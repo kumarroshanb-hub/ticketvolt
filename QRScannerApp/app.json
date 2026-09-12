@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "QR Scanner",
+    "slug": "qrscannerapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ticketvolt.qrscanner"
+    },
+    "android": {
+      "package": "com.ticketvolt.qrscanner",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "sdkVersion": "54.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "afff1a31-c449-4542-9860-054d3008472b"
+      }
+    }
+  }
+}

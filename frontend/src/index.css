@@ -1,0 +1,66 @@
+/* frontend/src/index.css */
+
+/* ---------- Reset ---------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  min-height: 100dvh;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Prevent iOS zoom on form focus — must be >=16px */
+input, select, textarea, button {
+  font-size: 16px;
+  font-family: inherit;
+}
+
+/* Better touch targets */
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+/* Prevent horizontal scroll */
+img, video, canvas, svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Safe-area insets for notched phones */
+:root {
+  --sat: env(safe-area-inset-top);
+  --sab: env(safe-area-inset-bottom);
+  --sal: env(safe-area-inset-left);
+  --sar: env(safe-area-inset-right);
+}
+
+/* Utility classes */
+.desktop-only { display: block; }
+.mobile-only  { display: none;  }
+
+@media (max-width: 768px) {
+  .desktop-only { display: none !important;  }
+  .mobile-only  { display: block !important; }
+
+  /* Hide desktop scrollbar, keep scroll */
+  ::-webkit-scrollbar { width: 0; height: 0; }
+}

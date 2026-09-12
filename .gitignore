@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+.env
+venv/
+*.sqlite3
+media/
+staticfiles/
+logs/
+*.log
+*.pid
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+.env.local
+npm-debug.log
+
+# React
+build/
+.DS_Store
+
+# Docker
+*.log
+*.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Celery
+celerybeat-schedule
+*.pid
+
+#baileys
+baileys-gateway/sessions/*.json
+
+#codebase dump
+complete_codebase*

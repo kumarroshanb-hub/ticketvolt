@@ -1,0 +1,10 @@
+# backend/.gitignore additions
+.env
+.env.local
+.env.neon
+.env.production
+*.env
+
+# Keep example files
+!.env.local.example
+!.env.production.example

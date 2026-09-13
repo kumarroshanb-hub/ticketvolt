@@ -16,6 +16,40 @@ import {
     useTheme,
 } from '@mui/material';
 
+/**
+ * Build-time configuration for demo credentials.
+ * These are inlined by CRA at build time from REACT_APP_* env vars.
+ * In production (Render), REACT_APP_SHOW_DEMO_CREDS is unset/false,
+ * so `DEMO_CREDS` becomes an empty array and the UI block never renders.
+ * No production password ever appears in the shipped bundle.
+ */
+const SHOW_DEMO_CREDS = process.env.REACT_APP_SHOW_DEMO_CREDS === 'true';
+
+const DEMO_CREDS = SHOW_DEMO_CREDS
+    ? [
+          {
+              role: '👑 Super Admin',
+              email: process.env.REACT_APP_DEMO_SUPERADMIN_EMAIL,
+              password: process.env.REACT_APP_DEMO_SUPERADMIN_PASSWORD,
+          },
+          {
+              role: '🛡️ Admin',
+              email: process.env.REACT_APP_DEMO_ADMIN_EMAIL,
+              password: process.env.REACT_APP_DEMO_ADMIN_PASSWORD,
+          },
+          {
+              role: '📋 Organizer',
+              email: process.env.REACT_APP_DEMO_ORGANIZER_EMAIL,
+              password: process.env.REACT_APP_DEMO_ORGANIZER_PASSWORD,
+          },
+          {
+              role: '👤 User',
+              email: process.env.REACT_APP_DEMO_USER_EMAIL,
+              password: process.env.REACT_APP_DEMO_USER_PASSWORD,
+          },
+      ].filter((c) => c.email && c.password) // drop incomplete entries
+    : [];
+
 const Login = () => {
     const navigate = useNavigate();
     const { login, isAuthenticated, loading } = useAuth();
@@ -26,17 +60,13 @@ const Login = () => {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [hasRedirected, setHasRedirected] = useState(false);
 
     useEffect(() => {
-        setEmail('superadmin@ticketvolt.com');
-        setPassword('REDACTED');
-
+        // No credential pre-fill. Ever.
         if (isAuthenticated && !loading) {
             console.log('ℹ️ Already authenticated, but staying on login page');
-            console.log('👤 User:', JSON.parse(localStorage.getItem('user') || '{}'));
         }
-    }, []);
+    }, [isAuthenticated, loading]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -44,33 +74,24 @@ const Login = () => {
         setIsSubmitting(true);
 
         try {
-            console.log('🔐 Form submitted with:', { email, password: password ? '***' : 'empty' });
-
             const result = await login(email, password);
-            console.log('🔐 Login result:', result);
 
             if (!result) {
                 setError('Login failed. Please try again.');
                 toast.error('Login failed. Please try again.');
-                setIsSubmitting(false);
                 return;
             }
 
             if (result.success === true) {
-                console.log('✅ Login successful! Navigating to dashboard...');
                 toast.success('Login successful!');
-
-                setHasRedirected(true);
                 navigate('/dashboard', { replace: true });
             } else {
                 const errorMsg = result.error || 'Login failed. Please try again.';
-                console.error('❌ Login failed:', errorMsg);
                 setError(errorMsg);
                 toast.error(errorMsg);
             }
-        } catch (error) {
-            console.error('❌ Login error:', error);
-            const errorMsg = error.message || 'An unexpected error occurred';
+        } catch (err) {
+            const errorMsg = err.message || 'An unexpected error occurred';
             setError(errorMsg);
             toast.error(errorMsg);
         } finally {
@@ -100,13 +121,6 @@ const Login = () => {
             </Box>
         );
     }
-
-    const demoCreds = [
-        { role: '👑 Super Admin', email: 'superadmin@ticketvolt.com', password: 'REDACTED' },
-        { role: '🛡️ Admin', email: 'admin@ticketvolt.com', password: 'REDACTED' },
-        { role: '📋 Organizer', email: 'organizer@ticketvolt.com', password: 'REDACTED' },
-        { role: '👤 User', email: 'user@ticketvolt.com', password: 'REDACTED' },
-    ];
 
     return (
         <Box
@@ -233,44 +247,61 @@ const Login = () => {
                     </Button>
                 </form>
 
-                {/* Demo Credentials */}
-                <Box
-                    sx={{
-                        mt: 3,
-                        pt: 2,
-                        borderTop: '1px solid rgba(255,255,255,0.06)',
-                        textAlign: 'center',
-                        maxHeight: isMobile ? 180 : 'none',
-                        overflowY: isMobile ? 'auto' : 'visible',
-                        WebkitOverflowScrolling: 'touch',
-                    }}
-                >
-                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 1 }}>
-                        Demo Credentials
-                    </Typography>
+                {/*
+                  Demo Credentials block.
+                  Renders ONLY when REACT_APP_SHOW_DEMO_CREDS === 'true'
+                  (i.e. local development with a populated .env.development.local).
+                  In production this whole block is dead code that gets tree-shaken
+                  or is simply skipped at runtime because DEMO_CREDS.length === 0.
+                */}
+                {DEMO_CREDS.length > 0 && (
+                    <Box
+                        sx={{
+                            mt: 3,
+                            pt: 2,
+                            borderTop: '1px solid rgba(255,255,255,0.06)',
+                            textAlign: 'center',
+                            maxHeight: isMobile ? 180 : 'none',
+                            overflowY: isMobile ? 'auto' : 'visible',
+                            WebkitOverflowScrolling: 'touch',
+                        }}
+                    >
+                        <Typography
+                            variant="caption"
+                            sx={{
+                                color: 'rgba(255,255,255,0.4)',
+                                textTransform: 'uppercase',
+                                letterSpacing: 1,
+                            }}
+                        >
+                            Demo Credentials (Dev Only)
+                        </Typography>
 
-                    <Box sx={{ mt: 1 }}>
-                        {demoCreds.map((cred, index) => (
-                            <Typography
-                                key={index}
-                                variant="caption"
-                                sx={{
-                                    display: 'block',
-                                    color: 'rgba(255,255,255,0.5)',
-                                    fontFamily: 'monospace',
-                                    fontSize: { xs: '11px', sm: '12px' },
-                                    py: 0.5,
-                                    cursor: 'pointer',
-                                    wordBreak: 'break-all',
-                                    '&:hover': { color: 'rgba(255,255,255,0.8)' },
-                                }}
-                                onClick={() => fillCredentials(cred.email, cred.password)}
-                            >
-                                {cred.role}: <span style={{ color: '#5B5FEF' }}>{cred.email}</span> / {cred.password}
-                            </Typography>
-                        ))}
+                        <Box sx={{ mt: 1 }}>
+                            {DEMO_CREDS.map((cred, index) => (
+                                <Typography
+                                    key={index}
+                                    variant="caption"
+                                    sx={{
+                                        display: 'block',
+                                        color: 'rgba(255,255,255,0.5)',
+                                        fontFamily: 'monospace',
+                                        fontSize: { xs: '11px', sm: '12px' },
+                                        py: 0.5,
+                                        cursor: 'pointer',
+                                        wordBreak: 'break-all',
+                                        '&:hover': { color: 'rgba(255,255,255,0.8)' },
+                                    }}
+                                    onClick={() => fillCredentials(cred.email, cred.password)}
+                                >
+                                    {cred.role}:{' '}
+                                    <span style={{ color: '#5B5FEF' }}>{cred.email}</span> /{' '}
+                                    {cred.password}
+                                </Typography>
+                            ))}
+                        </Box>
                     </Box>
-                </Box>
+                )}
 
                 <Box textAlign="center" mt={2}>
                     <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>

@@ -14,14 +14,17 @@ class Command(BaseCommand):
     help = 'Create users with different roles using passwords from environment variables'
 
     # Environment variable names for each role's password.
-    # These MUST be set in the environment (or .env loaded by settings)
-    # when the corresponding role is being created.
     ENV_SUPERADMIN_PASSWORD = 'DJANGO_SUPERADMIN_PASSWORD'
     ENV_ADMIN_PASSWORD      = 'DJANGO_ADMIN_PASSWORD'
     ENV_ORGANIZER_PASSWORD  = 'DJANGO_ORGANIZER_PASSWORD'
     ENV_USER_PASSWORD       = 'DJANGO_USER_PASSWORD'
 
-    # Minimum length enforced at the command level in addition to Django validators.
+    # ✅ Email addresses from env vars, with sensible non-PII defaults for local dev
+    ENV_SUPERADMIN_EMAIL = 'DJANGO_SUPERADMIN_EMAIL'
+    ENV_ADMIN_EMAIL      = 'DJANGO_ADMIN_EMAIL'
+    ENV_ORGANIZER_EMAIL  = 'DJANGO_ORGANIZER_EMAIL'
+    ENV_USER_EMAIL       = 'DJANGO_USER_EMAIL'
+
     MIN_PASSWORD_LENGTH = 12
 
     def add_arguments(self, parser):
@@ -31,13 +34,9 @@ class Command(BaseCommand):
         parser.add_argument('--user', action='store_true', help='Create regular user')
         parser.add_argument('--all', action='store_true', help='Create all user types')
 
-    # ------------------------------------------------------------------
-    # Entry point
-    # ------------------------------------------------------------------
     def handle(self, *args, **options):
         create_all = options['all']
 
-        # Warn loudly if the operator didn't ask for anything specific.
         if not create_all and not any(
             options[k] for k in ('superadmin', 'admin', 'organizer', 'user')
         ):
@@ -59,20 +58,7 @@ class Command(BaseCommand):
         if create_all or options['user']:
             self.create_regular_user()
 
-    # ------------------------------------------------------------------
-    # Password loading + validation helpers
-    # ------------------------------------------------------------------
     def _get_password(self, env_var: str, role: str) -> str:
-        """
-        Load a password from the environment and validate it.
-
-        Fails with CommandError if:
-          - the env var is missing or empty
-          - the password is too short
-          - the password fails Django's password validators
-
-        The password is NEVER printed to stdout/stderr.
-        """
         password = os.environ.get(env_var, '').strip()
 
         if not password:
@@ -91,8 +77,6 @@ class Command(BaseCommand):
                 f"(must be at least {self.MIN_PASSWORD_LENGTH} characters)."
             )
 
-        # Run Django's configured password validators (UserAttributeSimilarity,
-        # MinimumLength, CommonPassword, NumericPassword).
         try:
             validate_password(password)
         except ValidationError as exc:
@@ -102,6 +86,13 @@ class Command(BaseCommand):
             )
 
         return password
+
+    def _get_email(self, env_var: str, default: str) -> str:
+        """
+        Read email from env var. Falls back to a safe placeholder for local dev.
+        In production, always set the env var so real users get real emails.
+        """
+        return os.environ.get(env_var, '').strip() or default
 
     def _report_skip(self, role: str, username: str) -> None:
         self.stdout.write(self.style.WARNING(
@@ -123,10 +114,11 @@ class Command(BaseCommand):
             return
 
         password = self._get_password(self.ENV_SUPERADMIN_PASSWORD, 'superadmin')
+        email = self._get_email(self.ENV_SUPERADMIN_EMAIL, 'superadmin@example.local')
 
         user = User.objects.create_superuser(
             username=username,
-            email='superadmin@ticketvolt.com',
+            email=email,
             password=password,
             first_name='Super',
             last_name='Admin',
@@ -140,10 +132,11 @@ class Command(BaseCommand):
             return
 
         password = self._get_password(self.ENV_ADMIN_PASSWORD, 'admin')
+        email = self._get_email(self.ENV_ADMIN_EMAIL, 'admin@example.local')
 
         user = User.objects.create_user(
             username=username,
-            email='admin@ticketvolt.com',
+            email=email,
             password=password,
             first_name='Admin',
             last_name='User',
@@ -159,10 +152,11 @@ class Command(BaseCommand):
             return
 
         password = self._get_password(self.ENV_ORGANIZER_PASSWORD, 'organizer')
+        email = self._get_email(self.ENV_ORGANIZER_EMAIL, 'organizer@example.local')
 
         user = User.objects.create_user(
             username=username,
-            email='organizer@ticketvolt.com',
+            email=email,
             password=password,
             first_name='Organizer',
             last_name='User',
@@ -171,11 +165,11 @@ class Command(BaseCommand):
         UserProfile.objects.get_or_create(
             user=user,
             defaults={
-                'email': 'organizer@ticketvolt.com',
-                'phone': '+919876543210',
-                'whatsapp_number': '+919876543210',
-                'city': 'Mumbai',
-                'state': 'Maharashtra',
+                'email': email,
+                'phone': '',
+                'whatsapp_number': '',
+                'city': '',
+                'state': '',
                 'country': 'India',
                 'is_organizer': True,
             },
@@ -189,10 +183,11 @@ class Command(BaseCommand):
             return
 
         password = self._get_password(self.ENV_USER_PASSWORD, 'user')
+        email = self._get_email(self.ENV_USER_EMAIL, 'user@example.local')
 
         user = User.objects.create_user(
             username=username,
-            email='user@ticketvolt.com',
+            email=email,
             password=password,
             first_name='Regular',
             last_name='User',
@@ -201,11 +196,11 @@ class Command(BaseCommand):
         UserProfile.objects.get_or_create(
             user=user,
             defaults={
-                'email': 'user@ticketvolt.com',
-                'phone': '+919876543211',
-                'whatsapp_number': '+919876543211',
-                'city': 'Delhi',
-                'state': 'Delhi',
+                'email': email,
+                'phone': '',
+                'whatsapp_number': '',
+                'city': '',
+                'state': '',
                 'country': 'India',
                 'is_organizer': False,
             },

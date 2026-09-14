@@ -1,4 +1,6 @@
 # backend/core/settings/base.py
+from django.core.exceptions import ImproperlyConfigured
+
 """
 Base settings shared across all environments
 """
@@ -11,7 +13,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # ============================================
 # SECURITY (overridden per environment)
 # ============================================
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-fallback-key')
+# ✅ No insecure fallback. If SECRET_KEY is missing, Django will fail
+#    loudly at startup instead of silently using a publicly-known key.
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        "SECRET_KEY environment variable is required. "
+        "Generate one with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
+    )
 DEBUG = False
 ALLOWED_HOSTS = []
 

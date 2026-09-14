@@ -15,9 +15,53 @@ import {
   ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Constants from 'expo-constants';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { getCurrentApiUrl } from '../services/api';
+
+// ============================================================
+// Demo credentials — loaded from app.config.js `extra`.
+//
+// SECURITY:
+//   • app.config.js sets `showDemoCreds` from the SHOW_DEMO_CREDS
+//     environment variable, which must be UNSET in production EAS builds.
+//   • In production, `showDemoCreds` is false and the demo block below
+//     is never rendered.
+//   • No production password is ever present in the shipped JS bundle.
+// ============================================================
+const {
+  showDemoCreds,
+  demoAdminEmail,
+  demoAdminPassword,
+  demoOrganizerEmail,
+  demoOrganizerPassword,
+  demoUserEmail,
+  demoUserPassword,
+} = Constants.expoConfig?.extra ?? {};
+
+const DEMO_CREDS = showDemoCreds
+  ? [
+      {
+        key: 'admin',
+        label: '🛡️ Admin',
+        email: demoAdminEmail,
+        password: demoAdminPassword,
+      },
+      {
+        key: 'organizer',
+        label: '📋 Organizer',
+        email: demoOrganizerEmail,
+        password: demoOrganizerPassword,
+      },
+      {
+        key: 'user',
+        label: '👤 User',
+        email: demoUserEmail,
+        password: demoUserPassword,
+      },
+    ].filter((c) => c.email && c.password) // drop incomplete entries
+  : [];
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -33,7 +77,7 @@ export default function LoginScreen() {
     const url = getCurrentApiUrl();
     setApiUrl(url);
     console.log('📡 Current API URL:', url);
-    
+
     // Animate
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -53,9 +97,9 @@ export default function LoginScreen() {
     try {
       console.log('🔑 Attempting login with:', email);
       console.log('📡 API URL:', getCurrentApiUrl());
-      
+
       const result = await login(email, password);
-      
+
       if (result.success) {
         console.log('✅ Login successful');
         // Navigation handled by AuthContext
@@ -74,10 +118,11 @@ export default function LoginScreen() {
     navigation.navigate('Settings');
   };
 
+  // ✅ Dev-only helper. Never logs or displays the password back to the user.
   const fillCredentials = (emailVal, passwordVal) => {
     setEmail(emailVal);
     setPassword(passwordVal);
-    Alert.alert('✅ Credentials Loaded', `Email: ${emailVal}\nPassword: ${passwordVal}`);
+    Alert.alert('✅ Credentials Loaded', `Email: ${emailVal}`);
   };
 
   return (
@@ -88,7 +133,7 @@ export default function LoginScreen() {
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
-            
+
             {/* Top Bar with Settings Button */}
             <View style={styles.topBar}>
               <View style={styles.topBarLeft}>
@@ -181,24 +226,29 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Demo Credentials */}
-            <View style={styles.demoContainer}>
-              <Text style={styles.demoTitle}>QUICK LOGIN</Text>
-              
-              <TouchableOpacity
-                style={styles.demoButton}
-                onPress={() => fillCredentials('admin@ticketvolt.com', 'REDACTED')}
-              >
-                <Text style={styles.demoButtonText}>🛡️ Admin</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.demoButton}
-                onPress={() => fillCredentials('organizer@ticketvolt.com', 'REDACTED')}
-              >
-                <Text style={styles.demoButtonText}>📋 Organizer</Text>
-              </TouchableOpacity>
-            </View>
+            {/* ============================================================
+                DEMO CREDENTIALS — rendered ONLY when DEMO_CREDS is populated.
+                In production builds:
+                  • SHOW_DEMO_CREDS is unset
+                  • showDemoCreds is false
+                  • DEMO_CREDS is an empty array
+                  • This entire block is skipped at runtime
+            ============================================================ */}
+            {DEMO_CREDS.length > 0 && (
+              <View style={styles.demoContainer}>
+                <Text style={styles.demoTitle}>QUICK LOGIN (DEV ONLY)</Text>
+
+                {DEMO_CREDS.map((cred) => (
+                  <TouchableOpacity
+                    key={cred.key}
+                    style={styles.demoButton}
+                    onPress={() => fillCredentials(cred.email, cred.password)}
+                  >
+                    <Text style={styles.demoButtonText}>{cred.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
             {/* Status Indicators */}
             <View style={styles.statusContainer}>

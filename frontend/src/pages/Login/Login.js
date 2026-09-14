@@ -24,6 +24,15 @@ import {
  * No production password ever appears in the shipped bundle.
  */
 const SHOW_DEMO_CREDS = process.env.REACT_APP_SHOW_DEMO_CREDS === 'true';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// ✅ Fail the build if someone mistakenly enables demo creds in production.
+//    This prevents a compromised build even if the env var is misconfigured.
+if (IS_PRODUCTION && SHOW_DEMO_CREDS) {
+    throw new Error(
+        '🚨 SECURITY: REACT_APP_SHOW_DEMO_CREDS must NOT be "true" in production builds.'
+    );
+}
 
 const DEMO_CREDS = SHOW_DEMO_CREDS
     ? [

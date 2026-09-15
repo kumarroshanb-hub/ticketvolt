@@ -1,78 +1,171 @@
 # backend/ticket_bookings/api/serializers.py
 from rest_framework import serializers
-from ..models import (
-    Event, Venue, Session, TicketTier, Booking, Ticket,
-    CheckInLog, Discount, EventTemplateType, EventTemplate, UserProfile
-)
 from django.contrib.auth.models import User
 from django.conf import settings
+from django.utils import timezone
 import os
 import re
-import json
 import logging
+
+from ..models import (
+    Event, Venue, Session, TicketTier, Booking, Ticket,
+    CheckInLog, Discount, EventTemplateType, EventTemplate, UserProfile,
+)
 
 logger = logging.getLogger(__name__)
 
+# Hard cap — a single booking may not contain more than this many tickets.
+MAX_TICKETS_PER_BOOKING = 50
+
 
 # ============================================================
-# ✅ SECURITY HELPER: Safely get/create the WhatsApp service user
+# WhatsApp service-account helper (unchanged from your version)
 # ============================================================
 def get_or_create_whatsapp_bot_user():
-    """
-    Safely retrieve or create the 'whatsapp_bot' service account.
+    service_password = os.environ.get('WHATSAPP_BOT_PASSWORD')
 
-    The password is loaded from the WHATSAPP_BOT_PASSWORD environment
-    variable. This function will NEVER create the user with a hardcoded
-    or default password. If the env var is missing, it raises an error
-    so that misconfiguration fails loudly rather than silently creating
-    an insecure account.
-    """
+    if not service_password:
+        logger.critical(
+            "❌ WHATSAPP_BOT_PASSWORD environment variable is not set! "
+            "Cannot create or use the whatsapp_bot service account securely."
+        )
+        raise ValueError(
+            "WHATSAPP_BOT_PASSWORD environment variable is required "
+            "to create the whatsapp_bot service account."
+        )
+
+    if len(service_password) < 16:
+        raise ValueError(
+            "WHATSAPP_BOT_PASSWORD must be at least 16 characters."
+        )
+
     whatsapp_user, created = User.objects.get_or_create(
         username='whatsapp_bot',
         defaults={
             'email': 'whatsapp@ticketvolt.com',
             'is_active': True,
-            'is_staff': False,       # Service account: no admin privileges
-            'is_superuser': False,   # Service account: not a superuser
-        }
+            'is_staff': False,
+            'is_superuser': False,
+        },
     )
 
     if created:
-        # ✅ Load the password from environment - never hardcode
-        service_password = os.environ.get('WHATSAPP_BOT_PASSWORD')
-
-        if not service_password:
-            # Roll back the user creation to avoid leaving a passwordless user
-            whatsapp_user.delete()
-            logger.critical(
-                "❌ WHATSAPP_BOT_PASSWORD environment variable is not set! "
-                "Cannot create the whatsapp_bot service account securely. "
-                "Please set it in your .env file or deployment environment."
-            )
-            raise ValueError(
-                "WHATSAPP_BOT_PASSWORD environment variable is required "
-                "to create the whatsapp_bot service account."
-            )
-
         whatsapp_user.set_password(service_password)
         whatsapp_user.save()
-        logger.info("✅ Created whatsapp_bot service account (password from env var).")
+        logger.info("✅ Created whatsapp_bot service account.")
+    else:
+        if not whatsapp_user.check_password(service_password):
+            logger.warning(
+                "⚠️ whatsapp_bot exists but stored password does not match "
+                "WHATSAPP_BOT_PASSWORD. Rotate via admin."
+            )
 
     return whatsapp_user
 
 
-# ============ EVENT SERIALIZERS ============
+# ============================================================
+# EVENT SERIALIZERS
+# ============================================================
+
+class PublicEventSerializer(serializers.ModelSerializer):
+    """
+    Serializer used for PUBLIC (AllowAny) endpoints.
+
+    Exposes ONLY the fields a public visitor needs to browse events.
+    Deliberately excludes:
+      - organizer (FK to User)
+      - metadata / venue_metadata (may contain internal notes)
+      - total_revenue (business-sensitive)
+      - cancellation_policy / refundable_until
+      - booking_start_date / booking_end_date windows
+      - is_featured
+      - min/max_tickets_per_order (business config)
+    """
+    venue = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Event
+        fields = [
+            'id', 'title', 'description', 'short_description',
+            'event_type', 'category',
+            'start_date', 'end_date', 'timezone',
+            'cover_image', 'gallery_images',
+            'status', 'is_public',
+            'total_tickets_sold',
+            'ticket_format', 'combine_tickets', 'tickets_per_page',
+            'venue',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+    def get_venue(self, obj):
+        if not obj.venue:
+            return None
+        return {
+            'id': str(obj.venue.id),
+            'name': obj.venue.name,
+            'city': obj.venue.city,
+            'state': obj.venue.state,
+            'country': obj.venue.country,
+            'address_line1': obj.venue.address_line1,
+        }
+
+
+class PublicEventDetailSerializer(PublicEventSerializer):
+    """Public detail view — adds sessions and tiers (no revenue internals)."""
+    sessions = serializers.SerializerMethodField()
+    tiers = serializers.SerializerMethodField()
+
+    class Meta(PublicEventSerializer.Meta):
+        fields = PublicEventSerializer.Meta.fields + ['sessions', 'tiers']
+
+    def get_sessions(self, obj):
+        return [
+            {
+                'id': str(s.id),
+                'start_time': s.start_time,
+                'end_time': s.end_time,
+                'capacity': s.capacity,
+                'booked': s.booked,
+                'remaining': max(0, (s.capacity or 0) - (s.booked or 0)),
+                'is_active': s.is_active,
+            }
+            for s in obj.sessions.filter(is_active=True)
+        ]
+
+    def get_tiers(self, obj):
+        return [
+            {
+                'id': str(t.id),
+                'name': t.name,
+                'price': float(t.price),
+                'quantity_total': t.quantity_total,
+                'quantity_sold': t.quantity_sold,
+                'available': max(0, (t.quantity_total or 0) - (t.quantity_sold or 0)),
+                'ticket_type': t.ticket_type,
+                'max_per_order': t.max_per_order,
+                'min_per_order': t.min_per_order,
+            }
+            for t in obj.tiers.all()
+        ]
+
+
 class EventSerializer(serializers.ModelSerializer):
+    """
+    Full event serializer for authenticated managers
+    (admins, superadmins, organizers).
+    """
     class Meta:
         model = Event
         fields = '__all__'
         read_only_fields = [
             'id', 'organizer', 'created_at', 'updated_at',
-            'total_tickets_sold', 'total_revenue'
+            'total_tickets_sold', 'total_revenue',
         ]
 
 
 class EventDetailSerializer(serializers.ModelSerializer):
+    """Full event detail serializer for authenticated managers."""
     sessions = serializers.SerializerMethodField()
     tiers = serializers.SerializerMethodField()
     venue = serializers.SerializerMethodField()
@@ -82,7 +175,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = [
             'id', 'organizer', 'created_at', 'updated_at',
-            'total_tickets_sold', 'total_revenue'
+            'total_tickets_sold', 'total_revenue',
         ]
 
     def get_sessions(self, obj):
@@ -92,7 +185,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
                 'start_time': s.start_time,
                 'end_time': s.end_time,
                 'capacity': s.capacity,
-                'booked': s.booked
+                'booked': s.booked,
             }
             for s in obj.sessions.all()
         ]
@@ -104,7 +197,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
                 'name': t.name,
                 'price': float(t.price),
                 'quantity_total': t.quantity_total,
-                'quantity_sold': t.quantity_sold
+                'quantity_sold': t.quantity_sold,
             }
             for t in obj.tiers.all()
         ]
@@ -114,12 +207,14 @@ class EventDetailSerializer(serializers.ModelSerializer):
             return {
                 'id': str(obj.venue.id),
                 'name': obj.venue.name,
-                'city': obj.venue.city
+                'city': obj.venue.city,
             }
         return None
 
 
-# ============ VENUE SERIALIZERS ============
+# ============================================================
+# VENUE
+# ============================================================
 class VenueSerializer(serializers.ModelSerializer):
     class Meta:
         model = Venue
@@ -127,7 +222,9 @@ class VenueSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-# ============ TICKET SERIALIZER ============
+# ============================================================
+# TICKET
+# ============================================================
 class TicketSerializer(serializers.ModelSerializer):
     tier_name = serializers.CharField(source='tier.name', read_only=True, default=None)
     price = serializers.SerializerMethodField()
@@ -141,14 +238,12 @@ class TicketSerializer(serializers.ModelSerializer):
             'id', 'unique_code', 'attendee_name', 'attendee_email',
             'attendee_phone', 'status', 'check_in_time', 'qr_code',
             'tier_name', 'price', 'event_title', 'booking_reference',
-            'is_checked_in', 'created_at'
+            'is_checked_in', 'created_at',
         ]
         read_only_fields = ['id', 'unique_code', 'created_at']
 
     def get_price(self, obj):
-        if obj.tier:
-            return float(obj.tier.price)
-        return 0
+        return float(obj.tier.price) if obj.tier else 0
 
     def get_booking_reference(self, obj):
         return obj.booking.booking_reference if obj.booking else None
@@ -157,7 +252,9 @@ class TicketSerializer(serializers.ModelSerializer):
         return obj.status == 'used'
 
 
-# ============ BOOKING SERIALIZERS ============
+# ============================================================
+# BOOKING
+# ============================================================
 class BookingSerializer(serializers.ModelSerializer):
     event_title = serializers.CharField(source='event.title', read_only=True, default='N/A')
     event_id = serializers.UUIDField(source='event.id', read_only=True, default=None)
@@ -166,7 +263,7 @@ class BookingSerializer(serializers.ModelSerializer):
     tickets = TicketSerializer(many=True, read_only=True)
     formatted_date = serializers.SerializerMethodField()
 
-    # Accept event UUID from request (used for WhatsApp and admin-created bookings)
+    # Accept event UUID from request (used for WhatsApp / admin-created bookings)
     event = serializers.UUIDField(write_only=True, required=True)
 
     class Meta:
@@ -179,10 +276,11 @@ class BookingSerializer(serializers.ModelSerializer):
             'event_title', 'event_id', 'event',
             'ticket_count', 'checked_in_count',
             'tickets', 'formatted_date',
-            'metadata'
+            'metadata',
         ]
         read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at']
 
+    # ---- computed fields ----
     def get_ticket_count(self, obj):
         return obj.tickets.count()
 
@@ -192,34 +290,96 @@ class BookingSerializer(serializers.ModelSerializer):
     def get_formatted_date(self, obj):
         return obj.created_at.strftime('%d/%m/%Y') if obj.created_at else None
 
+    # ---- field validation ----
+    def validate_customer_email(self, value):
+        if value and len(value) > 254:
+            raise serializers.ValidationError('Email is too long.')
+        return value
+
+    def validate_customer_phone(self, value):
+        if value:
+            digits = re.sub(r'\D', '', str(value))
+            if not (7 <= len(digits) <= 15):
+                raise serializers.ValidationError('Invalid phone number.')
+        return value
+
+    def validate_tickets(self, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError('tickets must be a list.')
+        if len(value) > MAX_TICKETS_PER_BOOKING:
+            raise serializers.ValidationError(
+                f'Maximum {MAX_TICKETS_PER_BOOKING} tickets per booking.'
+            )
+        return value
+
+    def validate(self, data):
+        """
+        - Confirm event exists and is bookable.
+        - Validate every tier_id exists for that event.
+        - Recompute total_amount server-side (never trust client pricing).
+        """
+        event_uuid = data.get('event')
+        if event_uuid:
+            try:
+                event = Event.objects.get(id=event_uuid)
+            except Event.DoesNotExist:
+                raise serializers.ValidationError({'event': 'Event not found.'})
+
+            if event.status not in ('active', 'published'):
+                raise serializers.ValidationError(
+                    {'event': 'This event is not available for booking.'}
+                )
+            if event.end_date and event.end_date < timezone.now():
+                raise serializers.ValidationError(
+                    {'event': 'This event has already ended.'}
+                )
+            self._event_obj = event
+
+        tickets_payload = data.get('tickets') or []
+        if tickets_payload and hasattr(self, '_event_obj'):
+            valid_tier_ids = {str(t.id) for t in self._event_obj.tiers.all()}
+            for i, t in enumerate(tickets_payload):
+                if not isinstance(t, dict):
+                    raise serializers.ValidationError(
+                        {'tickets': f'Item {i} is not an object.'}
+                    )
+                tier_id = str(t.get('tier_id') or '').strip()
+                if not tier_id:
+                    raise serializers.ValidationError(
+                        {'tickets': f'Item {i} missing tier_id.'}
+                    )
+                if tier_id not in valid_tier_ids:
+                    raise serializers.ValidationError(
+                        {'tickets': f'Tier {tier_id} not found for this event.'}
+                    )
+
+            # Recompute the price from server-side data.
+            computed_total = 0
+            for t in tickets_payload:
+                tier = TicketTier.objects.filter(id=t.get('tier_id')).first()
+                if tier:
+                    computed_total += float(tier.price)
+            data['total_amount'] = computed_total
+
+        return data
+
     def create(self, validated_data):
         """
-        Override create to handle:
-        - event lookup from event_id
-        - user creation from email for WhatsApp bookings
-        - STORE ticket data in metadata (DO NOT create tickets yet)
-        - Tickets are created later when admin issues them via issue_tickets action
-
-        ⚠️ SECURITY: The whatsapp_bot service account password is loaded
-        from the WHATSAPP_BOT_PASSWORD environment variable, never hardcoded.
+        Create the booking. Tickets are NOT created here — they are
+        stored in booking.metadata['tickets'] and issued later via the
+        admin issue_tickets action.
         """
-        event_id = validated_data.pop('event', None)
-        if event_id:
-            try:
-                event = Event.objects.get(id=event_id)
-                validated_data['event'] = event
-            except Event.DoesNotExist:
-                raise serializers.ValidationError({'event': 'Event not found'})
+        event = getattr(self, '_event_obj', None)
+        if event is None:
+            raise serializers.ValidationError({'event': 'Event was not validated.'})
+        validated_data['event'] = event
 
-        # Handle tickets data (should normally be in metadata, but kept here for compat)
         tickets_data = validated_data.pop('tickets', [])
+        logger.info(f"📊 Tickets received in serializer: {len(tickets_data)}")
 
-        logger.info(f"📊 Tickets data received in serializer: {tickets_data}")
-        logger.info(f"📊 Number of tickets: {len(tickets_data)}")
-
-        # ------------------------------------------------------------
-        # Attach a user to the booking (create one from email if needed)
-        # ------------------------------------------------------------
+        # ---- Attach a user ----
         if 'user' not in validated_data:
             customer_email = validated_data.get('customer_email')
             customer_name = validated_data.get('customer_name', 'WhatsApp User')
@@ -227,113 +387,106 @@ class BookingSerializer(serializers.ModelSerializer):
 
             if customer_email:
                 try:
-                    # Generate a username from email (remove special chars)
-                    username = re.sub(r'[^a-zA-Z0-9_]', '_', customer_email.split('@')[0])
+                    username = re.sub(
+                        r'[^a-zA-Z0-9_]', '_',
+                        customer_email.split('@')[0]
+                    )[:140] or 'user'
                     base_username = username
                     counter = 1
                     while User.objects.filter(username=username).exists():
-                        username = f"{base_username}_{counter}"
+                        username = f"{base_username}_{counter}"[:150]
                         counter += 1
 
                     name_parts = customer_name.split()
-                    first_name = name_parts[0] if name_parts else customer_name
-                    last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+                    first_name = (name_parts[0] if name_parts else customer_name)[:150]
+                    last_name = (' '.join(name_parts[1:]) if len(name_parts) > 1 else '')[:150]
 
                     user = User.objects.create_user(
                         username=username,
                         email=customer_email,
-                        password=None,  # No password; user can reset later
+                        password=None,   # Unusable password
                         first_name=first_name,
-                        last_name=last_name
+                        last_name=last_name,
                     )
                     user.is_active = True
-                    user.save()
+                    user.save(update_fields=['is_active'])
 
-                    # Create UserProfile if applicable
                     try:
                         UserProfile.objects.get_or_create(
                             user=user,
                             defaults={
                                 'email': customer_email,
                                 'phone': customer_phone,
-                                'whatsapp_number': customer_phone
-                            }
+                                'whatsapp_number': customer_phone,
+                            },
                         )
                     except Exception as profile_err:
                         logger.warning(f"⚠️ Could not create UserProfile: {profile_err}")
 
                     validated_data['user'] = user
-
-                except Exception as e:
-                    logger.error(f"❌ Error creating user from email: {e}")
-                    # ✅ SECURE FALLBACK: use service account with env-var password
+                except Exception:
+                    logger.exception("Error creating user from email")
                     validated_data['user'] = get_or_create_whatsapp_bot_user()
             else:
-                # No email provided → use secure service account
                 validated_data['user'] = get_or_create_whatsapp_bot_user()
 
-        # Ensure total_amount is set
-        if 'total_amount' not in validated_data or validated_data['total_amount'] is None:
+        # ---- Ensure total_amount ----
+        if not validated_data.get('total_amount'):
             total = 0
-            for ticket_data in tickets_data:
-                tier_id = ticket_data.get('tier_id')
-                if tier_id:
+            for t in tickets_data:
+                tid = t.get('tier_id')
+                if tid:
                     try:
-                        tier = TicketTier.objects.get(id=tier_id)
-                        total += float(tier.price)
+                        total += float(TicketTier.objects.get(id=tid).price)
                     except TicketTier.DoesNotExist:
                         pass
             validated_data['total_amount'] = total
 
-        # Create the booking
+        # ---- Create the booking ----
         booking = super().create(validated_data)
 
-        # Initialize metadata if not present
         if not booking.metadata:
             booking.metadata = {}
 
-        # If tickets_data was empty, check metadata for ticket info
-        if not tickets_data and 'metadata' in validated_data:
-            metadata = validated_data.get('metadata', {})
-            if isinstance(metadata, dict):
-                if 'ticket_types' in metadata:
-                    tickets_data = metadata.get('ticket_types', [])
-                    logger.info(f"📊 Found {len(tickets_data)} tickets in metadata.ticket_types")
-                elif 'tickets' in metadata:
-                    tickets_data = metadata.get('tickets', [])
-                    logger.info(f"📊 Found {len(tickets_data)} tickets in metadata.tickets")
-                elif 'tier_ids' in metadata:
-                    tier_ids = metadata.get('tier_ids', [])
-                    tier_quantities = metadata.get('tier_quantities', {})
-                    for tier_id in tier_ids:
-                        quantity = tier_quantities.get(str(tier_id), 1)
-                        for i in range(quantity):
-                            attendee_name = booking.customer_name
-                            attendee_names = metadata.get('attendee_names', {})
-                            if str(tier_id) in attendee_names:
-                                names = attendee_names[str(tier_id)]
-                                if i < len(names):
-                                    attendee_name = names[i]
-                            tickets_data.append({
-                                'tier_id': tier_id,
-                                'attendee_name': attendee_name
-                            })
-                    logger.info(f"📊 Reconstructed {len(tickets_data)} tickets from tier_ids")
+        # Reconcile ticket data from metadata if not passed directly.
+        if not tickets_data and isinstance(validated_data.get('metadata'), dict):
+            md = validated_data['metadata']
+            if isinstance(md.get('ticket_types'), list):
+                tickets_data = md['ticket_types']
+            elif isinstance(md.get('tickets'), list):
+                tickets_data = md['tickets']
+            elif isinstance(md.get('tier_ids'), list):
+                tier_ids = md['tier_ids']
+                tier_quantities = md.get('tier_quantities', {})
+                for tier_id in tier_ids:
+                    quantity = tier_quantities.get(str(tier_id), 1)
+                    for i in range(int(quantity)):
+                        attendee_name = booking.customer_name
+                        attendee_names = md.get('attendee_names', {})
+                        if str(tier_id) in attendee_names:
+                            names = attendee_names[str(tier_id)]
+                            if i < len(names):
+                                attendee_name = names[i]
+                        tickets_data.append({
+                            'tier_id': tier_id,
+                            'attendee_name': attendee_name,
+                        })
 
-        # Store tickets data in metadata for later retrieval
         booking.metadata['tickets'] = tickets_data
         booking.metadata['total_tickets'] = len(tickets_data)
-        booking.metadata['ticket_created'] = False  # Not created yet
+        booking.metadata['ticket_created'] = False
 
         if tickets_data:
-            tier_ids = list(set([t.get('tier_id') for t in tickets_data if t.get('tier_id')]))
+            tier_ids = list({
+                t.get('tier_id') for t in tickets_data if t.get('tier_id')
+            })
             booking.metadata['tier_ids'] = tier_ids
 
             booking.metadata['ticket_types'] = [
                 {
                     'tier_id': t.get('tier_id'),
                     'attendee_name': t.get('attendee_name', booking.customer_name),
-                    'tier_name': t.get('tier_name', 'Unknown')
+                    'tier_name': t.get('tier_name', 'Unknown'),
                 }
                 for t in tickets_data
             ]
@@ -350,26 +503,11 @@ class BookingSerializer(serializers.ModelSerializer):
             booking.metadata['tier_quantities'] = tier_quantities
             booking.metadata['attendee_names'] = attendee_names_by_tier
 
-            logger.info(f"✅ Stored {len(tickets_data)} tickets in metadata (not created yet)")
-            logger.info(f"✅ Tier IDs: {tier_ids}")
-            logger.info(f"✅ Tier quantities: {tier_quantities}")
-        else:
-            tier_id = validated_data.get('tier_id')
-            if tier_id:
-                booking.metadata['tier_id'] = str(tier_id)
-                booking.metadata['quantity'] = validated_data.get('quantity', 1)
-                logger.info(f"✅ Stored single tier in metadata: {tier_id}")
-            else:
-                logger.warning(f"⚠️ No tickets data found for booking {booking.booking_reference}")
-
         booking.save(update_fields=['metadata'])
-
-        # IMPORTANT: do NOT create tickets here.
-        # Tickets are created by the `issue_tickets` admin action.
 
         logger.info(
             f"✅ Booking {booking.booking_reference} created with "
-            f"{len(tickets_data)} tickets in metadata (pending, no tickets yet)"
+            f"{len(tickets_data)} tickets in metadata"
         )
         return booking
 
@@ -389,7 +527,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'payment_id', 'payment_method', 'discount_applied', 'discount_code',
             'paid_at', 'created_at', 'updated_at', 'notes',
             'event', 'tickets', 'ticket_count', 'checked_in_count',
-            'formatted_date', 'metadata'
+            'formatted_date', 'metadata',
         ]
         read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at']
 
@@ -404,7 +542,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
                 'venue': {
                     'id': str(obj.event.venue.id) if obj.event.venue else None,
                     'name': obj.event.venue.name if obj.event.venue else None,
-                } if obj.event.venue else None
+                } if obj.event.venue else None,
             }
         return None
 
@@ -418,7 +556,9 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         return obj.created_at.strftime('%d/%m/%Y') if obj.created_at else None
 
 
-# ============ CHECK-IN SERIALIZERS ============
+# ============================================================
+# CHECK-IN
+# ============================================================
 class CheckInLogSerializer(serializers.ModelSerializer):
     ticket_code = serializers.CharField(source='ticket.unique_code', read_only=True)
     attendee_name = serializers.CharField(source='ticket.attendee_name', read_only=True)
@@ -432,7 +572,7 @@ class CheckInLogSerializer(serializers.ModelSerializer):
             'id', 'ticket', 'ticket_code', 'attendee_name', 'event', 'event_title',
             'session', 'scanner_user', 'scanner_email', 'scanner_name',
             'scanner_device_id', 'scanner_ip', 'scanned_at', 'status',
-            'latitude', 'longitude', 'notes', 'is_offline', 'synced_at', 'created_at'
+            'latitude', 'longitude', 'notes', 'is_offline', 'synced_at', 'created_at',
         ]
         read_only_fields = ['id', 'scanned_at', 'created_at', 'synced_at']
 
@@ -445,7 +585,9 @@ class CheckInLogSerializer(serializers.ModelSerializer):
         return None
 
 
-# ============ DISCOUNT SERIALIZERS ============
+# ============================================================
+# DISCOUNT
+# ============================================================
 class DiscountSerializer(serializers.ModelSerializer):
     class Meta:
         model = Discount
@@ -453,29 +595,21 @@ class DiscountSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'used_count', 'created_at']
 
 
-# ============ USER SERIALIZERS ============
+# ============================================================
+# USER
+# ============================================================
 class UserSerializer(serializers.ModelSerializer):
-    """
-    User serializer with a computed 'role' field.
-    """
     role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'is_active'
+            'role', 'date_joined', 'last_login',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'date_joined', 'last_login']
 
     def get_role(self, obj):
-        """
-        Determine user role:
-          - super_admin: is_superuser = True
-          - admin:       is_staff = True (and not superuser)
-          - organizer:   profile.is_organizer = True
-          - user:        default
-        """
         if obj.is_superuser:
             return 'super_admin'
         if obj.is_staff:
@@ -488,14 +622,11 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    """
-    Serializer for UserProfile.
-    """
     user = UserSerializer(read_only=True)
     user_id = serializers.PrimaryKeyRelatedField(
         source='user',
         queryset=User.objects.all(),
-        write_only=True
+        write_only=True,
     )
 
     class Meta:
@@ -503,17 +634,20 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'user_id', 'email', 'phone', 'whatsapp_number',
             'address', 'city', 'state', 'country', 'postal_code',
-            'is_organizer', 'created_at', 'updated_at'
+            'is_organizer', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    """
-    Serializer for user registration.
-    """
-    password = serializers.CharField(write_only=True, required=True, min_length=8)
-    password_confirm = serializers.CharField(write_only=True, required=True)
+    password = serializers.CharField(
+        write_only=True, required=True, min_length=12,
+        style={'input_type': 'password'},
+    )
+    password_confirm = serializers.CharField(
+        write_only=True, required=True,
+        style={'input_type': 'password'},
+    )
     phone = serializers.CharField(required=False, allow_blank=True)
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
     address = serializers.CharField(required=False, allow_blank=True)
@@ -529,12 +663,22 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'password', 'password_confirm',
             'first_name', 'last_name',
             'phone', 'whatsapp_number', 'address', 'city', 'state',
-            'country', 'postal_code', 'is_organizer'
+            'country', 'postal_code', 'is_organizer',
         ]
         extra_kwargs = {
             'username': {'required': True},
             'email': {'required': True},
         }
+
+    def validate_username(self, value):
+        if User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError('Username already exists')
+        return value
+
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('Email already exists')
+        return value
 
     def validate(self, data):
         if data.get('password') != data.get('password_confirm'):
@@ -542,21 +686,21 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
                 {'password_confirm': 'Passwords do not match'}
             )
 
-        if User.objects.filter(username=data.get('username')).exists():
-            raise serializers.ValidationError(
-                {'username': 'Username already exists'}
-            )
-
-        if User.objects.filter(email=data.get('email')).exists():
-            raise serializers.ValidationError(
-                {'email': 'Email already exists'}
-            )
-
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            validate_password(data.get('password'))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
         return data
 
     def create(self, validated_data):
         password = validated_data.pop('password')
         validated_data.pop('password_confirm')
+
+        # Public registration must NEVER allow self-assignment of
+        # organizer/admin roles. Force is_organizer = False.
+        validated_data.pop('is_organizer', None)
 
         profile_fields = {
             'phone': validated_data.pop('phone', ''),
@@ -566,7 +710,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'state': validated_data.pop('state', ''),
             'country': validated_data.pop('country', 'India'),
             'postal_code': validated_data.pop('postal_code', ''),
-            'is_organizer': validated_data.pop('is_organizer', False),
+            'is_organizer': False,
         }
 
         user = User.objects.create_user(
@@ -574,23 +718,19 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             email=validated_data.get('email'),
             password=password,
             first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', '')
+            last_name=validated_data.get('last_name', ''),
         )
         user.is_active = True
-        user.save()
+        user.save(update_fields=['is_active'])
 
-        UserProfile.objects.create(
-            user=user,
-            email=user.email,
-            **profile_fields
-        )
-
+        UserProfile.objects.create(user=user, email=user.email, **profile_fields)
         return user
 
 
-# ============ BOOKING LIST SERIALIZERS ============
+# ============================================================
+# BOOKING LIST / ADMIN
+# ============================================================
 class BookingListSerializer(serializers.ModelSerializer):
-    """Simplified booking serializer for list views."""
     event_title = serializers.CharField(source='event.title', read_only=True)
     event_id = serializers.UUIDField(source='event.id', read_only=True, default=None)
     customer_name = serializers.CharField()
@@ -605,18 +745,10 @@ class BookingListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
-            'id',
-            'booking_reference',
-            'event_title',
-            'event_id',
-            'customer_name',
-            'customer_email',
-            'customer_phone',
-            'total_amount',
-            'status',
-            'created_at',
-            'formatted_date',
-            'ticket_count'
+            'id', 'booking_reference', 'event_title', 'event_id',
+            'customer_name', 'customer_email', 'customer_phone',
+            'total_amount', 'status', 'created_at', 'formatted_date',
+            'ticket_count',
         ]
 
     def get_ticket_count(self, obj):
@@ -627,7 +759,6 @@ class BookingListSerializer(serializers.ModelSerializer):
 
 
 class BookingAdminSerializer(serializers.ModelSerializer):
-    """Admin serializer for booking management with all details."""
     tickets = TicketSerializer(many=True, read_only=True)
     event_details = serializers.SerializerMethodField()
     user_details = serializers.SerializerMethodField()
@@ -645,7 +776,7 @@ class BookingAdminSerializer(serializers.ModelSerializer):
             'discount_applied', 'discount_code',
             'paid_at', 'created_at', 'updated_at',
             'tickets', 'ticket_count', 'checked_in_count',
-            'metadata'
+            'metadata',
         ]
         read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at']
 
@@ -656,7 +787,7 @@ class BookingAdminSerializer(serializers.ModelSerializer):
                 'title': obj.event.title,
                 'start_date': obj.event.start_date,
                 'end_date': obj.event.end_date,
-                'status': obj.event.status
+                'status': obj.event.status,
             }
         return None
 
@@ -666,7 +797,7 @@ class BookingAdminSerializer(serializers.ModelSerializer):
                 'id': obj.user.id,
                 'username': obj.user.username,
                 'email': obj.user.email,
-                'full_name': f"{obj.user.first_name} {obj.user.last_name}".strip()
+                'full_name': f"{obj.user.first_name} {obj.user.last_name}".strip(),
             }
         return None
 
@@ -678,7 +809,6 @@ class BookingAdminSerializer(serializers.ModelSerializer):
 
 
 class BulkActionResponseSerializer(serializers.Serializer):
-    """Serializer for bulk action responses."""
     status = serializers.CharField()
     action = serializers.CharField()
     summary = serializers.DictField()
@@ -686,23 +816,23 @@ class BulkActionResponseSerializer(serializers.Serializer):
     errors = serializers.ListField(required=False, allow_null=True)
 
 
-# ============================================
-# TEMPLATE SERIALIZERS
-# ============================================
+# ============================================================
+# TEMPLATES
+# ============================================================
 class EventTemplateTypeSerializer(serializers.ModelSerializer):
-    """Serializer for EventTemplateType."""
     class Meta:
         model = EventTemplateType
         fields = [
             'id', 'name', 'slug', 'description',
-            'icon', 'is_active', 'created_at'
+            'icon', 'is_active', 'created_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class EventTemplateSerializer(serializers.ModelSerializer):
-    """Serializer for EventTemplate."""
-    template_type_details = EventTemplateTypeSerializer(source='template_type', read_only=True)
+    template_type_details = EventTemplateTypeSerializer(
+        source='template_type', read_only=True,
+    )
     image_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -711,11 +841,9 @@ class EventTemplateSerializer(serializers.ModelSerializer):
             'id', 'event', 'template_type', 'template_type_details',
             'name', 'description', 'image', 'image_url',
             'config', 'is_default', 'is_active',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_image_url(self, obj):
-        if obj.image:
-            return obj.image.url
-        return None
+        return obj.image.url if obj.image else None

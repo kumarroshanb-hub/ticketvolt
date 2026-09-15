@@ -4,6 +4,7 @@
 .env.neon
 .env.production
 *.env
+.env*
 
 # Keep example files
 !.env.local.example

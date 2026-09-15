@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .env
+.env*
 venv/
 *.sqlite3
 media/
@@ -39,4 +40,4 @@ celerybeat-schedule
 baileys-gateway/sessions/*.json
 
 #codebase dump
-complete_codebase*
+complete_codebase*.env*

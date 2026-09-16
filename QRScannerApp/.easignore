@@ -4,3 +4,18 @@ node_modules
 /ios
 *.log
 .git
+
+# Ignore everything by default
+*
+
+# Include only the source code and config files needed for the build
+!src/
+!assets/
+!App.js
+!app.json
+!app.config.js
+!babel.config.js
+!package.json
+!package-lock.json
+!index.js
+!jsconfig.json

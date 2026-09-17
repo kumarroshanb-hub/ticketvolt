@@ -24,6 +24,8 @@ import {
     ConfirmationNumber as TicketIcon,
     AttachMoney as MoneyIcon,
     Refresh as RefreshIcon,
+    Schedule as ScheduleIcon,
+    LocationOn as LocationIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
@@ -212,6 +214,190 @@ const MobileBookingCard = ({ booking, onClick }) => {
                 {isCompleted && (
                     <Typography variant="caption" sx={{ color: '#10b981', display: 'block', mt: 1, fontWeight: 600 }}>
                         ✅ All tickets used
+                    </Typography>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
+
+// ============================================
+// POPULAR EVENT CARD — enriched with tiers/sessions/venue
+// ============================================
+const PopularEventCard = ({ event, onClick, isMobile }) => {
+    const isActive = EventStatusUtils.isActive(event.status);
+    const isTerminal = EventStatusUtils.isTerminal(event.status);
+
+    // ✅ Resolve counts with fallbacks so this works even before backend redeploy
+    const tierCount = event.tier_count ?? 0;
+    const sessionCount = event.session_count ?? 0;
+    const totalCapacity = event.total_capacity ?? 0;
+
+    const venueName = event.venue_name || null;
+    const venueCity = event.venue_city || null;
+
+    // Format the start date nicely
+    const formattedDate = event.start_date
+        ? new Date(event.start_date).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+          })
+        : 'TBD';
+
+    return (
+        <Card
+            onClick={onClick}
+            sx={{
+                borderRadius: 2,
+                border: '1px solid #e2e8f0',
+                cursor: 'pointer',
+                opacity: isTerminal ? 0.7 : 1,
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                transition: 'all 0.2s ease',
+                '&:hover': {
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                    transform: 'translateY(-2px)',
+                },
+                '&:active': {
+                    transform: 'scale(0.99)',
+                },
+            }}
+        >
+            <CardContent
+                sx={{
+                    p: isMobile ? 1.5 : 2,
+                    flexGrow: 1,
+                    '&:last-child': { pb: isMobile ? 1.5 : 2 },
+                }}
+            >
+                {/* Title + Status */}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, mb: 1 }}>
+                    <Typography
+                        variant="h6"
+                        sx={{
+                            color: '#0f172a',
+                            fontWeight: 600,
+                            fontSize: isMobile ? '1rem' : '1.1rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            flex: 1,
+                            minWidth: 0,
+                        }}
+                    >
+                        {event.title}
+                    </Typography>
+                    <StatusChip
+                        status={event.status}
+                        type="event"
+                        size="small"
+                        showIcon={true}
+                        variant="filled"
+                    />
+                </Box>
+
+                {/* Date */}
+                <Typography
+                    variant="body2"
+                    sx={{
+                        color: '#475569',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        mb: 0.75,
+                    }}
+                >
+                    <ScheduleIcon sx={{ fontSize: 16, color: '#94a3b8' }} />
+                    {formattedDate}
+                </Typography>
+
+                {/* ✅ Venue (name + city) */}
+                {venueName || venueCity ? (
+                    <Typography
+                        variant="body2"
+                        sx={{
+                            color: '#475569',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            mb: 0.75,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        <LocationIcon sx={{ fontSize: 16, color: '#94a3b8', flexShrink: 0 }} />
+                        {venueName || 'Venue'}
+                        {venueCity ? `, ${venueCity}` : ''}
+                    </Typography>
+                ) : (
+                    <Typography
+                        variant="body2"
+                        sx={{
+                            color: '#94a3b8',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            mb: 0.75,
+                            fontStyle: 'italic',
+                        }}
+                    >
+                        <LocationIcon sx={{ fontSize: 16 }} />
+                        No venue assigned
+                    </Typography>
+                )}
+
+                <Divider sx={{ my: 1.5 }} />
+
+                {/* ✅ Tiers + Sessions + Capacity */}
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1.5 }}>
+                    <Typography
+                        variant="caption"
+                        sx={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600 }}
+                    >
+                        🎫 {tierCount} tier{tierCount === 1 ? '' : 's'}
+                    </Typography>
+                    <Typography
+                        variant="caption"
+                        sx={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600 }}
+                    >
+                        ⏱️ {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                    </Typography>
+                    {totalCapacity > 0 && (
+                        <Typography
+                            variant="caption"
+                            sx={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 0.5 }}
+                        >
+                            👥 {totalCapacity} seats
+                        </Typography>
+                    )}
+                </Box>
+
+                {/* Tickets Sold + Revenue */}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                    <Typography variant="body2" sx={{ color: '#64748b' }}>
+                        Tickets Sold
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                        {event.total_tickets_sold || 0}
+                    </Typography>
+                </Box>
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Typography variant="body2" sx={{ color: '#64748b' }}>
+                        Revenue
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                        ₹{event.total_revenue?.toLocaleString() || 0}
+                    </Typography>
+                </Box>
+
+                {isActive && (
+                    <Typography variant="caption" sx={{ color: '#10b981', mt: 1, display: 'block' }}>
+                        🟢 Live
                     </Typography>
                 )}
             </CardContent>
@@ -448,85 +634,15 @@ const Dashboard = () => {
                 </Typography>
                 <Grid container spacing={isMobile ? 1.5 : 2}>
                     {stats.popular_events && stats.popular_events.length > 0 ? (
-                        stats.popular_events.map((event) => {
-                            const isActive = EventStatusUtils.isActive(event.status);
-                            const isTerminal = EventStatusUtils.isTerminal(event.status);
-
-                            return (
-                                <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                    <Card
-                                        sx={{
-                                            borderRadius: 2,
-                                            border: '1px solid #e2e8f0',
-                                            cursor: 'pointer',
-                                            opacity: isTerminal ? 0.7 : 1,
-                                            height: '100%',
-                                            transition: 'all 0.2s ease',
-                                            '&:hover': {
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                                transform: 'translateY(-2px)',
-                                            },
-                                            '&:active': {
-                                                transform: 'scale(0.99)',
-                                            },
-                                        }}
-                                        onClick={() => navigate(`/events/${event.id}`)}
-                                    >
-                                        <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-                                            <Typography
-                                                variant="h6"
-                                                sx={{
-                                                    color: '#0f172a',
-                                                    fontWeight: 600,
-                                                    mb: 1,
-                                                    fontSize: isMobile ? '1rem' : '1.25rem',
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                            >
-                                                {event.title}
-                                            </Typography>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                                <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                    Tickets Sold
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                                                    {event.total_tickets_sold || 0}
-                                                </Typography>
-                                            </Box>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                                <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                    Revenue
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                                                    ₹{event.total_revenue?.toLocaleString() || 0}
-                                                </Typography>
-                                            </Box>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                    Status
-                                                </Typography>
-                                                <StatusChip
-                                                    status={event.status}
-                                                    type="event"
-                                                    size="small"
-                                                    showIcon={true}
-                                                    variant="filled"
-                                                />
-                                            </Box>
-                                            {isActive && (
-                                                <Box sx={{ mt: 1 }}>
-                                                    <Typography variant="caption" sx={{ color: '#10b981' }}>
-                                                        🟢 Live
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                        </CardContent>
-                                    </Card>
-                                </Grid>
-                            );
-                        })
+                        stats.popular_events.map((event) => (
+                            <Grid item xs={12} sm={6} md={4} key={event.id}>
+                                <PopularEventCard
+                                    event={event}
+                                    onClick={() => navigate(`/events/${event.id}`)}
+                                    isMobile={isMobile}
+                                />
+                            </Grid>
+                        ))
                     ) : (
                         <Grid item xs={12}>
                             <Box sx={{ textAlign: 'center', py: 4, color: '#94a3b8' }}>

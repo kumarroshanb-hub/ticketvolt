@@ -21,6 +21,8 @@ import {
     ConfirmationNumber as TicketIcon,
     ArrowForward as ArrowForwardIcon,
     PublishedWithChanges as PublishIcon,
+    Schedule as ScheduleIcon,
+    People as PeopleIcon,
 } from '@mui/icons-material';
 import { useNavigate as useRouterNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -228,6 +230,17 @@ const Events = () => {
                         const isDraft = event.status === 'draft';
                         const isPast = event.end_date && new Date(event.end_date) < new Date();
 
+                        // ✅ Resolve counts with fallbacks so this works
+                        //    even before the backend is redeployed.
+                        const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
+                        const sessionCount = event.session_count ?? event.sessions?.length ?? 0;
+                        const totalCapacity = event.total_capacity ?? 0;
+
+                        // ✅ Resolve venue: backend now returns a nested object.
+                        //    Fall back gracefully if it's not present.
+                        const venueName = event.venue?.name || null;
+                        const venueCity = event.venue?.city || null;
+
                         return (
                             <Grid item xs={12} sm={6} md={4} key={event.id}>
                                 <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 2 }}>
@@ -260,20 +273,59 @@ const Events = () => {
                                         )}
 
                                         <Box mt={2} display="flex" flexDirection="column" gap={1}>
+                                            {/* Date */}
                                             <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                 <CalendarIcon fontSize="small" />
-                                                {new Date(event.start_date).toLocaleDateString()}
+                                                {new Date(event.start_date).toLocaleDateString('en-IN', {
+                                                    day: '2-digit',
+                                                    month: 'short',
+                                                    year: 'numeric',
+                                                })}
                                             </Typography>
-                                            {event.venue && (
+
+                                            {/* ✅ FIX: Venue — show name + city, or a clear "No venue" message */}
+                                            {venueName || venueCity ? (
                                                 <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                     <LocationIcon fontSize="small" />
-                                                    {event.venue.name}
+                                                    {venueName || 'Venue'}
+                                                    {venueCity ? `, ${venueCity}` : ''}
+                                                </Typography>
+                                            ) : (
+                                                <Typography
+                                                    variant="body2"
+                                                    sx={{
+                                                        color: '#94a3b8',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 1,
+                                                        fontStyle: 'italic',
+                                                    }}
+                                                >
+                                                    <LocationIcon fontSize="small" />
+                                                    No venue assigned
                                                 </Typography>
                                             )}
-                                            <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <TicketIcon fontSize="small" />
-                                                {event.tiers?.length || 0} ticket tiers
-                                            </Typography>
+
+                                            {/* ✅ FIX: Ticket tiers + Sessions counts, side by side */}
+                                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                                <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <TicketIcon fontSize="small" />
+                                                    {tierCount} ticket tier{tierCount === 1 ? '' : 's'}
+                                                </Typography>
+
+                                                <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <ScheduleIcon fontSize="small" />
+                                                    {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                                                </Typography>
+                                            </Box>
+
+                                            {/* Total capacity (only shown when available) */}
+                                            {totalCapacity > 0 && (
+                                                <Typography variant="caption" sx={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <PeopleIcon sx={{ fontSize: 14 }} />
+                                                    {totalCapacity} total capacity
+                                                </Typography>
+                                            )}
                                         </Box>
 
                                         {isPast && canManageEvents && (

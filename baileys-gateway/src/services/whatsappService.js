@@ -23,20 +23,20 @@ class WhatsAppService {
         this.authFolder = path.join(__dirname, '../../sessions');
         this.messageQueue = [];
         this.isInitializing = false;
-        
+
         this.djangoApiUrl = process.env.DJANGO_API_URL || 'http://backend:8000/api';
         this.adminToken = process.env.ADMIN_TOKEN || '';
-        
+
         // Separate flags for different functionality
         this.whatsappEnabled = process.env.WHATSAPP_ENABLED === 'True';
         this.whatsappTicketDeliveryEnabled = process.env.WHATSAPP_TICKET_DELIVERY_ENABLED === 'True';
-        
+
         console.log('📋 WhatsAppService initialized with:');
         console.log(`   DJANGO_API_URL: ${this.djangoApiUrl}`);
         console.log(`   ADMIN_TOKEN: ${this.adminToken ? '✅ Present' : '❌ MISSING'}`);
         console.log(`   WHATSAPP_ENABLED (Bot): ${this.whatsappEnabled ? '✅ YES' : '❌ NO'}`);
         console.log(`   WHATSAPP_TICKET_DELIVERY_ENABLED: ${this.whatsappTicketDeliveryEnabled ? '✅ YES' : '❌ NO'}`);
-        
+
         this.userSessions = {};
         this.botNumber = null;
         this.FLOW = {
@@ -72,24 +72,170 @@ class WhatsAppService {
         });
     }
 
+    // ============================================================
+    // ✅ TIMEZONE & DURATION HELPERS (NEW)
+    // ============================================================
+
+    /**
+     * Format a date string in the event's specific timezone.
+     * Returns something like "10 Jun 2026, 07:00 am IST"
+     */
+    formatEventDate(dateString, timezone) {
+        if (!dateString) return 'TBD';
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return 'TBD';
+
+            // Guard against invalid timezone strings; fall back to UTC.
+            let tz = timezone;
+            try {
+                new Intl.DateTimeFormat('en-IN', { timeZone: tz });
+            } catch (e) {
+                console.warn(`⚠️ Invalid timezone "${timezone}", falling back to UTC`);
+                tz = 'UTC';
+            }
+
+            const formatter = new Intl.DateTimeFormat('en-IN', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: tz,
+                timeZoneName: 'short',
+            });
+            return formatter.format(date);
+        } catch (e) {
+            console.error('Error formatting event date:', e.message);
+            // Last-resort fallback
+            return new Date(dateString).toLocaleString('en-IN');
+        }
+    }
+
+    /**
+     * Format just the time part in the event's timezone.
+     * Returns something like "07:00 am IST"
+     */
+    formatEventTime(dateString, timezone) {
+        if (!dateString) return 'TBD';
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return 'TBD';
+
+            let tz = timezone;
+            try {
+                new Intl.DateTimeFormat('en-IN', { timeZone: tz });
+            } catch (e) {
+                tz = 'UTC';
+            }
+
+            const formatter = new Intl.DateTimeFormat('en-IN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: tz,
+                timeZoneName: 'short',
+            });
+            return formatter.format(date);
+        } catch (e) {
+            return new Date(dateString).toLocaleTimeString('en-IN');
+        }
+    }
+
+    /**
+     * Format just the date part in the event's timezone.
+     * Returns something like "10 Jun 2026"
+     */
+    formatEventDateOnly(dateString, timezone) {
+        if (!dateString) return 'TBD';
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return 'TBD';
+
+            let tz = timezone;
+            try {
+                new Intl.DateTimeFormat('en-IN', { timeZone: tz });
+            } catch (e) {
+                tz = 'UTC';
+            }
+
+            const formatter = new Intl.DateTimeFormat('en-IN', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                timeZone: tz,
+            });
+            return formatter.format(date);
+        } catch (e) {
+            return new Date(dateString).toLocaleDateString('en-IN');
+        }
+    }
+
+    /**
+     * Calculate and format the duration between two dates.
+     * Handles same-day and multi-day events.
+     * Returns something like "4 hour(s) 30 minute(s)" or "Spans 2 days"
+     */
+    formatEventDuration(startStr, endStr) {
+        if (!startStr || !endStr) return 'Duration not specified';
+        try {
+            const start = new Date(startStr);
+            const end = new Date(endStr);
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return 'Duration not specified';
+            }
+
+            const diffMs = end - start;
+            if (diffMs < 0) return 'Invalid duration';
+
+            const startDay = start.toDateString();
+            const endDay = end.toDateString();
+
+            // Multi-day event
+            if (startDay !== endDay) {
+                const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+                // Round up if it crosses into a new day partially
+                const totalDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+                return `Spans ${totalDays} day(s)`;
+            }
+
+            const totalMinutes = Math.floor(diffMs / 60000);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+
+            const parts = [];
+            if (hours > 0) parts.push(`${hours} hour(s)`);
+            if (minutes > 0) parts.push(`${minutes} minute(s)`);
+
+            if (parts.length === 0) return '< 1 minute';
+
+            return parts.join(' ');
+        } catch (e) {
+            console.error('Error formatting event duration:', e.message);
+            return 'Duration not specified';
+        }
+    }
+
+    // ============ INITIALIZE ============
     async initialize() {
         if (!this.whatsappEnabled) {
             console.log('ℹ️ WhatsApp bot is disabled. Set WHATSAPP_ENABLED=True to enable.');
             return;
         }
-        
+
         if (this.isInitializing) return;
         this.isInitializing = true;
 
         try {
             await fs.ensureDir(this.authFolder);
-            
+
             console.log('📱 Initializing WhatsApp...');
             console.log(`📁 Auth folder: ${this.authFolder}`);
             console.log(`🔗 Django API: ${this.djangoApiUrl}`);
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
-            
+
             this.sock = makeWASocket({
                 auth: state,
                 logger: logger,
@@ -108,43 +254,40 @@ class WhatsAppService {
                     console.log('\n' + '='.repeat(80));
                     console.log('📱 SCAN THIS QR CODE WITH WHATSAPP:');
                     console.log('='.repeat(80));
-                    
+
                     try {
                         QRCode.generate(qr, { small: true });
                     } catch (err) {
                         console.log('⚠️ Could not generate terminal QR, trying alternative...');
                     }
-                    
+
                     if (QRCodeLib) {
                         try {
                             console.log('\n📱 QR Code (Alternative view):');
-                            const qrTerminal = await QRCodeLib.toString(qr, { 
-                                type: 'terminal', 
+                            const qrTerminal = await QRCodeLib.toString(qr, {
+                                type: 'terminal',
                                 small: true,
                                 margin: 1
                             });
                             console.log(qrTerminal);
-                        } catch (err) {}
+                        } catch (err) { /* ignore */ }
                     }
-                    
+
                     console.log('\n📱 QR Code Data URL (copy and paste in browser):');
                     console.log(`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`);
-                    
+
                     try {
                         const qrImagePath = path.join(__dirname, '../../qr-code.png');
                         if (QRCodeLib) {
                             await QRCodeLib.toFile(qrImagePath, qr, {
                                 width: 400,
                                 margin: 2,
-                                color: {
-                                    dark: '#000000',
-                                    light: '#ffffff'
-                                }
+                                color: { dark: '#000000', light: '#ffffff' }
                             });
                             console.log(`\n📱 QR Code saved to: ${qrImagePath}`);
                         }
-                    } catch (err) {}
-                    
+                    } catch (err) { /* ignore */ }
+
                     console.log('\n' + '='.repeat(80));
                     console.log('⚠️  Scan the QR code above with your WhatsApp mobile app\n');
                 }
@@ -152,7 +295,7 @@ class WhatsAppService {
                 if (connection === 'close') {
                     const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
                     console.log(`🔌 Connection closed. Reconnecting: ${shouldReconnect}`);
-                    
+
                     if (shouldReconnect) {
                         this.isConnected = false;
                         this.isInitializing = false;
@@ -169,7 +312,7 @@ class WhatsAppService {
                     this.isInitializing = false;
                     console.log('\n✅ WhatsApp connected successfully!');
                     console.log('📱 Ready to send and receive messages!\n');
-                    
+
                     try {
                         const authInfo = this.sock.authState.creds;
                         if (authInfo && authInfo.me) {
@@ -179,7 +322,7 @@ class WhatsAppService {
                     } catch (e) {
                         console.log('📱 Could not retrieve bot number');
                     }
-                    
+
                     this.processMessageQueue();
                 }
             });
@@ -213,7 +356,7 @@ class WhatsAppService {
                 }
                 buffer = Buffer.from(imageBuffer, 'base64');
             }
-            
+
             const result = await this.sock.sendMessage(jid, {
                 image: buffer,
                 caption: caption || ''
@@ -241,14 +384,14 @@ class WhatsAppService {
                 }
                 buffer = Buffer.from(fileData, 'base64');
             }
-            
+
             const result = await this.sock.sendMessage(jid, {
                 document: buffer,
                 mimetype: 'application/pdf',
                 filename: filename || 'ticket.pdf',
                 caption: caption || ''
             });
-            
+
             console.log(`✅ Document sent successfully: ${filename}`);
             return { status: 'sent', result };
         } catch (error) {
@@ -272,7 +415,7 @@ class WhatsAppService {
                 }
                 buffer = Buffer.from(fileData, 'base64');
             }
-            
+
             const ext = filename.split('.').pop().toLowerCase();
             let mimetype = 'application/octet-stream';
             switch (ext) {
@@ -283,14 +426,14 @@ class WhatsAppService {
                 case 'txt': mimetype = 'text/plain'; break;
                 case 'json': mimetype = 'application/json'; break;
             }
-            
+
             const result = await this.sock.sendMessage(jid, {
                 document: buffer,
                 mimetype: mimetype,
                 filename: filename || 'file.pdf',
                 caption: caption || ''
             });
-            
+
             console.log(`✅ File sent successfully: ${filename}`);
             return { status: 'sent', result };
         } catch (error) {
@@ -303,25 +446,25 @@ class WhatsAppService {
     extractPhoneNumber(jid) {
         try {
             if (!jid) return null;
-            
+
             let number = jid.split('@')[0];
             number = number.split(':')[0];
             number = number.replace(/\D/g, '');
-            
+
             if (!number || number.length < 10 || number.length > 15) {
                 console.warn(`⚠️ Invalid phone number format: ${number} from JID: ${jid}`);
                 return null;
             }
-            
+
             if (number.length === 10) {
                 return number;
             }
             if (number.length === 12 && number.startsWith('91')) {
                 return number.substring(2);
             }
-            
+
             return number;
-            
+
         } catch (error) {
             console.error('Error extracting phone number:', error);
             return null;
@@ -334,22 +477,22 @@ class WhatsAppService {
             let id = jid.split('@')[0];
             id = id.split(':')[0];
             id = id.replace(/\D/g, '');
-            
+
             if (!id || id.length < 10 || id.length > 15) {
                 console.warn(`⚠️ Invalid sender ID: ${id} from JID: ${jid}`);
                 return null;
             }
-            
+
             if (id.length === 10) {
                 return id;
             }
-            
+
             if (id.length === 12 && id.startsWith('91')) {
                 return id.substring(2);
             }
-            
+
             return id;
-            
+
         } catch (error) {
             console.error('Error extracting sender ID:', error);
             return null;
@@ -359,9 +502,9 @@ class WhatsAppService {
     // ============ FORMAT PHONE NUMBER FOR DISPLAY ============
     formatPhoneForDisplay(phone) {
         if (!phone) return 'Unknown';
-        
+
         let cleaned = phone.replace(/\D/g, '');
-        
+
         if (cleaned.length === 10) {
             return `+91 ${cleaned.slice(0, 5)} ${cleaned.slice(5)}`;
         }
@@ -378,24 +521,24 @@ class WhatsAppService {
             console.log('ℹ️ WhatsApp bot is disabled. Ignoring message.');
             return;
         }
-        
+
         try {
             const sender = msg.key.remoteJid;
             const phoneNumber = this.extractSenderId(sender);
-            
+
             if (!phoneNumber) {
                 console.warn(`⚠️ Could not extract phone number from JID: ${sender}`);
-                await this.sendMessage(sender, 
+                await this.sendMessage(sender,
                     `❌ Could not identify your phone number. Please ensure you're using WhatsApp on your phone.`
                 );
                 return;
             }
-            
+
             const displayId = this.formatPhoneForDisplay(phoneNumber);
-            const text = msg.message?.conversation || 
-                        msg.message?.extendedTextMessage?.text || 
+            const text = msg.message?.conversation ||
+                        msg.message?.extendedTextMessage?.text ||
                         msg.message?.imageMessage?.caption || '';
-            
+
             console.log(`📩 From ${displayId} (${phoneNumber}): ${text}`);
 
             if (!this.userSessions[sender]) {
@@ -403,6 +546,7 @@ class WhatsAppService {
                     step: this.FLOW.IDLE,
                     phone_number: phoneNumber,
                     event_id: null,
+                    event_timezone: null, // ✅ store timezone for later messages
                     slot_preferences: [],
                     selected_slot: null,
                     slot_id: null,
@@ -466,7 +610,7 @@ class WhatsAppService {
         // ✅ Handle "confirm" command when waiting for it
         if (lowerText === 'confirm' && session.waiting_for_confirm) {
             session.waiting_for_confirm = false;
-            
+
             // ✅ Check if tiers exist, if not try to fetch them
             if (!session.tiers || session.tiers.length === 0) {
                 console.log('⚠️ No tiers in session, fetching from API...');
@@ -475,17 +619,18 @@ class WhatsAppService {
                     const response = await api.get(`/events/public/${session.event_id}/`);
                     const eventData = response.data;
                     session.tiers = eventData.tiers || [];
+                    if (eventData.timezone) session.event_timezone = eventData.timezone;
                     console.log(`📋 Fetched ${session.tiers.length} tiers from API`);
                 } catch (error) {
                     console.error('❌ Failed to fetch tiers:', error.message);
                 }
             }
-            
+
             if (session.tiers && session.tiers.length > 0) {
                 session.step = this.FLOW.SELECT_TIERS;
                 await this.showTierSelection(sender);
             } else {
-                await this.sendMessage(sender, 
+                await this.sendMessage(sender,
                     `❌ No ticket tiers available for this event.\n\n` +
                     `Please start over by typing *book*.`
                 );
@@ -520,7 +665,7 @@ class WhatsAppService {
                 await this.handleConfirmation(sender, text);
                 break;
             default:
-                await this.sendMessage(sender, 
+                await this.sendMessage(sender,
                     `👋 Welcome to TicketVolt!\n\n` +
                     `Type *book* to book tickets\n` +
                     `Type *events* to see events\n` +
@@ -569,25 +714,25 @@ We'll automatically allocate the best available slot.
         }
 
         message += `\nThank you for choosing TicketVolt! 🎫`;
-        
+
         await this.sendMessage(sender, message);
     }
 
-    // ============ SHOW EVENTS ============
+    // ============ SHOW EVENTS (FIXED: TIMEZONE + DURATION) ============
     async showEvents(sender) {
         try {
             console.log('🔍 Fetching events from public endpoint...');
             const api = this.getApiClient(false);
-            
+
             const response = await api.get('/events/public/');
             const events = response.data.results || response.data;
-            
+
             console.log(`✅ Events fetched via public endpoint: ${events.length}`);
-            
-            const activeEvents = events.filter(e => 
+
+            const activeEvents = events.filter(e =>
                 e.status === 'active' || e.status === 'published'
             );
-            
+
             if (!activeEvents || activeEvents.length === 0) {
                 await this.sendMessage(sender, '❌ No active events at the moment.');
                 return;
@@ -598,13 +743,22 @@ We'll automatically allocate the best available slot.
             session.step = this.FLOW.SELECT_EVENT;
 
             let message = '📅 *Select an Event*\n\n';
+
             activeEvents.forEach((event, index) => {
-                const date = new Date(event.start_date);
+                // ✅ FIX: Use the event's own timezone for date formatting
+                const formattedDate = this.formatEventDateOnly(event.start_date, event.timezone);
+                // ✅ FIX: Show duration instead of just the start time
+                const duration = this.formatEventDuration(event.start_date, event.end_date);
+                // ✅ Also show the start time in the event's local timezone
+                const startTime = this.formatEventTime(event.start_date, event.timezone);
+
                 message += `${index + 1}. *${event.title}*\n`;
-                message += `   📅 ${date.toLocaleDateString()}\n`;
-                message += `   ⏰ ${date.toLocaleTimeString()}\n`;
+                message += `   📅 ${formattedDate}\n`;
+                message += `   🕐 Starts at ${startTime}\n`;
+                message += `   ⏱️ Duration: ${duration}\n`;
                 message += `   📍 ${event.venue?.name || 'TBD'}\n\n`;
             });
+
             message += 'Reply with the number of your choice.';
 
             await this.sendMessage(sender, message);
@@ -614,7 +768,7 @@ We'll automatically allocate the best available slot.
                 console.error('Status:', error.response.status);
                 console.error('Data:', error.response.data);
             }
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Unable to fetch events. Please try again later.\n` +
                 `Error: ${error.message}`
             );
@@ -626,7 +780,7 @@ We'll automatically allocate the best available slot.
         await this.showEvents(sender);
     }
 
-    // ============ HANDLE EVENT SELECTION - FIXED ============
+    // ============ HANDLE EVENT SELECTION (FIXED: TIMEZONE IN SLOTS) ============
     async handleEventSelection(sender, text) {
         const session = this.userSessions[sender];
         const choice = parseInt(text);
@@ -649,13 +803,18 @@ We'll automatically allocate the best available slot.
 
         try {
             const api = this.getApiClient(false);
-            
+
             console.log(`📡 Fetching event ${selectedEvent.id} from public endpoint...`);
             const response = await api.get(`/events/public/${selectedEvent.id}/`);
             const eventData = response.data;
-            
+
             const sessions = eventData.sessions || [];
             const tiers = eventData.tiers || [];
+
+            // ✅ Store the event's timezone on the session so subsequent
+            //    messages (slots, summary, confirmation) can use it too.
+            session.event_timezone = eventData.timezone || selectedEvent.timezone || 'UTC';
+            console.log(`🕐 Event timezone: ${session.event_timezone}`);
 
             // ✅ ALWAYS store tiers in session, even if there are sessions
             session.tiers = tiers;
@@ -665,19 +824,27 @@ We'll automatically allocate the best available slot.
                 session.sessions = sessions;
                 session.step = this.FLOW.SELECT_SLOTS;
 
+                // ✅ FIX: Show the event's date, time and duration at the top
+                const eventDate = this.formatEventDateOnly(eventData.start_date, session.event_timezone);
+                const eventDuration = this.formatEventDuration(eventData.start_date, eventData.end_date);
+
                 let message = `🕐 *Select Your Preferred Slots*\n\n`;
-                message += `Event: *${selectedEvent.title}*\n\n`;
+                message += `Event: *${selectedEvent.title}*\n`;
+                message += `📅 ${eventDate}\n`;
+                message += `⏱️ Duration: ${eventDuration}\n\n`;
                 message += `📋 Available Slots:\n\n`;
 
                 sessions.forEach((slot, index) => {
-                    const start = new Date(slot.start_time);
-                    const end = new Date(slot.end_time);
+                    // ✅ FIX: Format slot times in the event's timezone
+                    const start = this.formatEventTime(slot.start_time, session.event_timezone);
+                    const end = this.formatEventTime(slot.end_time, session.event_timezone);
                     const remaining = slot.capacity - slot.booked;
                     const availability = remaining > 0 ? `✅ ${remaining} seats available` : '❌ Fully booked';
-                    message += `${index + 1}. ${start.toLocaleTimeString()} - ${end.toLocaleTimeString()}\n`;
+
+                    message += `${index + 1}. ${start} - ${end}\n`;
                     message += `   ${availability}\n\n`;
                 });
-                
+
                 message += `✏️ *How to select your preferences:*\n`;
                 message += `Enter the slot numbers in order of your preference, separated by commas.\n`;
                 message += `Example: *1,3,2* means:\n`;
@@ -703,15 +870,16 @@ We'll automatically allocate the best available slot.
         }
     }
 
-    // ============ HANDLE SLOT PREFERENCES ============
+    // ============ HANDLE SLOT PREFERENCES (FIXED: TIMEZONE) ============
     async handleSlotPreferences(sender, text) {
         const session = this.userSessions[sender];
-        
+        const tz = session.event_timezone || 'UTC';
+
         // Parse comma-separated slot preferences
         const preferences = text.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-        
+
         if (preferences.length === 0) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Invalid input. Please enter slot numbers separated by commas.\n` +
                 `Example: *1,3,2*\n\n` +
                 `Or type *cancel* to start over.`
@@ -722,7 +890,7 @@ We'll automatically allocate the best available slot.
         // Validate all choices
         const invalidChoices = preferences.filter(n => n < 1 || n > session.sessions.length);
         if (invalidChoices.length > 0) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Invalid choice(s): ${invalidChoices.join(', ')}. Please enter numbers between 1 and ${session.sessions.length}.`
             );
             return;
@@ -749,7 +917,7 @@ We'll automatically allocate the best available slot.
             const slotIndex = pref - 1;
             const slot = session.sessions[slotIndex];
             const remaining = slot.capacity - slot.booked;
-            
+
             checkedSlots.push({
                 preference: uniquePreferences.indexOf(pref) + 1,
                 slot_number: pref,
@@ -773,9 +941,9 @@ We'll automatically allocate the best available slot.
             for (let i = 0; i < session.sessions.length; i++) {
                 const slot = session.sessions[i];
                 const remaining = slot.capacity - slot.booked;
-                
+
                 const alreadyChecked = checkedSlots.some(s => s.slot_number === (i + 1));
-                
+
                 if (!alreadyChecked && remaining > 0) {
                     allocatedSlot = slot;
                     allocatedSlotIndex = i;
@@ -798,17 +966,20 @@ We'll automatically allocate the best available slot.
             let message = `❌ *No Slots Available*\n\n`;
             message += `Unfortunately, all slots are currently fully booked.\n\n`;
             message += `📋 *Your Preferences & Availability:*\n\n`;
-            
+
             checkedSlots.forEach(status => {
                 const availability = status.available ? `✅ ${status.remaining} seats` : '❌ Fully booked';
+                // ✅ FIX: format with event's timezone
+                const startStr = this.formatEventTime(status.start_time.toISOString(), tz);
+                const endStr = this.formatEventTime(status.end_time.toISOString(), tz);
                 message += `Preference ${status.preference}: Slot ${status.slot_number}\n`;
-                message += `   ${status.start_time.toLocaleTimeString()} - ${status.end_time.toLocaleTimeString()}\n`;
+                message += `   ${startStr} - ${endStr}\n`;
                 message += `   ${availability}\n\n`;
             });
-            
+
             message += `💡 Please try again later or contact support.\n`;
             message += `Type *cancel* to start over.`;
-            
+
             await this.sendMessage(sender, message);
             return;
         }
@@ -821,18 +992,24 @@ We'll automatically allocate the best available slot.
 
         let message = `✅ *Slot Allocated Successfully!*\n\n`;
         message += `🎯 *Allocated Slot:* Slot ${allocatedSlotIndex + 1}\n`;
-        const start = new Date(allocatedSlot.start_time);
-        const end = new Date(allocatedSlot.end_time);
-        message += `   🕐 ${start.toLocaleTimeString()} - ${end.toLocaleTimeString()}\n`;
+
+        // ✅ FIX: format with event's timezone
+        const startStr = this.formatEventTime(allocatedSlot.start_time, tz);
+        const endStr = this.formatEventTime(allocatedSlot.end_time, tz);
+
+        message += `   🕐 ${startStr} - ${endStr}\n`;
         message += `   ✅ ${allocatedSlot.capacity - allocatedSlot.booked} seats remaining\n\n`;
         message += `📋 *Your Preferences:*\n\n`;
-        
+
         checkedSlots.forEach((status) => {
             const availability = status.available ? `✅ ${status.remaining} seats` : '❌ Fully booked';
             const allocatedMark = status.is_allocated ? ' 🎯 *ALLOCATED*' : '';
             const prefLabel = status.preference ? `Preference ${status.preference}` : 'Fallback';
+            // ✅ FIX: format with event's timezone
+            const s = this.formatEventTime(status.start_time.toISOString(), tz);
+            const e = this.formatEventTime(status.end_time.toISOString(), tz);
             message += `${prefLabel}: Slot ${status.slot_number}${allocatedMark}\n`;
-            message += `   ${status.start_time.toLocaleTimeString()} - ${status.end_time.toLocaleTimeString()}\n`;
+            message += `   ${s} - ${e}\n`;
             message += `   ${availability}\n\n`;
         });
 
@@ -845,25 +1022,27 @@ We'll automatically allocate the best available slot.
         await this.sendMessage(sender, message);
     }
 
-    // ============ SHOW TIER SELECTION ============
+    // ============ SHOW TIER SELECTION (FIXED: TIMEZONE) ============
     async showTierSelection(sender) {
         const session = this.userSessions[sender];
         const tiers = session.tiers;
-        
+        const tz = session.event_timezone || 'UTC';
+
         console.log(`📋 showTierSelection: ${tiers ? tiers.length : 0} tiers available`);
-        
+
         // ✅ Check if there are any tiers available
         if (!tiers || tiers.length === 0) {
             await this.sendMessage(sender, '❌ No ticket tiers available for this event.');
             session.step = this.FLOW.IDLE;
             return;
         }
-        
+
         let message = `🎟️ *Select Ticket Types*\n\n`;
         message += `Event: *${session.event_title}*\n`;
         if (session.slot_start_time) {
-            const start = new Date(session.slot_start_time);
-            message += `🕐 Slot: ${start.toLocaleTimeString()} (allocated based on your preferences)\n`;
+            // ✅ FIX: format slot time in event's timezone
+            const start = this.formatEventTime(session.slot_start_time, tz);
+            message += `🕐 Slot: ${start} (allocated based on your preferences)\n`;
         }
         message += `\n📋 Available Tickets:\n\n`;
 
@@ -873,7 +1052,7 @@ We'll automatically allocate the best available slot.
             message += `${index + 1}. *${tier.name}* - ₹${price}\n`;
             message += `   Available: ${Math.max(0, available)}\n\n`;
         });
-        
+
         message += `✏️ *How to select:*\n`;
         message += `Enter the numbers of the tiers you want, separated by commas.\n`;
         message += `Example: *1,2,4* (selects tiers 1, 2, and 4)\n\n`;
@@ -887,11 +1066,11 @@ We'll automatically allocate the best available slot.
     // ============ HANDLE TIER SELECTIONS (Multiple) ============
     async handleTierSelections(sender, text) {
         const session = this.userSessions[sender];
-        
+
         const choices = text.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-        
+
         if (choices.length === 0) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Invalid input. Please enter numbers separated by commas.\n` +
                 `Example: *1,2,4*\n\n` +
                 `Or type *cancel* to start over.`
@@ -901,7 +1080,7 @@ We'll automatically allocate the best available slot.
 
         const invalidChoices = choices.filter(n => n < 1 || n > session.tiers.length);
         if (invalidChoices.length > 0) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Invalid choice(s): ${invalidChoices.join(', ')}. Please enter numbers between 1 and ${session.tiers.length}.`
             );
             return;
@@ -914,7 +1093,7 @@ We'll automatically allocate the best available slot.
         uniqueChoices.forEach(choice => {
             const tier = session.tiers[choice - 1];
             const available = (tier.quantity_total || 0) - (tier.quantity_sold || 0);
-            
+
             if (available <= 0) {
                 soldOutTiers.push(tier.name);
             } else {
@@ -930,7 +1109,7 @@ We'll automatically allocate the best available slot.
         });
 
         if (soldOutTiers.length > 0) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `⚠️ The following tiers are sold out: *${soldOutTiers.join(', ')}*\n\n` +
                 `Please try again with available tiers.`
             );
@@ -938,7 +1117,7 @@ We'll automatically allocate the best available slot.
         }
 
         if (selectedTiers.length === 0) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ No valid tiers selected. Please try again.`
             );
             return;
@@ -962,14 +1141,15 @@ We'll automatically allocate the best available slot.
         await this.sendMessage(sender, message);
     }
 
-    // ============ HANDLE TIER QUANTITIES ============
+    // ============ HANDLE TIER QUANTITIES (FIXED: TIMEZONE) ============
     async handleTierQuantities(sender, text) {
         const session = this.userSessions[sender];
-        
+        const tz = session.event_timezone || 'UTC';
+
         const quantities = text.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-        
+
         if (quantities.length !== session.selected_tiers.length) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Please enter exactly ${session.selected_tiers.length} quantities.\n` +
                 `Example: *2,4,1*`
             );
@@ -984,7 +1164,7 @@ We'll automatically allocate the best available slot.
         session.selected_tiers.forEach((tier, index) => {
             const qty = quantities[index];
             const maxAllowed = Math.min(tier.max_available, tier.max_per_order);
-            
+
             if (isNaN(qty) || qty < 1 || qty > maxAllowed) {
                 isValid = false;
                 errorMessages.push(`*${tier.tier_name}*: ${qty} (must be 1-${maxAllowed})`);
@@ -996,7 +1176,7 @@ We'll automatically allocate the best available slot.
         });
 
         if (!isValid) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Invalid quantities:\n${errorMessages.join('\n')}\n\n` +
                 `Please try again with valid quantities.`
             );
@@ -1009,8 +1189,9 @@ We'll automatically allocate the best available slot.
         let message = `📋 *Ticket Selection Summary*\n\n`;
         message += `Event: *${session.event_title}*\n`;
         if (session.slot_start_time) {
-            const start = new Date(session.slot_start_time);
-            message += `🕐 Slot: ${start.toLocaleTimeString()} (allocated based on your preferences)\n`;
+            // ✅ FIX: format slot time in event's timezone
+            const start = this.formatEventTime(session.slot_start_time, tz);
+            message += `🕐 Slot: ${start} (allocated based on your preferences)\n`;
         }
         message += `\n*Selected Tickets:*\n`;
         session.selected_tiers.forEach(tier => {
@@ -1039,7 +1220,7 @@ We'll automatically allocate the best available slot.
 
         if (lowerText === 'confirm') {
             session.step = this.FLOW.ENTER_NAME;
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `👤 Enter your *full name* (for booking confirmation).`
             );
             return;
@@ -1048,7 +1229,7 @@ We'll automatically allocate the best available slot.
         if (!session.attendees) {
             session.attendees = [];
             session.attendee_index = 0;
-            
+
             session.ticket_list = [];
             session.selected_tiers.forEach(tier => {
                 for (let i = 0; i < tier.quantity; i++) {
@@ -1064,7 +1245,7 @@ We'll automatically allocate the best available slot.
 
         if (session.attendees.length >= session.ticket_list.length) {
             session.step = this.FLOW.ENTER_NAME;
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `✅ All attendee names entered!\n\n` +
                 `👤 Enter your *full name* (for booking confirmation).`
             );
@@ -1073,8 +1254,8 @@ We'll automatically allocate the best available slot.
 
         const currentTicket = session.ticket_list[session.attendees.length];
         const tierName = currentTicket.tier_name;
-        const ticketDisplay = currentTicket.total_in_tier > 1 
-            ? ` (Ticket ${currentTicket.ticket_number} of ${currentTicket.total_in_tier})` 
+        const ticketDisplay = currentTicket.total_in_tier > 1
+            ? ` (Ticket ${currentTicket.ticket_number} of ${currentTicket.total_in_tier})`
             : '';
 
         let attendeeName = text.trim();
@@ -1083,7 +1264,7 @@ We'll automatically allocate the best available slot.
         }
 
         if (!attendeeName || attendeeName.length < 2) {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Please enter a valid name (at least 2 characters).\n` +
                 `Type *skip* to use default name.`
             );
@@ -1103,7 +1284,7 @@ We'll automatically allocate the best available slot.
 
         if (session.attendees.length >= session.ticket_list.length) {
             session.step = this.FLOW.ENTER_NAME;
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `✅ All attendee names entered!\n\n` +
                 `👤 Enter your *full name* (for booking confirmation).`
             );
@@ -1112,11 +1293,11 @@ We'll automatically allocate the best available slot.
 
         const nextTicket = session.ticket_list[session.attendees.length];
         const nextTierName = nextTicket.tier_name;
-        const nextTicketDisplay = nextTicket.total_in_tier > 1 
-            ? ` (Ticket ${nextTicket.ticket_number} of ${nextTicket.total_in_tier})` 
+        const nextTicketDisplay = nextTicket.total_in_tier > 1
+            ? ` (Ticket ${nextTicket.ticket_number} of ${nextTicket.total_in_tier})`
             : '';
 
-        await this.sendMessage(sender, 
+        await this.sendMessage(sender,
             `👤 *Attendee ${session.attendees.length + 1} of ${session.ticket_list.length}*\n\n` +
             `Ticket Type: *${nextTierName}*${nextTicketDisplay}\n\n` +
             `Please enter the attendee's full name.\n` +
@@ -1130,29 +1311,31 @@ We'll automatically allocate the best available slot.
         session.customer_name = text.trim();
         session.step = this.FLOW.ENTER_EMAIL;
 
-        await this.sendMessage(sender, 
+        await this.sendMessage(sender,
             `📧 Enter your *email address* (for booking confirmation).`
         );
     }
 
-    // ============ HANDLE CUSTOMER EMAIL ============
+    // ============ HANDLE CUSTOMER EMAIL (FIXED: TIMEZONE) ============
     async handleCustomerEmail(sender, text) {
         const session = this.userSessions[sender];
+        const tz = session.event_timezone || 'UTC';
         const email = text.trim();
-        
+
         if (!email.includes('@') || !email.includes('.')) {
             await this.sendMessage(sender, '❌ Please enter a valid email address.');
             return;
         }
-        
+
         session.customer_email = email;
         session.step = this.FLOW.CONFIRM;
 
         let message = `📋 *Booking Summary*\n\n`;
         message += `Event: *${session.event_title}*\n`;
         if (session.slot_start_time) {
-            const start = new Date(session.slot_start_time);
-            message += `🕐 Slot: ${start.toLocaleTimeString()}\n`;
+            // ✅ FIX: format slot time in event's timezone
+            const start = this.formatEventTime(session.slot_start_time, tz);
+            message += `🕐 Slot: ${start}\n`;
         }
         message += `\n*Tickets:*\n`;
         session.selected_tiers.forEach(tier => {
@@ -1183,26 +1366,27 @@ We'll automatically allocate the best available slot.
             session.waiting_for_confirm = false;
             await this.sendMessage(sender, '❌ Booking cancelled. Type *book* to start again.');
         } else {
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Please type *confirm* to book or *cancel* to cancel.`
             );
         }
     }
 
-    // ============ CREATE BOOKING (FIXED) ============
+    // ============ CREATE BOOKING (FIXED: TIMEZONE) ============
     async createBooking(sender) {
         const session = this.userSessions[sender];
-        
+        const tz = session.event_timezone || 'UTC';
+
         try {
             const phoneNumber = session.phone_number || this.extractSenderId(sender);
-            
+
             if (!phoneNumber) {
-                await this.sendMessage(sender, 
+                await this.sendMessage(sender,
                     `❌ Could not identify your phone number. Please restart the booking process.`
                 );
                 return;
             }
-            
+
             const displayNumber = this.formatPhoneForDisplay(phoneNumber);
             console.log(`📱 Creating booking for: ${displayNumber}`);
             console.log(`📱 Phone number: ${phoneNumber}`);
@@ -1245,7 +1429,7 @@ We'll automatically allocate the best available slot.
                 customer_phone: phoneNumber,
                 whatsapp_number: phoneNumber,
                 total_amount: session.total_amount,
-                tickets: tickets,  // ✅ This must be included
+                tickets: tickets,
                 metadata: {
                     slot_preferences: session.slot_preferences || [],
                     slot_allocation_message: session.slot_allocation_message || '',
@@ -1253,7 +1437,6 @@ We'll automatically allocate the best available slot.
                     slot_id: session.slot_id || null,
                     slot_start_time: session.slot_start_time || null,
                     slot_end_time: session.slot_end_time || null,
-                    // ✅ Store ticket info directly in metadata as backup
                     ticket_types: tickets.map(t => ({
                         tier_id: t.tier_id,
                         attendee_name: t.attendee_name,
@@ -1282,8 +1465,9 @@ We'll automatically allocate the best available slot.
             message += `🎫 *Booking Reference:* ${booking.booking_reference}\n`;
             message += `📅 Event: ${session.event_title}\n`;
             if (session.slot_start_time) {
-                const start = new Date(session.slot_start_time);
-                message += `🕐 Allocated Slot: ${start.toLocaleTimeString()}\n`;
+                // ✅ FIX: format slot time in event's timezone
+                const start = this.formatEventTime(session.slot_start_time, tz);
+                message += `🕐 Allocated Slot: ${start}\n`;
                 if (session.slot_preferences && session.slot_preferences.length > 0) {
                     const allocatedSlotNumber = session.sessions.findIndex(s => s.id === session.slot_id) + 1;
                     const preferenceRank = session.slot_preferences.indexOf(allocatedSlotNumber) + 1;
@@ -1298,13 +1482,13 @@ We'll automatically allocate the best available slot.
             message += `1. Please complete the payment at the venue/counter\n`;
             message += `2. Share your booking reference: *${booking.booking_reference}*\n`;
             message += `3. You will receive your tickets after payment confirmation\n\n`;
-            
+
             if (this.whatsappTicketDeliveryEnabled) {
                 message += `📱 You will receive your tickets via WhatsApp and Email.\n\n`;
             } else {
                 message += `📧 You will receive your tickets via Email only.\n\n`;
             }
-            
+
             message += `Thank you for choosing TicketVolt! 🎉`;
 
             await this.sendMessage(sender, message);
@@ -1317,7 +1501,7 @@ We'll automatically allocate the best available slot.
                 console.error('Status:', error.response.status);
                 console.error('Data:', JSON.stringify(error.response.data, null, 2));
             }
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `❌ Sorry, there was an error creating your booking.\n` +
                 `Please try again or contact support.`
             );
@@ -1356,7 +1540,7 @@ We'll automatically allocate the best available slot.
                 const pdfResponse = await api.get(`/bookings/${bookingId}/pdf/`, {
                     responseType: 'arraybuffer'
                 });
-                
+
                 if (pdfResponse.data) {
                     const pdfBuffer = Buffer.from(pdfResponse.data);
                     await this.sendDocument(
@@ -1402,7 +1586,7 @@ We'll automatically allocate the best available slot.
                 await new Promise(resolve => setTimeout(resolve, 800));
             }
 
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `✅ *All tickets delivered!*\n\n` +
                 `📱 Keep this chat for check-in updates.\n` +
                 `🎉 Enjoy the event!`
@@ -1415,7 +1599,7 @@ We'll automatically allocate the best available slot.
 
         } catch (error) {
             console.error('❌ Error sending tickets:', error.message);
-            await this.sendMessage(sender, 
+            await this.sendMessage(sender,
                 `⚠️ Booking confirmed but tickets could not be delivered.\n` +
                 `Contact support with: ${bookingId}`
             );
@@ -1449,7 +1633,7 @@ We'll automatically allocate the best available slot.
     // ============ PROCESS MESSAGE QUEUE ============
     async processMessageQueue() {
         console.log(`📤 Processing ${this.messageQueue.length} queued messages...`);
-        
+
         while (this.messageQueue.length > 0) {
             const item = this.messageQueue.shift();
             try {

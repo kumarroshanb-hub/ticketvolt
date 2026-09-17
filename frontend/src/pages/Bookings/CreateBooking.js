@@ -31,6 +31,9 @@ import {
     Add as AddIcon,
     Remove as RemoveIcon,
     Schedule as ScheduleIcon,
+    CalendarMonth as CalendarIcon,
+    LocationOn as LocationIcon,
+    People as PeopleIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
@@ -593,6 +596,12 @@ const CreateBooking = () => {
         }
     };
 
+    // ============================================
+    // ✅ REWRITTEN: renderEventSelection
+    //    - Uses tier_count / session_count / total_capacity (from the
+    //      updated PublicEventSerializer) for correct Sold-Out detection.
+    //    - Card visuals now match Events.js / Dashboard.js.
+    // ============================================
     const renderEventSelection = () => (
         <Box sx={{ py: 2 }}>
             {eventLoadError || (events.length === 0 && !loading) ? (
@@ -607,112 +616,200 @@ const CreateBooking = () => {
                     )}
                 </Alert>
             ) : (
-                <Grid container spacing={2}>
+                <Grid container spacing={isMobile ? 2 : 3}>
                     {events.map((event) => {
                         const isActive = event.status === 'active' || event.status === 'published';
                         const isDraft = event.status === 'draft';
+                        const isPast = event.end_date && new Date(event.end_date) < new Date();
 
-                        let ticketsAvailable = false;
-                        if (event.tiers && Array.isArray(event.tiers) && event.tiers.length > 0) {
-                            ticketsAvailable = event.tiers.some(t => {
-                                const total = t.quantity_total || 0;
-                                const sold = t.quantity_sold || 0;
-                                return (total - sold) > 0;
-                            });
-                        }
+                        // ✅ FIX: use the summary fields from the listing endpoint.
+                        //    Fallbacks keep this safe if the backend hasn't been redeployed yet.
+                        const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
+                        const sessionCount = event.session_count ?? event.sessions?.length ?? 0;
+                        const totalCapacity = event.total_capacity ?? 0;
+                        const totalSold = event.total_tickets_sold ?? 0;
 
-                        const canSelect = canManageEvents ? true : isActive;
-                        const isSoldOut = isActive && !ticketsAvailable;
+                        // Sold out = active event with zero capacity, OR all capacity sold
+                        const isSoldOut = isActive && (totalCapacity === 0 || totalSold >= totalCapacity);
+
+                        const canSelect = canManageEvents ? true : isActive && !isSoldOut;
+
+                        // Venue
+                        const venueName = event.venue?.name || null;
+                        const venueCity = event.venue?.city || null;
+
+                        // Date
+                        const formattedDate = event.start_date
+                            ? new Date(event.start_date).toLocaleDateString('en-IN', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                              })
+                            : 'TBD';
 
                         return (
                             <Grid item xs={12} sm={6} md={4} key={event.id}>
                                 <Card
                                     sx={{
                                         cursor: canSelect ? 'pointer' : 'not-allowed',
-                                        border: selectedEvent?.id === event.id ? '2px solid #4f46e5' :
-                                            isDraft ? '1px dashed rgba(255,200,0,0.5)' : '1px solid #e2e8f0',
+                                        border: selectedEvent?.id === event.id
+                                            ? '2px solid #4f46e5'
+                                            : isDraft
+                                                ? '1px dashed rgba(255,200,0,0.5)'
+                                                : '1px solid #e2e8f0',
                                         bgcolor: isDraft ? 'rgba(255,200,0,0.03)' : 'white',
-                                        opacity: canSelect ? 1 : 0.5,
+                                        opacity: canSelect ? 1 : 0.7,
                                         height: '100%',
-                                        '&:hover': {
-                                            borderColor: canSelect ? '#4f46e5' : '#e2e8f0',
-                                            transform: canSelect ? 'translateY(-2px)' : 'none',
-                                        },
-                                        '&:active': {
-                                            transform: canSelect ? 'scale(0.99)' : 'none',
-                                        },
-                                        transition: 'all 0.2s',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        borderRadius: 2,
+                                        transition: 'all 0.2s ease',
+                                        '&:hover': canSelect
+                                            ? {
+                                                  borderColor: '#4f46e5',
+                                                  transform: 'translateY(-2px)',
+                                                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                                              }
+                                            : {},
+                                        '&:active': canSelect ? { transform: 'scale(0.99)' } : {},
                                     }}
                                     onClick={() => {
                                         if (canSelect) {
                                             handleSelectEvent(event);
+                                        } else if (isSoldOut) {
+                                            toast.warning('This event is sold out');
                                         } else {
                                             toast.warning('This event is not available for booking');
                                         }
                                     }}
                                 >
-                                    <CardContent>
+                                    <CardContent sx={{ flexGrow: 1, p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
+                                        {/* Title + Status */}
                                         <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
-                                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                                                <Typography variant="h6" sx={{ color: isDraft ? '#b45309' : '#0f172a' }}>
-                                                    {event.title}
-                                                    {isDraft && canManageEvents && (
-                                                        <Chip
-                                                            label="DRAFT"
-                                                            size="small"
-                                                            sx={{
-                                                                ml: 1,
-                                                                bgcolor: 'rgba(255,200,0,0.15)',
-                                                                color: '#b45309',
-                                                                fontSize: '10px',
-                                                                height: '20px',
-                                                            }}
-                                                        />
-                                                    )}
-                                                    {isSoldOut && (
-                                                        <Chip
-                                                            label="SOLD OUT"
-                                                            size="small"
-                                                            sx={{
-                                                                ml: 1,
-                                                                bgcolor: 'rgba(239,68,68,0.15)',
-                                                                color: '#dc2626',
-                                                                fontSize: '10px',
-                                                                height: '20px',
-                                                            }}
-                                                        />
-                                                    )}
-                                                </Typography>
-                                                {event.short_description && (
-                                                    <Typography variant="body2" sx={{ color: '#64748b', mt: 0.5 }}>
-                                                        {event.short_description}
-                                                    </Typography>
-                                                )}
-                                                {event.venue && (
-                                                    <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                        📍 {event.venue.name}{event.venue.city ? `, ${event.venue.city}` : ''}
-                                                    </Typography>
-                                                )}
-                                                <Box display="flex" gap={2} mt={1} flexWrap="wrap">
-                                                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
-                                                        📅 {new Date(event.start_date).toLocaleDateString()}
-                                                    </Typography>
-                                                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
-                                                        ⏰ {new Date(event.start_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                    </Typography>
-                                                    {event.tiers && event.tiers.length > 0 && (
-                                                        <Typography variant="caption" sx={{ color: '#94a3b8' }}>
-                                                            🎫 {event.tiers.length} tiers
-                                                        </Typography>
-                                                    )}
-                                                </Box>
-                                            </Box>
+                                            <Typography
+                                                variant="h6"
+                                                sx={{
+                                                    color: isDraft ? '#b45309' : '#0f172a',
+                                                    fontWeight: 600,
+                                                    flex: 1,
+                                                    minWidth: 0,
+                                                    fontSize: isMobile ? '1rem' : '1.1rem',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}
+                                            >
+                                                {event.title}
+                                            </Typography>
                                             <Chip
-                                                label={event.status?.toUpperCase() || 'DRAFT'}
+                                                label={
+                                                    isSoldOut
+                                                        ? 'SOLD OUT'
+                                                        : isDraft
+                                                            ? 'DRAFT'
+                                                            : (event.status?.toUpperCase() || 'ACTIVE')
+                                                }
                                                 size="small"
-                                                color={event.status === 'active' ? 'success' : event.status === 'published' ? 'info' : 'default'}
+                                                color={
+                                                    isSoldOut
+                                                        ? 'error'
+                                                        : isDraft
+                                                            ? 'default'
+                                                            : isActive
+                                                                ? 'success'
+                                                                : 'default'
+                                                }
+                                                sx={{ fontSize: '10px', height: '22px', flexShrink: 0 }}
                                             />
                                         </Box>
+
+                                        {event.short_description && (
+                                            <Typography
+                                                variant="body2"
+                                                sx={{
+                                                    color: '#64748b',
+                                                    mt: 1,
+                                                    display: '-webkit-box',
+                                                    WebkitLineClamp: 2,
+                                                    WebkitBoxOrient: 'vertical',
+                                                    overflow: 'hidden',
+                                                }}
+                                            >
+                                                {event.short_description}
+                                            </Typography>
+                                        )}
+
+                                        {/* Meta rows */}
+                                        <Box mt={2} display="flex" flexDirection="column" gap={0.75}>
+                                            <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                <CalendarIcon fontSize="small" />
+                                                {formattedDate}
+                                            </Typography>
+
+                                            {venueName || venueCity ? (
+                                                <Typography
+                                                    variant="body2"
+                                                    sx={{
+                                                        color: '#475569',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 1,
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        whiteSpace: 'nowrap',
+                                                    }}
+                                                >
+                                                    <LocationIcon fontSize="small" />
+                                                    {venueName || 'Venue'}
+                                                    {venueCity ? `, ${venueCity}` : ''}
+                                                </Typography>
+                                            ) : (
+                                                <Typography
+                                                    variant="body2"
+                                                    sx={{
+                                                        color: '#94a3b8',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 1,
+                                                        fontStyle: 'italic',
+                                                    }}
+                                                >
+                                                    <LocationIcon fontSize="small" />
+                                                    No venue assigned
+                                                </Typography>
+                                            )}
+
+                                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                                <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <TicketIcon fontSize="small" />
+                                                    {tierCount} tier{tierCount === 1 ? '' : 's'}
+                                                </Typography>
+                                                <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <ScheduleIcon fontSize="small" />
+                                                    {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                                                </Typography>
+                                            </Box>
+
+                                            {totalCapacity > 0 && (
+                                                <Typography variant="caption" sx={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <PeopleIcon sx={{ fontSize: 14 }} />
+                                                    {totalCapacity} total capacity
+                                                    {totalSold > 0 && ` • ${totalSold} sold`}
+                                                </Typography>
+                                            )}
+                                        </Box>
+
+                                        {isPast && canManageEvents && (
+                                            <Chip
+                                                label="PAST EVENT"
+                                                size="small"
+                                                sx={{
+                                                    mt: 1,
+                                                    bgcolor: 'rgba(100,116,139,0.1)',
+                                                    color: '#64748b',
+                                                }}
+                                            />
+                                        )}
                                     </CardContent>
                                 </Card>
                             </Grid>

@@ -27,10 +27,6 @@ if (IS_PRODUCTION_BUILD && showDemoCreds) {
 
 export default ({ config }) => ({
     ...config,
-    plugins: [
-        ...(config.plugins ?? []),
-        'expo-status-bar',
-    ],
     extra: {
         ...(config.extra ?? {}),
         // -----------------------------------------------------------------

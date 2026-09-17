@@ -35,11 +35,6 @@ def _is_manager(user):
 class EventViewSet(viewsets.ModelViewSet):
     """
     ViewSet for Event management.
-
-    Public endpoints (list / retrieve / public / public_detail) are
-    readable by anyone but serialized with a narrow, safe field set.
-    Authenticated managers see the full serializer with revenue and
-    internal metadata.
     """
     queryset = Event.objects.all()
     throttle_classes = [ScopedRateThrottle]
@@ -221,11 +216,9 @@ class EventViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         user = request.user
 
-        # ---- visibility guard for non-admins ----
         if user.is_authenticated and not user.is_staff and not user.is_superuser:
             is_org = _is_organizer(user)
 
-            # Not the organizer and not a manager: enforce public rules.
             if not is_org or instance.organizer_id != user.id:
                 if instance.status not in ('active', 'published') or not instance.is_public:
                     return Response(
@@ -238,7 +231,6 @@ class EventViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_404_NOT_FOUND,
                     )
 
-            # Organizer viewing their own past event: block.
             if is_org and instance.organizer_id == user.id:
                 if instance.end_date and instance.end_date < timezone.now():
                     return Response(
@@ -249,7 +241,6 @@ class EventViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         data = serializer.data
 
-        # Only include revenue / ticket counts for managers.
         if _is_manager(user):
             active_tickets_count = instance.tickets.exclude(
                 booking__status__in=['cancelled', 'refunded']
@@ -285,14 +276,12 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        # venue
         if data.get('venue_id'):
             try:
                 instance.venue = Venue.objects.get(id=data['venue_id'])
             except Venue.DoesNotExist:
                 pass
 
-        # dates
         if data.get('start_date'):
             data['start_date'] = self._parse_dt(data['start_date'])
         if data.get('end_date'):
@@ -312,7 +301,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 setattr(instance, field, data[field])
         instance.save()
 
-        # sessions
         if 'sessions' in data:
             instance.sessions.all().delete()
             for session_data in data['sessions']:
@@ -323,7 +311,6 @@ class EventViewSet(viewsets.ModelViewSet):
                     capacity=session_data.get('capacity', 100),
                 )
 
-        # tiers
         if 'tiers' in data:
             instance.tiers.all().delete()
             for tier_data in data['tiers']:
@@ -390,7 +377,13 @@ class EventViewSet(viewsets.ModelViewSet):
         throttle_scope='public_read',
     )
     def public(self, request):
-        """Public upcoming events — no auth, narrow field set."""
+        """
+        Public upcoming events — no auth, narrow field set.
+
+        ✅ Prefetches tiers and sessions so the serializer's
+           `tier_count` / `session_count` / `total_capacity` methods
+           don't trigger N+1 queries.
+        """
         now = timezone.now()
 
         queryset = (
@@ -401,6 +394,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 end_date__gte=now,
             )
             .select_related('venue')
+            .prefetch_related('tiers', 'sessions')          # ✅ ADDED
             .order_by('-start_date')
             .annotate(
                 active_tickets_count=Count(

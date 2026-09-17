@@ -72,8 +72,15 @@ class PublicEventSerializer(serializers.ModelSerializer):
     Serializer used for PUBLIC (AllowAny) endpoints.
 
     Exposes ONLY the fields a public visitor needs to browse events.
+
+    ✅ Also exposes summary counts (tier_count, session_count, total_capacity)
+       so the booking flow can detect Sold-Out status and show rich cards
+       without an extra request per event.
     """
     venue = serializers.SerializerMethodField()
+    tier_count = serializers.SerializerMethodField()
+    session_count = serializers.SerializerMethodField()
+    total_capacity = serializers.SerializerMethodField()
 
     class Meta:
         model = Event
@@ -86,6 +93,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'total_tickets_sold',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'venue',
+            'tier_count', 'session_count', 'total_capacity',   # ✅ ADDED
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -101,6 +109,17 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'country': obj.venue.country,
             'address_line1': obj.venue.address_line1,
         }
+
+    def get_tier_count(self, obj):
+        return obj.tiers.count()
+
+    def get_session_count(self, obj):
+        return obj.sessions.count()
+
+    def get_total_capacity(self, obj):
+        from django.db.models import Sum
+        result = obj.tiers.aggregate(total=Sum('quantity_total'))
+        return result.get('total') or 0
 
 
 class PublicEventDetailSerializer(PublicEventSerializer):
@@ -617,10 +636,7 @@ class DiscountSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class UserProfileSummarySerializer(serializers.ModelSerializer):
-    """
-    Compact profile — embedded inside UserSerializer so the frontend
-    can render phone / city / etc. without an extra request.
-    """
+    """Compact profile — embedded inside UserSerializer."""
     class Meta:
         model = UserProfile
         fields = [
@@ -632,14 +648,8 @@ class UserProfileSummarySerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """
-    ✅ FIXED: now includes `is_active`, `is_staff`, `is_superuser`,
-       and a nested `profile` object.
-
-    Why this matters:
-      - Before: `user.is_active` was `undefined` on the frontend →
-        every user rendered as "Inactive" in the listing.
-      - Before: `user.profile` was never sent → the Edit modal always
-        showed blank phone/city/etc. fields.
+    Includes `is_active`, `is_staff`, `is_superuser`, and a nested `profile`
+    so the frontend Users page renders correct status and profile fields.
     """
     role = serializers.SerializerMethodField()
     profile = UserProfileSummarySerializer(read_only=True)
@@ -649,8 +659,8 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role',
-            'is_active', 'is_staff', 'is_superuser',   # ✅ ADDED
-            'profile',                                  # ✅ ADDED
+            'is_active', 'is_staff', 'is_superuser',
+            'profile',
             'date_joined', 'last_login',
         ]
         read_only_fields = [

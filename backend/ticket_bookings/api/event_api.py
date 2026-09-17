@@ -178,6 +178,14 @@ class EventViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         manager = _is_manager(request.user)
 
+        # ✅ Always prefetch related objects so `tier_count` / `session_count`
+        #    don't trigger N+1 queries in the serializer.
+        queryset = (
+            queryset
+            .select_related('venue')
+            .prefetch_related('tiers', 'sessions')
+        )
+
         # Only add expensive annotations for managers.
         if manager:
             queryset = queryset.annotate(
@@ -392,6 +400,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 is_public=True,
                 end_date__gte=now,
             )
+            .select_related('venue')
             .order_by('-start_date')
             .annotate(
                 active_tickets_count=Count(

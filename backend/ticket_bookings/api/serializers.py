@@ -154,7 +154,16 @@ class EventSerializer(serializers.ModelSerializer):
     """
     Full event serializer for authenticated managers
     (admins, superadmins, organizers).
+
+    ✅ Includes summary counts (tiers, sessions, capacity) and a nested
+       venue object so the events listing page can render rich cards
+       without extra requests.
     """
+    venue = serializers.SerializerMethodField()
+    tier_count = serializers.SerializerMethodField()
+    session_count = serializers.SerializerMethodField()
+    total_capacity = serializers.SerializerMethodField()
+
     class Meta:
         model = Event
         fields = '__all__'
@@ -163,12 +172,47 @@ class EventSerializer(serializers.ModelSerializer):
             'total_tickets_sold', 'total_revenue',
         ]
 
+    def get_venue(self, obj):
+        """Return a compact venue object for list cards."""
+        if not obj.venue:
+            return None
+        return {
+            'id': str(obj.venue.id),
+            'name': obj.venue.name,
+            'city': obj.venue.city,
+            'state': obj.venue.state,
+            'country': obj.venue.country,
+        }
+
+    def get_tier_count(self, obj):
+        """Number of ticket tiers defined for this event."""
+        # Uses the prefetched queryset when available (see EventViewSet.list).
+        return obj.tiers.count()
+
+    def get_session_count(self, obj):
+        """Number of sessions defined for this event."""
+        return obj.sessions.count()
+
+    def get_total_capacity(self, obj):
+        """Sum of all tier quantities (total capacity across tiers)."""
+        from django.db.models import Sum
+        result = obj.tiers.aggregate(total=Sum('quantity_total'))
+        return result.get('total') or 0
+
 
 class EventDetailSerializer(serializers.ModelSerializer):
-    """Full event detail serializer for authenticated managers."""
+    """
+    Full event detail serializer for authenticated managers.
+
+    ✅ Also includes venue object and summary counts so the detail page
+       behaves consistently with the list page.
+    """
     sessions = serializers.SerializerMethodField()
     tiers = serializers.SerializerMethodField()
     venue = serializers.SerializerMethodField()
+    tier_count = serializers.SerializerMethodField()
+    session_count = serializers.SerializerMethodField()
+    total_capacity = serializers.SerializerMethodField()
 
     class Meta:
         model = Event
@@ -208,8 +252,21 @@ class EventDetailSerializer(serializers.ModelSerializer):
                 'id': str(obj.venue.id),
                 'name': obj.venue.name,
                 'city': obj.venue.city,
+                'state': obj.venue.state,
+                'country': obj.venue.country,
             }
         return None
+
+    def get_tier_count(self, obj):
+        return obj.tiers.count()
+
+    def get_session_count(self, obj):
+        return obj.sessions.count()
+
+    def get_total_capacity(self, obj):
+        from django.db.models import Sum
+        result = obj.tiers.aggregate(total=Sum('quantity_total'))
+        return result.get('total') or 0
 
 
 # ============================================================

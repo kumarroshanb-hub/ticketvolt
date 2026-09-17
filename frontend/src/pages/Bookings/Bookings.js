@@ -20,6 +20,9 @@ import {
     Receipt as ReceiptIcon,
     Email as EmailIcon,
     ShoppingCart as ShoppingCartIcon,
+    Event as EventIcon,
+    ConfirmationNumber as TicketIcon,
+    AttachMoney as MoneyIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -51,6 +54,190 @@ import {
 
 import Ticket from '../../components/Ticket/E-Ticket';
 
+// ============================================
+// STAT CARD — matches Dashboard.js
+// ============================================
+const StatCard = ({ title, value, icon, color }) => {
+    const theme = useTheme();
+    const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+
+    return (
+        <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+            <CardContent sx={{ p: isSmall ? 1.5 : 2, '&:last-child': { pb: isSmall ? 1.5 : 2 } }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Typography
+                            variant="caption"
+                            sx={{
+                                color: '#64748b',
+                                fontWeight: 600,
+                                letterSpacing: 0.5,
+                                fontSize: isSmall ? '10px' : '12px',
+                            }}
+                        >
+                            {title}
+                        </Typography>
+                        <Typography
+                            variant="h4"
+                            sx={{
+                                fontWeight: 700,
+                                color: '#0f172a',
+                                mt: 1,
+                                fontSize: isSmall ? '1.25rem' : '2rem',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {value}
+                        </Typography>
+                    </Box>
+                    <Box
+                        sx={{
+                            backgroundColor: `${color}15`,
+                            borderRadius: '50%',
+                            p: isSmall ? 0.75 : 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                        }}
+                    >
+                        {icon}
+                    </Box>
+                </Box>
+            </CardContent>
+        </Card>
+    );
+};
+
+// ============================================
+// MOBILE BOOKING CARD — matches Dashboard.js
+// ============================================
+const MobileBookingCard = ({ booking, onClick, renderActions, isSelected, showCheckbox, onToggleSelect }) => {
+    const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
+
+    return (
+        <Card
+            sx={{
+                borderRadius: 2,
+                border: isSelected ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                opacity: isCompleted ? 0.75 : 1,
+                overflow: 'hidden',
+                transition: 'all 0.2s ease',
+            }}
+        >
+            <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                {/* Header: Reference + Status */}
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1.5 }}>
+                    {showCheckbox && (
+                        <Checkbox
+                            checked={isSelected}
+                            onChange={(e) => onToggleSelect && onToggleSelect(e, booking.id)}
+                            disabled={isCompleted}
+                            sx={{ color: '#94a3b8', p: 0.5, mt: -0.5 }}
+                            size="small"
+                        />
+                    )}
+                    <Box
+                        onClick={onClick}
+                        sx={{
+                            cursor: 'pointer',
+                            flex: 1,
+                            minWidth: 0,
+                            '&:active': { opacity: 0.7 },
+                        }}
+                    >
+                        <Typography
+                            variant="subtitle1"
+                            sx={{
+                                fontFamily: 'monospace',
+                                fontWeight: 700,
+                                color: '#0f172a',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {booking.booking_reference}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                            {booking.formatted_date || new Date(booking.created_at).toLocaleDateString()}
+                        </Typography>
+                    </Box>
+                    <StatusChip
+                        status={booking.status}
+                        type="booking"
+                        size="small"
+                        showIcon={true}
+                        variant="filled"
+                    />
+                </Box>
+
+                <Divider sx={{ mb: 1.5 }} />
+
+                {/* Customer + Event */}
+                <Box
+                    onClick={onClick}
+                    sx={{ cursor: 'pointer', '&:active': { opacity: 0.7 } }}
+                >
+                    <Box sx={{ mb: 1 }}>
+                        <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
+                            Customer
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                            {booking.customer_name || 'N/A'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={{ mb: 1.5 }}>
+                        <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
+                            Event
+                        </Typography>
+                        <Typography
+                            variant="body2"
+                            sx={{
+                                color: '#334155',
+                                fontWeight: 500,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {booking.event_title || booking.event?.title || 'N/A'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 1.5, borderTop: '1px dashed #e2e8f0' }}>
+                        <Typography variant="h6" sx={{ color: '#4f46e5', fontWeight: 700 }}>
+                            ₹{booking.total_amount}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                            {booking.ticket_count || 0} ticket{(booking.ticket_count || 0) !== 1 ? 's' : ''}
+                        </Typography>
+                    </Box>
+
+                    {isCompleted && (
+                        <Typography variant="caption" sx={{ color: '#10b981', display: 'block', mt: 1, fontWeight: 600 }}>
+                            ✅ All tickets used
+                        </Typography>
+                    )}
+                </Box>
+
+                {/* Actions */}
+                {renderActions && (
+                    <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #f1f5f9' }}>
+                        {renderActions(booking)}
+                    </Box>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 const Bookings = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
@@ -546,42 +733,89 @@ const Bookings = () => {
                     <PageTitle variant="h4">
                         {isRegularUser ? 'My Bookings' : 'Bookings'}
                     </PageTitle>
+                    <Typography
+                        variant="body2"
+                        sx={{
+                            color: '#64748b',
+                            ml: isMobile ? 0 : 2,
+                            display: 'block',
+                            width: isMobile ? '100%' : 'auto',
+                        }}
+                    >
+                        {isRegularUser
+                            ? 'View and manage your bookings'
+                            : 'Manage all customer bookings'}
+                    </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadBookings}>
                         Refresh
                     </OutlineButton>
-                    <PrimaryButton variant="contained" onClick={handleBookTickets}>
-                        <ShoppingCartIcon sx={{ mr: 1 }} />
+                    <PrimaryButton variant="contained" startIcon={<ShoppingCartIcon />} onClick={handleBookTickets}>
                         Book Tickets
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
 
-            {/* Stats */}
-            <Grid container spacing={1.5} sx={{ mb: 3 }}>
-                {[
-                    { label: 'Total',     value: stats.total,     color: 'white',   bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.06)' },
-                    { label: 'Pending',   value: stats.pending,   color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',    border: 'rgba(245,158,11,0.2)' },
-                    { label: 'Confirmed', value: stats.confirmed, color: '#22c55e', bg: 'rgba(34,197,94,0.1)',     border: 'rgba(34,197,94,0.2)' },
-                    { label: 'Completed', value: stats.completed, color: '#10b981', bg: 'rgba(16,185,129,0.1)',    border: 'rgba(16,185,129,0.2)' },
-                    { label: 'Cancelled', value: stats.cancelled, color: '#ef4444', bg: 'rgba(239,68,68,0.1)',     border: 'rgba(239,68,68,0.2)' },
-                    { label: 'Refunded',  value: stats.refunded,  color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)',    border: 'rgba(139,92,246,0.2)' },
-                ].map((s) => (
-                    <Grid item xs={4} sm={4} md={2} key={s.label}>
-                        <Paper sx={{ p: 1.5, textAlign: 'center', bgcolor: s.bg, border: `1px solid ${s.border}` }}>
-                            <Typography variant="h5" sx={{ color: s.color, fontWeight: 700 }}>{s.value}</Typography>
-                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>{s.label}</Typography>
-                        </Paper>
-                    </Grid>
-                ))}
+            {/* ============================================ */}
+            {/* STATS CARDS — Matches Dashboard styling */}
+            {/* ============================================ */}
+            <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
+                <Grid item xs={6} sm={6} md={2}>
+                    <StatCard
+                        title="Total"
+                        value={stats.total}
+                        icon={<EventIcon sx={{ color: '#4f46e5', fontSize: isMobile ? 20 : 24 }} />}
+                        color="#4f46e5"
+                    />
+                </Grid>
+                <Grid item xs={6} sm={6} md={2}>
+                    <StatCard
+                        title="Pending"
+                        value={stats.pending}
+                        icon={<PaymentIcon sx={{ color: '#f59e0b', fontSize: isMobile ? 20 : 24 }} />}
+                        color="#f59e0b"
+                    />
+                </Grid>
+                <Grid item xs={6} sm={6} md={2}>
+                    <StatCard
+                        title="Confirmed"
+                        value={stats.confirmed}
+                        icon={<QrCodeIcon sx={{ color: '#22c55e', fontSize: isMobile ? 20 : 24 }} />}
+                        color="#22c55e"
+                    />
+                </Grid>
+                <Grid item xs={6} sm={6} md={2}>
+                    <StatCard
+                        title="Completed"
+                        value={stats.completed}
+                        icon={<ReceiptIcon sx={{ color: '#10b981', fontSize: isMobile ? 20 : 24 }} />}
+                        color="#10b981"
+                    />
+                </Grid>
+                <Grid item xs={6} sm={6} md={2}>
+                    <StatCard
+                        title="Cancelled"
+                        value={stats.cancelled}
+                        icon={<CancelIcon sx={{ color: '#ef4444', fontSize: isMobile ? 20 : 24 }} />}
+                        color="#ef4444"
+                    />
+                </Grid>
+                <Grid item xs={6} sm={6} md={2}>
+                    <StatCard
+                        title="Refunded"
+                        value={stats.refunded}
+                        icon={<MoneyIcon sx={{ color: '#8b5cf6', fontSize: isMobile ? 20 : 24 }} />}
+                        color="#8b5cf6"
+                    />
+                </Grid>
             </Grid>
 
             {/* Error Alert */}
             {error && (
-                <Alert severity="error" sx={{ mb: 3, bgcolor: 'rgba(239,68,68,0.1)', color: '#f87171' }}>
+                <Alert severity="error" sx={{ mb: 3 }}>
                     {error}
-                    <Button size="small" onClick={loadBookings} sx={{ ml: 2, color: '#f87171' }}>
+                    <Button size="small" onClick={loadBookings} sx={{ ml: 2 }}>
                         Retry
                     </Button>
                 </Alert>
@@ -589,7 +823,7 @@ const Bookings = () => {
 
             {/* Info Alert for Regular Users */}
             {isRegularUser && bookings.length === 0 && !error && (
-                <Alert severity="info" sx={{ mb: 3, bgcolor: 'rgba(59,130,246,0.1)', color: '#60a5fa' }}>
+                <Alert severity="info" sx={{ mb: 3 }}>
                     You don't have any bookings yet. Click "Book Tickets" to browse events and book your first ticket!
                 </Alert>
             )}
@@ -666,127 +900,27 @@ const Bookings = () => {
                             const actions = getAvailableActions(booking);
 
                             return (
-                                <Card
+                                <MobileBookingCard
                                     key={booking.id}
-                                    sx={{
-                                        borderRadius: 2,
-                                        border: selectedIds.includes(booking.id)
-                                            ? '2px solid #4f46e5'
-                                            : '1px solid #e2e8f0',
-                                        opacity: isReadonly ? 0.75 : 1,
-                                        overflow: 'hidden',
+                                    booking={booking}
+                                    isSelected={selectedIds.includes(booking.id)}
+                                    showCheckbox={canManageAllBookings}
+                                    onToggleSelect={handleSelectOne}
+                                    onClick={() => {
+                                        setSelectedBooking(booking);
+                                        setDetailsOpen(true);
                                     }}
-                                >
-                                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                                        {/* Header row with checkbox */}
-                                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1 }}>
-                                            {canManageAllBookings && (
-                                                <Checkbox
-                                                    checked={selectedIds.includes(booking.id)}
-                                                    onChange={(e) => handleSelectOne(e, booking.id)}
-                                                    disabled={isReadonly}
-                                                    sx={{ color: '#94a3b8', p: 0.5, mt: -0.5 }}
-                                                    size="small"
-                                                />
-                                            )}
-                                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                                                <Typography
-                                                    variant="subtitle1"
-                                                    sx={{
-                                                        fontFamily: 'monospace',
-                                                        fontWeight: 700,
-                                                        color: '#0f172a',
-                                                        overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap',
-                                                    }}
-                                                >
-                                                    {booking.booking_reference}
-                                                </Typography>
-                                            </Box>
-                                            <StatusChip
-                                                status={booking.status}
-                                                type="booking"
-                                                size="small"
-                                                showIcon
-                                                variant="filled"
-                                            />
-                                        </Box>
-
-                                        <Divider sx={{ mb: 1.5 }} />
-
-                                        {/* Customer + Event */}
-                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.5 }}>
-                                            <Box>
-                                                <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
-                                                    Customer
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
-                                                    {booking.customer_name}
-                                                </Typography>
-                                            </Box>
-                                            <Box>
-                                                <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
-                                                    Event
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
-                                                    {booking.event_title || booking.event?.title || 'N/A'}
-                                                </Typography>
-                                            </Box>
-                                        </Box>
-
-                                        {/* Amount + date */}
-                                        <Box
-                                            sx={{
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                mb: 1.5,
-                                                pt: 1.5,
-                                                borderTop: '1px dashed #e2e8f0',
-                                            }}
-                                        >
-                                            <Typography variant="h6" sx={{ color: '#4f46e5', fontWeight: 700 }}>
-                                                ₹{booking.total_amount}
-                                            </Typography>
-                                            <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
-                                                {booking.formatted_date || new Date(booking.created_at).toLocaleDateString()}
-                                            </Typography>
-                                        </Box>
-
-                                        {/* Ticket chip */}
-                                        <Chip
-                                            label={`${booking.ticket_count || 0} ticket(s)`}
-                                            size="small"
-                                            color={isCompleted ? 'success' : 'primary'}
-                                            variant={isCompleted ? 'filled' : 'outlined'}
-                                            icon={<ArrowForwardIcon sx={{ fontSize: 16 }} />}
-                                            clickable={!isReadonly}
-                                            onClick={() => !isReadonly && handleViewTickets(booking.id)}
-                                            sx={{
-                                                mb: 2,
-                                                borderColor: isCompleted ? '#10b981' : '#c7d2fe',
-                                                color: isCompleted ? '#fff' : '#4f46e5',
-                                                backgroundColor: isCompleted ? '#10b981' : 'transparent',
-                                            }}
-                                        />
-
-                                        {/* Actions */}
-                                        <Box
-                                            sx={{
-                                                display: 'flex',
-                                                gap: 1,
-                                                flexWrap: 'wrap',
-                                                pt: 1,
-                                                borderTop: '1px solid #f1f5f9',
-                                            }}
-                                        >
+                                    renderActions={(b) => (
+                                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                             {actions.canViewETicket && (
                                                 <Button
                                                     size="small"
                                                     variant="outlined"
                                                     startIcon={<ReceiptIcon />}
-                                                    onClick={() => handleViewETicket(booking)}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleViewETicket(b);
+                                                    }}
                                                     disabled={actionLoading}
                                                     sx={{
                                                         flex: '1 1 45%',
@@ -803,7 +937,10 @@ const Bookings = () => {
                                                     size="small"
                                                     variant="outlined"
                                                     startIcon={<EmailIcon />}
-                                                    onClick={() => handleSendEmailFromTable(booking)}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleSendEmailFromTable(b);
+                                                    }}
                                                     disabled={actionLoading}
                                                     sx={{
                                                         flex: '1 1 45%',
@@ -815,15 +952,18 @@ const Bookings = () => {
                                                     Email
                                                 </Button>
                                             )}
-                                            {canManageAllBookings && (
+                                            {canManageAllBookings && !isReadonly && (
                                                 <>
                                                     {actions.canMarkPayment && (
                                                         <Button
                                                             size="small"
                                                             variant="outlined"
                                                             startIcon={<PaymentIcon />}
-                                                            onClick={() => handleMarkPaymentReceived(booking.id)}
-                                                            disabled={actionLoading || isReadonly}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleMarkPaymentReceived(b.id);
+                                                            }}
+                                                            disabled={actionLoading}
                                                             sx={{ flex: '1 1 45%', borderColor: '#fde68a', color: '#f59e0b', textTransform: 'none' }}
                                                         >
                                                             Mark Paid
@@ -834,8 +974,11 @@ const Bookings = () => {
                                                             size="small"
                                                             variant="outlined"
                                                             startIcon={<QrCodeIcon />}
-                                                            onClick={() => handleConfirmPaymentAndIssue(booking.id)}
-                                                            disabled={actionLoading || isReadonly}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleConfirmPaymentAndIssue(b.id);
+                                                            }}
+                                                            disabled={actionLoading}
                                                             sx={{ flex: '1 1 45%', borderColor: '#bbf7d0', color: '#10b981', textTransform: 'none' }}
                                                         >
                                                             Confirm & Issue
@@ -846,8 +989,11 @@ const Bookings = () => {
                                                             size="small"
                                                             variant="outlined"
                                                             startIcon={<QrCodeIcon />}
-                                                            onClick={() => handleIssueTickets(booking.id)}
-                                                            disabled={actionLoading || isReadonly}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleIssueTickets(b.id);
+                                                            }}
+                                                            disabled={actionLoading}
                                                             sx={{ flex: '1 1 45%', borderColor: '#c7d2fe', color: '#4f46e5', textTransform: 'none' }}
                                                         >
                                                             Issue
@@ -858,8 +1004,11 @@ const Bookings = () => {
                                                             size="small"
                                                             variant="outlined"
                                                             startIcon={<RefreshIcon2 />}
-                                                            onClick={() => handleRegenerateQR(booking.id)}
-                                                            disabled={actionLoading || isReadonly}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleRegenerateQR(b.id);
+                                                            }}
+                                                            disabled={actionLoading}
                                                             sx={{ flex: '1 1 45%', borderColor: '#ddd6fe', color: '#7c3aed', textTransform: 'none' }}
                                                         >
                                                             Regen QR
@@ -870,8 +1019,11 @@ const Bookings = () => {
                                                             size="small"
                                                             variant="outlined"
                                                             startIcon={<CancelIcon />}
-                                                            onClick={() => handleCancelBooking(booking.id)}
-                                                            disabled={actionLoading || isReadonly}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleCancelBooking(b.id);
+                                                            }}
+                                                            disabled={actionLoading}
                                                             sx={{ flex: '1 1 45%', borderColor: '#fecaca', color: '#ef4444', textTransform: 'none' }}
                                                         >
                                                             Cancel
@@ -882,8 +1034,11 @@ const Bookings = () => {
                                                             size="small"
                                                             variant="outlined"
                                                             startIcon={<PaymentIcon />}
-                                                            onClick={() => handleRefundBooking(booking.id)}
-                                                            disabled={actionLoading || isReadonly}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleRefundBooking(b.id);
+                                                            }}
+                                                            disabled={actionLoading}
                                                             sx={{ flex: '1 1 45%', borderColor: '#ddd6fe', color: '#8b5cf6', textTransform: 'none' }}
                                                         >
                                                             Refund
@@ -895,8 +1050,9 @@ const Bookings = () => {
                                                 size="small"
                                                 variant="contained"
                                                 startIcon={<ViewIcon />}
-                                                onClick={() => {
-                                                    setSelectedBooking(booking);
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSelectedBooking(b);
                                                     setDetailsOpen(true);
                                                 }}
                                                 sx={{
@@ -908,8 +1064,8 @@ const Bookings = () => {
                                                 View Details
                                             </Button>
                                         </Box>
-                                    </CardContent>
-                                </Card>
+                                    )}
+                                />
                             );
                         })}
                     </Box>

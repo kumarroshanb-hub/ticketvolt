@@ -72,14 +72,6 @@ class PublicEventSerializer(serializers.ModelSerializer):
     Serializer used for PUBLIC (AllowAny) endpoints.
 
     Exposes ONLY the fields a public visitor needs to browse events.
-    Deliberately excludes:
-      - organizer (FK to User)
-      - metadata / venue_metadata (may contain internal notes)
-      - total_revenue (business-sensitive)
-      - cancellation_policy / refundable_until
-      - booking_start_date / booking_end_date windows
-      - is_featured
-      - min/max_tickets_per_order (business config)
     """
     venue = serializers.SerializerMethodField()
 
@@ -152,12 +144,8 @@ class PublicEventDetailSerializer(PublicEventSerializer):
 
 class EventSerializer(serializers.ModelSerializer):
     """
-    Full event serializer for authenticated managers
-    (admins, superadmins, organizers).
-
-    ✅ Includes summary counts (tiers, sessions, capacity) and a nested
-       venue object so the events listing page can render rich cards
-       without extra requests.
+    Full event serializer for authenticated managers.
+    Includes summary counts (tiers, sessions, capacity) and nested venue.
     """
     venue = serializers.SerializerMethodField()
     tier_count = serializers.SerializerMethodField()
@@ -173,7 +161,6 @@ class EventSerializer(serializers.ModelSerializer):
         ]
 
     def get_venue(self, obj):
-        """Return a compact venue object for list cards."""
         if not obj.venue:
             return None
         return {
@@ -185,28 +172,19 @@ class EventSerializer(serializers.ModelSerializer):
         }
 
     def get_tier_count(self, obj):
-        """Number of ticket tiers defined for this event."""
-        # Uses the prefetched queryset when available (see EventViewSet.list).
         return obj.tiers.count()
 
     def get_session_count(self, obj):
-        """Number of sessions defined for this event."""
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        """Sum of all tier quantities (total capacity across tiers)."""
         from django.db.models import Sum
         result = obj.tiers.aggregate(total=Sum('quantity_total'))
         return result.get('total') or 0
 
 
 class EventDetailSerializer(serializers.ModelSerializer):
-    """
-    Full event detail serializer for authenticated managers.
-
-    ✅ Also includes venue object and summary counts so the detail page
-       behaves consistently with the list page.
-    """
+    """Full event detail serializer for authenticated managers."""
     sessions = serializers.SerializerMethodField()
     tiers = serializers.SerializerMethodField()
     venue = serializers.SerializerMethodField()
@@ -320,7 +298,6 @@ class BookingSerializer(serializers.ModelSerializer):
     tickets = TicketSerializer(many=True, read_only=True)
     formatted_date = serializers.SerializerMethodField()
 
-    # Accept event UUID from request (used for WhatsApp / admin-created bookings)
     event = serializers.UUIDField(write_only=True, required=True)
 
     class Meta:
@@ -337,7 +314,6 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at']
 
-    # ---- computed fields ----
     def get_ticket_count(self, obj):
         return obj.tickets.count()
 
@@ -347,7 +323,6 @@ class BookingSerializer(serializers.ModelSerializer):
     def get_formatted_date(self, obj):
         return obj.created_at.strftime('%d/%m/%Y') if obj.created_at else None
 
-    # ---- field validation ----
     def validate_customer_email(self, value):
         if value and len(value) > 254:
             raise serializers.ValidationError('Email is too long.')
@@ -372,11 +347,6 @@ class BookingSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """
-        - Confirm event exists and is bookable.
-        - Validate every tier_id exists for that event.
-        - Recompute total_amount server-side (never trust client pricing).
-        """
         event_uuid = data.get('event')
         if event_uuid:
             try:
@@ -412,7 +382,6 @@ class BookingSerializer(serializers.ModelSerializer):
                         {'tickets': f'Tier {tier_id} not found for this event.'}
                     )
 
-            # Recompute the price from server-side data.
             computed_total = 0
             for t in tickets_payload:
                 tier = TicketTier.objects.filter(id=t.get('tier_id')).first()
@@ -423,11 +392,6 @@ class BookingSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """
-        Create the booking. Tickets are NOT created here — they are
-        stored in booking.metadata['tickets'] and issued later via the
-        admin issue_tickets action.
-        """
         event = getattr(self, '_event_obj', None)
         if event is None:
             raise serializers.ValidationError({'event': 'Event was not validated.'})
@@ -436,7 +400,6 @@ class BookingSerializer(serializers.ModelSerializer):
         tickets_data = validated_data.pop('tickets', [])
         logger.info(f"📊 Tickets received in serializer: {len(tickets_data)}")
 
-        # ---- Attach a user ----
         if 'user' not in validated_data:
             customer_email = validated_data.get('customer_email')
             customer_name = validated_data.get('customer_name', 'WhatsApp User')
@@ -461,7 +424,7 @@ class BookingSerializer(serializers.ModelSerializer):
                     user = User.objects.create_user(
                         username=username,
                         email=customer_email,
-                        password=None,   # Unusable password
+                        password=None,
                         first_name=first_name,
                         last_name=last_name,
                     )
@@ -487,7 +450,6 @@ class BookingSerializer(serializers.ModelSerializer):
             else:
                 validated_data['user'] = get_or_create_whatsapp_bot_user()
 
-        # ---- Ensure total_amount ----
         if not validated_data.get('total_amount'):
             total = 0
             for t in tickets_data:
@@ -499,13 +461,11 @@ class BookingSerializer(serializers.ModelSerializer):
                         pass
             validated_data['total_amount'] = total
 
-        # ---- Create the booking ----
         booking = super().create(validated_data)
 
         if not booking.metadata:
             booking.metadata = {}
 
-        # Reconcile ticket data from metadata if not passed directly.
         if not tickets_data and isinstance(validated_data.get('metadata'), dict):
             md = validated_data['metadata']
             if isinstance(md.get('ticket_types'), list):
@@ -655,16 +615,48 @@ class DiscountSerializer(serializers.ModelSerializer):
 # ============================================================
 # USER
 # ============================================================
+
+class UserProfileSummarySerializer(serializers.ModelSerializer):
+    """
+    Compact profile — embedded inside UserSerializer so the frontend
+    can render phone / city / etc. without an extra request.
+    """
+    class Meta:
+        model = UserProfile
+        fields = [
+            'phone', 'whatsapp_number',
+            'address', 'city', 'state', 'country', 'postal_code',
+            'is_organizer',
+        ]
+
+
 class UserSerializer(serializers.ModelSerializer):
+    """
+    ✅ FIXED: now includes `is_active`, `is_staff`, `is_superuser`,
+       and a nested `profile` object.
+
+    Why this matters:
+      - Before: `user.is_active` was `undefined` on the frontend →
+        every user rendered as "Inactive" in the listing.
+      - Before: `user.profile` was never sent → the Edit modal always
+        showed blank phone/city/etc. fields.
+    """
     role = serializers.SerializerMethodField()
+    profile = UserProfileSummarySerializer(read_only=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'date_joined', 'last_login',
+            'role',
+            'is_active', 'is_staff', 'is_superuser',   # ✅ ADDED
+            'profile',                                  # ✅ ADDED
+            'date_joined', 'last_login',
         ]
-        read_only_fields = ['id', 'date_joined', 'last_login']
+        read_only_fields = [
+            'id', 'date_joined', 'last_login',
+            'is_active', 'is_staff', 'is_superuser', 'profile',
+        ]
 
     def get_role(self, obj):
         if obj.is_superuser:
@@ -755,8 +747,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         validated_data.pop('password_confirm')
 
-        # Public registration must NEVER allow self-assignment of
-        # organizer/admin roles. Force is_organizer = False.
         validated_data.pop('is_organizer', None)
 
         profile_fields = {

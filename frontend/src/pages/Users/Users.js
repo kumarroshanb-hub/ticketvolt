@@ -1112,7 +1112,7 @@ const Users = () => {
     const handleToggleActive = async (user) => {
         try {
             const response = await api.post(`/users/${user.id}/toggle_active/`);
-            toast.success(response.data.message || `User ${user.is_active ? 'deactivated' : 'activated'}`);
+            toast.success(response.data.message || `User ${user.is_active !== false ? 'deactivated' : 'activated'}`);
             loadUsers();
         } catch (err) {
             toast.error('Failed to update user status');
@@ -1162,12 +1162,17 @@ const Users = () => {
     );
 
     // Render status badge
-    const renderStatusBadge = (isActive) => (
-        <Badge className={isActive ? 'active' : 'inactive'}>
-            {isActive ? <CheckCircle fontSize="small" /> : <Block fontSize="small" />}
-            {isActive ? 'Active' : 'Inactive'}
-        </Badge>
-    );
+    // ✅ Treat only explicit `false` as inactive. This keeps the UI correct
+    //    even if the API response is missing `is_active` (defensive fallback).
+    const renderStatusBadge = (isActive) => {
+        const active = isActive !== false;
+        return (
+            <Badge className={active ? 'active' : 'inactive'}>
+                {active ? <CheckCircle fontSize="small" /> : <Block fontSize="small" />}
+                {active ? 'Active' : 'Inactive'}
+            </Badge>
+        );
+    };
 
     // ============================================
     // SUB-COMPONENTS
@@ -1473,7 +1478,7 @@ const Users = () => {
                         </div>
 
                         <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                            {renderStatusBadge(user.is_active)}
+                            {renderStatusBadge(user.is_active !== false)}
                             {user.is_staff && (
                                 <Badge className="active">
                                     <AdminPanelSettings fontSize="small" />
@@ -1682,7 +1687,7 @@ const Users = () => {
                                         <UserName>{user.first_name} {user.last_name}</UserName>
                                         <UserUsername>@{user.username}</UserUsername>
                                     </div>
-                                    {renderStatusBadge(user.is_active)}
+                                    {renderStatusBadge(user.is_active !== false)}
                                 </MobileUserHeader>
 
                                 <MobileUserBody>
@@ -1727,10 +1732,10 @@ const Users = () => {
                                             e.stopPropagation();
                                             handleToggleActive(user);
                                         }}
-                                        style={{ color: user.is_active ? '#ef4444' : '#10b981' }}
+                                        style={{ color: user.is_active !== false ? '#ef4444' : '#10b981' }}
                                     >
-                                        {user.is_active ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
-                                        {user.is_active ? 'Block' : 'Unblock'}
+                                        {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
+                                        {user.is_active !== false ? 'Block' : 'Unblock'}
                                     </Button>
                                     <Button
                                         className="danger"
@@ -1773,7 +1778,7 @@ const Users = () => {
                                     </TableCell>
                                     <TableCell>{user.email}</TableCell>
                                     <TableCell>{renderRoleBadge(user.role)}</TableCell>
-                                    <TableCell>{renderStatusBadge(user.is_active)}</TableCell>
+                                    <TableCell>{renderStatusBadge(user.is_active !== false)}</TableCell>
                                     <TableCell>{formatDate(user.date_joined)}</TableCell>
                                     <TableCell align="right">
                                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
@@ -1795,9 +1800,9 @@ const Users = () => {
                                                     e.stopPropagation();
                                                     handleToggleActive(user);
                                                 }}
-                                                title={user.is_active ? 'Deactivate' : 'Activate'}
+                                                title={user.is_active !== false ? 'Deactivate' : 'Activate'}
                                             >
-                                                {user.is_active ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
+                                                {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
                                             </ActionButton>
                                             <ActionButton
                                                 className="danger"

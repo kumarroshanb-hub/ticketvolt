@@ -49,6 +49,53 @@ def _is_organizer(user):
         or hasattr(user, 'organizer')
     )
 
+
+# ============================================================
+# ✅ DIAGNOSTIC EMAIL SENDER
+# ------------------------------------------------------------
+# Wraps Django's EmailMessage.send() so we always get a clear,
+# explicit log line for both success and failure.
+#
+# Why this matters:
+#   The previous code used `email.send(fail_silently=True)`, which
+#   swallows SMTP errors. The log said "email sent" even when
+#   nothing was delivered (wrong password, blocked port, etc.).
+#
+# Usage:
+#   _safe_send_email(email, context_label='tickets')
+# ============================================================
+def _safe_send_email(email_message, context_label=''):
+    """
+    Send a Django EmailMessage and log the outcome explicitly.
+    Never raises — returns True on success, False on failure.
+
+    On failure, logs the full traceback so Render's log viewer
+    shows the exact SMTP error (auth, connection, timeout, etc.).
+    """
+    try:
+        # Return value is the number of successfully delivered messages (0 or 1)
+        sent = email_message.send(fail_silently=False)
+
+        if sent == 1:
+            logger.info(
+                f"📧 [{context_label}] SMTP accepted 1 email → {email_message.to}"
+            )
+            return True
+
+        logger.warning(
+            f"📧 [{context_label}] SMTP returned {sent} (unexpected). "
+            f"Recipients: {email_message.to}"
+        )
+        return False
+
+    except Exception as exc:
+        logger.exception(
+            f"📧 [{context_label}] SMTP FAILURE: {type(exc).__name__}: {exc} "
+            f"| Recipients: {email_message.to}"
+        )
+        return False
+
+
 # ============================================================
 # BULK ACTION WHITELIST
 # ------------------------------------------------------------
@@ -1778,13 +1825,18 @@ class BookingViewSet(viewsets.ModelViewSet):
                 [booking.customer_email],
             )
             email.attach_alternative(html_content, "text/html")
-            email.send(fail_silently=True)
 
-            logger.info(f"✅ Payment confirmation email sent to {booking.customer_email}")
-            return {'success': True}
+            # ✅ DIAGNOSTIC SEND — logs SMTP acceptance or full traceback
+            ok = _safe_send_email(email, context_label='payment_confirmation')
+
+            if ok:
+                return {'success': True}
+
+            logger.error(f"❌ Payment confirmation email FAILED for {booking.customer_email}")
+            return {'success': False, 'error': 'SMTP rejected the message'}
 
         except Exception as e:
-            logger.warning(f"⚠️ Payment confirmation email failed: {str(e)}")
+            logger.exception(f"⚠️ Payment confirmation email error: {str(e)}")
             return {'success': False, 'error': str(e)}
 
     def _send_tickets_email(self, booking, allocation_message=None):
@@ -1935,9 +1987,19 @@ class BookingViewSet(viewsets.ModelViewSet):
                     attachment['buffer'].getvalue(),
                     attachment['mimetype'],
                 )
-                logger.info(f"✅ Attached: {attachment['filename']} ({attachment['format']})")
+                logger.info(f"📧 [tickets] Attached: {attachment['filename']} ({attachment['format']})")
 
-            email.send(fail_silently=True)
+            # ✅ DIAGNOSTIC SEND — logs SMTP acceptance or full traceback
+            ok = _safe_send_email(
+                email,
+                context_label=f'tickets ({format_names})'
+            )
+
+            if not ok:
+                return {
+                    'success': False,
+                    'message': 'SMTP rejected the tickets email',
+                }
 
             return {
                 'success': True,
@@ -1949,7 +2011,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             }
 
         except Exception as e:
-            logger.warning(f"⚠️ Tickets email failed (not blocking): {str(e)}")
+            logger.exception(f"⚠️ Tickets email error: {str(e)}")
             import traceback
             traceback.print_exc()
             return {'success': False, 'message': f'Failed to send tickets email: {str(e)}'}
@@ -2115,13 +2177,17 @@ class BookingViewSet(viewsets.ModelViewSet):
                 [booking.customer_email],
             )
             email.attach_alternative(html_content, "text/html")
-            email.send(fail_silently=True)
 
-            logger.info(f"✅ Cancellation email sent to {booking.customer_email}")
-            return {'success': True}
+            ok = _safe_send_email(email, context_label='cancellation')
+
+            if ok:
+                return {'success': True}
+
+            logger.error(f"❌ Cancellation email FAILED for {booking.customer_email}")
+            return {'success': False, 'error': 'SMTP rejected the message'}
 
         except Exception as e:
-            logger.warning(f"⚠️ Cancellation email failed: {str(e)}")
+            logger.exception(f"⚠️ Cancellation email error: {str(e)}")
             return {'success': False, 'error': str(e)}
 
     def _send_refund_email(self, booking):
@@ -2183,13 +2249,17 @@ class BookingViewSet(viewsets.ModelViewSet):
                 [booking.customer_email],
             )
             email.attach_alternative(html_content, "text/html")
-            email.send(fail_silently=True)
 
-            logger.info(f"✅ Refund email sent to {booking.customer_email}")
-            return {'success': True}
+            ok = _safe_send_email(email, context_label='refund')
+
+            if ok:
+                return {'success': True}
+
+            logger.error(f"❌ Refund email FAILED for {booking.customer_email}")
+            return {'success': False, 'error': 'SMTP rejected the message'}
 
         except Exception as e:
-            logger.warning(f"⚠️ Refund email failed: {str(e)}")
+            logger.exception(f"⚠️ Refund email error: {str(e)}")
             return {'success': False, 'error': str(e)}
 
     @action(detail=True, methods=['get'])

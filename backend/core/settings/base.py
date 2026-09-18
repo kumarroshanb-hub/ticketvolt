@@ -279,12 +279,42 @@ WHATSAPP_TICKET_DELIVERY_ENABLED = (
 # ============================================
 # EMAIL
 # ============================================
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
-EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+# Django's default SMTP backend is used for local dev / if you
+# really want SMTP. But on Render's free tier, outbound SMTP is
+# blocked at the network layer (OSError: Network is unreachable).
+#
+# In production, we use Resend's HTTPS API instead — port 443 is
+# always allowed. See backend/ticket_bookings/services/email_backend.py
+#
+# Environment variables:
+#   EMAIL_PROVIDER=resend         -> Use Resend HTTP API (production default)
+#   EMAIL_PROVIDER=smtp (default) -> Use classic SMTP (local dev)
+#
+#   RESEND_API_KEY=re_xxxxxxxx     -> Required for `resend`
+#
+# Shared config used by both:
+#   DEFAULT_FROM_EMAIL
+# ============================================
+
+EMAIL_PROVIDER = os.environ.get('EMAIL_PROVIDER', 'smtp').lower()
+
+if EMAIL_PROVIDER == 'resend':
+    EMAIL_BACKEND = 'ticket_bookings.services.email_backend.ResendEmailBackend'
+    RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+    if not RESEND_API_KEY:
+        raise ImproperlyConfigured(
+            "EMAIL_PROVIDER=resend but RESEND_API_KEY is not set. "
+            "Get one at https://resend.com/api-keys"
+        )
+else:
+    # Classic SMTP (local dev / environments where SMTP is allowed)
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+    EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+
 DEFAULT_FROM_EMAIL = os.environ.get(
     'DEFAULT_FROM_EMAIL', 'TicketVolt <noreply@ticketvolt.com>'
 )

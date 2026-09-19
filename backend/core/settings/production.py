@@ -1,8 +1,21 @@
 # backend/core/settings/production.py
 """
-Production settings - Neon + Cloud services (Render, etc.)
+Production settings - Neon + Tigris Object Storage + Cloud services (Render, etc.)
+
+Media storage:
+  - Event template images and generated tickets are stored on Tigris
+    (S3-compatible object storage).
+  - Tigris was chosen because:
+      • No credit card required to sign up
+      • 5 GB free storage, 10,000 write requests, 100,000 read requests per month
+      • Zero egress fees (free data transfer out)
+      • S3-compatible API (works with django-storages + boto3)
+      • Single global endpoint at https://t3.storage.dev
+  - Render's filesystem is ephemeral, so files written locally are lost on
+    every deploy. Tigris provides persistent storage.
 """
 from .base import *
+import os
 
 
 # ============================================
@@ -119,7 +132,99 @@ CORS_ALLOW_METHODS = [
 # ============================================
 if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
     MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
+
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+
+# ============================================
+# TIGRIS MEDIA STORAGE
+# ============================================
+# Media files (event templates, generated ticket PDFs/PNGs) are stored
+# on Tigris via the S3-compatible API.
+#
+# Required env vars on Render:
+#   TIGRIS_ACCESS_KEY_ID       — Access Key ID (starts with tid_)
+#   TIGRIS_SECRET_ACCESS_KEY   — Secret Access Key (starts with tsec_)
+#   TIGRIS_BUCKET_NAME         — Bucket name
+#
+# Tigris uses a single global endpoint and "auto" region.
+# No region-specific endpoint is needed.
+#
+# If any of the required values are missing, we raise at startup so the
+# deploy fails loudly rather than silently falling back to ephemeral
+# local storage (which would lose files on every redeploy).
+
+TIGRIS_ACCESS_KEY_ID = os.environ.get('TIGRIS_ACCESS_KEY_ID', '').strip()
+TIGRIS_SECRET_ACCESS_KEY = os.environ.get('TIGRIS_SECRET_ACCESS_KEY', '').strip()
+TIGRIS_BUCKET_NAME = os.environ.get('TIGRIS_BUCKET_NAME', '').strip()
+
+_missing_tigris = [
+    name for name, value in [
+        ('TIGRIS_ACCESS_KEY_ID', TIGRIS_ACCESS_KEY_ID),
+        ('TIGRIS_SECRET_ACCESS_KEY', TIGRIS_SECRET_ACCESS_KEY),
+        ('TIGRIS_BUCKET_NAME', TIGRIS_BUCKET_NAME),
+    ] if not value
+]
+
+if _missing_tigris:
+    raise ImproperlyConfigured(
+        "SECURITY: Missing required Tigris env vars: "
+        f"{', '.join(_missing_tigris)}\n"
+        "Get these from https://console.storage.dev\n"
+        "and set them in Render's Environment tab."
+    )
+
+# Tigris uses a single global endpoint and "auto" region.
+TIGRIS_ENDPOINT_URL = 'https://t3.storage.dev'
+TIGRIS_REGION = 'auto'
+
+# Build the base storage options shared by both 'default' and any
+# future aliases.
+_TIGRIS_STORAGE_OPTIONS = {
+    'access_key': TIGRIS_ACCESS_KEY_ID,
+    'secret_key': TIGRIS_SECRET_ACCESS_KEY,
+    'bucket_name': TIGRIS_BUCKET_NAME,
+    'region_name': TIGRIS_REGION,
+    'endpoint_url': TIGRIS_ENDPOINT_URL,
+    'signature_version': 's3v4',
+    'addressing_style': 'virtual',
+    'default_acl': 'public-read',
+    'querystring_auth': False,
+    'file_overwrite': False,
+}
+
+# Media URL — how Django/DRF will construct URLs for media files.
+# Tigris provides a global URL format: https://<bucket>.t3.storage.dev/
+MEDIA_URL = f'https://{TIGRIS_BUCKET_NAME}.t3.storage.dev/'
+
+# Django 4.2+ storage configuration.
+# `default` is used for FileField / ImageField (media files).
+# `staticfiles` continues to use WhiteNoise so static assets ship
+# with the container and don't need Tigris.
+STORAGES = {
+    'default': {
+        'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        'OPTIONS': _TIGRIS_STORAGE_OPTIONS,
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
+
+# Legacy alias for Django < 4.2 code paths (and third-party packages
+# that still read DEFAULT_FILE_STORAGE directly).
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+# Sanity check: make sure django-storages + boto3 are installed.
+try:
+    import storages  # noqa: F401
+    import boto3     # noqa: F401
+except ImportError as exc:
+    raise ImproperlyConfigured(
+        "SECURITY: django-storages and boto3 are required for Tigris storage. "
+        "Add 'django-storages' and 'boto3' to requirements.txt.\n"
+        f"Underlying error: {exc}"
+    )
 
 
 # ============================================
@@ -150,10 +255,33 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
+        # boto3/botocore logs every request at DEBUG. Keep them quiet.
+        'boto3': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'botocore': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        's3transfer': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
 }
 
+
+# ============================================
+# STARTUP BANNER
+# ============================================
 print(
     f"🚀 Using PRODUCTION settings "
-    f"(DB: {os.environ.get('DB_HOST', 'not set')}, DEBUG: {DEBUG})"
+    f"(DB: {os.environ.get('DB_HOST', 'not set')}, "
+    f"DEBUG: {DEBUG}, "
+    f"Tigris bucket: {TIGRIS_BUCKET_NAME}, "
+    f"MEDIA_URL: {MEDIA_URL})"
 )

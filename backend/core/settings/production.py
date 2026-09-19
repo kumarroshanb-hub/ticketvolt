@@ -133,7 +133,9 @@ CORS_ALLOW_METHODS = [
 if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
     MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# NOTE: STATICFILES_STORAGE is intentionally NOT set here.
+# It is configured via STORAGES['staticfiles'] below.
+# Setting both triggers ImproperlyConfigured on Django 4.2+.
 
 
 # ============================================

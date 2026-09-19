@@ -211,10 +211,6 @@ STORAGES = {
     },
 }
 
-# Legacy alias for Django < 4.2 code paths (and third-party packages
-# that still read DEFAULT_FILE_STORAGE directly).
-DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-
 # Sanity check: make sure django-storages + boto3 are installed.
 try:
     import storages  # noqa: F401

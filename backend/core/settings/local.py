@@ -115,9 +115,16 @@ CORS_ALLOW_CREDENTIALS = True
 # ============================================
 # STATIC FILES — no WhiteNoise locally
 # ============================================
-STATICFILES_STORAGE = (
-    'django.contrib.staticfiles.storage.StaticFilesStorage'
-)
+# Do NOT set STATICFILES_STORAGE. Django 4.2+ forbids having both
+# STATICFILES_STORAGE and STORAGES, and production sets STORAGES.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
 
 
 # ============================================

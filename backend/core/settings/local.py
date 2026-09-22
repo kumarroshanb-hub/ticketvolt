@@ -3,8 +3,9 @@
 Local development settings — Docker PostgreSQL.
 
 Notes:
-  • SECRET_KEY and JWT_SIGNING_KEY are REQUIRED in EVERY environment,
-    including local. Provide them via backend/.env.local.
+  • SECRET_KEY, JWT_SIGNING_KEY, and TICKET_SIGNING_SECRET are REQUIRED
+    in EVERY environment, including local. Provide them via
+    backend/.env.local.
 
   • This file intentionally does NOT provide hardcoded fallbacks.
     A missing env var must fail loudly at startup so the same code path
@@ -13,9 +14,11 @@ Notes:
   • To set up a fresh local environment:
       cd backend
       cp .env.local.example .env.local
-      # Then paste generated values for SECRET_KEY and JWT_SIGNING_KEY
+      # Then paste generated values for SECRET_KEY, JWT_SIGNING_KEY, and
+      # TICKET_SIGNING_SECRET:
       #   python -c "from django.core.management.utils import get_random_secret_key as k; print(k())"
       #   openssl rand -base64 64
+      #   openssl rand -base64 48
 
   • ALLOWED_HOSTS is explicit. Add extra hosts via the env var.
 """
@@ -31,27 +34,24 @@ DEBUG = True
 
 
 # ============================================
-# 🔐 SECRET_KEY / JWT_SIGNING_KEY
+# 🔐 SECRET_KEY / JWT_SIGNING_KEY / TICKET_SIGNING_SECRET
 # ============================================
-# base.py already requires these env vars and enforces they are ≥ 32
-# chars and different from each other. We deliberately do NOT provide
-# fallback constants here.
+# base.py already requires these env vars and enforces they are ≥ the
+# min length and different from each other. We deliberately do NOT
+# provide fallback constants here.
 #
 # If you're seeing an ImproperlyConfigured error at startup, that is
-# BY DESIGN. Set the env vars in backend/.env.local (which is gitignored).
+# BY DESIGN. Set the env vars in backend/.env.local (gitignored).
 
 
 # ============================================
 # HOSTS — explicit, NOT wildcard
 # ============================================
-# Local dev hosts only. Add more via ALLOWED_HOSTS_EXTRA if needed
-# (e.g. your LAN IP for testing on a physical phone).
 _allowed = [
     'localhost',
     '127.0.0.1',
     '0.0.0.0',
     '[::1]',
-    # Docker-internal hostnames
     'backend',
     'host.docker.internal',
 ]
@@ -66,8 +66,6 @@ ALLOWED_HOSTS = _allowed
 # ============================================
 # LOCAL DOCKER DATABASE
 # ============================================
-# All DB values are REQUIRED from the env file. No defaults for the
-# password (previous fallback 'ticketvolt123' is gone).
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -90,9 +88,6 @@ if not DATABASES['default']['PASSWORD']:
 # ============================================
 # CORS — allowlist based, NOT wildcard
 # ============================================
-# Default to the standard CRA dev origins. To allow all (not
-# recommended, even locally), set CORS_ALLOW_ALL_ORIGINS=True in
-# your .env.local explicitly.
 _cors_defaults = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
@@ -106,17 +101,13 @@ if _cors_env:
 else:
     CORS_ALLOWED_ORIGINS = _cors_defaults
 
-# Only allow-all if the developer explicitly opts in via env.
 CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'False') == 'True'
-
 CORS_ALLOW_CREDENTIALS = True
 
 
 # ============================================
 # STATIC FILES — no WhiteNoise locally
 # ============================================
-# Do NOT set STATICFILES_STORAGE. Django 4.2+ forbids having both
-# STATICFILES_STORAGE and STORAGES, and production sets STORAGES.
 STORAGES = {
     'default': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',
@@ -130,7 +121,6 @@ STORAGES = {
 # ============================================
 # EMAIL — print to console locally (opt-in)
 # ============================================
-# Uncomment to test emails without sending:
 # EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 
@@ -140,6 +130,10 @@ STORAGES = {
 print("🔧 Using LOCAL settings (Docker PostgreSQL)")
 print(f"🔑 SECRET_KEY length: {len(SECRET_KEY)}")
 print(f"🔑 JWT_SIGNING_KEY length: {len(JWT_SIGNING_KEY)}")
-print(f"🔐 Keys are independent: {SECRET_KEY != JWT_SIGNING_KEY}")
+print(f"🔑 TICKET_SIGNING_SECRET length: {len(TICKET_SIGNING_SECRET)}")
+print(
+    "🔐 All three secrets are independent: "
+    f"{len({SECRET_KEY, JWT_SIGNING_KEY, TICKET_SIGNING_SECRET}) == 3}"
+)
 print(f"🌐 ALLOWED_HOSTS: {ALLOWED_HOSTS}")
 print(f"🌐 CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")

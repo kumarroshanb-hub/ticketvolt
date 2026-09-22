@@ -26,6 +26,7 @@ import TicketView from './pages/Tickets/TicketView';
 import Unauthorized from './pages/Unauthorized/Unauthorized';
 import Register from './pages/Register/Register';
 import Users from './pages/Users/Users';
+import Profile from './pages/Profile'; // ✅ barrel import (Profile/index.js)
 //import Organizers from './pages/Organizer/Organizers';
 import { ROLES } from './constants';
 
@@ -174,6 +175,11 @@ const AppRoutes = () => {
                         <Settings />
                     </RoleBasedRoute>
                 } />
+                
+                {/* ============================================
+                    PROFILE - Everyone can access (own profile)
+                ============================================ */}
+                <Route path="profile" element={<Profile />} />
                 
                 {/* ============================================
                     TICKET VIEW - Everyone can access

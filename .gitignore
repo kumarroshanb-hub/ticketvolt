@@ -41,3 +41,5 @@ baileys-gateway/sessions/*.json
 
 #codebase dump
 complete_codebase*.env*
+
+frontend/build/

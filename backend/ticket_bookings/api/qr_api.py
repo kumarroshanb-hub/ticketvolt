@@ -1,86 +1,81 @@
-# ticket_bookings/api/qr_api.py
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from django.http import HttpResponse, FileResponse
-from ticket_bookings.models import Ticket
-from ticket_bookings.services.qr_service import QRCodeService
-from io import BytesIO
-import qrcode
+# backend/ticket_bookings/api/qr_api.py
 import json
+from io import BytesIO
+
+import qrcode
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from ticket_bookings.models import Ticket
+from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
+from ticket_bookings.services.qr_service import QRCodeService
+
 
 class QRCodeDownloadView(APIView):
+    """
+    Download a ticket's QR as a PNG attachment.
+
+    Uses the CANONICAL payload builder so the downloaded PNG is byte-for-byte
+    consistent with what the scanner expects.
+    """
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request, ticket_id):
-        """Download QR code as image file"""
         ticket = get_object_or_404(Ticket, id=ticket_id)
-        
-        # Generate QR code data
-        qr_data = {
-            'ticket_id': str(ticket.id),
-            'code': ticket.unique_code,
-            'event': ticket.event.title if ticket.event else 'Event',
-            'attendee': ticket.attendee_name or 'Guest',
-        }
-        
-        # Create QR code
+
+        payload = serialise_ticket_qr_payload(ticket, include_ids=True)
+
         qr = qrcode.QRCode(
-            version=1,
+            version=None,
             error_correction=qrcode.constants.ERROR_CORRECT_H,
             box_size=10,
             border=4,
         )
-        qr.add_data(json.dumps(qr_data))
+        qr.add_data(payload)
         qr.make(fit=True)
-        
-        # Create image
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Save to bytes
+        img = qr.make_image(fill_color='black', back_color='white')
+
         buffered = BytesIO()
-        img.save(buffered, format="PNG")
+        img.save(buffered, format='PNG')
         buffered.seek(0)
-        
-        # Return as file download
+
         response = FileResponse(
             buffered,
             content_type='image/png',
-            filename=f"ticket_{ticket.unique_code}.png"
+            filename=f'ticket_{ticket.unique_code}.png',
         )
-        response['Content-Disposition'] = f'attachment; filename="ticket_{ticket.unique_code}.png"'
+        response['Content-Disposition'] = (
+            f'attachment; filename="ticket_{ticket.unique_code}.png"'
+        )
         return response
 
+
 class QRCodeImageView(APIView):
+    """
+    Return a URL pointing to a stored PNG of the ticket's QR.
+
+    NOTE: This endpoint writes to object storage (one object per unique ticket,
+    deterministically named). It does NOT cache the URL on the Ticket model —
+    the model has no such field, and adding one would require a migration for
+    a value that is already derivable. Storage `exists()` + `url()` is cheap.
+    """
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request, ticket_id):
-        """Get QR code image URL for WhatsApp"""
         ticket = get_object_or_404(Ticket, id=ticket_id)
-        
-        # Check if QR image URL exists
-        if ticket.qr_image_url:
-            return Response({
-                'image_url': ticket.qr_image_url,
-                'ticket_code': ticket.unique_code
-            })
-        
-        # Generate QR image file
+
         qr_result = QRCodeService.generate_qr_image_file(ticket)
-        
-        if qr_result:
-            # Save the URL to the ticket
-            ticket.qr_image_url = qr_result['url']
-            ticket.save()
-            
-            return Response({
-                'image_url': qr_result['url'],
-                'ticket_code': ticket.unique_code,
-                'file_path': qr_result['file_path']
-            })
-        
-        return Response(
-            {'error': 'Failed to generate QR code'},
-            status=500
-        )
+        if not qr_result:
+            return Response(
+                {'error': 'Failed to generate QR code'},
+                status=500,
+            )
+
+        return Response({
+            'image_url': qr_result['url'],
+            'ticket_code': ticket.unique_code,
+            'file_path': qr_result['file_path'],
+        })

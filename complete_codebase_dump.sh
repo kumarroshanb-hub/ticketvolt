@@ -1,13 +1,21 @@
 #!/bin/bash
 
 # ============================================================
-# TicketVolt — Complete Codebase Dump (fast + hang-proof)
-# Compatible with macOS default Bash 3.2 (no mapfile needed)
-# Excludes: all .env files, celerybeat-schedule, previous dump
-#           files, poison sentinel, .git and stale Git backup
-#           directories.
-# NOTE: baileys-gateway/ IS INCLUDED. Its node_modules and
-#       sessions/ dirs are still pruned for size and safety.
+# TicketVolt — Complete Codebase Dump (v3 — hardened)
+# ------------------------------------------------------------
+# Fixes over v2:
+#   1. Atomic output: writes to temp file, moves on success.
+#      A crash/SIGPIPE can no longer leave a truncated dump.
+#   2. Line-anchored redaction. No more corrupting JSON like
+#      {"PASSWORD": "x"} into {"PASSWORD" = "x"}.
+#   3. Adaptive per-file timeout (8–60s based on file size).
+#      Large files no longer get silently skipped.
+#   4. `count_matches()` helper — `grep -c` returning 1 on
+#      zero matches no longer prints "true" in the summary.
+#   5. `-print0` + `read -d ''` — filenames with spaces/newlines
+#      no longer break the file list.
+#   6. Files >5MB skip redaction (emitted raw) instead of timing out.
+#   7. Leak scan properly wired and aborts with exit code 2.
 # ============================================================
 
 set -o pipefail
@@ -24,46 +32,48 @@ DIM='\033[2m'
 NC='\033[0m'
 
 # ---------- Config ----------
-PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-8}"
+PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-20}"          # baseline (adaptive on top)
+MAX_FILE_BYTES="${MAX_FILE_BYTES:-5242880}"         # 5 MB — skip sed above this
+MIN_TIMEOUT=8
+MAX_TIMEOUT=60
 
 # ---------- Output file ----------
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTPUT_FILE="complete_codebase_dump_${TIMESTAMP}.txt"
-
-# ---------- File marker ----------
 FILE_MARKER='@@@FILE@@@'
 
-# ---------- Poison list ----------
+# ---------- Sentinel files ----------
 POISON_FILE=".dump_poison_files"
+LEAK_REPORT=".dump_leak_report"
 touch "$POISON_FILE" 2>/dev/null || true
 
 # ---------- Exclusions ----------
-# Explicit enumeration — no globbing.
-# ✅ baileys-gateway is NO LONGER excluded here.
-#    Its node_modules/ and sessions/ subdirs are still pruned below.
 EXCLUDE_DIR_RE='(^|/)(node_modules|__pycache__|\.git|\.git-projects-old|\.expo|\.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|\.metro|\.gradle|\.kotlin|\.cache|\.vscode|\.idea|\.npm|\.yarn|venv|env|\.venv|\.tox|\.mypy_cache|\.pytest_cache|Pods|\.next|\.nuxt|\.turbo|\.parcel-cache|\.serverless|\.terraform|\.husky|_build|target|vendor)(/|$)'
 
 EXCLUDE_FILE_RE='\.(pyc|pyo|so|dylib|dll|exe|log|lock|map|min\.js|min\.css|png|jpg|jpeg|gif|ico|bmp|webp|tiff|pdf|zip|tar|gz|bz2|xz|7z|rar|db|sqlite|sqlite3|woff|woff2|ttf|otf|eot|mp3|mp4|mov|avi|webm|DS_Store|bak|swp|swo)$'
 
-EXCLUDE_NAME_RE='(\.DS_Store|Thumbs\.db|celerybeat-schedule|\.dump_poison_files|complete_codebase_dump_.*\.txt)$'
+EXCLUDE_NAME_RE='(\.DS_Store|Thumbs\.db|celerybeat-schedule|\.dump_poison_files|\.dump_leak_report|complete_codebase_dump_.*\.txt)$'
 
 EXCLUDE_ENV_RE='(^|/)\.env(\..*)?$'
 
-SECRETS_TO_REDACT_RE='(SECRET_KEY|PASSWORD|ADMIN_TOKEN|API_KEY|DJANGO_SUPERUSER_PASSWORD|POSTGRES_PASSWORD|JWT_SECRET|JWT_SIGNING_KEY|AWS_SECRET|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|BOT_PASSWORD)'
+# ---------- Secrets to redact ----------
+# Only match TOP-LEVEL assignments (line start, optional whitespace + export).
+# This prevents corruption of JSON like: {"PASSWORD": "hunter2"}
+SECRETS_KEYS_RE='SECRET_KEY|PASSWORD|ADMIN_TOKEN|API_KEY|DJANGO_SUPERUSER_PASSWORD|POSTGRES_PASSWORD|JWT_SECRET|JWT_SIGNING_KEY|AWS_SECRET|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|BOT_PASSWORD'
+
+REDACT_SED_DQ="s/^([[:space:]]*(export[[:space:]]+)?(${SECRETS_KEYS_RE})[A-Z0-9_]*[[:space:]]*)=[[:space:]]*\"[^\"]*\"/\\1= \"[REDACTED]\"/g"
+REDACT_SED_SQ="s/^([[:space:]]*(export[[:space:]]+)?(${SECRETS_KEYS_RE})[A-Z0-9_]*[[:space:]]*)=[[:space:]]*'[^']*'/\\1= '[REDACTED]'/g"
 
 # ---------- find -prune expression ----------
-# ✅ `-name baileys-gateway` removed — that dir is now included.
-#    `-name sessions` and `-name node_modules` remain so the
-#    Baileys session JSONs and deps are still skipped.
 PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name build -o -name dist -o -name out -o -name coverage -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .gradle -o -name .kotlin -o -name .cache -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name _build -o -name target -o -name vendor ) -prune'
 
 # ---------- Banner ----------
 clear
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   📦  TicketVolt — Complete Codebase Dump (fast)             ║${NC}"
-echo -e "${BLUE}║       per-file timeout: ${PER_FILE_TIMEOUT}s                              ║${NC}"
-echo -e "${BLUE}║       find: -prune (.git, node_modules, build, …)            ║${NC}"
-echo -e "${BLUE}║       INCLUDES: baileys-gateway/ (source only)               ║${NC}"
+echo -e "${BLUE}║   📦  TicketVolt — Complete Codebase Dump (v3 hardened)      ║${NC}"
+echo -e "${BLUE}║       adaptive timeout: ${MIN_TIMEOUT}-${MAX_TIMEOUT}s per file                     ║${NC}"
+echo -e "${BLUE}║       atomic output: no truncation on crash                  ║${NC}"
+echo -e "${BLUE}║       JSON-safe redaction + leak scan                        ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -78,13 +88,13 @@ PROJECT_NAME="$(basename "$PROJECT_ROOT")"
 echo -e "${CYAN}Project root:${NC} $PROJECT_ROOT"
 echo -e "${CYAN}Output file:${NC}  $OUTPUT_FILE"
 
-HAS_GTIMEOUT=0
 if command -v gtimeout >/dev/null 2>&1; then
     HAS_GTIMEOUT=1
     echo -e "${CYAN}Timeout bin:${NC}  gtimeout (fast)"
 else
-    echo -e "${CYAN}Timeout bin:${NC}  built-in poll wrapper (install coreutils for speed)"
-    echo -e "${DIM}               brew install coreutils${NC}"
+    HAS_GTIMEOUT=0
+    echo -e "${CYAN}Timeout bin:${NC}  built-in poll wrapper"
+    echo -e "${DIM}               brew install coreutils  (for faster timeouts)${NC}"
 fi
 
 POISON_COUNT=0
@@ -92,20 +102,25 @@ if [ -s "$POISON_FILE" ]; then
     POISON_COUNT=$(grep -c . "$POISON_FILE" || true)
 fi
 if [ "$POISON_COUNT" -gt 0 ]; then
-    echo -e "${CYAN}Poison files:${NC} ${POISON_COUNT} (will be skipped; rm .dump_poison_files to retry)"
+    echo -e "${CYAN}Poison files:${NC} ${POISON_COUNT} (skipped; rm .dump_poison_files to retry)"
 fi
 echo ""
 
-# ---------- Helpers ----------
-safe_grep_count() {
+# ============================================================
+# HELPERS
+# ============================================================
+
+# grep -c returning 1 on zero matches — always return a numeric count.
+count_matches() {
+    local pattern="$1" file="$2"
     local n
-    n=$(grep -c "$1" "$2" 2>/dev/null) || n=0
-    echo "$n"
+    n=$(grep -c "$pattern" "$file" 2>/dev/null) || n=0
+    printf '%s' "$n"
 }
 
+# Run a command with a hard timeout, preserving stdout on success.
 run_read_timeout() {
-    local secs="$1"
-    shift
+    local secs="$1"; shift
     local out
     out=$(mktemp -t run_out.XXXXXX)
     local rc=""
@@ -123,7 +138,6 @@ run_read_timeout() {
         "$@" </dev/null > "$out" 2>/dev/null
     ) &
     local pid=$!
-
     local waited=0
     local limit=$((secs * 5))
 
@@ -152,6 +166,19 @@ run_read_timeout() {
     return $rc
 }
 
+# Scale timeout by file size: 8s base + 1s per 100KB, capped.
+adaptive_timeout() {
+    local file="$1"
+    local size_kb
+    size_kb=$(du -k "$file" 2>/dev/null | cut -f1)
+    size_kb=${size_kb:-1}
+    local extra=$((size_kb / 100))
+    local t=$((MIN_TIMEOUT + extra))
+    [ "$t" -gt "$MAX_TIMEOUT" ] && t=$MAX_TIMEOUT
+    echo "$t"
+}
+
+# Emit file content with line-anchored redaction.
 dump_file_content() {
     local file_path="$1"
 
@@ -159,18 +186,32 @@ dump_file_content() {
         return 0
     fi
 
+    # Binary sniff
     local head_bytes
     head_bytes=$(head -c 512 "$file_path" 2>/dev/null | LC_ALL=C tr -d '\0')
     if [ -z "$head_bytes" ]; then
         return 1
     fi
 
-    run_read_timeout "$PER_FILE_TIMEOUT" \
-        sed -E "s/(${SECRETS_TO_REDACT_RE})[[:space:]]*=[[:space:]]*['\"]?[^'\"[:space:]]+['\"]?/\1 = [REDACTED]/g" \
-        "$file_path"
+    local size_bytes
+    size_bytes=$(wc -c < "$file_path" 2>/dev/null | xargs)
+    size_bytes=${size_bytes:-0}
+
+    # Huge file: emit raw rather than time out.
+    if [ "$size_bytes" -gt "$MAX_FILE_BYTES" ]; then
+        cat "$file_path"
+        return 0
+    fi
+
+    local t
+    t=$(adaptive_timeout "$file_path")
+
+    run_read_timeout "$t" \
+        sed -E -e "$REDACT_SED_DQ" -e "$REDACT_SED_SQ" "$file_path"
     return $?
 }
 
+# Emit a full file block with marker + metadata.
 dump_file_to_stdout() {
     local file_path="$1"
     local description="$2"
@@ -232,28 +273,108 @@ dump_file_to_stdout() {
     echo ""
 }
 
-# ---------- Precompute file list ----------
-echo -e "${YELLOW}🔍 Scanning project for source files...${NC}"
-SCAN_START=$(date +%s)
+# ============================================================
+# LEAK SCAN
+# ============================================================
+scan_for_leaks() {
+    local dump_file="$1"
+    local findings=0
 
+    : > "$LEAK_REPORT"
+
+    # 1. Known API key prefixes
+    local prefix_re='(tid_[A-Za-z0-9]{8,}|tsec_[A-Za-z0-9]{8,}|re_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|sk_live_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9]{20,}|pk_live_[A-Za-z0-9]{20,}|pk_test_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|ghs_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[bps]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})'
+
+    local prefix_hits
+    prefix_hits=$(grep -nE "$prefix_re" "$dump_file" 2>/dev/null || true)
+    if [ -n "$prefix_hits" ]; then
+        {
+            echo "================================================================"
+            echo "LEAK: known API key prefixes found in dump"
+            echo "================================================================"
+            echo "$prefix_hits" | head -50
+            echo ""
+        } >> "$LEAK_REPORT"
+        findings=$((findings + $(printf '%s\n' "$prefix_hits" | grep -c .)))
+    fi
+
+    # 2. High-entropy strings
+    local entropy_hits
+    entropy_hits=$(awk '
+        {
+            line = $0
+            gsub(/\[REDACTED\]/, "", line)
+            n = split(line, tokens, /[^A-Za-z0-9+\/=_-]+/)
+            for (i = 1; i <= n; i++) {
+                t = tokens[i]
+                L = length(t)
+                if (L < 40) continue
+                if (L == 40 && t ~ /^[0-9a-fA-F]+$/) continue
+                if (L == 64 && t ~ /^[0-9a-fA-F]+$/) continue
+                if (t ~ /^iVBOR/) continue
+                if (t ~ /^\/9j\//) continue
+                if (t ~ /^R0lGOD/) continue
+                if (t ~ /^sha(1|256|384|512)-/) continue
+                has_digit = (t ~ /[0-9]/)
+                has_upper = (t ~ /[A-Z]/)
+                has_lower = (t ~ /[a-z]/)
+                if (!(has_digit && has_upper && has_lower)) continue
+                print FILENAME ":" NR ": " t
+            }
+        }
+    ' "$dump_file" 2>/dev/null || true)
+
+    if [ -n "$entropy_hits" ]; then
+        {
+            echo "================================================================"
+            echo "LEAK: high-entropy strings found in dump (first 50)"
+            echo "================================================================"
+            echo "$entropy_hits" | head -50
+            echo ""
+        } >> "$LEAK_REPORT"
+        findings=$((findings + $(printf '%s\n' "$entropy_hits" | grep -c .)))
+    fi
+
+    echo "$findings"
+}
+
+# ============================================================
+# PREPARE TEMP FILES
+# ============================================================
 TMP_LIST="$(mktemp -t dump_filelist.XXXXXX)"
 TOP_DIRS_FILE="$(mktemp -t dump_topdirs.XXXXXX)"
 ROOT_FILES_FILE="$(mktemp -t dump_rootfiles.XXXXXX)"
-trap 'rm -f "$TMP_LIST" "$TOP_DIRS_FILE" "$ROOT_FILES_FILE"' EXIT
+EXPECTED_TMP="$(mktemp -t dump_expected.XXXXXX)"
+ACTUAL_TMP="$(mktemp -t dump_actual.XXXXXX)"
+MISSING_TMP="$(mktemp -t dump_missing.XXXXXX)"
+TOPLEVEL_BUCKETS_FILE="$(mktemp -t dump_buckets.XXXXXX)"
+TMP_OUTPUT="$(mktemp -t dump_output.XXXXXX)"
 
-find "$PROJECT_ROOT" \
-    $PRUNE_EXPR -o \
-    -type f -print 2>/dev/null </dev/null \
-    | while IFS= read -r p; do
-        [ -L "$p" ] && continue
-        [ -f "$p" ] || continue
-        [ "$p" = "$PROJECT_ROOT/$OUTPUT_FILE" ] && continue
-        [ "$p" = "$PROJECT_ROOT/$POISON_FILE" ] && continue
-        echo "$p" | grep -Eq "$EXCLUDE_FILE_RE" && continue
-        echo "$p" | grep -Eq "$EXCLUDE_NAME_RE" && continue
-        echo "$p" | grep -Eq "$EXCLUDE_ENV_RE"  && continue
-        printf '%s\n' "$p"
-      done \
+cleanup() {
+    rm -f "$TMP_LIST" "$TOP_DIRS_FILE" "$ROOT_FILES_FILE" \
+          "$EXPECTED_TMP" "$ACTUAL_TMP" "$MISSING_TMP" \
+          "$TOPLEVEL_BUCKETS_FILE" "$TMP_OUTPUT"
+}
+trap cleanup EXIT
+
+# ============================================================
+# BUILD FILE LIST
+# ============================================================
+echo -e "${YELLOW}🔍 Scanning project for source files...${NC}"
+SCAN_START=$(date +%s)
+
+: > "$TMP_LIST"
+while IFS= read -r -d '' p; do
+    [ -L "$p" ] && continue
+    [ -f "$p" ] || continue
+    [ "$p" = "$PROJECT_ROOT/$OUTPUT_FILE" ] && continue
+    [ "$p" = "$PROJECT_ROOT/$POISON_FILE" ] && continue
+    [ "$p" = "$PROJECT_ROOT/$LEAK_REPORT" ] && continue
+    echo "$p" | grep -Eq "$EXCLUDE_FILE_RE" && continue
+    echo "$p" | grep -Eq "$EXCLUDE_NAME_RE" && continue
+    echo "$p" | grep -Eq "$EXCLUDE_ENV_RE"  && continue
+    printf '%s\n' "$p"
+done < <(find "$PROJECT_ROOT" $PRUNE_EXPR -o -type f -print0 2>/dev/null </dev/null) \
     | LC_ALL=C sort > "$TMP_LIST"
 
 SCAN_END=$(date +%s)
@@ -263,15 +384,36 @@ TOTAL_FILES=$(wc -l < "$TMP_LIST" | xargs)
 
 if [ "$TOTAL_FILES" -eq 0 ]; then
     echo -e "${RED}❌ No source files found. Check your project root.${NC}"
-    echo -e "${YELLOW}Debug: running find -prune directly...${NC}"
-    find "$PROJECT_ROOT" $PRUNE_EXPR -o -type f -print 2>&1 | head -20
     exit 1
 fi
 
-echo -e "${GREEN}✅ Found ${BOLD}${TOTAL_FILES}${NC}${GREEN} source files to dump (scan took ${SCAN_SECS}s)${NC}"
+echo -e "${GREEN}✅ Found ${BOLD}${TOTAL_FILES}${NC}${GREEN} source files (scan took ${SCAN_SECS}s)${NC}"
 echo ""
 
-# ---------- Progress bar ----------
+# ============================================================
+# TOP-LEVEL DIRS + ROOT FILES
+# ============================================================
+find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type d -not -name ".*" 2>/dev/null </dev/null \
+    | grep -Ev "$EXCLUDE_DIR_RE" \
+    | LC_ALL=C sort > "$TOP_DIRS_FILE"
+
+: > "$ROOT_FILES_FILE"
+while IFS= read -r -d '' p; do
+    [ -L "$p" ] && continue
+    [ -f "$p" ] || continue
+    [ "$p" = "$PROJECT_ROOT/$OUTPUT_FILE" ] && continue
+    [ "$p" = "$PROJECT_ROOT/$POISON_FILE" ] && continue
+    [ "$p" = "$PROJECT_ROOT/$LEAK_REPORT" ] && continue
+    echo "$p" | grep -Eq "$EXCLUDE_FILE_RE" && continue
+    echo "$p" | grep -Eq "$EXCLUDE_NAME_RE" && continue
+    echo "$p" | grep -Eq "$EXCLUDE_ENV_RE"  && continue
+    printf '%s\n' "$p"
+done < <(find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null </dev/null) \
+    | LC_ALL=C sort > "$ROOT_FILES_FILE"
+
+# ============================================================
+# PROGRESS BAR
+# ============================================================
 CURRENT=0
 START_TS=$(date +%s)
 
@@ -297,26 +439,8 @@ render_progress() {
         "$CURRENT" "$TOTAL_FILES" "$bar" "$pct" "$elapsed" "$rel_path" >&2
 }
 
-# ---------- Top-level dirs and root files ----------
-find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type d -not -name ".*" 2>/dev/null </dev/null \
-    | grep -Ev "$EXCLUDE_DIR_RE" \
-    | LC_ALL=C sort > "$TOP_DIRS_FILE"
-
-find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type f 2>/dev/null </dev/null \
-    | while IFS= read -r p; do
-        [ -L "$p" ] && continue
-        [ -f "$p" ] || continue
-        [ "$p" = "$PROJECT_ROOT/$OUTPUT_FILE" ] && continue
-        [ "$p" = "$PROJECT_ROOT/$POISON_FILE" ] && continue
-        echo "$p" | grep -Eq "$EXCLUDE_FILE_RE" && continue
-        echo "$p" | grep -Eq "$EXCLUDE_NAME_RE" && continue
-        echo "$p" | grep -Eq "$EXCLUDE_ENV_RE"  && continue
-        printf '%s\n' "$p"
-      done \
-    | LC_ALL=C sort > "$ROOT_FILES_FILE"
-
 # ============================================================
-# BEGIN DUMP
+# BEGIN DUMP (atomic — write to TMP_OUTPUT, then mv)
 # ============================================================
 {
     # ---------- 0. HEADER ----------
@@ -330,9 +454,12 @@ Host:          $(hostname 2>/dev/null || echo unknown)
 Project root:  $PROJECT_ROOT
 Total files:   $TOTAL_FILES
 Scan time:     ${SCAN_SECS}s
-Per-file TO:   ${PER_FILE_TIMEOUT}s
+Per-file TO:   adaptive (${MIN_TIMEOUT}-${MAX_TIMEOUT}s, scale by size)
+Redaction:     v3 (line-anchored, JSON-safe)
+Leak scan:     enabled (aborts on prefix/entropy hit)
 Excluded:      all .env files, celerybeat-schedule, previous dump files,
-               poison sentinel, .git, .git-projects-old, sessions/, node_modules/
+               poison sentinel, leak report, .git, .git-projects-old,
+               sessions/, node_modules/
 Included:      baileys-gateway/ source (excl. node_modules/ and sessions/)
 Pruned dirs:   .git, .git-projects-old, node_modules, build, dist, sessions, …
 ================================================================================
@@ -370,9 +497,7 @@ SECTION
     echo "Full directory tree (excluding build artifacts, deps, binaries, .env files):"
     echo ""
 
-    # ✅ baileys-gateway removed from TREE_EXCLUDE so the tree renderer
-    #    shows the directory. node_modules and sessions are still hidden.
-    TREE_EXCLUDE='node_modules|__pycache__|.git|.git-projects-old|.expo|.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|.metro|.gradle|.kotlin|.cache|.vscode|.idea|.npm|.yarn|venv|env|.venv|.tox|.mypy_cache|.pytest_cache|Pods|.next|.nuxt|.turbo|.parcel-cache|.serverless|.terraform|.husky|_build|target|vendor|.env|celerybeat-schedule|complete_codebase_dump_*.txt'
+    TREE_EXCLUDE='node_modules|__pycache__|.git|.git-projects-old|.expo|.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|.metro|.gradle|.kotlin|.cache|.vscode|.idea|.npm|.yarn|venv|env|.venv|.tox|.mypy_cache|.pytest_cache|Pods|.next|.nuxt|.turbo|.parcel-cache|.serverless|.terraform|.husky|_build|target|vendor|.env|celerybeat-schedule|complete_codebase_dump_*.txt|.dump_leak_report'
 
     if command -v tree &>/dev/null; then
         if [ "$HAS_GTIMEOUT" = "1" ]; then
@@ -513,7 +638,11 @@ SECTION
 Each file begins with:
     @@@FILE@@@ <relative/path>
 
-If a file cannot be read within the per-file timeout, its contents are
+Redaction v3: line-anchored. Only literal string assignments at the
+beginning of a line are redacted. JSON like {"PASSWORD": "x"} is NOT
+matched (avoids source corruption).
+
+If a file cannot be read within its adaptive timeout, its contents are
 replaced with a "[file read timed out]" placeholder and the dump continues.
 Files that time out are recorded in .dump_poison_files and skipped on
 subsequent runs. Delete that file to force a retry of all files.
@@ -597,25 +726,60 @@ Project root:  $PROJECT_ROOT
 Output file:   $OUTPUT_FILE
 Total files:   $TOTAL_FILES
 Scan time:     ${SCAN_SECS}s
-Per-file TO:   ${PER_FILE_TIMEOUT}s
+Per-file TO:   adaptive (${MIN_TIMEOUT}-${MAX_TIMEOUT}s)
 
 ================================================================================
 FOOTER
 
-} > "$OUTPUT_FILE"
+} > "$TMP_OUTPUT"
 
 # ============================================================
-# FINISH
+# ATOMIC MOVE — the file can no longer be truncated
 # ============================================================
+if [ ! -s "$TMP_OUTPUT" ]; then
+    echo -e "${RED}❌ Dump produced empty output — aborting.${NC}" >&2
+    exit 1
+fi
+mv "$TMP_OUTPUT" "$OUTPUT_FILE"
+
 END_TS=$(date +%s)
 ELAPSED=$((END_TS - START_TS))
 
-# ---------- Robust marker counting via set intersection ----------
-EXPECTED_TMP=$(mktemp -t dump_expected.XXXXXX)
-ACTUAL_TMP=$(mktemp -t dump_actual.XXXXXX)
-MISSING_TMP=$(mktemp -t dump_missing.XXXXXX)
-trap 'rm -f "$TMP_LIST" "$TOP_DIRS_FILE" "$ROOT_FILES_FILE" "$EXPECTED_TMP" "$ACTUAL_TMP" "$MISSING_TMP"' EXIT
+# ============================================================
+# LEAK SCAN — hard failure
+# ============================================================
+echo "" >&2
+echo -e "${YELLOW}🔎 Scanning dump for leaked secrets...${NC}" >&2
+LEAK_COUNT=$(scan_for_leaks "$OUTPUT_FILE" | tr -d '[:space:]')
+[ -z "$LEAK_COUNT" ] && LEAK_COUNT=0
 
+if [ "$LEAK_COUNT" -gt 0 ] 2>/dev/null; then
+    echo "" >&2
+    echo -e "${RED}╔══════════════════════════════════════════════════════════════╗${NC}" >&2
+    echo -e "${RED}║   ❌  LEAK DETECTED — DUMP ABORTED                           ║${NC}" >&2
+    echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}" >&2
+    echo "" >&2
+    echo -e "${RED}${LEAK_COUNT} suspicious string(s) found.${NC}" >&2
+    echo -e "${RED}Report:${NC} $(pwd)/${LEAK_REPORT}" >&2
+    echo "" >&2
+    echo -e "${YELLOW}First 20 hits:${NC}" >&2
+    head -20 "$LEAK_REPORT" | sed 's/^/      /' >&2
+    echo "" >&2
+    echo -e "${YELLOW}Action required:${NC}" >&2
+    echo -e "  1. Inspect ${LEAK_REPORT}" >&2
+    echo -e "  2. Rotate any real secrets that were exposed" >&2
+    echo -e "  3. Tighten SECRETS_KEYS_RE or add exclusions to scan_for_leaks()" >&2
+    echo -e "  4. Delete the leaked dump file: ${OUTPUT_FILE}" >&2
+    echo "" >&2
+    exit 2
+fi
+
+echo -e "${GREEN}✅ No leaks detected.${NC}" >&2
+echo "" >&2
+
+# ============================================================
+# STATISTICS (set-intersection, no more "true" counts)
+# ============================================================
 sed "s|^${PROJECT_ROOT}/||" "$TMP_LIST" | LC_ALL=C sort -u > "$EXPECTED_TMP"
 
 grep "^${FILE_MARKER} " "$OUTPUT_FILE" 2>/dev/null \
@@ -625,23 +789,21 @@ grep "^${FILE_MARKER} " "$OUTPUT_FILE" 2>/dev/null \
 TOTAL_MARKERS=$(LC_ALL=C comm -12 "$EXPECTED_TMP" "$ACTUAL_TMP" | wc -l | xargs)
 
 LC_ALL=C comm -23 "$EXPECTED_TMP" "$ACTUAL_TMP" > "$MISSING_TMP"
-MISSING_COUNT=$(grep -c . "$MISSING_TMP" || true)
+MISSING_COUNT=$(count_matches '.' "$MISSING_TMP")
 
-FRONTEND_COUNT=$(grep -c '^frontend/' "$ACTUAL_TMP" || true)
-BACKEND_COUNT=$(grep -c '^backend/' "$ACTUAL_TMP" || true)
-SCANNER_COUNT=$(grep -c '^QRScannerApp/' "$ACTUAL_TMP" || true)
-BAILEYS_COUNT=$(grep -c '^baileys-gateway/' "$ACTUAL_TMP" || true)
-ENV_LEAKS=$(grep -cE '(^|/)\.env(\.|$)' "$ACTUAL_TMP" || true)
-CELERY_LEAKS=$(grep -cE '(^|/)celerybeat-schedule$' "$ACTUAL_TMP" || true)
-SESSION_LEAKS=$(grep -cE '(^|/)sessions/' "$ACTUAL_TMP" || true)
-TIMEOUT_COUNT=$(safe_grep_count "timed out" "$OUTPUT_FILE")
+FRONTEND_COUNT=$(count_matches '^frontend/' "$ACTUAL_TMP")
+BACKEND_COUNT=$(count_matches '^backend/' "$ACTUAL_TMP")
+SCANNER_COUNT=$(count_matches '^QRScannerApp/' "$ACTUAL_TMP")
+BAILEYS_COUNT=$(count_matches '^baileys-gateway/' "$ACTUAL_TMP")
+ENV_LEAKS=$(count_matches '(^|/)\.env(\.|$)' "$ACTUAL_TMP")
+CELERY_LEAKS=$(count_matches '(^|/)celerybeat-schedule$' "$ACTUAL_TMP")
+SESSION_LEAKS=$(count_matches '(^|/)sessions/' "$ACTUAL_TMP")
+TIMEOUT_COUNT=$(count_matches "timed out" "$OUTPUT_FILE")
 
-TOPLEVEL_BUCKETS_FILE="$(mktemp -t dump_buckets.XXXXXX)"
 grep "^${FILE_MARKER} " "$OUTPUT_FILE" 2>/dev/null \
     | sed -E "s|^${FILE_MARKER} ([^/]+)/.*|\1/|; s|^${FILE_MARKER} ([^/]+)$|\1|" \
     | LC_ALL=C sort | uniq -c | LC_ALL=C sort -rn > "$TOPLEVEL_BUCKETS_FILE"
 
-echo "" >&2
 echo "" >&2
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║   ✅  DUMP COMPLETE                                          ║${NC}"
@@ -694,8 +856,6 @@ if [ -s "$POISON_FILE" ]; then
         echo -e "${DIM}    Delete .dump_poison_files to retry them.${NC}"
     fi
 fi
-
-rm -f "$TOPLEVEL_BUCKETS_FILE"
 
 echo ""
 echo -e "${GREEN}✅ Ready to upload for analysis.${NC}"

@@ -4,8 +4,8 @@ Base settings shared across all environments.
 
 Hardening principles:
   • Secrets are REQUIRED in every environment. No silent fallbacks.
-  • SECRET_KEY and JWT_SIGNING_KEY are independent and both enforced
-    to differ from each other.
+  • SECRET_KEY, JWT_SIGNING_KEY, and TICKET_SIGNING_SECRET are all
+    independent and enforced to differ from each other.
   • Defaults are secure; public endpoints must opt in explicitly.
 """
 import os
@@ -64,6 +64,37 @@ if JWT_SIGNING_KEY == SECRET_KEY:
         "SECURITY: JWT_SIGNING_KEY must NOT equal SECRET_KEY.\n"
         "They must be independently generated. Rotate BOTH if you have "
         "been running with them equal."
+    )
+
+
+# ============================================
+# 🔐 TICKET_SIGNING_SECRET — REQUIRED, INDEPENDENT, MIN LENGTH
+# ============================================
+# Used to HMAC-sign QR ticket payloads. The scanner backend re-verifies
+# every scanned payload against this secret before trusting the code.
+#
+# The mobile app MUST NOT embed this value — signing happens only on the
+# server at issue time, and verification only on the server at scan time.
+TICKET_SIGNING_SECRET = os.environ.get('TICKET_SIGNING_SECRET')
+
+if not TICKET_SIGNING_SECRET:
+    raise ImproperlyConfigured(
+        "TICKET_SIGNING_SECRET environment variable is required "
+        "(all environments).\n"
+        "Generate one with:\n"
+        "  openssl rand -base64 48"
+    )
+_MIN_TICKET_SECRET_LEN = 32 if IS_PRODUCTION else 24
+if len(TICKET_SIGNING_SECRET) < _MIN_TICKET_SECRET_LEN:
+    raise ImproperlyConfigured(
+        f"TICKET_SIGNING_SECRET must be at least "
+        f"{_MIN_TICKET_SECRET_LEN} characters. "
+        f"Current length: {len(TICKET_SIGNING_SECRET)}."
+    )
+if TICKET_SIGNING_SECRET in (SECRET_KEY, JWT_SIGNING_KEY):
+    raise ImproperlyConfigured(
+        "SECURITY: TICKET_SIGNING_SECRET must be independent from "
+        "SECRET_KEY and JWT_SIGNING_KEY. Rotate it if it has been shared."
     )
 
 
@@ -177,7 +208,6 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # ============================================
 # UPLOAD LIMITS — DoS defense
 # ============================================
-# 5 MB max request body (was effectively unlimited)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 2000
@@ -190,8 +220,6 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    # Default to requiring authentication. Public endpoints must
-    # explicitly opt in with permission_classes=[AllowAny].
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
@@ -207,15 +235,15 @@ REST_FRAMEWORK = {
         'user': '600/min',
         'login': '20/min',           # Applied via ScopedRateThrottle on LoginView
         'checkin': '120/min',
+        'checkin_verify': '240/min', # read-only verify — allow more
         'register': '3/hour',
-        'booking_create': '30/hour', # Applied on BookingViewSet.create
-        'public_read': '120/min',    # Applied on public event endpoints
+        'booking_create': '30/hour',
+        'public_read': '120/min',
         'booking_resend': '5/hour',
     },
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
-    # Cap pagination page size to prevent scraping
     'DEFAULT_PAGINATION_CLASS': None,
 }
 
@@ -230,7 +258,7 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
-    'SIGNING_KEY': JWT_SIGNING_KEY,       # ← independent from SECRET_KEY
+    'SIGNING_KEY': JWT_SIGNING_KEY,
     'VERIFYING_KEY': None,
     'AUDIENCE': None,
     'ISSUER': 'ticketvolt',
@@ -279,23 +307,6 @@ WHATSAPP_TICKET_DELIVERY_ENABLED = (
 # ============================================
 # EMAIL
 # ============================================
-# Django's default SMTP backend is used for local dev / if you
-# really want SMTP. But on Render's free tier, outbound SMTP is
-# blocked at the network layer (OSError: Network is unreachable).
-#
-# In production, we use Resend's HTTPS API instead — port 443 is
-# always allowed. See backend/ticket_bookings/services/email_backend.py
-#
-# Environment variables:
-#   EMAIL_PROVIDER=resend         -> Use Resend HTTP API (production default)
-#   EMAIL_PROVIDER=smtp (default) -> Use classic SMTP (local dev)
-#
-#   RESEND_API_KEY=re_xxxxxxxx     -> Required for `resend`
-#
-# Shared config used by both:
-#   DEFAULT_FROM_EMAIL
-# ============================================
-
 EMAIL_PROVIDER = os.environ.get('EMAIL_PROVIDER', 'smtp').lower()
 
 if EMAIL_PROVIDER == 'resend':
@@ -307,7 +318,6 @@ if EMAIL_PROVIDER == 'resend':
             "Get one at https://resend.com/api-keys"
         )
 else:
-    # Classic SMTP (local dev / environments where SMTP is allowed)
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
     EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
     EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
@@ -327,12 +337,9 @@ EMAIL_TIMEOUT = 30
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
-# Secret admin path. Set ADMIN_URL on Render (e.g. "manage-a3f9c2b1/").
-# Never log this value.
 _ADMIN_URL_RAW = os.environ.get('ADMIN_URL', 'admin/').strip('/')
 ADMIN_URL = _ADMIN_URL_RAW + '/'
 
-# In production, refuse to boot with the default admin path.
 if IS_PRODUCTION and _ADMIN_URL_RAW == 'admin':
     raise ImproperlyConfigured(
         "SECURITY: ADMIN_URL must NOT be the default 'admin/' in production.\n"
@@ -345,16 +352,13 @@ if IS_PRODUCTION and _ADMIN_URL_RAW == 'admin':
 # AXES — BRUTE-FORCE PROTECTION
 # ============================================
 AXES_FAILURE_LIMIT = 5
-AXES_COOLOFF_TIME = 1                         # Hours before unlock
-# Lock out per (username, IP) OR per IP alone.
+AXES_COOLOFF_TIME = 1
 AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address'], ['ip_address']]
-AXES_RESET_ON_SUCCESS = True
 AXES_ENABLE_ACCESS_FAILURE_LOG = True
-AXES_LOCKOUT_TEMPLATE = None                  # Return JSON, not HTML
+AXES_LOCKOUT_TEMPLATE = None
 AXES_LOCKOUT_CALLABLE = None
 AXES_VERBOSE = False
 AXES_ENABLE_ADMIN = False
-# Don't count successful logins toward the failure limit
 AXES_RESET_ON_SUCCESS = True
 
 
@@ -368,16 +372,14 @@ SECURE_REFERRER_POLICY = 'same-origin'
 
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_AGE = 60 * 60 * 8              # 8 hours
+SESSION_COOKIE_AGE = 60 * 60 * 8
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
-CSRF_COOKIE_HTTPONLY = False                  # JS needs to read it for CSRF
+CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SAMESITE = 'Lax'
 
-# Disallow other origins from opening popups/windows to us
 SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 
-# Permissions Policy (feature policy successor)
 PERMISSIONS_POLICY = {
     'accelerometer': [],
     'camera': [],

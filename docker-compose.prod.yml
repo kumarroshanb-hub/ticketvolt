@@ -24,7 +24,7 @@ services:
       - ./backend/.env.neon      # ← Load from .env.neon
     environment:
       ENVIRONMENT: production    # ← Selects production.py settings
-      DEBUG: 'True'              # Override for testing
+      DEBUG: 'False'              # Override for testing
     depends_on:
       redis:
         condition: service_healthy
@@ -84,7 +84,7 @@ services:
       - "3002:3002"
     environment:
       PORT: 3002
-      NODE_ENV: development
+      NODE_ENV: production
       DJANGO_API_URL: http://backend:8000/api
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       REDIS_URL: redis://redis:6379

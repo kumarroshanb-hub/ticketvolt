@@ -1,5 +1,5 @@
 // frontend/src/pages/Checkin/Checkin.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box,
     Grid,
@@ -19,14 +19,12 @@ import {
     Chip,
     IconButton,
     Alert,
-    Snackbar,
     Tooltip,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
     Divider,
-    Stack,
     Avatar,
     InputAdornment,
     useMediaQuery,
@@ -49,11 +47,9 @@ import {
     Close as CloseIcon,
     Keyboard as KeyboardIcon,
     Today as TodayIcon,
-    TrendingUp as TrendingUpIcon,
-    People as PeopleIcon,
     Error as ErrorIcon,
     Check as CheckIcon,
-    RadioButtonChecked as RadioButtonCheckedIcon,
+    Undo as UndoIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
@@ -66,15 +62,45 @@ import {
     PageHeaderLeft,
     PageHeaderRight,
     OutlineButton,
-    StatusChip,
     LoadingWrapper,
 } from '../../components/Common';
 
-import {
-    TICKET_STATUS,
-    TICKET_STATUS_LABELS,
-    TicketStatusUtils,
-} from '../../constants';
+// ============================================
+// CHECK-IN LOG STATUS → UI PRESENTATION
+// ------------------------------------------------------------
+// The backend CheckInLog.status field can be one of:
+//   'success'   — a real, valid check-in
+//   'failed'    — a scan that did not result in a check-in
+//   'cancelled' — a check-in that was later undone by a superuser
+//
+// The old code assumed status === 'success' → Success, ELSE Failed.
+// That mislabeled 'cancelled' rows as "Failed" and hid real failures.
+// This map makes the mapping explicit and exhaustive.
+// ============================================
+const LOG_STATUS_UI = {
+    success: {
+        label: 'Success',
+        color: 'success',
+        icon: <CheckCircleIcon fontSize="small" />,
+    },
+    failed: {
+        label: 'Failed',
+        color: 'error',
+        icon: <CancelIcon fontSize="small" />,
+    },
+    cancelled: {
+        label: 'Undone',
+        color: 'warning',
+        icon: <UndoIcon fontSize="small" />,
+    },
+};
+
+const getLogStatusUI = (status) =>
+    LOG_STATUS_UI[status] || {
+        label: status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown',
+        color: 'default',
+        icon: <InfoIcon fontSize="small" />,
+    };
 
 // ============================================
 // STAT CARD
@@ -264,38 +290,41 @@ const Checkin = () => {
     const [checkingIn, setCheckingIn] = useState(false);
     const [result, setResult] = useState(null);
     const [history, setHistory] = useState([]);
-    const [stats, setStats] = useState({
-        total_scans: 0,
-        today_scans: 0,
-        success_scans: 0,
-        failed_scans: 0,
-    });
     const [filter, setFilter] = useState('all');
     const [search, setSearch] = useState('');
     const [openScanner, setOpenScanner] = useState(false);
 
+    // ============================================================
+    // LOAD DATA
+    // ------------------------------------------------------------
+    // We fetch up to 100 history rows and derive the stat cards
+    // from that dataset. This makes the "Failed" card actually
+    // reflect reality (the /dashboard/stats/ endpoint does not
+    // know about failed/cancelled CheckInLog rows).
+    //
+    // If you need true all-time totals, expose a dedicated
+    // /checkin/stats/ endpoint that returns log-status counts
+    // and swap this out.
+    // ============================================================
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
             const historyResponse = await api.get('/checkin/history/', {
-                params: { limit: 20 }
+                params: { limit: 100 },
             });
 
-            const historyData = historyResponse.data?.history || historyResponse.data || [];
+            const raw = historyResponse.data;
+            const historyData = Array.isArray(raw?.history)
+                ? raw.history
+                : Array.isArray(raw)
+                    ? raw
+                    : [];
+
             setHistory(historyData);
-
-            const statsResponse = await api.get('/dashboard/stats/');
-            const data = statsResponse.data;
-
-            setStats({
-                total_scans: data?.total_checkins || 0,
-                today_scans: data?.today_checkins || 0,
-                success_scans: data?.total_checkins || 0,
-                failed_scans: 0,
-            });
         } catch (error) {
             console.error('Error loading check-in data:', error);
             toast.error('Failed to load check-in data');
+            setHistory([]);
         } finally {
             setLoading(false);
         }
@@ -305,26 +334,59 @@ const Checkin = () => {
         loadData();
     }, [loadData]);
 
+    // ============================================================
+    // DERIVED STATS
+    // ------------------------------------------------------------
+    // Recompute on every history change so the numbers on the
+    // stat cards always agree with what's shown in the table.
+    // ============================================================
+    const stats = useMemo(() => {
+        const total = history.length;
+        const success = history.filter((h) => h.status === 'success').length;
+        const failed = history.filter((h) => h.status === 'failed').length;
+        const cancelled = history.filter((h) => h.status === 'cancelled').length;
+
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const today = history.filter((h) => {
+            if (!h.checked_in_at) return false;
+            return new Date(h.checked_in_at) >= startOfToday;
+        }).length;
+
+        return {
+            total_scans: total,
+            today_scans: today,
+            success_scans: success,
+            failed_scans: failed,
+            cancelled_scans: cancelled,
+        };
+    }, [history]);
+
+    // ============================================================
+    // VERIFY (no state change)
+    // ============================================================
     const verifyTicket = async (code) => {
         setVerifying(true);
         setResult(null);
 
         try {
-            const response = await api.get(`/checkin/verify/?code=${encodeURIComponent(code)}`);
+            const response = await api.get(
+                `/checkin/verify/?code=${encodeURIComponent(code)}`
+            );
 
             if (response.data?.valid) {
                 setResult({
                     type: 'success',
                     title: 'Ticket Valid',
                     message: 'This ticket is valid and ready for check-in',
-                    ticket: response.data.ticket
+                    ticket: response.data.ticket,
                 });
             } else {
                 setResult({
                     type: 'error',
                     title: 'Invalid Ticket',
                     message: response.data?.detail || 'This ticket is not valid',
-                    ticket: response.data?.ticket
+                    ticket: response.data?.ticket,
                 });
             }
         } catch (error) {
@@ -335,28 +397,31 @@ const Checkin = () => {
                     type: 'warning',
                     title: 'Already Checked In',
                     message: 'This ticket has already been checked in',
-                    ticket: errorData.ticket
+                    ticket: errorData.ticket,
                 });
-            } else if (errorData?.code === 'TICKET_USED' || errorData?.detail?.includes('already been used')) {
+            } else if (
+                errorData?.code === 'TICKET_USED' ||
+                errorData?.detail?.includes('already been used')
+            ) {
                 setResult({
                     type: 'warning',
                     title: 'Already Used',
                     message: 'This ticket has already been used',
-                    ticket: errorData?.ticket
+                    ticket: errorData?.ticket,
                 });
             } else if (errorData?.detail) {
                 setResult({
                     type: 'error',
                     title: 'Invalid Ticket',
                     message: errorData.detail,
-                    ticket: errorData?.ticket
+                    ticket: errorData?.ticket,
                 });
             } else {
                 setResult({
                     type: 'error',
                     title: 'Verification Failed',
                     message: 'Failed to verify ticket. Please try again.',
-                    ticket: null
+                    ticket: null,
                 });
             }
         } finally {
@@ -364,13 +429,16 @@ const Checkin = () => {
         }
     };
 
+    // ============================================================
+    // CHECK-IN (state-changing)
+    // ============================================================
     const checkInTicket = async (code) => {
         setCheckingIn(true);
 
         try {
             const response = await api.post('/checkin/', {
                 code: code,
-                device_id: 'admin-panel'
+                device_id: 'admin-panel',
             });
 
             if (response.data?.success) {
@@ -379,17 +447,19 @@ const Checkin = () => {
                     title: 'Check-in Successful!',
                     message: response.data.message,
                     ticket: response.data.ticket,
-                    checkin_time: response.data.checkin_time
+                    checkin_time: response.data.checkin_time,
                 });
                 toast.success('Check-in successful!');
-
-                setStats(prev => ({
-                    ...prev,
-                    total_scans: prev.total_scans + 1,
-                    today_scans: prev.today_scans + 1,
-                    success_scans: prev.success_scans + 1,
-                }));
+                // Re-fetch history so the table reflects the new row.
                 loadData();
+            } else {
+                setResult({
+                    type: 'error',
+                    title: 'Check-in Failed',
+                    message: response.data?.detail || 'The server rejected this check-in.',
+                    ticket: response.data?.ticket,
+                });
+                toast.error(response.data?.detail || 'Check-in failed');
             }
         } catch (error) {
             const errorData = error.response?.data;
@@ -399,10 +469,16 @@ const Checkin = () => {
                     type: 'error',
                     title: 'Check-in Failed',
                     message: errorData.detail,
-                    ticket: errorData?.ticket
+                    ticket: errorData?.ticket,
                 });
                 toast.error(errorData.detail);
             } else {
+                setResult({
+                    type: 'error',
+                    title: 'Check-in Failed',
+                    message: 'An unexpected error occurred.',
+                    ticket: null,
+                });
                 toast.error('Failed to check in ticket');
             }
         } finally {
@@ -413,7 +489,6 @@ const Checkin = () => {
     const handleManualEntry = async (e) => {
         e.preventDefault();
         if (!manualCode.trim()) return;
-
         await verifyTicket(manualCode.trim());
     };
 
@@ -428,22 +503,38 @@ const Checkin = () => {
         setManualCode('');
     };
 
-    const filteredHistory = history.filter(item => {
-        if (search && !item.code?.toLowerCase().includes(search.toLowerCase()) &&
-            !item.attendee_name?.toLowerCase().includes(search.toLowerCase())) {
-            return false;
-        }
-        if (filter === 'success') return item.status === 'success';
-        if (filter === 'failed') return item.status !== 'success';
-        return true;
-    });
+    // ============================================================
+    // FILTERED HISTORY
+    // ------------------------------------------------------------
+    // The `failed` filter now means *exactly* status === 'failed',
+    // not "anything that isn't success". A cancelled row is no
+    // longer counted as failed.
+    // ============================================================
+    const filteredHistory = useMemo(() => {
+        const q = search.trim().toLowerCase();
+
+        return history.filter((item) => {
+            if (q) {
+                const code = (item.code || '').toLowerCase();
+                const name = (item.attendee_name || '').toLowerCase();
+                if (!code.includes(q) && !name.includes(q)) return false;
+            }
+
+            if (filter === 'all') return true;
+            if (filter === 'success') return item.status === 'success';
+            if (filter === 'failed') return item.status === 'failed';
+            if (filter === 'cancelled') return item.status === 'cancelled';
+            return true;
+        });
+    }, [history, search, filter]);
 
     const formatDateTime = (dateString) => {
-        if (!dateString) return 'N/A';
+        if (!dateString) return { date: 'N/A', time: 'N/A' };
         const date = new Date(dateString);
+        if (isNaN(date.getTime())) return { date: 'N/A', time: 'N/A' };
         return {
             date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+            time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         };
     };
 
@@ -459,7 +550,7 @@ const Checkin = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle variant="h4">QR Scanner & Check-in</PageTitle>
+                    <PageTitle variant="h4">QR Scanner &amp; Check-in</PageTitle>
                     {!isMobile && (
                         <Typography variant="body2" sx={{ color: '#64748b', ml: 2 }}>
                             Scan and verify tickets at event entrance
@@ -478,16 +569,16 @@ const Checkin = () => {
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Total Scans"
-                        value={stats.total_scans || 0}
+                        value={stats.total_scans}
                         icon={<ScannerIcon sx={{ color: '#4f46e5' }} />}
                         color="#4f46e5"
-                        subtitle={isMobile ? undefined : "All time check-ins"}
+                        subtitle={isMobile ? undefined : 'All time check-ins'}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Today"
-                        value={stats.today_scans || 0}
+                        value={stats.today_scans}
                         icon={<TodayIcon sx={{ color: '#10b981' }} />}
                         color="#10b981"
                         subtitle={isMobile ? undefined : "Today's check-ins"}
@@ -496,19 +587,19 @@ const Checkin = () => {
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Success"
-                        value={stats.success_scans || 0}
+                        value={stats.success_scans}
                         icon={<CheckCircleIcon sx={{ color: '#3b82f6' }} />}
                         color="#3b82f6"
-                        subtitle={isMobile ? undefined : "Valid tickets"}
+                        subtitle={isMobile ? undefined : 'Valid tickets'}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Failed"
-                        value={stats.failed_scans || 0}
+                        value={stats.failed_scans}
                         icon={<ErrorIcon sx={{ color: '#ef4444' }} />}
                         color="#ef4444"
-                        subtitle={isMobile ? undefined : "Invalid tickets"}
+                        subtitle={isMobile ? undefined : 'Invalid tickets'}
                     />
                 </Grid>
             </Grid>
@@ -641,12 +732,13 @@ const Checkin = () => {
                                         size="small"
                                         value={filter}
                                         onChange={(e) => setFilter(e.target.value)}
-                                        sx={{ flex: isMobile ? 1 : 'unset', width: isMobile ? 'auto' : 120 }}
+                                        sx={{ flex: isMobile ? 1 : 'unset', width: isMobile ? 'auto' : 140 }}
                                         SelectProps={{ native: true }}
                                     >
                                         <option value="all">All</option>
                                         <option value="success">Success</option>
                                         <option value="failed">Failed</option>
+                                        <option value="cancelled">Undone</option>
                                     </TextField>
                                 </Box>
                             </Box>
@@ -655,11 +747,14 @@ const Checkin = () => {
                                 /* ---------- MOBILE: CARD LIST ---------- */
                                 filteredHistory.length > 0 ? (
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                                        {filteredHistory.map((item, index) => {
+                                        {filteredHistory.map((item) => {
                                             const { date, time } = formatDateTime(item.checked_in_at);
+                                            const statusUI = getLogStatusUI(item.status);
+                                            const rowKey = item.id || `${item.code}-${item.checked_in_at}`;
+
                                             return (
                                                 <Card
-                                                    key={index}
+                                                    key={rowKey}
                                                     sx={{
                                                         borderRadius: 2,
                                                         border: '1px solid #e2e8f0',
@@ -682,11 +777,13 @@ const Checkin = () => {
                                                             >
                                                                 {item.code || 'N/A'}
                                                             </Typography>
-                                                            {item.status === 'success' ? (
-                                                                <Chip size="small" label="Success" icon={<CheckCircleIcon />} color="success" variant="outlined" />
-                                                            ) : (
-                                                                <Chip size="small" label="Failed" icon={<CancelIcon />} color="error" variant="outlined" />
-                                                            )}
+                                                            <Chip
+                                                                size="small"
+                                                                label={statusUI.label}
+                                                                icon={statusUI.icon}
+                                                                color={statusUI.color}
+                                                                variant="outlined"
+                                                            />
                                                         </Box>
 
                                                         <Divider sx={{ my: 1 }} />
@@ -732,7 +829,7 @@ const Checkin = () => {
                                             No Check-in History
                                         </Typography>
                                         <Typography variant="body2" sx={{ color: '#94a3b8' }}>
-                                            Scan tickets to see them here
+                                            {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
                                         </Typography>
                                     </Paper>
                                 )
@@ -751,15 +848,18 @@ const Checkin = () => {
                                         </TableHead>
                                         <TableBody>
                                             {filteredHistory.length > 0 ? (
-                                                filteredHistory.map((item, index) => {
+                                                filteredHistory.map((item) => {
                                                     const { date, time } = formatDateTime(item.checked_in_at);
+                                                    const statusUI = getLogStatusUI(item.status);
+                                                    const rowKey = item.id || `${item.code}-${item.checked_in_at}`;
+
                                                     return (
                                                         <TableRow
-                                                            key={index}
+                                                            key={rowKey}
                                                             hover
                                                             sx={{
                                                                 cursor: 'pointer',
-                                                                '&:hover': { backgroundColor: '#f8fafc' }
+                                                                '&:hover': { backgroundColor: '#f8fafc' },
                                                             }}
                                                         >
                                                             <TableCell sx={{ fontFamily: 'monospace', color: '#0f172a', fontWeight: 600 }}>
@@ -772,23 +872,13 @@ const Checkin = () => {
                                                                 {item.event || 'N/A'}
                                                             </TableCell>
                                                             <TableCell align="center">
-                                                                {item.status === 'success' ? (
-                                                                    <Chip
-                                                                        size="small"
-                                                                        label="Success"
-                                                                        icon={<CheckCircleIcon />}
-                                                                        color="success"
-                                                                        variant="outlined"
-                                                                    />
-                                                                ) : (
-                                                                    <Chip
-                                                                        size="small"
-                                                                        label="Failed"
-                                                                        icon={<CancelIcon />}
-                                                                        color="error"
-                                                                        variant="outlined"
-                                                                    />
-                                                                )}
+                                                                <Chip
+                                                                    size="small"
+                                                                    label={statusUI.label}
+                                                                    icon={statusUI.icon}
+                                                                    color={statusUI.color}
+                                                                    variant="outlined"
+                                                                />
                                                             </TableCell>
                                                             <TableCell align="center" sx={{ color: '#64748b' }}>
                                                                 <Box>
@@ -812,7 +902,7 @@ const Checkin = () => {
                                                                 No Check-in History
                                                             </Typography>
                                                             <Typography variant="body2" sx={{ color: '#94a3b8' }}>
-                                                                Scan tickets to see them here
+                                                                {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
                                                             </Typography>
                                                         </Box>
                                                     </TableCell>

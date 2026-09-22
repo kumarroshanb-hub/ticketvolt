@@ -390,19 +390,46 @@ const Bookings = () => {
         }
     };
 
+    // ============================================================
+    // ✅ FIXED: handleSendEmailFromTable
+    // ------------------------------------------------------------
+    // SECURITY: The email recipient is determined SERVER-SIDE from
+    // the booking record. We deliberately do NOT send `email` in the
+    // request body — that would imply the endpoint trusts client
+    // input for the recipient, which is a potential abuse vector if
+    // the backend ever changed to read it.
+    //
+    // The backend's `resend_tickets` action reads `booking.customer_email`
+    // and ignores any client-supplied email, so sending none is correct.
+    // ============================================================
     const handleSendEmailFromTable = async (booking) => {
         try {
-            console.log('📧 Send Email for booking:', booking.booking_reference);
+            console.log('📧 Resending tickets for booking:', booking.booking_reference);
 
-            const response = await api.post(`/bookings/${booking.id}/resend_tickets/`, {
-                email: booking.customer_email,
-            });
+            const response = await api.post(`/bookings/${booking.id}/resend_tickets/`);
 
             console.log('📧 Email response:', response.data);
-            toast.success(`Tickets sent to ${booking.customer_email}`);
+
+            const formatInfo = response.data?.formats
+                ? ` (${response.data.formats})`
+                : '';
+            const attachmentsInfo = response.data?.attachments
+                ? ` — ${response.data.attachments} attachment(s)`
+                : '';
+
+            toast.success(
+                `Tickets sent to ${booking.customer_email}${formatInfo}${attachmentsInfo}`
+            );
         } catch (error) {
             console.error('❌ Send email error:', error);
-            toast.error(error.response?.data?.error || 'Failed to send ticket email');
+
+            const errorMsg =
+                error.response?.data?.error ||
+                error.response?.data?.detail ||
+                error.message ||
+                'Failed to send ticket email';
+
+            toast.error(errorMsg);
         }
     };
 

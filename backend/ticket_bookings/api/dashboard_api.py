@@ -10,6 +10,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Statuses that should NOT count toward stats
+EXCLUDED_BOOKING_STATUSES = ['cancelled', 'refunded']
+
+# Statuses that DO count as revenue-generating
+REVENUE_BOOKING_STATUSES = ['paid', 'confirmed', 'completed']
+
+# Statuses that DO count as "sold" tickets
+SOLD_BOOKING_STATUSES = ['paid', 'confirmed', 'completed']
+
 
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -19,121 +28,111 @@ class DashboardStatsView(APIView):
             user = request.user
             now = timezone.now()
 
-            # Check if user is an organizer via profile
-            is_organizer = False
-            if hasattr(user, 'profile') and user.profile.is_organizer:
-                is_organizer = True
-            # Fallback: check for organizer attribute
-            if hasattr(user, 'organizer'):
-                is_organizer = True
+            is_organizer = (
+                (hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False))
+                or hasattr(user, 'organizer')
+            )
 
-            # ✅ ADMIN/SUPERADMIN: See ALL data (past, present, future)
-            # No date filtering - full management access
+            # ============================================================
+            # 1. Build a SINGLE flat queryset for events (no `|` combinator).
+            #    Using Q objects instead of `qs1 | qs2` preserves annotations.
+            # ============================================================
             if user.is_staff or user.is_superuser:
                 events_qs = Event.objects.all()
                 bookings_qs = Booking.objects.all()
                 tickets_qs = Ticket.objects.all()
                 checkins_qs = CheckInLog.objects.filter(status='success')
-
-                # Active events = events not cancelled/completed (any date)
                 active_events = events_qs.exclude(
                     status__in=['cancelled', 'completed']
                 ).count()
 
-            # ✅ ORGANIZER: ONLY UPCOMING events (consistent with events API)
             elif is_organizer:
-                # ✅ FIXED: Only upcoming events for organizers (same as events page)
-                their_upcoming_events = Event.objects.filter(
-                    organizer=user,
-                    end_date__gte=now  # ✅ Only upcoming events
+                # ✅ Use Q objects, not `|` on querysets.
+                #    Q(...) | Q(...) inside a single .filter() keeps the queryset
+                #    as one query, which preserves annotations and prefetches.
+                event_scope_q = (
+                    Q(organizer=user, end_date__gte=now)
+                    | Q(status__in=['active', 'published'], is_public=True, end_date__gte=now)
                 )
+                events_qs = Event.objects.filter(event_scope_q).distinct()
 
-                upcoming_public = Event.objects.filter(
-                    status__in=['active', 'published'],
-                    is_public=True,
-                    end_date__gte=now  # ✅ Only upcoming events
-                )
-
-                # Combine: their upcoming events + upcoming public events
-                events_qs = their_upcoming_events | upcoming_public
-
-                # Bookings for their upcoming events + upcoming public bookings
                 bookings_qs = Booking.objects.filter(
-                    Q(event__organizer=user, event__end_date__gte=now) | Q(event__in=upcoming_public)
-                )
+                    Q(event__organizer=user, event__end_date__gte=now)
+                    | Q(event__status__in=['active', 'published'],
+                        event__is_public=True,
+                        event__end_date__gte=now)
+                ).distinct()
 
                 tickets_qs = Ticket.objects.filter(
-                    Q(event__organizer=user, event__end_date__gte=now) | Q(event__in=upcoming_public)
-                )
+                    Q(event__organizer=user, event__end_date__gte=now)
+                    | Q(event__status__in=['active', 'published'],
+                        event__is_public=True,
+                        event__end_date__gte=now)
+                ).distinct()
 
                 checkins_qs = CheckInLog.objects.filter(
-                    Q(event__organizer=user, event__end_date__gte=now) | Q(event__in=upcoming_public),
-                    status='success'
-                )
+                    Q(event__organizer=user, event__end_date__gte=now)
+                    | Q(event__status__in=['active', 'published'],
+                        event__is_public=True,
+                        event__end_date__gte=now),
+                    status='success',
+                ).distinct()
 
-                # Active events = upcoming non-cancelled events
-                active_events = (their_upcoming_events.exclude(
+                active_events = events_qs.exclude(
                     status__in=['cancelled', 'completed']
-                ) | upcoming_public).count()
-
-            # ✅ REGULAR USER: Only upcoming events (no past events)
-            else:
-                # Regular users only see upcoming active/published public events
-                upcoming_events = Event.objects.filter(
-                    status__in=['active', 'published'],
-                    is_public=True,
-                    end_date__gte=now  # ✅ Only upcoming events
-                )
-
-                events_qs = upcoming_events
-
-                # Bookings for their upcoming events
-                bookings_qs = Booking.objects.filter(
-                    event__in=upcoming_events
-                )
-
-                tickets_qs = Ticket.objects.filter(
-                    event__in=upcoming_events
-                )
-
-                checkins_qs = CheckInLog.objects.filter(
-                    event__in=upcoming_events,
-                    status='success'
-                )
-
-                # Active events = upcoming active events
-                active_events = upcoming_events.filter(
-                    status='active'
                 ).count()
 
-            # ✅ Stats counts - Only count confirmed/paid bookings, not cancelled/refunded
+            else:
+                # Regular user: only upcoming public events
+                events_qs = Event.objects.filter(
+                    status__in=['active', 'published'],
+                    is_public=True,
+                    end_date__gte=now,
+                )
+                bookings_qs = Booking.objects.filter(event__in=events_qs)
+                tickets_qs = Ticket.objects.filter(event__in=events_qs)
+                checkins_qs = CheckInLog.objects.filter(
+                    event__in=events_qs, status='success'
+                )
+                active_events = events_qs.filter(status='active').count()
+
+            # ============================================================
+            # 2. Top-level stats.
+            #    Note: use `.exclude()` on the ORIGINAL qs, then `.count()`.
+            # ============================================================
             total_bookings = bookings_qs.exclude(
-                status__in=['cancelled', 'refunded']
+                status__in=EXCLUDED_BOOKING_STATUSES
             ).count()
 
             paid_bookings = bookings_qs.filter(status='paid').count()
 
-            # ✅ Total tickets - Only count tickets from non-cancelled/non-refunded bookings
             total_tickets = tickets_qs.exclude(
-                booking__status__in=['cancelled', 'refunded']
+                booking__status__in=EXCLUDED_BOOKING_STATUSES
             ).count()
 
             total_events = events_qs.count()
 
-            # ✅ Total revenue - Only from confirmed/paid bookings (not cancelled/refunded)
             total_revenue = bookings_qs.filter(
-                status__in=['paid', 'confirmed', 'completed']
-            ).aggregate(
-                total=Sum('total_amount')
-            )['total'] or 0
+                status__in=REVENUE_BOOKING_STATUSES
+            ).aggregate(total=Sum('total_amount'))['total'] or 0
 
             total_checkins = checkins_qs.count()
 
-            # ✅ Get recent bookings with event titles
-            # For regular users: only their bookings
-            # For organizers: bookings for upcoming events
-            # For admins: all bookings
-            recent_bookings = bookings_qs.select_related('event').order_by('-created_at')[:5]
+            # ✅ NEW: Today's revenue (frontend expects this field)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_revenue = bookings_qs.filter(
+                status__in=REVENUE_BOOKING_STATUSES,
+                paid_at__gte=today_start,
+            ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+            # ============================================================
+            # 3. Recent bookings — select_related event to avoid N+1.
+            # ============================================================
+            recent_bookings = (
+                bookings_qs
+                .select_related('event')
+                .order_by('-created_at')[:5]
+            )
 
             recent_bookings_data = []
             for booking in recent_bookings:
@@ -151,42 +150,50 @@ class DashboardStatsView(APIView):
                     'event_id': str(booking.event.id) if booking.event else None,
                 })
 
-            # ✅ Get popular events with ticket, revenue, tier and session data
-            # Only count tickets from active bookings (not cancelled/refunded)
-            # ✅ Prefetch tiers/sessions and select venue to avoid N+1 queries.
+            # ============================================================
+            # 4. Popular events — ALL aggregates done in ONE query.
+            #    This is the critical fix for the "values are zero" bug:
+            #      - Use POSITIVE filters (Q(...in=[...])), not negations (~Q).
+            #      - Annotate every value you need.
+            #      - Then iterate WITHOUT any further DB hits.
+            # ============================================================
             popular_events = (
                 events_qs
                 .select_related('venue')
-                .prefetch_related('tiers', 'sessions')
+                .prefetch_related('tiers')          # needed for tier_count & capacity
                 .annotate(
+                    # Count tickets belonging to *active* bookings
                     active_ticket_count=Count(
                         'tickets',
-                        filter=~Q(tickets__booking__status__in=['cancelled', 'refunded'])
-                    )
+                        filter=Q(tickets__booking__status__in=SOLD_BOOKING_STATUSES),
+                        distinct=True,
+                    ),
+                    # Count bookings in active states
+                    active_booking_count=Count(
+                        'bookings',
+                        filter=Q(bookings__status__in=SOLD_BOOKING_STATUSES),
+                        distinct=True,
+                    ),
+                    # Revenue: Sum over active bookings only
+                    event_revenue=Sum(
+                        'bookings__total_amount',
+                        filter=Q(bookings__status__in=REVENUE_BOOKING_STATUSES),
+                    ),
                 )
                 .order_by('-active_ticket_count')[:5]
             )
 
             popular_events_data = []
             for event in popular_events:
-                # Calculate revenue for this event from active bookings only
-                event_revenue = event.bookings.filter(
-                    status__in=['paid', 'confirmed', 'completed']
-                ).aggregate(
-                    total=Sum('total_amount')
-                )['total'] or 0
+                # tier_count & total_capacity come from prefetch — no extra query
+                tiers = list(event.tiers.all())   # hits cache, no DB
+                tier_count = len(tiers)
+                total_capacity = sum((t.quantity_total or 0) for t in tiers)
 
-                # Count active tickets for this event
-                active_tickets = event.tickets.exclude(
-                    booking__status__in=['cancelled', 'refunded']
-                ).count()
-
-                # ✅ NEW: compute tier/session/capacity summary from prefetched data
-                tier_count = len(event.tiers.all())
-                session_count = len(event.sessions.all())
-                total_capacity = sum(
-                    (t.quantity_total or 0) for t in event.tiers.all()
-                )
+                # Session count — cheap, one extra query per event at worst.
+                # If you want zero extra queries, add `session_count=Count('sessions', distinct=True)`
+                # to the annotate() above and drop this line.
+                session_count = event.sessions.count()
 
                 popular_events_data.append({
                     'id': str(event.id),
@@ -194,15 +201,15 @@ class DashboardStatsView(APIView):
                     'status': event.status,
                     'start_date': event.start_date.isoformat() if event.start_date else None,
                     'end_date': event.end_date.isoformat() if event.end_date else None,
-                    'total_tickets_sold': active_tickets,
-                    'total_revenue': float(event_revenue),
+                    # ✅ These now come straight from the annotation:
+                    'total_tickets_sold': event.active_ticket_count or 0,
+                    'total_revenue': float(event.event_revenue or 0),
+                    'booking_count': event.active_booking_count or 0,
+                    'ticket_count': event.active_ticket_count or 0,
+                    # Venue
                     'venue_name': event.venue.name if event.venue else None,
                     'venue_city': event.venue.city if event.venue else None,
-                    'ticket_count': active_tickets,
-                    'booking_count': event.bookings.exclude(
-                        status__in=['cancelled', 'refunded']
-                    ).count(),
-                    # ✅ NEW FIELDS
+                    # Summary fields
                     'tier_count': tier_count,
                     'session_count': session_count,
                     'total_capacity': total_capacity,
@@ -217,17 +224,18 @@ class DashboardStatsView(APIView):
                 'paid_bookings': paid_bookings,
                 'total_tickets': total_tickets,
                 'total_revenue': float(total_revenue),
+                'today_revenue': float(today_revenue),          # ✅ NEW
                 'total_checkins': total_checkins,
                 'recent_bookings': recent_bookings_data,
                 'popular_events': popular_events_data,
-                # ✅ Additional info for clarity
                 'role_info': {
                     'role': 'admin' if user.is_staff else 'organizer' if is_organizer else 'user',
                     'is_staff': user.is_staff,
                     'is_organizer': is_organizer,
                     'shows_past_events': user.is_staff or is_organizer,
-                }
+                },
             })
+
         except Exception as e:
             import traceback
             traceback.print_exc()

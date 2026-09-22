@@ -1,19 +1,39 @@
 # backend/ticket_bookings/api/checkin_api.py
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.throttling import ScopedRateThrottle
-from django.utils import timezone
-from django.shortcuts import get_object_or_404
-from django.db import transaction
-from django.db.models import Q
-from ticket_bookings.models import Ticket, CheckInLog, Event, Booking
-from ticket_bookings.constants import TicketStatus, BookingStatus
 import logging
-import json
+
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+
+from ticket_bookings.constants import BookingStatus, TicketStatus
+from ticket_bookings.models import CheckInLog, Event, Ticket
+from ticket_bookings.services.qr_service import QRCodeService
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# NOTE ON CheckInLog.status
+# ------------------------------------------------------------
+# This viewset is the ONLY place that should create CheckInLog
+# rows. Every `CheckInLog.objects.create(...)` below passes
+# `status='success'` explicitly.
+#
+# The CheckInLog.status model field MUST NOT have a default.
+# A default of 'success' allowed a bug where a failing code
+# path would persist a log with the default status and leave
+# the DB out of sync with the API response.
+#
+# If you see rows with status other than 'success' or 'cancelled'
+# in the CheckInLog table, they are NOT being created by this
+# file. Inspect the model's save() overrides, signals, or
+# background tasks.
+# ============================================================
 
 
 def _is_organizer(user):
@@ -25,58 +45,34 @@ def _is_organizer(user):
 
 class CheckInViewSet(viewsets.ViewSet):
     """
-    ViewSet for handling ticket check-ins.
+    Ticket check-in endpoints.
+
     Throttled under the 'checkin' scope (120/min by default).
     """
+
     permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'checkin'
 
-    # ==================== HELPERS ====================
+    # ============================================================
+    # HELPERS
+    # ============================================================
 
     def _extract_ticket_code(self, code_data):
-        """Extract the actual ticket code from various formats."""
-        if not code_data:
-            return None
+        """
+        Extract the ticket code from any accepted QR payload format.
 
-        if isinstance(code_data, str):
-            if code_data.strip().startswith('{'):
-                try:
-                    parsed = json.loads(code_data)
-                    return (
-                        parsed.get('code')
-                        or parsed.get('ticket_id')
-                        or parsed.get('unique_code')
-                        or code_data
-                    )
-                except json.JSONDecodeError:
-                    return code_data
-            return code_data
-
-        if isinstance(code_data, dict):
-            return (
-                code_data.get('code')
-                or code_data.get('ticket_id')
-                or code_data.get('unique_code')
-            )
-
-        return str(code_data)
-
-    def _get_ticket_status_message(self, status):
-        status_messages = {
-            TicketStatus.REFUNDED: 'This ticket has been refunded and is no longer valid',
-            TicketStatus.CANCELLED: 'This ticket has been cancelled and is no longer valid',
-            TicketStatus.USED: 'This ticket has already been used',
-            TicketStatus.EXPIRED: 'This ticket has expired',
-            TicketStatus.ACTIVE: 'This ticket is active and valid',
-        }
-        return status_messages.get(status, f'Ticket status: {status}')
+        Delegates to the canonical decoder so this file and every QR
+        generator stay in sync. Returns None if nothing usable is found.
+        """
+        decoded = QRCodeService.decode_ticket_qr(code_data)
+        return decoded.get('code')
 
     def _user_can_manage_event(self, user, event):
         """
         Admins/staff: any event.
-        Organizers: only their own events.
-        Others: no.
+        Organizers:   only their own events.
+        Everyone else: no.
         """
         if user.is_staff or user.is_superuser:
             return True
@@ -97,29 +93,119 @@ class CheckInViewSet(viewsets.ViewSet):
                 booking.status = BookingStatus.COMPLETED
                 booking.save(update_fields=['status'])
                 logger.info(
-                    f"✅ Booking {booking.booking_reference} automatically marked "
-                    f"as COMPLETED (all {total_tickets} tickets used)"
+                    "Booking %s auto-completed (%s/%s tickets used)",
+                    booking.booking_reference, used_tickets, total_tickets,
                 )
                 return True
         return False
 
-    # ==================== CREATE ====================
+    def _ticket_payload(self, ticket):
+        """Standard ticket summary used in every response."""
+        attendee_name = ticket.attendee_name or 'Guest'
+        if not ticket.attendee_name and ticket.booking:
+            attendee_name = ticket.booking.customer_name
 
+        return {
+            'code': ticket.unique_code,
+            'attendee_name': attendee_name,
+            'event': ticket.event.title if ticket.event else 'Event',
+            'event_id': str(ticket.event.id) if ticket.event else None,
+            'status': ticket.status,
+        }
+
+    def _existing_checkin(self, ticket):
+        """The successful check-in for this ticket, if any."""
+        return CheckInLog.objects.filter(ticket=ticket, status='success').first()
+
+    def _rejection_for(self, ticket):
+        """
+        If the ticket cannot be checked in, return the appropriate Response.
+        Otherwise return None.
+
+        Shared by create/validate/verify so the rejection rules live in
+        exactly one place.
+        """
+        if ticket.status in (
+            TicketStatus.REFUNDED,
+            TicketStatus.CANCELLED,
+            TicketStatus.EXPIRED,
+        ):
+            return Response(
+                {
+                    'detail': (
+                        f'This ticket has been {ticket.status} '
+                        f'and is no longer valid'
+                    ),
+                    'code': f'TICKET_{ticket.status.upper()}',
+                    'ticket': self._ticket_payload(ticket),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if ticket.status == TicketStatus.USED:
+            return Response(
+                {
+                    'detail': 'Ticket has already been used',
+                    'code': 'TICKET_USED',
+                    'ticket': self._ticket_payload(ticket),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            ticket.event
+            and ticket.event.end_date
+            and ticket.event.end_date < timezone.now()
+        ):
+            return Response(
+                {
+                    'detail': 'This event has already ended',
+                    'code': 'EVENT_ENDED',
+                    'ticket': self._ticket_payload(ticket),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return None
+
+    def _already_checked_in_response(self, ticket, existing):
+        return Response(
+            {
+                'detail': 'Ticket already checked in',
+                'code': 'ALREADY_CHECKED_IN',
+                'ticket': {
+                    **self._ticket_payload(ticket),
+                    'checked_in_at': existing.scanned_at.isoformat(),
+                },
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # ============================================================
+    # CREATE  — POST /checkin/
+    # ============================================================
+
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         """
         POST /checkin/
-        {
-            "code": "TIXKE0TU5PJ13E0",
-            "device_id": "android-scanner",
-            "latitude": null,
-            "longitude": null
-        }
+        Body:
+            {
+              "code": "TIX...",
+              "device_id": "android-scanner",
+              "latitude": null,
+              "longitude": null
+            }
+
+        Wrapped in @transaction.atomic because the CheckInLog row, the
+        Ticket.status flip, and the Booking.status auto-complete must
+        all succeed or all roll back.
         """
         raw_code = request.data.get('code') or request.data.get('ticket_code')
-        device_id = request.data.get('device_id', 'unknown')[:255]
+        device_id = (request.data.get('device_id') or 'unknown')[:255]
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
-        scanner_ip = request.META.get('REMOTE_ADDR', None)
+        scanner_ip = request.META.get('REMOTE_ADDR')
 
         if not raw_code:
             return Response(
@@ -134,89 +220,26 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        logger.info(f"🔄 Processing check-in for code: {ticket_code}")
+        logger.info("Processing check-in for code: %s", ticket_code)
 
         try:
             ticket = get_object_or_404(Ticket, unique_code=ticket_code)
 
-            # Authorization: only admin/staff or the event organizer may check in.
             if not self._user_can_manage_event(request.user, ticket.event):
                 return Response(
                     {'detail': 'You do not have permission to check in this ticket.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            existing_checkin = CheckInLog.objects.filter(
-                ticket=ticket, status='success'
-            ).first()
+            existing = self._existing_checkin(ticket)
+            if existing:
+                return self._already_checked_in_response(ticket, existing)
 
-            if existing_checkin:
-                return Response(
-                    {
-                        'detail': 'Ticket already checked in',
-                        'code': 'ALREADY_CHECKED_IN',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'checked_in_at': existing_checkin.scanned_at.isoformat(),
-                        },
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            rejection = self._rejection_for(ticket)
+            if rejection is not None:
+                return rejection
 
-            if ticket.status in [
-                TicketStatus.REFUNDED,
-                TicketStatus.CANCELLED,
-                TicketStatus.EXPIRED,
-            ]:
-                return Response(
-                    {
-                        'detail': f'This ticket has been {ticket.status} and is no longer valid',
-                        'code': f'TICKET_{ticket.status.upper()}',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'status': ticket.status,
-                        },
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            if ticket.status == TicketStatus.USED:
-                return Response(
-                    {
-                        'detail': 'Ticket has already been used',
-                        'code': 'TICKET_USED',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                        },
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            if (
-                ticket.event
-                and ticket.event.end_date
-                and ticket.event.end_date < timezone.now()
-            ):
-                return Response(
-                    {
-                        'detail': 'This event has already ended',
-                        'code': 'EVENT_ENDED',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'event_end_time': ticket.event.end_date.isoformat(),
-                        },
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
+            # ---- The ONLY place a 'success' CheckInLog is created ----
             checkin_log = CheckInLog.objects.create(
                 ticket=ticket,
                 event=ticket.event,
@@ -224,7 +247,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 scanner_user=request.user,
                 scanner_device_id=device_id,
                 scanner_ip=scanner_ip,
-                status='success',
+                status='success',                 # explicit, required
                 latitude=latitude,
                 longitude=longitude,
                 is_offline=False,
@@ -236,13 +259,9 @@ class CheckInViewSet(viewsets.ViewSet):
             ticket.save(update_fields=['status', 'check_in_time'])
 
             logger.info(
-                f"✅ Ticket {ticket_code} checked in by {request.user.email} "
-                f"using {device_id}"
+                "Ticket %s checked in by %s via %s",
+                ticket_code, request.user.email, device_id,
             )
-
-            attendee_name = ticket.attendee_name or 'Guest'
-            if not ticket.attendee_name and ticket.booking:
-                attendee_name = ticket.booking.customer_name
 
             booking_completed = False
             if ticket.booking:
@@ -252,13 +271,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 {
                     'success': True,
                     'message': 'Check-in successful',
-                    'ticket': {
-                        'code': ticket.unique_code,
-                        'attendee_name': attendee_name,
-                        'event': ticket.event.title if ticket.event else 'Event',
-                        'event_id': str(ticket.event.id) if ticket.event else None,
-                        'status': ticket.status,
-                    },
+                    'ticket': self._ticket_payload(ticket),
                     'checkin_time': checkin_log.scanned_at.isoformat(),
                     'device_id': device_id,
                     'booking_completed': booking_completed,
@@ -268,7 +281,7 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
         except Ticket.DoesNotExist:
-            logger.warning(f"❌ Ticket not found: {ticket_code}")
+            logger.warning("Ticket not found: %s", ticket_code)
             return Response(
                 {
                     'detail': f'Ticket not found: {ticket_code}',
@@ -276,21 +289,21 @@ class CheckInViewSet(viewsets.ViewSet):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception as e:
-            logger.exception(f"❌ Error checking in ticket {ticket_code}")
+        except Exception:
+            logger.exception("Error checking in ticket %s", ticket_code)
             return Response(
                 {'detail': 'An unexpected error occurred.', 'code': 'INTERNAL_ERROR'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ==================== VALIDATE ====================
+    # ============================================================
+    # VALIDATE  — POST /checkin/validate/
+    # ============================================================
 
     @action(detail=False, methods=['post'])
-    @transaction.atomic
     def validate(self, request):
         """Validate a ticket without checking it in."""
         raw_code = request.data.get('code') or request.data.get('ticket_code')
-
         if not raw_code:
             return Response(
                 {'detail': 'Ticket code is required'},
@@ -309,127 +322,90 @@ class CheckInViewSet(viewsets.ViewSet):
 
             if not self._user_can_manage_event(request.user, ticket.event):
                 return Response(
-                    {'valid': False, 'code': 'PERMISSION_DENIED',
-                     'detail': 'You do not have permission to validate this ticket.'},
+                    {
+                        'valid': False,
+                        'code': 'PERMISSION_DENIED',
+                        'detail': 'You do not have permission to validate this ticket.',
+                    },
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            if ticket.status in [
-                TicketStatus.REFUNDED,
-                TicketStatus.CANCELLED,
-                TicketStatus.EXPIRED,
-            ]:
-                return Response(
-                    {
-                        'valid': False,
-                        'code': f'TICKET_{ticket.status.upper()}',
-                        'detail': f'This ticket has been {ticket.status} and is no longer valid',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'status': ticket.status,
-                        },
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            existing_checkin = CheckInLog.objects.filter(
-                ticket=ticket, status='success'
-            ).first()
-
-            if existing_checkin:
+            existing = self._existing_checkin(ticket)
+            if existing:
                 return Response(
                     {
                         'valid': False,
                         'code': 'ALREADY_CHECKED_IN',
                         'detail': 'Ticket already checked in',
                         'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'checked_in_at': existing_checkin.scanned_at.isoformat(),
+                            **self._ticket_payload(ticket),
+                            'checked_in_at': existing.scanned_at.isoformat(),
                         },
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if ticket.status == TicketStatus.USED:
+            rejection = self._rejection_for(ticket)
+            if rejection is not None:
                 return Response(
                     {
                         'valid': False,
-                        'code': 'TICKET_USED',
-                        'detail': 'Ticket has already been used',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'status': ticket.status,
-                        },
+                        'code': rejection.data.get('code'),
+                        'detail': rejection.data.get('detail'),
+                        'ticket': rejection.data.get('ticket'),
                     },
-                    status=status.HTTP_400_BAD_REQUEST,
+                    status=rejection.status_code,
                 )
-
-            if (
-                ticket.event
-                and ticket.event.end_date
-                and ticket.event.end_date < timezone.now()
-            ):
-                return Response(
-                    {
-                        'valid': False,
-                        'code': 'EVENT_ENDED',
-                        'detail': 'This event has already ended',
-                        'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': ticket.attendee_name or 'Guest',
-                            'event': ticket.event.title if ticket.event else 'Event',
-                        },
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            attendee_name = ticket.attendee_name or 'Guest'
-            if not ticket.attendee_name and ticket.booking:
-                attendee_name = ticket.booking.customer_name
 
             return Response(
                 {
                     'valid': True,
                     'message': 'Ticket is valid',
-                    'ticket': {
-                        'code': ticket.unique_code,
-                        'attendee_name': attendee_name,
-                        'event': ticket.event.title if ticket.event else 'Event',
-                        'status': ticket.status,
-                    },
+                    'ticket': self._ticket_payload(ticket),
                 },
                 status=status.HTTP_200_OK,
             )
 
         except Ticket.DoesNotExist:
             return Response(
-                {'valid': False, 'detail': f'Ticket not found: {ticket_code}',
-                 'code': 'TICKET_NOT_FOUND'},
+                {
+                    'valid': False,
+                    'detail': f'Ticket not found: {ticket_code}',
+                    'code': 'TICKET_NOT_FOUND',
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception as e:
-            logger.exception(f"Error validating ticket {ticket_code}")
+        except Exception:
+            logger.exception("Error validating ticket %s", ticket_code)
             return Response(
-                {'valid': False, 'detail': 'An unexpected error occurred.',
-                 'code': 'ERROR'},
+                {
+                    'valid': False,
+                    'detail': 'An unexpected error occurred.',
+                    'code': 'ERROR',
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ==================== BULK ====================
+    # ============================================================
+    # BULK  — POST /checkin/bulk/
+    # ============================================================
 
     @action(detail=False, methods=['post'])
     def bulk(self, request):
+        """
+        Check in a list of codes.
+
+        Partial-success by design: each code is processed independently.
+        Each code's mutation is wrapped in its OWN transaction so that a
+        failure on code N cannot leave code N half-applied (log written,
+        ticket still active). Concurrent scans of the same ticket are
+        serialised via SELECT ... FOR UPDATE.
+        """
         codes = request.data.get('codes', [])
-        device_id = request.data.get('device_id', 'unknown')[:255]
+        device_id = (request.data.get('device_id') or 'unknown')[:255]
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
-        scanner_ip = request.META.get('REMOTE_ADDR', None)
+        scanner_ip = request.META.get('REMOTE_ADDR')
 
         if not codes or not isinstance(codes, list):
             return Response(
@@ -437,85 +413,105 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cap bulk size to prevent abuse
         if len(codes) > 200:
             return Response(
                 {'detail': 'Maximum 200 codes per bulk request'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        results = []
-        for code in codes:
-            try:
-                ticket_code = self._extract_ticket_code(code)
-                if not ticket_code:
-                    results.append({
-                        'code': code,
-                        'status': 'invalid',
-                        'code_type': 'INVALID_FORMAT',
-                        'message': 'Invalid ticket code format',
-                    })
-                    continue
+        results = [
+            self._bulk_process_one(
+                code, request.user, device_id,
+                latitude, longitude, scanner_ip,
+            )
+            for code in codes
+        ]
 
-                ticket = Ticket.objects.get(unique_code=ticket_code)
+        return Response(
+            {
+                'results': results,
+                'total': len(results),
+                'successful': sum(1 for r in results if r['status'] == 'success'),
+            },
+            status=status.HTTP_200_OK,
+        )
 
-                # Authorization check per ticket
-                if not self._user_can_manage_event(request.user, ticket.event):
-                    results.append({
+    def _bulk_process_one(
+        self, code, user, device_id, latitude, longitude, scanner_ip,
+    ):
+        """
+        Process a single code. Never raises — always returns a result dict
+        so the bulk response remains well-formed even if one code explodes.
+        """
+        ticket_code = self._extract_ticket_code(code)
+        if not ticket_code:
+            return {
+                'code': code,
+                'status': 'invalid',
+                'code_type': 'INVALID_FORMAT',
+                'message': 'Invalid ticket code format',
+            }
+
+        try:
+            with transaction.atomic():
+                ticket = (
+                    Ticket.objects
+                    .select_for_update()
+                    .get(unique_code=ticket_code)
+                )
+
+                if not self._user_can_manage_event(user, ticket.event):
+                    return {
                         'code': ticket_code,
                         'status': 'permission_denied',
                         'code_type': 'PERMISSION_DENIED',
                         'message': 'You do not have permission to check in this ticket.',
-                    })
-                    continue
+                    }
 
-                if ticket.status in [
+                if ticket.status in (
                     TicketStatus.REFUNDED,
                     TicketStatus.CANCELLED,
                     TicketStatus.EXPIRED,
-                ]:
-                    results.append({
+                ):
+                    return {
                         'code': ticket_code,
                         'status': ticket.status,
                         'code_type': f'TICKET_{ticket.status.upper()}',
-                        'message': f'Ticket has been {ticket.status} and is no longer valid',
+                        'message': (
+                            f'Ticket has been {ticket.status} '
+                            f'and is no longer valid'
+                        ),
                         'attendee_name': ticket.attendee_name or 'Guest',
                         'event': ticket.event.title if ticket.event else 'Event',
-                    })
-                    continue
+                    }
 
-                existing_checkin = CheckInLog.objects.filter(
-                    ticket=ticket, status='success'
-                ).first()
-
-                if existing_checkin:
-                    results.append({
+                existing = self._existing_checkin(ticket)
+                if existing:
+                    return {
                         'code': ticket_code,
                         'status': 'already_checked_in',
                         'code_type': 'ALREADY_CHECKED_IN',
                         'message': 'Ticket already checked in',
                         'attendee_name': ticket.attendee_name or 'Guest',
                         'event': ticket.event.title if ticket.event else 'Event',
-                        'checked_in_at': existing_checkin.scanned_at.isoformat(),
-                    })
-                    continue
+                        'checked_in_at': existing.scanned_at.isoformat(),
+                    }
 
                 if ticket.status == TicketStatus.USED:
-                    results.append({
+                    return {
                         'code': ticket_code,
                         'status': 'already_used',
                         'code_type': 'TICKET_USED',
                         'message': 'Ticket has already been used',
                         'attendee_name': ticket.attendee_name or 'Guest',
                         'event': ticket.event.title if ticket.event else 'Event',
-                    })
-                    continue
+                    }
 
                 CheckInLog.objects.create(
                     ticket=ticket,
                     event=ticket.event,
                     session=ticket.session,
-                    scanner_user=request.user,
+                    scanner_user=user,
                     scanner_device_id=device_id,
                     scanner_ip=scanner_ip,
                     status='success',
@@ -533,7 +529,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 if ticket.booking:
                     booking_completed = self._check_and_complete_booking(ticket.booking)
 
-                results.append({
+                return {
                     'code': ticket_code,
                     'status': 'success',
                     'code_type': 'SUCCESS',
@@ -541,34 +537,27 @@ class CheckInViewSet(viewsets.ViewSet):
                     'attendee_name': ticket.attendee_name or 'Guest',
                     'event': ticket.event.title if ticket.event else 'Event',
                     'booking_completed': booking_completed,
-                })
+                }
 
-            except Ticket.DoesNotExist:
-                results.append({
-                    'code': code,
-                    'status': 'not_found',
-                    'code_type': 'TICKET_NOT_FOUND',
-                    'message': 'Ticket not found',
-                })
-            except Exception as e:
-                logger.exception(f"Bulk check-in failed for code {code}")
-                results.append({
-                    'code': code,
-                    'status': 'error',
-                    'code_type': 'ERROR',
-                    'message': 'An error occurred processing this ticket.',
-                })
+        except Ticket.DoesNotExist:
+            return {
+                'code': code,
+                'status': 'not_found',
+                'code_type': 'TICKET_NOT_FOUND',
+                'message': 'Ticket not found',
+            }
+        except Exception:
+            logger.exception("Bulk check-in failed for code %s", code)
+            return {
+                'code': code,
+                'status': 'error',
+                'code_type': 'ERROR',
+                'message': 'An error occurred processing this ticket.',
+            }
 
-        return Response(
-            {
-                'results': results,
-                'total': len(results),
-                'successful': len([r for r in results if r['status'] == 'success']),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-    # ==================== VERIFY ====================
+    # ============================================================
+    # VERIFY  — GET /checkin/verify/?code=...
+    # ============================================================
 
     @action(detail=False, methods=['get'])
     def verify(self, request):
@@ -586,54 +575,39 @@ class CheckInViewSet(viewsets.ViewSet):
 
             if not self._user_can_manage_event(request.user, ticket.event):
                 return Response(
-                    {'valid': False, 'code': 'PERMISSION_DENIED',
-                     'detail': 'You do not have permission to verify this ticket.'},
+                    {
+                        'valid': False,
+                        'code': 'PERMISSION_DENIED',
+                        'detail': 'You do not have permission to verify this ticket.',
+                    },
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            attendee_name = ticket.attendee_name or 'Guest'
-            if not ticket.attendee_name and ticket.booking:
-                attendee_name = ticket.booking.customer_name
-
-            if ticket.status in [
-                TicketStatus.REFUNDED,
-                TicketStatus.CANCELLED,
-                TicketStatus.EXPIRED,
-            ]:
+            rejection = self._rejection_for(ticket)
+            if rejection is not None:
                 return Response(
                     {
                         'valid': False,
-                        'code': f'TICKET_{ticket.status.upper()}',
-                        'detail': f'This ticket has been {ticket.status} and is no longer valid',
+                        'code': rejection.data.get('code'),
+                        'detail': rejection.data.get('detail'),
                         'ticket': {
-                            'code': ticket.unique_code,
-                            'attendee_name': attendee_name,
-                            'event': ticket.event.title if ticket.event else 'Event',
-                            'status': ticket.status,
+                            **rejection.data.get('ticket', {}),
                             'is_checked_in': False,
                         },
                     },
-                    status=status.HTTP_400_BAD_REQUEST,
+                    status=rejection.status_code,
                 )
 
-            existing_checkin = CheckInLog.objects.filter(
-                ticket=ticket, status='success'
-            ).first()
-
-            is_checked_in = existing_checkin is not None
+            existing = self._existing_checkin(ticket)
 
             return Response(
                 {
                     'valid': True,
                     'ticket': {
-                        'code': ticket.unique_code,
-                        'attendee_name': attendee_name,
-                        'event': ticket.event.title if ticket.event else 'Event',
-                        'status': ticket.status,
-                        'is_checked_in': is_checked_in,
+                        **self._ticket_payload(ticket),
+                        'is_checked_in': existing is not None,
                         'checked_in_at': (
-                            existing_checkin.scanned_at.isoformat()
-                            if existing_checkin else None
+                            existing.scanned_at.isoformat() if existing else None
                         ),
                     },
                 },
@@ -642,22 +616,37 @@ class CheckInViewSet(viewsets.ViewSet):
 
         except Ticket.DoesNotExist:
             return Response(
-                {'valid': False, 'code': 'TICKET_NOT_FOUND', 'detail': 'Ticket not found'},
+                {
+                    'valid': False,
+                    'code': 'TICKET_NOT_FOUND',
+                    'detail': 'Ticket not found',
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception as e:
-            logger.exception(f"Error verifying ticket {ticket_code}")
+        except Exception:
+            logger.exception("Error verifying ticket %s", ticket_code)
             return Response(
-                {'valid': False, 'code': 'ERROR',
-                 'detail': 'An unexpected error occurred.'},
+                {
+                    'valid': False,
+                    'code': 'ERROR',
+                    'detail': 'An unexpected error occurred.',
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ==================== UNDO ====================
+    # ============================================================
+    # UNDO  — DELETE /checkin/undo/?code=...
+    # ============================================================
 
     @action(detail=False, methods=['delete'])
+    @transaction.atomic
     def undo(self, request):
-        """Undo a check-in (superuser only)."""
+        """
+        Undo a check-in. Superuser only.
+
+        Atomic + row-locked because we mutate three rows: CheckInLog,
+        Ticket, and (potentially) Booking.
+        """
         if not request.user.is_superuser:
             return Response(
                 {'detail': 'Only superusers can undo check-ins'},
@@ -674,22 +663,25 @@ class CheckInViewSet(viewsets.ViewSet):
         ticket_code = self._extract_ticket_code(code)
 
         try:
-            ticket = Ticket.objects.get(unique_code=ticket_code)
+            ticket = (
+                Ticket.objects
+                .select_for_update()
+                .get(unique_code=ticket_code)
+            )
 
-            checkin_log = CheckInLog.objects.filter(
-                ticket=ticket, status='success'
-            ).first()
-
+            checkin_log = self._existing_checkin(ticket)
             if not checkin_log:
                 return Response(
                     {'detail': 'No check-in found for this ticket'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if ticket.status in [TicketStatus.REFUNDED, TicketStatus.CANCELLED]:
+            if ticket.status in (TicketStatus.REFUNDED, TicketStatus.CANCELLED):
                 return Response(
                     {
-                        'detail': f'Cannot undo check-in for a {ticket.status} ticket',
+                        'detail': (
+                            f'Cannot undo check-in for a {ticket.status} ticket'
+                        ),
                         'code': 'INVALID_OPERATION',
                         'ticket_status': ticket.status,
                     },
@@ -707,8 +699,8 @@ class CheckInViewSet(viewsets.ViewSet):
                 ticket.booking.status = BookingStatus.CONFIRMED
                 ticket.booking.save(update_fields=['status'])
                 logger.info(
-                    f"🔄 Booking {ticket.booking.booking_reference} reverted "
-                    f"from completed to confirmed"
+                    "Booking %s reverted from completed to confirmed",
+                    ticket.booking.booking_reference,
                 )
 
             return Response(
@@ -724,19 +716,21 @@ class CheckInViewSet(viewsets.ViewSet):
                 {'detail': 'Ticket not found'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception as e:
-            logger.exception(f"Error undoing check-in for {ticket_code}")
+        except Exception:
+            logger.exception("Error undoing check-in for %s", ticket_code)
             return Response(
                 {'detail': 'An unexpected error occurred.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ==================== STATS (SCOPED) ====================
+    # ============================================================
+    # STATS  — GET /checkin/stats/?event=<uuid>
+    # ============================================================
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """
-        Get check-in statistics for an event.
+        Check-in statistics for an event.
 
         Authorization:
           - Admins/staff: any event
@@ -774,13 +768,8 @@ class CheckInViewSet(viewsets.ViewSet):
             checked_in_count = max(checked_in_logs, used_tickets)
             remaining = total_tickets - checked_in_count
 
-            refunded_count = tickets.filter(status=TicketStatus.REFUNDED).count()
-            cancelled_count = tickets.filter(status=TicketStatus.CANCELLED).count()
-            expired_count = tickets.filter(status=TicketStatus.EXPIRED).count()
-            active_count = tickets.filter(status=TicketStatus.ACTIVE).count()
-
             percentage = (
-                (checked_in_count / total_tickets * 100) if total_tickets > 0 else 0
+                (checked_in_count / total_tickets * 100) if total_tickets else 0
             )
 
             return Response(
@@ -793,11 +782,11 @@ class CheckInViewSet(viewsets.ViewSet):
                         'remaining': remaining,
                         'percentage': round(percentage, 2),
                         'breakdown': {
-                            'active': active_count,
+                            'active': tickets.filter(status=TicketStatus.ACTIVE).count(),
                             'used': used_tickets,
-                            'refunded': refunded_count,
-                            'cancelled': cancelled_count,
-                            'expired': expired_count,
+                            'refunded': tickets.filter(status=TicketStatus.REFUNDED).count(),
+                            'cancelled': tickets.filter(status=TicketStatus.CANCELLED).count(),
+                            'expired': tickets.filter(status=TicketStatus.EXPIRED).count(),
                         },
                     }
                 },
@@ -809,29 +798,36 @@ class CheckInViewSet(viewsets.ViewSet):
                 {'detail': 'Event not found'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception as e:
+        except Exception:
             logger.exception("Error getting check-in stats")
             return Response(
                 {'detail': 'An error occurred while fetching stats'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ==================== HISTORY (SCOPED) ====================
+    # ============================================================
+    # HISTORY  — GET /checkin/history/?limit=&event=
+    # ============================================================
 
     @action(detail=False, methods=['get'])
     def history(self, request):
         """
-        Get recent check-in history.
+        Recent check-in history.
+
+        Returns ALL CheckInLog rows regardless of status (success,
+        failed, cancelled) so the UI can show what actually happened.
+        Previously this filtered to status='success', which hid any
+        anomalous log rows and made the "success vs. failed" bug
+        invisible in the UI.
 
         Authorization scoping:
-          - Admins/staff: all check-ins.
-          - Organizers:   only check-ins for events they organize.
+          - Admins/staff:  all check-ins
+          - Organizers:    only check-ins for events they organize
           - Regular users: only check-ins they personally performed
-                           (scanner_user = request.user).
 
-        Optional query params:
-          - limit (default 10, max 100)
-          - event (filter to a specific event UUID)
+        `scanned_by` is returned as the scanner's *username*, not their
+        email. Organizers can see who scanned at their events, but we
+        do not broadcast every staff member's email address.
         """
         try:
             limit_raw = request.query_params.get('limit', 10)
@@ -842,44 +838,54 @@ class CheckInViewSet(viewsets.ViewSet):
             limit = max(1, min(limit, 100))
 
             event_id = request.query_params.get('event')
-
             user = request.user
-            query = CheckInLog.objects.filter(status='success')
+
+            # NOTE: intentionally NOT filtered by status.
+            query = CheckInLog.objects.all()
 
             # ---- Row-level authorization ----
             if not (user.is_staff or user.is_superuser):
                 if _is_organizer(user):
-                    # Organizer: only their own events
                     query = query.filter(event__organizer=user)
                 else:
-                    # Regular user: only their own scans
                     query = query.filter(scanner_user=user)
 
             if event_id:
-                # Additional filter; combined with the scoping above.
                 query = query.filter(event_id=event_id)
 
-            recent_checkins = (
+            recent = (
                 query
                 .select_related('ticket', 'event', 'scanner_user', 'ticket__booking')
                 .order_by('-scanned_at')[:limit]
             )
 
             history = []
-            for log in recent_checkins:
+            for log in recent:
                 attendee_name = 'Guest'
                 if log.ticket and log.ticket.attendee_name:
                     attendee_name = log.ticket.attendee_name
                 elif log.ticket and log.ticket.booking:
                     attendee_name = log.ticket.booking.customer_name
 
+                if log.scanner_user:
+                    scanned_by = (
+                        log.scanner_user.get_full_name()
+                        or log.scanner_user.username
+                        or 'Unknown'
+                    )
+                else:
+                    scanned_by = 'Unknown'
+
                 history.append({
+                    'id': str(log.id),
                     'code': log.ticket.unique_code if log.ticket else None,
                     'attendee_name': attendee_name,
                     'event': log.event.title if log.event else 'Event',
+                    'status': log.status,
                     'checked_in_at': log.scanned_at.isoformat(),
                     'device_id': log.scanner_device_id,
-                    'scanned_by': log.scanner_user.email if log.scanner_user else 'Unknown',
+                    'scanned_by': scanned_by,
+                    'is_offline': log.is_offline,
                 })
 
             return Response(
@@ -887,7 +893,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error getting check-in history")
             return Response(
                 {'detail': 'An error occurred while fetching history'},

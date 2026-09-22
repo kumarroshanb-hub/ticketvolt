@@ -1,19 +1,20 @@
 // frontend/src/components/Navbar/Navbar.js
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import styled from 'styled-components';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Menu as MenuIcon,
+    KeyboardArrowDown as KeyboardArrowDownIcon,
+    Person as PersonIcon,
+    Logout as LogoutIcon,
 } from '@mui/icons-material';
 
 // ============================================
 // STYLED COMPONENTS
 // ============================================
 
-// ✅ When `$fixed` is set (mobile), the navbar sticks to the top of the
-//     viewport with a blurred background so it stays visible while scrolling.
 const NavbarContainer = styled.nav`
     display: flex;
     justify-content: space-between;
@@ -31,7 +32,6 @@ const NavbarContainer = styled.nav`
     z-index: 1100;
     box-sizing: border-box;
 
-    /* Safe-area inset for notched phones (e.g. iPhone X+) */
     padding-top: ${props => (props.$fixed ? 'max(12px, env(safe-area-inset-top))' : '12px')};
     padding-left: ${props => (props.$fixed ? 'max(16px, env(safe-area-inset-left))' : '0')};
     padding-right: ${props => (props.$fixed ? 'max(16px, env(safe-area-inset-right))' : '0')};
@@ -41,11 +41,10 @@ const NavLeft = styled.div`
     display: flex;
     align-items: center;
     gap: 12px;
-    min-width: 0; /* allow PageTitle to shrink/truncate on small screens */
+    min-width: 0;
     flex: 1;
 `;
 
-// ✅ Hamburger — visible only on mobile
 const MenuButton = styled.button`
     display: none;
     background: none;
@@ -88,7 +87,11 @@ const NavRight = styled.div`
     flex-shrink: 0;
 `;
 
-const UserInfo = styled.div`
+const UserMenuWrapper = styled.div`
+    position: relative;
+`;
+
+const UserInfo = styled.button`
     display: flex;
     align-items: center;
     gap: 10px;
@@ -100,13 +103,18 @@ const UserInfo = styled.div`
     transition: all 0.2s ease;
     min-height: 44px;
     touch-action: manipulation;
+    font-family: inherit;
 
     &:hover {
         border-color: #4f46e5;
         box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.08);
     }
 
-    /* Compact avatar-only chip on small screens */
+    &:focus-visible {
+        outline: 2px solid #4f46e5;
+        outline-offset: 2px;
+    }
+
     @media (max-width: 900px) {
         padding: 4px;
         gap: 0;
@@ -127,11 +135,11 @@ const UserAvatar = styled.div`
     font-size: 14px;
 `;
 
-// ✅ Hidden on mobile
 const UserDetails = styled.div`
     display: flex;
     flex-direction: column;
     line-height: 1.2;
+    text-align: left;
 
     @media (max-width: 900px) {
         display: none;
@@ -156,7 +164,6 @@ const UserRole = styled.span`
     letter-spacing: 0.3px;
 `;
 
-// ✅ Hidden on mobile
 const RoleBadge = styled.span`
     font-size: 9px;
     padding: 2px 10px;
@@ -184,6 +191,89 @@ const RoleBadge = styled.span`
     }
 `;
 
+const Chevron = styled(KeyboardArrowDownIcon)`
+    color: #64748b;
+    font-size: 18px !important;
+    transition: transform 0.2s ease;
+    transform: rotate(${props => (props.$open ? '180deg' : '0deg')});
+
+    @media (max-width: 900px) {
+        display: none;
+    }
+`;
+
+const Dropdown = styled.div`
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 200px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
+    padding: 6px;
+    z-index: 1200;
+    animation: fadeIn 0.15s ease;
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+`;
+
+const DropdownHeader = styled.div`
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    margin-bottom: 4px;
+`;
+
+const DropdownName = styled.div`
+    font-size: 13px;
+    font-weight: 600;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+`;
+
+const DropdownEmail = styled.div`
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+`;
+
+const DropdownItem = styled.button`
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #0f172a;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease;
+
+    svg { font-size: 18px; color: #64748b; }
+
+    &:hover {
+        background: #f1f5f9;
+    }
+
+    &.danger {
+        color: #dc2626;
+        svg { color: #dc2626; }
+        &:hover { background: #fef2f2; }
+    }
+`;
+
 // ============================================
 // PAGE TITLE MAP
 // ============================================
@@ -199,9 +289,9 @@ const PAGE_TITLES = {
     '/discounts': 'Discounts',
     '/users':     'Users',
     '/settings':  'Settings',
+    '/profile':   'Profile',
 };
 
-// Match longest prefix so nested routes (e.g. /events/create) also work
 const getPageTitleFromPath = (pathname) => {
     if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
 
@@ -223,18 +313,38 @@ const getPageTitleFromPath = (pathname) => {
 // COMPONENT
 // ============================================
 
-/**
- * Navbar
- *
- * Props:
- *   onMenuToggle {function} — called when the hamburger is tapped (mobile)
- *   isMobile     {boolean}  — when true, renders as a fixed mobile top bar
- */
 const Navbar = ({ onMenuToggle, isMobile = false }) => {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
     const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
     const navigate = useNavigate();
     const location = useLocation();
+
+    const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef(null);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        const handleClick = (e) => {
+            if (menuRef.current && !menuRef.current.contains(e.target)) {
+                setMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [menuOpen]);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        const handleKey = (e) => {
+            if (e.key === 'Escape') setMenuOpen(false);
+        };
+        document.addEventListener('keydown', handleKey);
+        return () => document.removeEventListener('keydown', handleKey);
+    }, [menuOpen]);
+
+    useEffect(() => {
+        setMenuOpen(false);
+    }, [location.pathname]);
 
     const getRoleLabel = () => {
         if (isSuperAdmin) return 'Super Admin';
@@ -247,6 +357,19 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         if (user?.name) return user.name.charAt(0).toUpperCase();
         if (user?.username) return user.username.charAt(0).toUpperCase();
         return 'U';
+    };
+
+    const handleLogout = () => {
+        setMenuOpen(false);
+        if (typeof logout === 'function') {
+            logout();
+        }
+        navigate('/login');
+    };
+
+    const handleGoToProfile = () => {
+        setMenuOpen(false);
+        navigate('/profile');
     };
 
     const pageTitle = getPageTitleFromPath(location.pathname);
@@ -266,16 +389,54 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
             </NavLeft>
 
             <NavRight>
-                <UserInfo onClick={() => navigate('/profile')} aria-label="User menu">
-                    <UserAvatar>{getInitial()}</UserAvatar>
-                    <UserDetails>
-                        <UserName>{user?.name || user?.username || 'User'}</UserName>
-                        <UserRole>{getRoleLabel()}</UserRole>
-                    </UserDetails>
-                    <RoleBadge role={role}>
-                        {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : '👤'}
-                    </RoleBadge>
-                </UserInfo>
+                <UserMenuWrapper ref={menuRef}>
+                    <UserInfo
+                        onClick={() => setMenuOpen(prev => !prev)}
+                        aria-label="User menu"
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpen}
+                    >
+                        <UserAvatar>{getInitial()}</UserAvatar>
+                        <UserDetails>
+                            <UserName>{user?.name || user?.username || 'User'}</UserName>
+                            <UserRole>{getRoleLabel()}</UserRole>
+                        </UserDetails>
+                        <RoleBadge role={role}>
+                            {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : '👤'}
+                        </RoleBadge>
+                        <Chevron $open={menuOpen} />
+                    </UserInfo>
+
+                    {menuOpen && (
+                        <Dropdown role="menu">
+                            <DropdownHeader>
+                                <DropdownName>
+                                    {user?.name || user?.username || 'User'}
+                                </DropdownName>
+                                {user?.email && (
+                                    <DropdownEmail>{user.email}</DropdownEmail>
+                                )}
+                            </DropdownHeader>
+
+                            <DropdownItem
+                                role="menuitem"
+                                onClick={handleGoToProfile}
+                            >
+                                <PersonIcon />
+                                Profile
+                            </DropdownItem>
+
+                            <DropdownItem
+                                role="menuitem"
+                                className="danger"
+                                onClick={handleLogout}
+                            >
+                                <LogoutIcon />
+                                Logout
+                            </DropdownItem>
+                        </Dropdown>
+                    )}
+                </UserMenuWrapper>
             </NavRight>
         </NavbarContainer>
     );

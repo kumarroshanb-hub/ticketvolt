@@ -17,9 +17,18 @@ logger = logging.getLogger(__name__)
 # Hard cap — a single booking may not contain more than this many tickets.
 MAX_TICKETS_PER_BOOKING = 50
 
+# ---------------------------------------------------------------------------
+# Canonical ticket QR payload schema. Must match the mobile extractor and
+# the server-side helper in views.py.
+# ---------------------------------------------------------------------------
+TICKET_SCHEMA_VERSION = 1
+TICKET_TYPE = 'ticket'
+TICKET_CODE_RE = re.compile(r'^TIX[A-Z0-9]{8,32}$')
+MAX_QR_PAYLOAD_LENGTH = 2048
+
 
 # ============================================================
-# WhatsApp service-account helper (unchanged from your version)
+# WhatsApp service-account helper
 # ============================================================
 def get_or_create_whatsapp_bot_user():
     service_password = os.environ.get('WHATSAPP_BOT_PASSWORD')
@@ -64,19 +73,67 @@ def get_or_create_whatsapp_bot_user():
 
 
 # ============================================================
+# TICKET QR PAYLOAD (strict)
+# ============================================================
+class TicketPayloadSerializer(serializers.Serializer):
+    """
+    Strict, fail-closed schema for the signed QR payload.
+
+    The mobile scanner and the server-side `_validate_ticket_payload`
+    helper both implement the same contract. This serializer is the
+    canonical definition; keep them in sync.
+
+    Accepted shape (exactly these four keys, nothing else):
+        {
+          "v": 1,
+          "type": "ticket",
+          "code": "TIX<8-32 uppercase alnum>",
+          "sig": "<hex HMAC-SHA256 over canonical {v,type,code}>"
+        }
+    """
+    v = serializers.IntegerField(required=True)
+    type = serializers.CharField(required=True, max_length=16)
+    code = serializers.CharField(required=True, max_length=64)
+    sig = serializers.CharField(required=True, max_length=256)
+
+    def validate(self, attrs):
+        if attrs.get('v') != TICKET_SCHEMA_VERSION:
+            raise serializers.ValidationError(
+                {'v': f'Unsupported schema version. Expected {TICKET_SCHEMA_VERSION}.'}
+            )
+        if attrs.get('type') != TICKET_TYPE:
+            raise serializers.ValidationError(
+                {'type': f'Invalid payload type. Expected "{TICKET_TYPE}".'}
+            )
+
+        code = attrs.get('code') or ''
+        if not TICKET_CODE_RE.match(code):
+            raise serializers.ValidationError(
+                {'code': 'Invalid ticket code format.'}
+            )
+
+        sig = attrs.get('sig') or ''
+        if not sig:
+            raise serializers.ValidationError({'sig': 'Missing signature.'})
+
+        # Reject unknown top-level keys to keep the surface minimal.
+        # DRF strips unknown keys silently by default, so check raw input.
+        raw = self.initial_data if isinstance(self.initial_data, dict) else {}
+        allowed = {'v', 'type', 'code', 'sig'}
+        extra = set(raw.keys()) - allowed
+        if extra:
+            raise serializers.ValidationError(
+                {'non_field_errors': [f'Unexpected fields: {sorted(extra)}']}
+            )
+
+        return attrs
+
+
+# ============================================================
 # EVENT SERIALIZERS
 # ============================================================
 
 class PublicEventSerializer(serializers.ModelSerializer):
-    """
-    Serializer used for PUBLIC (AllowAny) endpoints.
-
-    Exposes ONLY the fields a public visitor needs to browse events.
-
-    ✅ Also exposes summary counts (tier_count, session_count, total_capacity)
-       so the booking flow can detect Sold-Out status and show rich cards
-       without an extra request per event.
-    """
     venue = serializers.SerializerMethodField()
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
@@ -93,7 +150,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'total_tickets_sold',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'venue',
-            'tier_count', 'session_count', 'total_capacity',   # ✅ ADDED
+            'tier_count', 'session_count', 'total_capacity',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -123,7 +180,6 @@ class PublicEventSerializer(serializers.ModelSerializer):
 
 
 class PublicEventDetailSerializer(PublicEventSerializer):
-    """Public detail view — adds sessions and tiers (no revenue internals)."""
     sessions = serializers.SerializerMethodField()
     tiers = serializers.SerializerMethodField()
 
@@ -162,10 +218,6 @@ class PublicEventDetailSerializer(PublicEventSerializer):
 
 
 class EventSerializer(serializers.ModelSerializer):
-    """
-    Full event serializer for authenticated managers.
-    Includes summary counts (tiers, sessions, capacity) and nested venue.
-    """
     venue = serializers.SerializerMethodField()
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
@@ -203,7 +255,6 @@ class EventSerializer(serializers.ModelSerializer):
 
 
 class EventDetailSerializer(serializers.ModelSerializer):
-    """Full event detail serializer for authenticated managers."""
     sessions = serializers.SerializerMethodField()
     tiers = serializers.SerializerMethodField()
     venue = serializers.SerializerMethodField()
@@ -303,6 +354,7 @@ class TicketSerializer(serializers.ModelSerializer):
         return obj.booking.booking_reference if obj.booking else None
 
     def get_is_checked_in(self, obj):
+        # Keep this consistent with views._ticket_to_scan_response.
         return obj.status == 'used'
 
 
@@ -636,7 +688,6 @@ class DiscountSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class UserProfileSummarySerializer(serializers.ModelSerializer):
-    """Compact profile — embedded inside UserSerializer."""
     class Meta:
         model = UserProfile
         fields = [
@@ -647,10 +698,6 @@ class UserProfileSummarySerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    """
-    Includes `is_active`, `is_staff`, `is_superuser`, and a nested `profile`
-    so the frontend Users page renders correct status and profile fields.
-    """
     role = serializers.SerializerMethodField()
     profile = UserProfileSummarySerializer(read_only=True)
 
@@ -674,8 +721,6 @@ class UserSerializer(serializers.ModelSerializer):
         if obj.is_staff:
             return 'admin'
         if hasattr(obj, 'profile') and obj.profile.is_organizer:
-            return 'organizer'
-        if hasattr(obj, 'organizer'):
             return 'organizer'
         return 'user'
 

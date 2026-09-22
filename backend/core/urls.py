@@ -25,7 +25,16 @@ def home(request):
 urlpatterns = [
     # Home and health
     path('', home, name='home'),
+
+    # Root-level health check — used by Render and other infrastructure.
+    # Keep this; the production platform health probe hits /health/.
     path('health/', health_check, name='health_check'),
+
+    # Alias under /api/ so mobile clients that normalize their base URL to
+    # "http://host:8000/api" can probe the same health endpoint without
+    # having to know about the root-level path. Both routes hit the same
+    # view — no duplication of logic.
+    path('api/health/', health_check, name='api_health_check'),
 
     # ============================================
     # Django Admin — served under a secret path.
@@ -34,16 +43,11 @@ urlpatterns = [
     path(settings.ADMIN_URL, admin.site.urls),
 
     # Admin action URLs from the ticket_bookings app
-    # (kept under the same secret prefix so the admin surface is
-    #  one contiguous attack surface you can lock down at the edge.)
     path(settings.ADMIN_URL, include('ticket_bookings.admin_urls')),
 
     # ============================================
     # JWT
     # ============================================
-    # NOTE: TokenObtainPairView is intentionally NOT mounted here.
-    # Login goes through LoginView, which enforces Axes lockout,
-    # per-endpoint throttling, and timing-safe comparison.
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
 

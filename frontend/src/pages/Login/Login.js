@@ -168,7 +168,7 @@ const Login = () => {
                             fontSize: { xs: '1.75rem', sm: '2rem' },
                         }}
                     >
-                        Ticket<span style={{ color: '#5B5FEF' }}>Volt</span>
+                        Tiket<span style={{ color: '#5B5FEF' }}>Vault</span>
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}>
                         Sign in to manage your events

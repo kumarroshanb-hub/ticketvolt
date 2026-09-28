@@ -479,7 +479,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             <Logo>
                 <LogoIcon>🎫</LogoIcon>
                 <LogoText collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                    Ticket<span>Volt</span>
+                    Tiket<span>Vault</span>
                 </LogoText>
                 {isDrawer && (
                     <DrawerCloseButton

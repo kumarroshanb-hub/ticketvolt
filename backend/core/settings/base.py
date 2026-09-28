@@ -326,7 +326,7 @@ else:
     EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 
 DEFAULT_FROM_EMAIL = os.environ.get(
-    'DEFAULT_FROM_EMAIL', 'TicketVolt <noreply@ticketvolt.com>'
+    'DEFAULT_FROM_EMAIL', 'TiketVault <noreply@tiketvault.com>'
 )
 EMAIL_TIMEOUT = 30
 

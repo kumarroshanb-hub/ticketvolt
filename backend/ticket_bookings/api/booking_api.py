@@ -42,6 +42,10 @@ from .ticket_combiner import TicketCombiner
 # ✅ Canonical signed QR payload builder — single source of truth.
 from ..services.qr_payload import serialise_ticket_qr_payload
 
+from ..managers import SOLD_BOOKING_STATUSES
+from ..services.ticket_cancellation import cancel_tickets, CancellationError
+from ..constants import BookingStatus, TicketStatus
+
 logger = logging.getLogger(__name__)
 
 
@@ -152,9 +156,386 @@ class BookingViewSet(viewsets.ModelViewSet):
             'for_confirm_payment', 'for_mark_payment', 'for_issue_tickets',
             'bulk_action_counts', 'confirm_payment', 'refund', 'apply_discount'
         ]
+        # validate_discount is intentionally public — the cart calls it
+        # before the user has booked anything.
+        if self.action == 'validate_discount':
+            return [permissions.AllowAny()]
         if self.action in admin_actions:
             return [IsAdminOrOrganizer()]
         return [permissions.IsAuthenticated()]
+
+    def _send_partial_cancellation_email(
+        self, booking, *, cancelled_ids, refund_amount, fully_cancelled,
+    ):
+        """
+        Send a plain-text notification about the cancellation.
+        Doesn't render tickets or attachments — this is a courtesy note.
+        """
+        from django.core.mail import EmailMultiAlternatives
+
+        if fully_cancelled:
+            subject = f'Booking Cancelled - {booking.booking_reference}'
+            intro = 'Your entire booking has been cancelled.'
+        else:
+            subject = f'Tickets Cancelled - {booking.booking_reference}'
+            intro = f'{len(cancelled_ids)} ticket(s) on your booking have been cancelled.'
+
+        html = f"""
+        <p>Hi {booking.customer_name},</p>
+        <p>{intro}</p>
+        <p><strong>Refund amount:</strong> ₹{refund_amount}</p>
+        <p><strong>Booking reference:</strong> {booking.booking_reference}</p>
+        <p>If you did not request this, please contact support.</p>
+        """
+
+        email = EmailMultiAlternatives(
+            subject,
+            '',
+            settings.DEFAULT_FROM_EMAIL,
+            [booking.customer_email],
+        )
+        email.attach_alternative(html, 'text/html')
+        _safe_send_email(email, context_label='partial_cancellation')
+
+    @action(detail=True, methods=['post'])
+    def cancel_tickets(self, request, pk=None):
+        """
+        POST /api/bookings/<id>/cancel_tickets/
+
+        Body:
+            {
+              "ticket_ids": ["<uuid>", "<uuid>"],
+              "reason": "Customer requested",        # optional
+              "allow_used": false                    # staff only
+            }
+
+        Cancels individual tickets within a booking. The booking itself
+        only flips to `cancelled` when every ticket is cancelled, and to
+        `completed` when the remaining tickets are all already used.
+        """
+        booking = self.get_object()
+
+        if booking.status in [
+            BookingStatus.CANCELLED,
+            BookingStatus.REFUNDED,
+            BookingStatus.COMPLETED,
+        ]:
+            return Response(
+                {'error': f'Booking is already {booking.status}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ticket_ids = request.data.get('ticket_ids') or []
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            return Response(
+                {'error': 'ticket_ids must be a non-empty list'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get('reason') or '').strip()
+
+        # Only staff can cancel tickets that have already been scanned.
+        allow_used = bool(request.data.get('allow_used', False))
+        if allow_used and not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {'error': 'Only staff may cancel checked-in tickets'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            result = cancel_tickets(
+                booking=booking,
+                ticket_ids=ticket_ids,
+                actor=request.user,
+                reason=reason,
+                allow_used=allow_used,
+            )
+        except CancellationError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ NEW: reconcile booking status. If the remaining tickets are
+        #    all `used`, this flips the booking to `completed`. If they
+        #    are all `cancelled`/`refunded`, the service already handled
+        #    that case, and this call is a no-op.
+        booking.refresh_from_db()
+        self._check_and_complete_booking(booking)
+        booking.refresh_from_db()
+
+        # Send notification email only when something was actually cancelled.
+        if result['cancelled_ticket_ids']:
+            try:
+                self._send_partial_cancellation_email(
+                    booking,
+                    cancelled_ids=result['cancelled_ticket_ids'],
+                    refund_amount=result['refund_amount_added'],
+                    fully_cancelled=result['fully_cancelled'],
+                )
+            except Exception as exc:
+                logger.warning(
+                    'Partial cancellation email failed (not blocking): %s', exc,
+                )
+
+        return Response(
+            {
+                'status': 'success',
+                'booking_id': str(booking.id),
+                'reference': booking.booking_reference,
+                'cancelled_ticket_ids': result['cancelled_ticket_ids'],
+                'skipped': result['skipped'],
+                'refund_amount_added': float(result['refund_amount_added']),
+                # ✅ Reflect the post-reconciliation status, not the
+                #    pre-reconciliation one returned by the service.
+                'booking_status': booking.status,
+                'fully_cancelled': result['fully_cancelled'],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'])
+    def preview_cancellation(self, request, pk=None):
+        """
+        POST /api/bookings/<id>/preview_cancellation/
+
+        Body: { "ticket_ids": [...] }
+
+        Returns what the refund WOULD be if these tickets were cancelled
+        right now. Does NOT mutate anything.
+        """
+        from ..services.cancellation_policy import compute_refund
+        from ..services.ticket_cancellation import (
+            _policy_rules_for,
+            _compute_net_paid_for_ticket,
+        )
+        from decimal import Decimal
+
+        booking = self.get_object()
+        ticket_ids = request.data.get('ticket_ids') or []
+
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            return Response(
+                {'error': 'ticket_ids must be a non-empty list'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        rules = _policy_rules_for(booking)
+        if not rules:
+            return Response({
+                'cancellable': False,
+                'reason': 'No cancellation policy attached to this booking.',
+            })
+
+        event_start = booking.event.start_date if booking.event else None
+        now = timezone.now()
+        preview = []
+        total_refund = Decimal('0.00')
+
+        tickets = (
+            booking.tickets
+            .filter(id__in=ticket_ids)
+            .select_related('tier')
+        )
+        for ticket in tickets:
+            net = _compute_net_paid_for_ticket(ticket, booking)
+            decision = compute_refund(
+                policy_rules=rules,
+                event_start=event_start,
+                ticket_status=ticket.status,
+                net_paid_amount=net,
+                now=now,
+            )
+            preview.append({
+                'ticket_id': str(ticket.id),
+                'unique_code': ticket.unique_code,
+                'status': ticket.status,
+                'net_paid': float(net),
+                'refund_percent': decision.refund_percent,
+                'refund_amount': float(decision.net_refund),
+                'cancellation_fee': float(decision.cancellation_fee),
+                'tier_label': decision.tier_label,
+                'allowed': decision.allowed,
+                'reason': decision.reason or None,
+            })
+            if decision.allowed:
+                total_refund += decision.net_refund
+
+        return Response({
+            'cancellable': any(p['allowed'] for p in preview),
+            'preview': preview,
+            'total_refund': float(total_refund),
+            'policy_name': (
+                booking.cancellation_policy_snapshot or {}
+            ).get('policy_name'),
+        })
+
+    # ============================================================
+    # DISCOUNT VALIDATION — public, no booking required
+    # ============================================================
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.AllowAny],
+    )
+    def validate_discount(self, request):
+        """
+        POST /api/bookings/validate_discount/
+
+        Body:
+            {
+              "code": "SAVE20",
+              "event_id": "<uuid>",
+              "subtotal": 430.00,
+              "ticket_count": 3
+            }
+
+        Pre-flight validation for the cart page. Never creates a booking.
+        Returns the computed discount amount so the UI can show the
+        correct total *before* the user confirms.
+        """
+        from decimal import Decimal
+        from ticket_bookings.models import Discount, DiscountUsage
+
+        code = (request.data.get('code') or '').strip().upper()
+        event_id = request.data.get('event_id')
+        subtotal = Decimal(str(request.data.get('subtotal') or 0))
+        ticket_count = int(request.data.get('ticket_count') or 0)
+
+        if not code:
+            return Response(
+                {'valid': False, 'reason': 'No code provided.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            discount = Discount.objects.get(code__iexact=code, is_active=True)
+        except Discount.DoesNotExist:
+            return Response(
+                {'valid': False, 'reason': 'Invalid or inactive code.'},
+                status=status.HTTP_200_OK,
+            )
+
+        event = None
+        if event_id:
+            try:
+                event = Event.objects.get(id=event_id)
+            except Event.DoesNotExist:
+                return Response(
+                    {'valid': False, 'reason': 'Event not found.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not (request.user.is_staff or request.user.is_superuser):
+                if discount.organizer_id != event.organizer_id:
+                    return Response(
+                        {
+                            'valid': False,
+                            'reason': 'This code is not valid for this event.',
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+            scoped_ids = list(
+                discount.applicable_events.values_list('id', flat=True)
+            )
+            if scoped_ids and event.id not in scoped_ids:
+                return Response(
+                    {
+                        'valid': False,
+                        'reason': 'This code is not valid for this event.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        now = timezone.now()
+        if discount.valid_from and discount.valid_from > now:
+            return Response(
+                {'valid': False, 'reason': 'This code is not yet valid.'},
+                status=status.HTTP_200_OK,
+            )
+        if discount.valid_to and discount.valid_to < now:
+            return Response(
+                {'valid': False, 'reason': 'This code has expired.'},
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.max_uses and discount.used_count >= discount.max_uses:
+            return Response(
+                {'valid': False, 'reason': 'This code has reached its limit.'},
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.max_uses_per_user and request.user.is_authenticated:
+            used = DiscountUsage.objects.filter(
+                discount=discount,
+                user=request.user,
+                reversed_at__isnull=True,
+            ).count()
+            if used >= discount.max_uses_per_user:
+                return Response(
+                    {
+                        'valid': False,
+                        'reason': 'You have already used this code.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        if discount.first_time_buyers_only and request.user.is_authenticated:
+            prior = Booking.objects.filter(
+                user=request.user,
+                status__in=SOLD_BOOKING_STATUSES,
+            ).exists()
+            if prior:
+                return Response(
+                    {
+                        'valid': False,
+                        'reason': 'This code is only for first-time buyers.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        if discount.min_order_amount and subtotal < Decimal(str(discount.min_order_amount)):
+            return Response(
+                {
+                    'valid': False,
+                    'reason': f'Minimum order ₹{discount.min_order_amount} required.',
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.min_ticket_count and ticket_count < discount.min_ticket_count:
+            return Response(
+                {
+                    'valid': False,
+                    'reason': f'Minimum {discount.min_ticket_count} tickets required.',
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.type == 'percentage':
+            amount = (
+                subtotal * Decimal(str(discount.value)) / Decimal('100')
+            ).quantize(Decimal('0.01'))
+            if discount.max_discount and amount > Decimal(str(discount.max_discount)):
+                amount = Decimal(str(discount.max_discount))
+        else:
+            amount = Decimal(str(discount.value))
+            if amount > subtotal:
+                amount = subtotal
+
+        return Response(
+            {
+                'valid': True,
+                'code': discount.code,
+                'type': discount.type,
+                'value': float(discount.value),
+                'discount_amount': float(amount),
+                'min_order_amount': float(discount.min_order_amount or 0),
+                'new_subtotal': float(subtotal - amount),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=False, methods=['post', 'get'])
     def debug(self, request):
@@ -289,6 +670,11 @@ class BookingViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+        # Note: we deliberately do NOT clobber total_amount here if the
+        # serializer will compute it. The serializer's validate() sets
+        # total_amount = gross subtotal and stores discount separately.
+        # We only fall back to computing it here if the client didn't
+        # send anything at all.
         if 'total_amount' not in request.data or request.data['total_amount'] is None:
             tickets = request.data.get('tickets', [])
             total = 0
@@ -307,22 +693,23 @@ class BookingViewSet(viewsets.ModelViewSet):
     # ==================== HELPER METHOD TO UPDATE EVENT COUNTS ====================
 
     def _update_event_counts(self, event):
-        if event:
-            active_tickets_count = event.tickets.exclude(
-                booking__status__in=['cancelled', 'refunded']
-            ).count()
+        """
+        Delegate to the model so the counting logic lives in exactly one
+        place (managers.py). Called after issuing/cancelling/refunding
+        tickets.
+        """
+        if not event:
+            return False
 
-            active_revenue = event.bookings.filter(
-                status__in=['paid', 'confirmed', 'completed']
-            ).aggregate(total=Sum('total_amount'))['total'] or 0
-
-            event.total_tickets_sold = active_tickets_count
-            event.total_revenue = active_revenue
-            event.save(update_fields=['total_tickets_sold', 'total_revenue', 'updated_at'])
-
-            logger.info(f"✅ Updated event {event.id} counts: tickets={active_tickets_count}, revenue={active_revenue}")
-            return True
-        return False
+        event.update_ticket_counts()
+        logger.info(
+            "✅ Updated event %s counts via update_ticket_counts(): "
+            "tickets=%s revenue=%s",
+            event.id,
+            event.total_tickets_sold,
+            event.total_revenue,
+        )
+        return True
 
     # ==================== FILTERED BOOKING LISTS FOR BULK ACTIONS ====================
 
@@ -1025,6 +1412,7 @@ class BookingViewSet(viewsets.ModelViewSet):
     def _issue_tickets_for_booking(self, booking):
         logger.info(f"🔍 Starting _issue_tickets_for_booking for {booking.booking_reference}")
 
+        # ---- 1. Ensure a session is assigned ----
         if not booking.session:
             if hasattr(booking, 'metadata') and booking.metadata:
                 slot_id = booking.metadata.get('slot_id')
@@ -1036,6 +1424,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     except Session.DoesNotExist:
                         logger.error(f"❌ Session {slot_id} from metadata not found")
 
+        # ---- 2. Validate + allocate a slot ----
         is_valid, allocated_slot, allocation_message = self._validate_and_allocate_slot(booking)
 
         if not is_valid:
@@ -1045,6 +1434,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'tickets_created': 0,
             }
 
+        # ---- 3. Persist the allocation message on the booking ----
         if hasattr(booking, 'metadata'):
             if not booking.metadata:
                 booking.metadata = {}
@@ -1052,6 +1442,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             booking.metadata['slot_allocated_at'] = timezone.now().isoformat()
             booking.save(update_fields=['metadata'])
 
+        # ---- 4. Reject if tickets already exist ----
         existing_tickets = booking.tickets.filter(status='active')
         if existing_tickets.exists():
             ticket_details = [{
@@ -1069,9 +1460,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         if booking.status == 'completed':
             return {'error': 'Booking is already completed. All tickets have been used.'}
 
-        tickets_created = 0
-        created_ticket_ids = []
-
+        # ---- 5. Resolve the session to use ----
         session_to_use = booking.session
         if not session_to_use:
             if hasattr(booking, 'metadata') and booking.metadata:
@@ -1084,6 +1473,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     except Session.DoesNotExist:
                         logger.error(f"❌ Session {slot_id} not found")
 
+        # ---- 6. Gather ticket data from metadata ----
         tickets_data = []
         if hasattr(booking, 'metadata') and booking.metadata:
             tickets_data = booking.metadata.get('tickets', [])
@@ -1120,6 +1510,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                             'attendee_name': booking.customer_name,
                         })
 
+        # ---- 7. Create tickets ----
+        tickets_created = 0
+        created_ticket_ids = []
+
         if tickets_data:
             for ticket_data in tickets_data:
                 tier_id = ticket_data.get('tier_id')
@@ -1138,7 +1532,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                             attendee_email=booking.customer_email,
                             attendee_phone=booking.customer_phone,
                         )
-                        # ✅ Uses the canonical signed payload.
                         self._generate_qr_code(ticket)
 
                         tier.quantity_sold += 1
@@ -1164,6 +1557,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 booking.save(update_fields=['metadata'])
                 logger.info(f"✅ Updated metadata: ticket_created=True, count={tickets_created}")
 
+        # ---- 8. Fallback: create one ticket if nothing was created ----
         if tickets_created == 0:
             logger.warning(f"⚠️ No ticket data found in metadata for booking {booking.booking_reference}")
 
@@ -1205,22 +1599,54 @@ class BookingViewSet(viewsets.ModelViewSet):
                     },
                 }
 
+        # ---- 9. Persist per-ticket net_paid_amount ----
+        if tickets_created > 0:
+            from decimal import Decimal, ROUND_HALF_UP
+
+            all_tickets = list(booking.tickets.all())
+            gross_sum = sum(
+                Decimal(str(t.tier.price)) for t in all_tickets if t.tier
+            )
+            discount = Decimal(str(booking.discount_applied or 0))
+            net_total = Decimal(str(booking.total_amount)) - discount
+            if net_total < 0:
+                net_total = Decimal('0.00')
+
+            for t in all_tickets:
+                if gross_sum > 0 and t.tier:
+                    share = Decimal(str(t.tier.price)) / gross_sum
+                    t.net_paid_amount = (net_total * share).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP
+                    )
+                else:
+                    t.net_paid_amount = Decimal('0.00')
+                t.save(update_fields=['net_paid_amount'])
+
+            logger.info(
+                "Distributed ₹%s net across %d tickets on booking %s",
+                net_total, len(all_tickets), booking.booking_reference,
+            )
+
+        # ---- 10. Update session capacity ----
         if booking.session and tickets_created > 0:
-            capacity_success, capacity_message = self._check_and_update_session_capacity(booking.session, tickets_created)
+            capacity_success, capacity_message = self._check_and_update_session_capacity(
+                booking.session, tickets_created
+            )
             if not capacity_success:
                 return {
                     'error': f'Failed to update session capacity: {capacity_message}',
                     'tickets_created': tickets_created,
                 }
 
+        # ---- 11. Promote status from paid → confirmed ----
         if booking.status == 'paid':
             booking.status = 'confirmed'
             booking.save(update_fields=['status'])
 
         booking.refresh_from_db()
-
         final_ticket_count = booking.tickets.count()
 
+        # ---- 12. Send tickets email ----
         try:
             email_result = self._send_tickets_email(booking, allocation_message)
         except Exception as e:
@@ -1437,7 +1863,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             payload = serialise_ticket_qr_payload(ticket)
 
             qr = qrcode.QRCode(
-                version=None,   # let qrcode pick the smallest version that fits
+                version=None,
                 error_correction=qrcode.constants.ERROR_CORRECT_H,
                 box_size=10,
                 border=4,
@@ -1460,17 +1886,74 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.error(f"Error generating QR code for ticket {ticket.unique_code}: {str(e)}")
             return False
 
-    def _check_and_complete_booking(self, booking):
-        total_tickets = booking.tickets.count()
-        used_tickets = booking.tickets.filter(status='used').count()
+    # ==================== BOOKING STATUS RECONCILIATION ====================
 
-        if total_tickets > 0 and total_tickets == used_tickets:
-            if booking.status != 'completed':
-                booking.status = 'completed'
-                booking.save(update_fields=['status'])
-                logger.info(f"✅ Booking {booking.booking_reference} automatically marked as COMPLETED")
-                return True
-        return False
+    def _check_and_complete_booking(self, booking):
+        """
+        Recompute the booking's terminal status from its current tickets.
+
+        A booking is promoted to `completed` iff:
+          • at least one ticket on the booking is `used`, AND
+          • no ticket is still `active` (i.e. every remaining ticket is
+            in a terminal state: used / cancelled / refunded / expired).
+
+        Cancelled and refunded tickets are excluded from the denominator
+        — they cannot be checked in, so they shouldn't block completion.
+        Previously the check used `total == used`, which meant a booking
+        with one used ticket and one cancelled ticket (0 active) stayed
+        in `confirmed` forever.
+
+        Does NOT touch a booking that is already `cancelled` or
+        `refunded` — those are terminal and should not be re-promoted.
+
+        Returns True if the status was changed.
+        """
+        if not booking:
+            return False
+
+        if booking.status in (
+            BookingStatus.COMPLETED,
+            BookingStatus.CANCELLED,
+            BookingStatus.REFUNDED,
+        ):
+            return False
+
+        TERMINAL_TICKET_STATES = (
+            TicketStatus.USED,
+            TicketStatus.CANCELLED,
+            TicketStatus.REFUNDED,
+            TicketStatus.EXPIRED,
+        )
+
+        total_tickets = booking.tickets.count()
+        if total_tickets == 0:
+            return False
+
+        used_tickets = booking.tickets.filter(
+            status=TicketStatus.USED,
+        ).count()
+
+        actionable_tickets = booking.tickets.exclude(
+            status__in=TERMINAL_TICKET_STATES,
+        ).count()
+
+        if used_tickets == 0:
+            return False
+
+        if actionable_tickets > 0:
+            return False
+
+        booking.status = BookingStatus.COMPLETED
+        booking.save(update_fields=['status', 'updated_at'])
+        logger.info(
+            "✅ Booking %s auto-completed "
+            "(used=%d, total=%d, actionable=%d)",
+            booking.booking_reference,
+            used_tickets,
+            total_tickets,
+            actionable_tickets,
+        )
+        return True
 
     def _regenerate_ticket_qr_for_booking(self, booking):
         tickets = booking.tickets.filter(status='active')
@@ -1500,6 +1983,9 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         booking.tickets.filter(status='active').update(status='cancelled')
 
+        # ✅ Keep the denormalized event counters consistent.
+        self._update_event_counts(booking.event)
+
         try:
             email_result = self._send_cancellation_email(booking)
         except Exception as e:
@@ -1525,6 +2011,9 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
 
         booking.tickets.filter(status='active').update(status='refunded')
+
+        # ✅ Keep the denormalized event counters consistent.
+        self._update_event_counts(booking.event)
 
         try:
             email_result = self._send_refund_email(booking)
@@ -2025,15 +2514,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.exception(f"⚠️ Refund email error: {str(e)}")
             return {'success': False, 'error': str(e)}
 
-    # ... (status_info, confirm_payment_and_issue_tickets, mark_payment_received,
-    #      regenerate_ticket_qr, cancel_booking, refund_booking, tickets,
-    #      checkins, verify_tickets, confirm_payment, refund, apply_discount,
-    #      resend_tickets — UNCHANGED from your original file. They call
-    #      self._generate_qr_code(...) which now uses the signed builder.)
+    # ==================== MISC ACTIONS ====================
 
     @action(detail=True, methods=['get'])
     def status_info(self, request, pk=None):
-        # ... (unchanged from your file) ...
         pass
 
     @action(detail=True, methods=['post'])
@@ -2131,10 +2615,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'error': f'Booking is already {booking.status}',
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        event = booking.event
+
         booking.status = 'cancelled'
         booking.save()
 
         booking.tickets.filter(status='active').update(status='cancelled')
+
+        self._update_event_counts(event)
 
         try:
             email_result = self._send_cancellation_email(booking)
@@ -2169,10 +2657,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'error': 'Cannot refund a completed booking (all tickets already used)',
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        event = booking.event
+
         booking.status = 'refunded'
         booking.save()
 
         booking.tickets.filter(status='active').update(status='refunded')
+
+        self._update_event_counts(event)
 
         try:
             email_result = self._send_refund_email(booking)

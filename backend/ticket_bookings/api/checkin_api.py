@@ -81,23 +81,73 @@ class CheckInViewSet(viewsets.ViewSet):
         return False
 
     def _check_and_complete_booking(self, booking):
-        """Mark booking COMPLETED when all its tickets are used."""
+        """
+        Recompute the booking's terminal status from its current tickets.
+
+        A booking is promoted to `completed` iff:
+          • at least one ticket on the booking is `used`, AND
+          • no ticket is still check-in-able (every remaining ticket is
+            in a terminal state: used / cancelled / refunded / expired).
+
+        Cancelled and refunded tickets are excluded from the denominator
+        — they cannot be checked in, so they shouldn't block completion.
+        This matches the exact same rule enforced by
+        BookingViewSet._check_and_complete_booking, so check-in,
+        cancel, and refund all agree on what "completed" means.
+
+        Refuses to touch a booking that is already `cancelled` or
+        `refunded` — those are terminal and must not be re-promoted.
+
+        Returns True if the status was changed.
+        """
         if not booking:
             return False
 
-        total_tickets = booking.tickets.count()
-        used_tickets = booking.tickets.filter(status=TicketStatus.USED).count()
+        # ---- 1. Nothing to do if already terminal ----
+        if booking.status in (
+            BookingStatus.COMPLETED,
+            BookingStatus.CANCELLED,
+            BookingStatus.REFUNDED,
+        ):
+            return False
 
-        if total_tickets > 0 and total_tickets == used_tickets:
-            if booking.status != BookingStatus.COMPLETED:
-                booking.status = BookingStatus.COMPLETED
-                booking.save(update_fields=['status'])
-                logger.info(
-                    "Booking %s auto-completed (%s/%s tickets used)",
-                    booking.booking_reference, used_tickets, total_tickets,
-                )
-                return True
-        return False
+        # ---- 2. Count tickets by category ----
+        terminal_states = (
+            TicketStatus.USED,
+            TicketStatus.CANCELLED,
+            TicketStatus.REFUNDED,
+            TicketStatus.EXPIRED,
+        )
+
+        total_tickets = booking.tickets.count()
+        if total_tickets == 0:
+            return False
+
+        used_tickets = booking.tickets.filter(status=TicketStatus.USED).count()
+        actionable_tickets = booking.tickets.exclude(
+            status__in=terminal_states,
+        ).count()
+
+        # ---- 3. Apply the rules ----
+        # Nothing used → not "completed", regardless of the rest.
+        if used_tickets == 0:
+            return False
+
+        # Any ticket still check-in-able → not done yet.
+        if actionable_tickets > 0:
+            return False
+
+        # ---- 4. Promote ----
+        booking.status = BookingStatus.COMPLETED
+        booking.save(update_fields=['status'])
+        logger.info(
+            "Booking %s auto-completed (%s used, %s total, %s actionable)",
+            booking.booking_reference,
+            used_tickets,
+            total_tickets,
+            actionable_tickets,
+        )
+        return True
 
     def _ticket_payload(self, ticket):
         """Standard ticket summary used in every response."""

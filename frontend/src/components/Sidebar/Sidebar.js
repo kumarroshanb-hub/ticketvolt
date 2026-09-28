@@ -16,6 +16,7 @@ import {
     People as PeopleIcon,
     Close as CloseIcon,
     Logout as LogoutIcon,
+    Policy as PolicyIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
@@ -364,6 +365,13 @@ const MENU_ITEMS = {
         path: '/discounts',
         icon: <DiscountIcon />,
         label: 'Discounts',
+        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
+        section: 'management',
+    },
+    cancellationPolicies: {
+        path: '/cancellation-policies',
+        icon: <PolicyIcon />,
+        label: 'Cancellation Policies',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },

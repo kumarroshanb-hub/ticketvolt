@@ -9,12 +9,18 @@ from django.utils import timezone
 from datetime import datetime
 from django.db.models import Sum, Count, Q
 
-from ..models import Event, Venue, Session, TicketTier
+from ..models import Event, Venue, Session, TicketTier, CancellationPolicy
 from .serializers import (
     EventSerializer,
     EventDetailSerializer,
     PublicEventSerializer,
     PublicEventDetailSerializer,
+)
+
+from ..managers import (
+    SOLD_BOOKING_STATUSES,
+    EXCLUDED_BOOKING_STATUSES,
+    EXCLUDED_TICKET_STATUSES,
 )
 
 
@@ -109,6 +115,35 @@ class EventViewSet(viewsets.ModelViewSet):
         except Exception:
             return value
 
+    @staticmethod
+    def _resolve_cancellation_policy(user, policy_id):
+        """
+        Return (policy_or_None, error_response_or_None).
+
+        Enforces the same ownership rule as the serializer validator:
+        non-staff users may only attach policies they own.
+        """
+        if not policy_id:
+            return None, None
+
+        try:
+            policy = CancellationPolicy.objects.get(id=policy_id)
+        except (CancellationPolicy.DoesNotExist, ValueError):
+            return None, Response(
+                {'cancellation_policy_id': 'Policy not found.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not (user.is_staff or user.is_superuser):
+            if policy.organizer_id != user.id:
+                return None, Response(
+                    {'cancellation_policy_id':
+                     'You can only attach your own cancellation policies.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        return policy, None
+
     # ---------------- CREATE ----------------
     def create(self, request, *args, **kwargs):
         user = request.user
@@ -127,6 +162,13 @@ class EventViewSet(viewsets.ModelViewSet):
             except Venue.DoesNotExist:
                 pass
 
+        # ✅ Resolve the cancellation policy from the write-only FK id.
+        cancellation_policy, err = self._resolve_cancellation_policy(
+            user, data.get('cancellation_policy_id')
+        )
+        if err is not None:
+            return err
+
         event = Event.objects.create(
             organizer=request.user,
             title=data.get('title', 'Untitled'),
@@ -144,6 +186,9 @@ class EventViewSet(viewsets.ModelViewSet):
             ticket_format=data.get('ticket_format', 'pdf'),
             combine_tickets=data.get('combine_tickets', False),
             tickets_per_page=data.get('tickets_per_page', 4),
+            # ✅ NEW: cancellation policy
+            cancellation_policy=cancellation_policy,
+            cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
         )
 
         for session_data in data.get('sessions', []):
@@ -173,30 +218,30 @@ class EventViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         manager = _is_manager(request.user)
 
-        # ✅ Always prefetch related objects so `tier_count` / `session_count`
-        #    don't trigger N+1 queries in the serializer.
         queryset = (
             queryset
-            .select_related('venue')
+            .select_related('venue', 'cancellation_policy')
             .prefetch_related('tiers', 'sessions')
         )
 
-        # Only add expensive annotations for managers.
         if manager:
             queryset = queryset.annotate(
                 active_tickets_count=Count(
                     'tickets',
-                    filter=~Q(tickets__booking__status__in=['cancelled', 'refunded']),
+                    filter=(
+                        ~Q(tickets__status__in=EXCLUDED_TICKET_STATUSES)
+                        & ~Q(tickets__booking__status__in=EXCLUDED_BOOKING_STATUSES)
+                    ),
                     distinct=True,
                 ),
                 active_bookings_count=Count(
                     'bookings',
-                    filter=~Q(bookings__status__in=['cancelled', 'refunded']),
+                    filter=~Q(bookings__status__in=EXCLUDED_BOOKING_STATUSES),
                     distinct=True,
                 ),
                 active_revenue=Sum(
                     'bookings__total_amount',
-                    filter=Q(bookings__status__in=['paid', 'confirmed', 'completed']),
+                    filter=Q(bookings__status__in=SOLD_BOOKING_STATUSES),
                 ),
             )
 
@@ -242,14 +287,19 @@ class EventViewSet(viewsets.ModelViewSet):
         data = serializer.data
 
         if _is_manager(user):
-            active_tickets_count = instance.tickets.exclude(
-                booking__status__in=['cancelled', 'refunded']
+            active_tickets_count = instance.tickets.filter(
+                ~Q(status__in=EXCLUDED_TICKET_STATUSES),
+                booking__status__in=SOLD_BOOKING_STATUSES,
             ).count()
-            actual_revenue = instance.bookings.filter(
-                status__in=['paid', 'confirmed', 'completed']
-            ).aggregate(total=Sum('total_amount'))['total'] or 0
+            actual_revenue = (
+                instance.bookings
+                .filter(status__in=SOLD_BOOKING_STATUSES)
+                .aggregate(total=Sum('total_amount'))
+                .get('total')
+                or 0
+            )
             active_bookings_count = instance.bookings.exclude(
-                status__in=['cancelled', 'refunded']
+                status__in=EXCLUDED_BOOKING_STATUSES
             ).count()
 
             data['total_tickets_sold'] = active_tickets_count
@@ -282,18 +332,36 @@ class EventViewSet(viewsets.ModelViewSet):
             except Venue.DoesNotExist:
                 pass
 
+        # Work on a mutable copy so we can rewrite date strings safely.
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+
         if data.get('start_date'):
             data['start_date'] = self._parse_dt(data['start_date'])
         if data.get('end_date'):
             data['end_date'] = self._parse_dt(data['end_date'])
 
+        # ✅ Handle the cancellation policy FK explicitly.
+        #    Frontend sends `cancellation_policy_id` (may be ''/null to clear).
+        if 'cancellation_policy_id' in data:
+            raw = data.get('cancellation_policy_id')
+            if not raw:
+                instance.cancellation_policy = None
+            else:
+                policy, err = self._resolve_cancellation_policy(user, raw)
+                if err is not None:
+                    return err
+                instance.cancellation_policy = policy
+
+        # NOTE: 'cancellation_policy' is deliberately NOT in this list.
+        # The FK is assigned above via the write-only id.
         fields = [
             'title', 'description', 'short_description', 'event_type', 'category',
             'start_date', 'end_date', 'timezone', 'status', 'metadata', 'is_public',
             'is_featured', 'cover_image', 'gallery_images', 'venue_metadata',
             'booking_start_date', 'booking_end_date',
             'min_tickets_per_order', 'max_tickets_per_order',
-            'cancellation_policy', 'refundable_until',
+            'refundable_until',
+            'cancellation_policy_text',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
         ]
         for field in fields:
@@ -379,10 +447,6 @@ class EventViewSet(viewsets.ModelViewSet):
     def public(self, request):
         """
         Public upcoming events — no auth, narrow field set.
-
-        ✅ Prefetches tiers and sessions so the serializer's
-           `tier_count` / `session_count` / `total_capacity` methods
-           don't trigger N+1 queries.
         """
         now = timezone.now()
 
@@ -394,12 +458,15 @@ class EventViewSet(viewsets.ModelViewSet):
                 end_date__gte=now,
             )
             .select_related('venue')
-            .prefetch_related('tiers', 'sessions')          # ✅ ADDED
+            .prefetch_related('tiers', 'sessions')
             .order_by('-start_date')
             .annotate(
                 active_tickets_count=Count(
                     'tickets',
-                    filter=~Q(tickets__booking__status__in=['cancelled', 'refunded']),
+                    filter=(
+                        ~Q(tickets__status__in=EXCLUDED_TICKET_STATUSES)
+                        & ~Q(tickets__booking__status__in=EXCLUDED_BOOKING_STATUSES)
+                    ),
                     distinct=True,
                 )
             )
@@ -436,8 +503,9 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        active_tickets_count = event.tickets.exclude(
-            booking__status__in=['cancelled', 'refunded']
+        active_tickets_count = event.tickets.filter(
+            ~Q(status__in=EXCLUDED_TICKET_STATUSES),
+            booking__status__in=SOLD_BOOKING_STATUSES,
         ).count()
 
         serializer = PublicEventDetailSerializer(event)

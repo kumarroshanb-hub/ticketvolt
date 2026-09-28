@@ -11,6 +11,7 @@ from .api.analytics_api import AnalyticsView
 from .api.qr_api import QRCodeDownloadView, QRCodeImageView
 from .api.template_api import TemplateTypeViewSet, EventTemplateViewSet
 from .api.user_api import UserViewSet
+from .api.cancellation_policy_api import CancellationPolicyViewSet
 
 # Scanner views (signed-QR verification + atomic check-in + history).
 # These live in views.py at the ticket_bookings app root.
@@ -30,7 +31,11 @@ router.register(r'discounts', DiscountViewSet, basename='discount')
 router.register(r'template-types', TemplateTypeViewSet, basename='template-type')
 router.register(r'templates', EventTemplateViewSet, basename='template')
 router.register(r'users', UserViewSet, basename='user')
-
+router.register(
+    r'cancellation-policies',
+    CancellationPolicyViewSet,
+    basename='cancellation-policy',
+)
 
 urlpatterns = [
     # ============ SIGNED-QR SCANNER ENDPOINTS ============
@@ -139,4 +144,9 @@ urlpatterns = [
         EventViewSet.as_view({'get': 'public_detail'}),
         name='events-public-detail',
     ),
+    path(
+          'bookings/<uuid:pk>/cancel_tickets/',
+          BookingViewSet.as_view({'post': 'cancel_tickets'}),
+          name='booking-cancel-tickets',
+     ),
 ]

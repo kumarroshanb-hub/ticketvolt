@@ -479,10 +479,23 @@ def checkin_history(request):
     Returns the most recent check-in log entries. The scanner app's
     History screen calls this to display recent activity.
 
+    Contract (must match QRScannerApp/src/screens/HistoryScreen.js):
+      {
+        "id":            "<uuid>",
+        "ticket_code":   "TIX...",       # nullable if ticket is gone
+        "attendee_name": "...",          # nullable
+        "event":         "Walkathon 2026",  # nullable
+        "status":        "success" | "failed" | "cancelled",
+        "scanned_at":    "2026-09-22T23:15:50.123456+08:00",
+        "scanner":       "username"      # nullable
+      }
+
     Notes:
       - `limit` is clamped to [1, 500] to prevent scraping / accidental
         memory blowups.
-      - Only fields the scanner UI needs are returned.
+      - `scanner` is the *username*, not the display name or email.
+        Organizers should be able to see who scanned, but we don't
+        broadcast every operator's email address to every scanner.
     """
     try:
         limit = int(request.query_params.get('limit', 20))
@@ -510,7 +523,7 @@ def checkin_history(request):
             'attendee_name': log.ticket.attendee_name if log.ticket else None,
             'event': _event_title(log),
             'status': log.status,
-            'scanned_at': log.scanned_at,
+            'scanned_at': log.scanned_at.isoformat() if log.scanned_at else None,
             'scanner': (
                 log.scanner_user.username if log.scanner_user else None
             ),

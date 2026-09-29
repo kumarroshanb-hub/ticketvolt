@@ -13,20 +13,23 @@ from .api.template_api import TemplateTypeViewSet, EventTemplateViewSet
 from .api.user_api import UserViewSet
 from .api.cancellation_policy_api import CancellationPolicyViewSet
 
-# Scanner views (signed-QR verification + atomic check-in + history).
-# These live in views.py at the ticket_bookings app root.
-from .views import checkin_verify, checkin_perform, checkin_history
+# Scanner views.
+# - checkin_verify / checkin_perform: signed-payload (mobile app)
+# - checkin_manual_verify / checkin_manual: bare-code (admin web UI)
+# - checkin_history: shared
+from .views import (
+    checkin_verify,
+    checkin_perform,
+    checkin_history,
+    checkin_manual_verify,
+    checkin_manual,
+)
 
 # Create router and register all view sets
 router = DefaultRouter()
 router.register(r'events', EventViewSet, basename='event')
 router.register(r'venues', VenueViewSet, basename='venue')
 router.register(r'bookings', BookingViewSet, basename='booking')
-# NOTE: the old `checkin` viewset used to be registered here. It is
-# replaced by the explicit signed-QR endpoints below. If you still need
-# the DRF list/detail routes for CheckInLog, register that viewset under
-# a different prefix, e.g. `router.register(r'checkin-logs', CheckInViewSet, ...)`,
-# so it does not shadow `checkin/verify/`, `checkin/history/` and `checkin/`.
 router.register(r'discounts', DiscountViewSet, basename='discount')
 router.register(r'template-types', TemplateTypeViewSet, basename='template-type')
 router.register(r'templates', EventTemplateViewSet, basename='template')
@@ -38,21 +41,23 @@ router.register(
 )
 
 urlpatterns = [
-    # ============ SIGNED-QR SCANNER ENDPOINTS ============
-    # Explicit paths MUST come before the router include so they are not
-    # shadowed by any router-registered `checkin/` route.
+    # ============ SCANNER ENDPOINTS ============
+    # Order matters: Django matches top-to-bottom, so the more specific
+    # paths must come before the bare `checkin/` prefix.
     #
-    # Order within this block matters: Django matches top-to-bottom, so
-    # the more specific `checkin/history/` and `checkin/verify/` must
-    # appear before the bare `checkin/` prefix.
+    # Signed-payload endpoints (mobile app):
     path('checkin/verify/', checkin_verify, name='checkin-verify'),
     path('checkin/history/', checkin_history, name='checkin-history'),
     path('checkin/', checkin_perform, name='checkin'),
 
+    # Manual-entry endpoints (admin web UI):
+    path('checkin/manual-verify/', checkin_manual_verify, name='checkin-manual-verify'),
+    path('checkin/manual/', checkin_manual, name='checkin-manual'),
+
     # ============ API Router URLs ============
     path('', include(router.urls)),
 
-    # ============ BULK ACTION - Explicitly added ============
+    # ============ BULK ACTION ============
     path(
         'bookings/bulk_action/',
         BookingViewSet.as_view({'post': 'bulk_action'}),
@@ -118,8 +123,6 @@ urlpatterns = [
     path(
         'bookings/<uuid:pk>/refund/',
         BookingViewSet.as_view({'post': 'refund'}),
-        # Renamed from 'booking-refund' to avoid a duplicate reverse() name
-        # with the newer refund_booking route above.
         name='booking-refund-legacy',
     ),
     path(
@@ -145,8 +148,8 @@ urlpatterns = [
         name='events-public-detail',
     ),
     path(
-          'bookings/<uuid:pk>/cancel_tickets/',
-          BookingViewSet.as_view({'post': 'cancel_tickets'}),
-          name='booking-cancel-tickets',
-     ),
+        'bookings/<uuid:pk>/cancel_tickets/',
+        BookingViewSet.as_view({'post': 'cancel_tickets'}),
+        name='booking-cancel-tickets',
+    ),
 ]

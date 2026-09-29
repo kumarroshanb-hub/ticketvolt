@@ -100,6 +100,16 @@ class DashboardStatsView(APIView):
                 .order_by('-created_at')[:5]
             )
 
+            # ------------------------------------------------------------
+            # ✅ Include `discount_applied`, `discount_code`, and a
+            #    precomputed `net_amount` in every recent booking so the
+            #    frontend can render the discount breakdown (net amount
+            #    as the headline, gross struck-through, discount line).
+            #
+            #    The frontend defensively falls back to
+            #    `total_amount - discount_applied` when `net_amount` is
+            #    absent, so both code paths converge on the same result.
+            # ------------------------------------------------------------
             recent_bookings_data = [
                 {
                     'id': str(b.id),
@@ -107,7 +117,12 @@ class DashboardStatsView(APIView):
                     'customer_name': b.customer_name,
                     'customer_email': b.customer_email,
                     'customer_phone': b.customer_phone,
-                    'total_amount': float(b.total_amount),
+                    'total_amount': float(b.total_amount or 0),
+                    'discount_applied': float(b.discount_applied or 0),
+                    'discount_code': b.discount_code or '',
+                    'net_amount': float(
+                        (b.total_amount or 0) - (b.discount_applied or 0)
+                    ),
                     'status': b.status,
                     'created_at': b.created_at.isoformat() if b.created_at else None,
                     'formatted_date': (

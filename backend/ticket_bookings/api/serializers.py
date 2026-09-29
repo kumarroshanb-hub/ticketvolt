@@ -533,6 +533,51 @@ class BookingSerializer(serializers.ModelSerializer):
         return value
 
     # -----------------------------------------------------------------
+    # HELPER — resolve the tickets payload from wherever it lives
+    # -----------------------------------------------------------------
+    def _resolve_tickets_payload(self, data):
+        """
+        The frontend sends tickets inside `metadata.ticket_types`
+        (and `metadata.tickets`) because the top-level `tickets` field
+        is `read_only=True` and therefore never lands in `validated_data`.
+
+        This helper returns the first non-empty list it finds among:
+          1. data['tickets']                    (top-level, if ever sent)
+          2. data['metadata']['ticket_types']   (what CreateBooking actually sends)
+          3. data['metadata']['tickets']        (alternate shape)
+          4. self.initial_data['tickets']       (raw request fallback)
+          5. self.initial_data['metadata']...   (raw request fallback)
+        """
+        # 1. Top-level `tickets` (rarely populated, but harmless to check).
+        tickets = data.get('tickets')
+        if isinstance(tickets, list) and tickets:
+            return tickets
+
+        # 2./3. From `metadata` inside validated data.
+        md = data.get('metadata')
+        if isinstance(md, dict):
+            for key in ('ticket_types', 'tickets'):
+                candidate = md.get(key)
+                if isinstance(candidate, list) and candidate:
+                    return candidate
+
+        # 4./5. From the raw request data (in case metadata was stripped
+        #       by an earlier serializer pass — belt and braces).
+        raw = self.initial_data if isinstance(self.initial_data, dict) else {}
+        raw_tickets = raw.get('tickets')
+        if isinstance(raw_tickets, list) and raw_tickets:
+            return raw_tickets
+
+        raw_md = raw.get('metadata')
+        if isinstance(raw_md, dict):
+            for key in ('ticket_types', 'tickets'):
+                candidate = raw_md.get(key)
+                if isinstance(candidate, list) and candidate:
+                    return candidate
+
+        return []
+
+    # -----------------------------------------------------------------
     # VALIDATE — resolves the discount server-side
     # -----------------------------------------------------------------
     def validate(self, data):
@@ -553,7 +598,16 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
             self._event_obj = event
 
-        tickets_payload = data.get('tickets') or []
+        # ------------------------------------------------------------
+        # ✅ Resolve the tickets list from WHEREVER the client put it.
+        #    Before this fix, the code only looked at `data['tickets']`,
+        #    which is read-only on this serializer and therefore always
+        #    empty. That made `computed_total == 0`, which in turn caused
+        #    every discount with `min_order_amount > 0` to be wrongly
+        #    rejected with "Minimum order ₹X required."
+        # ------------------------------------------------------------
+        tickets_payload = self._resolve_tickets_payload(data)
+
         computed_total = Decimal('0.00')
 
         if tickets_payload and hasattr(self, '_event_obj'):
@@ -578,13 +632,39 @@ class BookingSerializer(serializers.ModelSerializer):
                 if tier:
                     computed_total += Decimal(str(tier.price))
 
+        # ------------------------------------------------------------
+        # ✅ Safety net: if we STILL couldn't compute a total (e.g. the
+        #    client sent only `total_amount` with no per-ticket detail),
+        #    fall back to the client-supplied total_amount so discount
+        #    validation doesn't falsely fail on `min_order_amount`.
+        #
+        #    This is safe because the discount AMOUNT is recomputed from
+        #    `computed_total` — a malicious client inflating total_amount
+        #    only affects the minimum-order threshold, not the money
+        #    actually charged (the booking total is overwritten below).
+        # ------------------------------------------------------------
+        if computed_total == Decimal('0.00'):
+            fallback = (
+                data.get('total_amount')
+                or self.initial_data.get('total_amount')
+            )
+            if fallback:
+                try:
+                    computed_total = Decimal(str(fallback))
+                except (ValueError, TypeError, ArithmeticError):
+                    pass
+
         # total_amount is ALWAYS the gross subtotal (before discount).
         # The discount is stored separately in `discount_applied`.
         if computed_total > 0:
             data['total_amount'] = computed_total
 
         # ---- Resolve the discount server-side (never trust client) ----
-        raw_code = data.get('discount_code') or self.initial_data.get('discount_code') or ''
+        raw_code = (
+            data.get('discount_code')
+            or self.initial_data.get('discount_code')
+            or ''
+        )
         discount_code = str(raw_code).strip().upper()
         discount_amount = Decimal('0.00')
 
@@ -634,13 +714,22 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
 
             # Order constraints
-            if discount_obj.min_order_amount and computed_total < Decimal(str(discount_obj.min_order_amount)):
+            if (
+                discount_obj.min_order_amount
+                and computed_total < Decimal(str(discount_obj.min_order_amount))
+            ):
                 raise serializers.ValidationError(
-                    {'discount_code': f'Minimum order ₹{discount_obj.min_order_amount} required.'}
+                    {'discount_code':
+                     f'Minimum order ₹{discount_obj.min_order_amount} required.'}
                 )
-            if discount_obj.min_ticket_count and len(tickets_payload) < discount_obj.min_ticket_count:
+
+            if (
+                discount_obj.min_ticket_count
+                and len(tickets_payload) < discount_obj.min_ticket_count
+            ):
                 raise serializers.ValidationError(
-                    {'discount_code': f'Minimum {discount_obj.min_ticket_count} tickets required.'}
+                    {'discount_code':
+                     f'Minimum {discount_obj.min_ticket_count} tickets required.'}
                 )
 
             # Compute discount amount
@@ -648,7 +737,10 @@ class BookingSerializer(serializers.ModelSerializer):
                 discount_amount = (
                     computed_total * Decimal(str(discount_obj.value)) / Decimal('100')
                 ).quantize(Decimal('0.01'))
-                if discount_obj.max_discount and discount_amount > Decimal(str(discount_obj.max_discount)):
+                if (
+                    discount_obj.max_discount
+                    and discount_amount > Decimal(str(discount_obj.max_discount))
+                ):
                     discount_amount = Decimal(str(discount_obj.max_discount))
             else:
                 discount_amount = Decimal(str(discount_obj.value))

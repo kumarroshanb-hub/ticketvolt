@@ -40,6 +40,6 @@ celerybeat-schedule
 baileys-gateway/sessions/*.json
 
 #codebase dump
-complete_codebase*.env*
+complete_codebase*.txt
 
 frontend/build/

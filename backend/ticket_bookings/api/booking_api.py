@@ -1,4 +1,4 @@
-# ticket_bookings/api/booking_api.py
+# backend/ticket_bookings/api/booking_api.py
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -163,6 +163,76 @@ class BookingViewSet(viewsets.ModelViewSet):
         if self.action in admin_actions:
             return [IsAdminOrOrganizer()]
         return [permissions.IsAuthenticated()]
+
+    # ============================================================
+    # ✅ NEW HELPER — normalize a metadata ticket entry's tier_id and
+    # resolve it to a TicketTier. Never returns None unless the event
+    # truly has zero tiers.
+    # ============================================================
+    def _resolve_tier_for_metadata_entry(self, entry, valid_tiers, tiers_in_order, idx):
+        """
+        Given a single ticket entry from `booking.metadata['tickets']`
+        (or `metadata['ticket_types']`), resolve its `tier_id` to a real
+        `TicketTier` instance.
+
+        Resolution strategy (first hit wins):
+          1. Exact match by stringified `tier_id` in `valid_tiers`.
+          2. Match by `tier_name` (case-insensitive) among the event's tiers.
+          3. First tier in `tiers_in_order`.
+
+        Returns (tier_instance, fallback_reason) — `fallback_reason` is
+        None if the exact match was used, or a short string describing
+        why a fallback was chosen.
+        """
+        raw_tier_id = entry.get('tier_id') if isinstance(entry, dict) else None
+        tier_id = None
+
+        # Normalize: handles UUID objects, strings, ints, None.
+        if raw_tier_id is not None:
+            try:
+                tier_id = str(raw_tier_id).strip()
+            except Exception:
+                tier_id = None
+
+            if tier_id == '':
+                tier_id = None
+
+        # ---- 1. Exact tier_id match ----
+        if tier_id and tier_id in valid_tiers:
+            return valid_tiers[tier_id], None
+
+        # ---- 2. Match by tier_name ----
+        tier_name_hint = ''
+        if isinstance(entry, dict):
+            tier_name_hint = (entry.get('tier_name') or '').strip().lower()
+
+        if tier_name_hint:
+            for t in tiers_in_order:
+                if (t.name or '').strip().lower() == tier_name_hint:
+                    logger.warning(
+                        "⚠️ Ticket #%d: tier_id %r not found; "
+                        "matched by tier_name %r instead.",
+                        idx, raw_tier_id, t.name,
+                    )
+                    return t, f'tier_name match ({t.name})'
+
+        # ---- 3. First available tier ----
+        if tiers_in_order:
+            fallback = tiers_in_order[0]
+            logger.warning(
+                "⚠️ Ticket #%d: tier_id %r not found and no tier_name match; "
+                "falling back to first tier %r.",
+                idx, raw_tier_id, fallback.name,
+            )
+            return fallback, f'first-tier fallback ({fallback.name})'
+
+        # No tiers at all — caller must handle this.
+        logger.error(
+            "❌ Ticket #%d: tier_id %r could not be resolved and the "
+            "event has no tiers at all.",
+            idx, raw_tier_id,
+        )
+        return None, 'no-tiers-available'
 
     def _send_partial_cancellation_email(
         self, booking, *, cancelled_ids, refund_amount, fully_cancelled,
@@ -1410,6 +1480,26 @@ class BookingViewSet(viewsets.ModelViewSet):
     # ==================== ISSUE TICKETS ====================
 
     def _issue_tickets_for_booking(self, booking):
+        """
+        Create one Ticket row per attendee entry stored on the booking's
+        metadata, then send the ticket email.
+
+        The old implementation silently dropped attendees whose tier_id
+        could not be resolved (e.g. because the UUID had been stored with
+        surrounding whitespace, or because a tier had been deleted). It
+        would then only fall through to the "one fallback ticket" path
+        if ZERO tickets had been created, so a 3-out-of-4 failure was
+        completely invisible.
+
+        This version:
+          • Resolves each entry's tier via `_resolve_tier_for_metadata_entry`,
+            which falls back to tier_name matching and finally to the first
+            available tier — never drops an attendee unless the event has
+            zero tiers.
+          • Logs loudly on every fallback so the operator can investigate.
+          • Compares the number of tickets created against the number of
+            attendee entries and refuses to silently succeed on mismatch.
+        """
         logger.info(f"🔍 Starting _issue_tickets_for_booking for {booking.booking_reference}")
 
         # ---- 1. Ensure a session is assigned ----
@@ -1477,7 +1567,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         tickets_data = []
         if hasattr(booking, 'metadata') and booking.metadata:
             tickets_data = booking.metadata.get('tickets', [])
-            logger.info(f"📊 Found {len(tickets_data)} tickets in metadata.tickets for booking {booking.booking_reference}")
+            logger.info(
+                f"📊 Found {len(tickets_data)} tickets in "
+                f"metadata.tickets for booking {booking.booking_reference}"
+            )
 
             if not tickets_data:
                 tickets_data = booking.metadata.get('ticket_types', [])
@@ -1510,56 +1603,155 @@ class BookingViewSet(viewsets.ModelViewSet):
                             'attendee_name': booking.customer_name,
                         })
 
-        # ---- 7. Create tickets ----
+        expected_count = len(tickets_data) if tickets_data else 0
+
+        # ---- 7. Create tickets (one per attendee) ----
         tickets_created = 0
         created_ticket_ids = []
+        fallback_log = []
 
-        if tickets_data:
-            for ticket_data in tickets_data:
-                tier_id = ticket_data.get('tier_id')
-                attendee_name = ticket_data.get('attendee_name', booking.customer_name)
+        # Preload valid tiers for this event into a dict keyed by
+        # stringified UUID so lookups are O(1) and normalization is simple.
+        valid_tiers = {
+            str(t.id): t
+            for t in TicketTier.objects.filter(event=booking.event)
+        }
+        tiers_in_order = list(valid_tiers.values())
 
-                if tier_id:
-                    try:
-                        tier = TicketTier.objects.get(id=tier_id)
-                        ticket = Ticket.objects.create(
-                            booking=booking,
-                            tier=tier,
-                            event=booking.event,
-                            session=session_to_use,
-                            status='active',
-                            attendee_name=attendee_name,
-                            attendee_email=booking.customer_email,
-                            attendee_phone=booking.customer_phone,
-                        )
-                        self._generate_qr_code(ticket)
+        if expected_count > 0 and not tiers_in_order:
+            # Hard fail — the event has zero tiers, so no ticket can be
+            # created no matter how we resolve the metadata.
+            return {
+                'error': (
+                    'This event has no ticket tiers configured. '
+                    'Tickets cannot be issued until at least one tier exists.'
+                ),
+                'tickets_created': 0,
+                'debug_info': {
+                    'booking_id': str(booking.id),
+                    'reference': booking.booking_reference,
+                    'expected_tickets': expected_count,
+                    'event_tiers_count': 0,
+                },
+            }
 
-                        tier.quantity_sold += 1
-                        tier.save()
+        for idx, ticket_data in enumerate(tickets_data):
+            attendee_name = (
+                ticket_data.get('attendee_name', booking.customer_name)
+                if isinstance(ticket_data, dict)
+                else booking.customer_name
+            )
 
-                        booking.event.total_tickets_sold += 1
-                        booking.event.save()
+            tier, fallback_reason = self._resolve_tier_for_metadata_entry(
+                ticket_data, valid_tiers, tiers_in_order, idx,
+            )
 
-                        tickets_created += 1
-                        created_ticket_ids.append(str(ticket.id))
-                        logger.info(f"✅ Created ticket {ticket.unique_code} for {attendee_name} (Tier: {tier.name})")
-                    except TicketTier.DoesNotExist:
-                        logger.error(f"❌ Ticket tier {tier_id} not found")
-                        continue
-                    except Exception as e:
-                        logger.error(f"❌ Error creating ticket: {str(e)}")
-                        continue
+            if tier is None:
+                # Only reachable when tiers_in_order was empty, which we
+                # already short-circuited above. Defensive anyway.
+                logger.error(
+                    "❌ Ticket #%d for %s: no tier could be resolved. "
+                    "Skipping attendee %r.",
+                    idx, booking.booking_reference, attendee_name,
+                )
+                fallback_log.append({
+                    'index': idx,
+                    'attendee_name': attendee_name,
+                    'reason': 'no-tier-available',
+                    'created': False,
+                })
+                continue
 
-            if tickets_created > 0:
-                booking.metadata['ticket_created'] = True
-                booking.metadata['tickets_created_count'] = tickets_created
-                booking.metadata['ticket_ids'] = created_ticket_ids
-                booking.save(update_fields=['metadata'])
-                logger.info(f"✅ Updated metadata: ticket_created=True, count={tickets_created}")
+            if fallback_reason:
+                fallback_log.append({
+                    'index': idx,
+                    'attendee_name': attendee_name,
+                    'reason': fallback_reason,
+                    'created': True,
+                })
+
+            try:
+                ticket = Ticket.objects.create(
+                    booking=booking,
+                    tier=tier,
+                    event=booking.event,
+                    session=session_to_use,
+                    status='active',
+                    attendee_name=attendee_name,
+                    attendee_email=booking.customer_email,
+                    attendee_phone=booking.customer_phone,
+                )
+                self._generate_qr_code(ticket)
+
+                tier.quantity_sold += 1
+                tier.save(update_fields=['quantity_sold'])
+
+                booking.event.total_tickets_sold += 1
+                booking.event.save(update_fields=['total_tickets_sold'])
+
+                tickets_created += 1
+                created_ticket_ids.append(str(ticket.id))
+                logger.info(
+                    "✅ Created ticket %s for %s (Tier: %s)",
+                    ticket.unique_code, attendee_name, tier.name,
+                )
+            except Exception as e:
+                logger.exception(
+                    "❌ Error creating ticket #%d for %r: %s",
+                    idx, attendee_name, e,
+                )
+                fallback_log.append({
+                    'index': idx,
+                    'attendee_name': attendee_name,
+                    'reason': f'exception: {e}',
+                    'created': False,
+                })
+                continue
+
+        if tickets_created > 0:
+            booking.metadata['ticket_created'] = True
+            booking.metadata['tickets_created_count'] = tickets_created
+            booking.metadata['ticket_ids'] = created_ticket_ids
+            if fallback_log:
+                booking.metadata['ticket_issuance_fallback_log'] = fallback_log
+            booking.save(update_fields=['metadata'])
+            logger.info(
+                "✅ Updated metadata: ticket_created=True, count=%d",
+                tickets_created,
+            )
+
+        # ---- 7b. Integrity check: did we create one ticket per attendee? ----
+        if expected_count > 0 and tickets_created < expected_count:
+            missing = expected_count - tickets_created
+            logger.error(
+                "🚨 TICKET ISSUANCE MISMATCH on booking %s: "
+                "expected %d, created %d (%d missing). "
+                "fallback_log=%s",
+                booking.booking_reference,
+                expected_count,
+                tickets_created,
+                missing,
+                fallback_log,
+            )
+            return {
+                'error': (
+                    f'Ticket issuance incomplete: expected '
+                    f'{expected_count} tickets, created '
+                    f'{tickets_created}. {missing} attendee(s) were '
+                    f'dropped. See server logs for details.'
+                ),
+                'tickets_created': tickets_created,
+                'ticket_ids': created_ticket_ids,
+                'expected_count': expected_count,
+                'fallback_log': fallback_log,
+            }
 
         # ---- 8. Fallback: create one ticket if nothing was created ----
         if tickets_created == 0:
-            logger.warning(f"⚠️ No ticket data found in metadata for booking {booking.booking_reference}")
+            logger.warning(
+                f"⚠️ No ticket data found in metadata for booking "
+                f"{booking.booking_reference}"
+            )
 
             if booking.event and booking.event.tiers.exists():
                 available_tiers = booking.event.tiers.filter(
@@ -1568,8 +1760,13 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                 if available_tiers.exists():
                     tier = available_tiers.first()
-                    tickets_created = self._generate_tickets(booking, tier, 1, session_to_use)
-                    logger.info(f"✅ Created {tickets_created} fallback ticket from tier: {tier.name}")
+                    tickets_created = self._generate_tickets(
+                        booking, tier, 1, session_to_use,
+                    )
+                    logger.info(
+                        f"✅ Created {tickets_created} fallback ticket "
+                        f"from tier: {tier.name}"
+                    )
 
                     booking.metadata['fallback_ticket_created'] = True
                     booking.metadata['fallback_tier_id'] = str(tier.id)
@@ -1577,25 +1774,37 @@ class BookingViewSet(viewsets.ModelViewSet):
                     booking.save(update_fields=['metadata'])
                 else:
                     return {
-                        'error': 'No available ticket tiers found for this event. Please contact support.',
+                        'error': (
+                            'No available ticket tiers found for this '
+                            'event. Please contact support.'
+                        ),
                         'tickets_created': 0,
                         'debug_info': {
                             'booking_id': str(booking.id),
                             'reference': booking.booking_reference,
                             'metadata': booking.metadata,
-                            'event_tiers_count': booking.event.tiers.count() if booking.event else 0,
+                            'event_tiers_count': (
+                                booking.event.tiers.count()
+                                if booking.event else 0
+                            ),
                         },
                     }
             else:
                 return {
-                    'error': 'No ticket information found for this booking. Please contact support.',
+                    'error': (
+                        'No ticket information found for this booking. '
+                        'Please contact support.'
+                    ),
                     'tickets_created': 0,
                     'debug_info': {
                         'booking_id': str(booking.id),
                         'reference': booking.booking_reference,
                         'metadata': booking.metadata,
                         'has_event': booking.event is not None,
-                        'event_tiers_count': booking.event.tiers.count() if booking.event else 0,
+                        'event_tiers_count': (
+                            booking.event.tiers.count()
+                            if booking.event else 0
+                        ),
                     },
                 }
 
@@ -1654,7 +1863,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             email_result = {'success': False, 'message': str(e)}
 
         return {
-            'success': f'Generated {tickets_created} tickets for slot {booking.session.id if booking.session else "Unknown"}',
+            'success': (
+                f'Generated {tickets_created} tickets for slot '
+                f'{booking.session.id if booking.session else "Unknown"}'
+            ),
             'tickets_created': tickets_created,
             'final_ticket_count': final_ticket_count,
             'ticket_ids': created_ticket_ids,
@@ -1662,8 +1874,14 @@ class BookingViewSet(viewsets.ModelViewSet):
             'email_message': email_result.get('message', ''),
             'slot_allocation': {
                 'slot_id': str(booking.session.id) if booking.session else None,
-                'slot_start': booking.session.start_time.isoformat() if booking.session else None,
-                'slot_end': booking.session.end_time.isoformat() if booking.session else None,
+                'slot_start': (
+                    booking.session.start_time.isoformat()
+                    if booking.session else None
+                ),
+                'slot_end': (
+                    booking.session.end_time.isoformat()
+                    if booking.session else None
+                ),
                 'allocation_message': allocation_message,
             },
         }
@@ -1735,7 +1953,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'has_ticket_types': len(ticket_types) > 0,
                 'has_tier_ids': len(tier_ids) > 0,
                 'has_existing_tickets': len(existing_tickets) > 0,
-                'can_issue_tickets': len(existing_tickets) == 0 and (len(tickets_data) > 0 or len(ticket_types) > 0 or len(tier_ids) > 0),
+                'can_issue_tickets': (
+                    len(existing_tickets) == 0
+                    and (
+                        len(tickets_data) > 0
+                        or len(ticket_types) > 0
+                        or len(tier_ids) > 0
+                    )
+                ),
             },
         }, status=status.HTTP_200_OK)
 

@@ -50,6 +50,7 @@ import {
     Error as ErrorIcon,
     Check as CheckIcon,
     Undo as UndoIcon,
+    Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
@@ -364,6 +365,11 @@ const Checkin = () => {
 
     // ============================================================
     // VERIFY (no state change)
+    // ------------------------------------------------------------
+    // The backend now returns a `slot_window` advisory on successful
+    // verify responses. If the ticket is valid but outside its slot
+    // window, we surface that to the operator BEFORE they click
+    // "Confirm Check-In", so they're not surprised by a rejection.
     // ============================================================
     const verifyTicket = async (code) => {
         setVerifying(true);
@@ -375,12 +381,27 @@ const Checkin = () => {
             );
 
             if (response.data?.valid) {
-                setResult({
-                    type: 'success',
-                    title: 'Ticket Valid',
-                    message: 'This ticket is valid and ready for check-in',
-                    ticket: response.data.ticket,
-                });
+                const slotWindow = response.data?.slot_window;
+
+                if (slotWindow && slotWindow.open === false) {
+                    // Ticket is valid, but the slot window is closed.
+                    // Warn the operator before they attempt check-in.
+                    setResult({
+                        type: 'warning',
+                        title: 'Outside Slot Window',
+                        message:
+                            slotWindow.message ||
+                            'This ticket is valid, but its slot is not currently open for check-in.',
+                        ticket: response.data.ticket,
+                    });
+                } else {
+                    setResult({
+                        type: 'success',
+                        title: 'Ticket Valid',
+                        message: 'This ticket is valid and ready for check-in',
+                        ticket: response.data.ticket,
+                    });
+                }
             } else {
                 setResult({
                     type: 'error',
@@ -392,7 +413,14 @@ const Checkin = () => {
         } catch (error) {
             const errorData = error.response?.data;
 
-            if (errorData?.ticket?.is_checked_in) {
+            if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+                setResult({
+                    type: 'warning',
+                    title: 'Outside Slot Window',
+                    message: errorData.detail,
+                    ticket: errorData?.ticket,
+                });
+            } else if (errorData?.ticket?.is_checked_in) {
                 setResult({
                     type: 'warning',
                     title: 'Already Checked In',
@@ -431,6 +459,10 @@ const Checkin = () => {
 
     // ============================================================
     // CHECK-IN (state-changing)
+    // ------------------------------------------------------------
+    // The backend now rejects out-of-window scans with a 400 and
+    // code 'OUTSIDE_SLOT_WINDOW'. We display that as a clear,
+    // non-alarming warning so the operator knows exactly why.
     // ============================================================
     const checkInTicket = async (code) => {
         setCheckingIn(true);
@@ -463,24 +495,23 @@ const Checkin = () => {
             }
         } catch (error) {
             const errorData = error.response?.data;
+            let title = 'Check-in Failed';
+            let message = errorData?.detail || 'An unexpected error occurred.';
+            let resultType = 'error';
 
-            if (errorData?.detail) {
-                setResult({
-                    type: 'error',
-                    title: 'Check-in Failed',
-                    message: errorData.detail,
-                    ticket: errorData?.ticket,
-                });
-                toast.error(errorData.detail);
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Check-in Failed',
-                    message: 'An unexpected error occurred.',
-                    ticket: null,
-                });
-                toast.error('Failed to check in ticket');
+            // ✅ Handle the new specific error code
+            if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+                title = 'Invalid Check-in Time';
+                resultType = 'warning';
             }
+
+            setResult({
+                type: resultType,
+                title: title,
+                message: message,
+                ticket: errorData?.ticket,
+            });
+            toast.error(message);
         } finally {
             setCheckingIn(false);
         }
@@ -650,6 +681,20 @@ const Checkin = () => {
                                     </Typography>
                                 </Box>
                             </Box>
+
+                            {/* Slot window info strip */}
+                            <Alert
+                                severity="info"
+                                icon={<ScheduleIcon fontSize="small" />}
+                                sx={{
+                                    mb: 2,
+                                    borderRadius: 2,
+                                    '& .MuiAlert-message': { fontSize: '0.75rem' },
+                                }}
+                            >
+                                Check-in opens <strong>30 min before</strong> slot start and closes{' '}
+                                <strong>15 min after</strong> slot end.
+                            </Alert>
 
                             {/* Manual Entry */}
                             <Box component="form" onSubmit={handleManualEntry} sx={{ mb: 2 }}>

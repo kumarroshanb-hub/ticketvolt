@@ -139,15 +139,77 @@ const generateDiscountCode = () => {
     return code;
 };
 
-// Convert backend date string → yyyy-mm-dd for <input type="date">
+// ===========================================================================
+// ✅ TIMEZONE-SAFE DATE HELPERS
+// ---------------------------------------------------------------------------
+// The bug: `new Date(value).toISOString()` converts to UTC before
+// formatting. If the backend stores "midnight in the user's local
+// timezone" as a UTC timestamp (e.g. 2026-09-27T16:00:00Z for HK's
+// 2026-09-28T00:00:00+08:00), `toISOString()` will output "2026-09-27",
+// causing the off-by-one date shift.
+//
+// The fix: format the date in the user's LOCAL timezone, not UTC.
+// We use `getFullYear()`, `getMonth()`, `getDate()` — all of which
+// return local-time values — instead of `toISOString()`.
+// ===========================================================================
+
+/**
+ * Convert a backend date string → `yyyy-mm-dd` for <input type="date">.
+ * Formats using LOCAL time so a timestamp like `2026-09-27T16:00:00Z`
+ * renders as `2026-09-28` for a user in UTC+8.
+ */
 const toDateInput = (value) => {
     if (!value) return '';
     try {
-        return new Date(value).toISOString().split('T')[0];
+        const date = new Date(value);
+        if (isNaN(date.getTime())) return '';
+
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+
+        return `${year}-${month}-${day}`;
     } catch {
         return '';
     }
 };
+
+/**
+ * Convert `yyyy-mm-dd` from <input type="date"> → an ISO 8601 string
+ * that preserves the calendar date in the user's LOCAL timezone.
+ *
+ * We deliberately do NOT send a UTC midnight timestamp, because that
+ * would let the backend re-interpret the date in its own timezone
+ * and drift. Instead we send the local calendar date at 00:00 local
+ * time, which the backend stores as-is when USE_TZ=False, or as a
+ * timezone-aware timestamp when USE_TZ=True (interpreted in the
+ * project's TIME_ZONE setting).
+ */
+const fromDateInput = (value, { endOfDay = false } = {}) => {
+    if (!value) return null;
+    try {
+        // `value` is always `yyyy-mm-dd`.
+        const [year, month, day] = value.split('-').map((n) => parseInt(n, 10));
+        if (!year || !month || !day) return null;
+
+        // For "valid_to" we want the very end of the day so that a
+        // discount valid "until 28-Sep" still works at 23:59 on the 28th.
+        const hours = endOfDay ? 23 : 0;
+        const minutes = endOfDay ? 59 : 0;
+        const seconds = endOfDay ? 59 : 0;
+
+        const local = new Date(year, month - 1, day, hours, minutes, seconds, 0);
+        if (isNaN(local.getTime())) return null;
+
+        return local.toISOString();
+    } catch {
+        return null;
+    }
+};
+
+// ===========================================================================
+// COMPONENT
+// ===========================================================================
 
 const Discounts = () => {
     const theme = useTheme();
@@ -239,6 +301,9 @@ const Discounts = () => {
                 min_ticket_count: discount.min_ticket_count ?? 0,
                 first_time_buyers_only: !!discount.first_time_buyers_only,
                 stackable: !!discount.stackable,
+                // ✅ Use the timezone-safe formatter so an event stored as
+                //    2026-09-27T16:00:00Z (which is 2026-09-28 in HK) shows
+                //    the correct calendar date in the date picker.
                 valid_from: toDateInput(discount.valid_from),
                 valid_to: toDateInput(discount.valid_to),
                 is_active: discount.is_active !== undefined ? discount.is_active : true,
@@ -288,8 +353,12 @@ const Discounts = () => {
                     parseInt(formData.min_ticket_count, 10) || 0,
                 first_time_buyers_only: !!formData.first_time_buyers_only,
                 stackable: !!formData.stackable,
-                valid_from: formData.valid_from || null,
-                valid_to: formData.valid_to || null,
+                // ✅ Convert yyyy-mm-dd → ISO using LOCAL timezone,
+                //    so the calendar date the user picked is preserved
+                //    end-to-end. `valid_to` uses end-of-day so a discount
+                //    valid "until 28-Sep" still applies at 23:59 on the 28th.
+                valid_from: fromDateInput(formData.valid_from),
+                valid_to: fromDateInput(formData.valid_to, { endOfDay: true }),
                 is_active: !!formData.is_active,
                 applicable_events: (formData.applicable_events || []).map(
                     (ev) => (typeof ev === 'string' ? ev : ev.id)
@@ -596,6 +665,7 @@ const Discounts = () => {
                                             },
                                             {
                                                 label: 'Valid Until',
+                                                // ✅ Format with local timezone
                                                 value: discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
                                                     : 'Never',
@@ -766,6 +836,7 @@ const Discounts = () => {
                                             </TableCell>
                                             <TableCell align="center">{getStatusChip(discount)}</TableCell>
                                             <TableCell align="center" sx={{ color: '#64748b' }}>
+                                                {/* ✅ Format with local timezone */}
                                                 {discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
                                                     : 'Never'}

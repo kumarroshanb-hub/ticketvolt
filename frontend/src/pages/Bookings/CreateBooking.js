@@ -75,7 +75,7 @@ const CreateBooking = () => {
     const [eventLoadError, setEventLoadError] = useState(null);
     const [autoSelectDone, setAutoSelectDone] = useState(false);
 
-    // ---- NEW: discount state ----
+    // ---- Discount state ----
     const [discountInput, setDiscountInput] = useState('');
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
@@ -138,6 +138,63 @@ const CreateBooking = () => {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [events, location.search, autoSelectDone]);
+
+    // =========================================================================
+    // ✅ Re-validate the discount whenever the ticket composition changes.
+    // -------------------------------------------------------------------------
+    // A code that was valid for 4 tickets may not be valid for 1 ticket
+    // (e.g., min_ticket_count, min_order_amount rules). This effect re-runs
+    // the server-side validation silently, so the UI always reflects the
+    // current subtotal and ticket count.
+    //
+    // We deliberately depend ONLY on totalAmount / totalTickets / event id,
+    // NOT on appliedDiscount itself — otherwise this would loop forever.
+    // =========================================================================
+    useEffect(() => {
+        // If no discount applied yet, nothing to do.
+        if (!appliedDiscount?.valid) return;
+
+        // If there are no tickets left, drop the discount.
+        if (totalTickets === 0) {
+            setAppliedDiscount(null);
+            setDiscountInput('');
+            return;
+        }
+
+        let cancelled = false;
+        const revalidate = async () => {
+            try {
+                const res = await api.post('/bookings/validate_discount/', {
+                    code: appliedDiscount.code,
+                    event_id: selectedEvent?.id,
+                    subtotal: totalAmount,
+                    ticket_count: totalTickets,
+                });
+                if (cancelled) return;
+
+                if (res.data?.valid) {
+                    setAppliedDiscount(res.data);
+                } else {
+                    setAppliedDiscount(null);
+                    setDiscountInput('');
+                    toast.info(
+                        `Discount "${appliedDiscount.code}" is no longer valid: ${
+                            res.data?.reason || 'conditions changed'
+                        }`
+                    );
+                }
+            } catch {
+                if (!cancelled) {
+                    setAppliedDiscount(null);
+                    setDiscountInput('');
+                }
+            }
+        };
+
+        revalidate();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [totalAmount, totalTickets, selectedEvent?.id]);
 
     const loadEvents = async () => {
         setLoading(true);
@@ -390,8 +447,11 @@ const CreateBooking = () => {
         try {
             const payload = buildPayload();
 
-            // Attach the discount code (backend recomputes the amount).
-            if (appliedDiscount?.valid) {
+            // ✅ Attach the discount code if a valid one is applied.
+            //    The backend RECOMPUTES the discount amount server-side —
+            //    we only send the code, never the amount. This is critical
+            //    for security: a malicious client cannot spoof a discount.
+            if (appliedDiscount?.valid && appliedDiscount?.code) {
                 payload.discount_code = appliedDiscount.code;
             }
 
@@ -1217,9 +1277,16 @@ const CreateBooking = () => {
                                     })}
                                 </Typography>
                             )}
+                            {/*
+                              ✅ Slot preferences — rendered as "#1: Slot 2" instead
+                              of a bare "2" that was ambiguous to the operator.
+                            */}
                             {slotPreferences.length > 0 && (
                                 <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                    <strong>Preferences:</strong> {slotPreferences.join(' → ')}
+                                    <strong>Slot Preferences:</strong>{' '}
+                                    {slotPreferences
+                                        .map((n, i) => `#${i + 1}: Slot ${n}`)
+                                        .join(' · ')}
                                 </Typography>
                             )}
                         </Box>

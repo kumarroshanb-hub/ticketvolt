@@ -1,5 +1,5 @@
 // frontend/src/pages/Venues/Create.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Paper, Typography, TextField, Button, Grid, Alert,
     CircularProgress, MenuItem, Divider, FormControlLabel, Switch,
@@ -18,8 +18,225 @@ import {
 } from '../../components/Common';
 import styled from 'styled-components';
 
-// ✅ Import shared constants
+// ✅ Import shared constants (kept for backwards compatibility,
+//    but not used on this page — safe to remove in a future cleanup)
 import { EVENT_STATUS } from '../../constants';
+
+// ============================================================
+// COUNTRY LIST
+// ------------------------------------------------------------
+// Kept local to this file for now. If you later need it in other
+// forms (Register.js, EventDetail.js, Profile.js, etc.), move this
+// array to `frontend/src/constants/index.js` and import it there.
+//
+// Sorted alphabetically. Includes common alternatives spelled out.
+// ============================================================
+const COUNTRIES = [
+    'Afghanistan',
+    'Albania',
+    'Algeria',
+    'Andorra',
+    'Angola',
+    'Antigua and Barbuda',
+    'Argentina',
+    'Armenia',
+    'Australia',
+    'Austria',
+    'Azerbaijan',
+    'Bahamas',
+    'Bahrain',
+    'Bangladesh',
+    'Barbados',
+    'Belarus',
+    'Belgium',
+    'Belize',
+    'Benin',
+    'Bhutan',
+    'Bolivia',
+    'Bosnia and Herzegovina',
+    'Botswana',
+    'Brazil',
+    'Brunei',
+    'Bulgaria',
+    'Burkina Faso',
+    'Burundi',
+    'Cabo Verde',
+    'Cambodia',
+    'Cameroon',
+    'Canada',
+    'Central African Republic',
+    'Chad',
+    'Chile',
+    'China',
+    'Colombia',
+    'Comoros',
+    'Congo (Brazzaville)',
+    'Congo (Kinshasa)',
+    'Costa Rica',
+    'Croatia',
+    'Cuba',
+    'Cyprus',
+    'Czech Republic',
+    'Denmark',
+    'Djibouti',
+    'Dominica',
+    'Dominican Republic',
+    'Ecuador',
+    'Egypt',
+    'El Salvador',
+    'Equatorial Guinea',
+    'Eritrea',
+    'Estonia',
+    'Eswatini',
+    'Ethiopia',
+    'Fiji',
+    'Finland',
+    'France',
+    'Gabon',
+    'Gambia',
+    'Georgia',
+    'Germany',
+    'Ghana',
+    'Greece',
+    'Grenada',
+    'Guatemala',
+    'Guinea',
+    'Guinea-Bissau',
+    'Guyana',
+    'Haiti',
+    'Honduras',
+    'Hong Kong',
+    'Hungary',
+    'Iceland',
+    'India',
+    'Indonesia',
+    'Iran',
+    'Iraq',
+    'Ireland',
+    'Israel',
+    'Italy',
+    'Ivory Coast',
+    'Jamaica',
+    'Japan',
+    'Jordan',
+    'Kazakhstan',
+    'Kenya',
+    'Kiribati',
+    'Kosovo',
+    'Kuwait',
+    'Kyrgyzstan',
+    'Laos',
+    'Latvia',
+    'Lebanon',
+    'Lesotho',
+    'Liberia',
+    'Libya',
+    'Liechtenstein',
+    'Lithuania',
+    'Luxembourg',
+    'Macau',
+    'Madagascar',
+    'Malawi',
+    'Malaysia',
+    'Maldives',
+    'Mali',
+    'Malta',
+    'Marshall Islands',
+    'Mauritania',
+    'Mauritius',
+    'Mexico',
+    'Micronesia',
+    'Moldova',
+    'Monaco',
+    'Mongolia',
+    'Montenegro',
+    'Morocco',
+    'Mozambique',
+    'Myanmar',
+    'Namibia',
+    'Nauru',
+    'Nepal',
+    'Netherlands',
+    'New Zealand',
+    'Nicaragua',
+    'Niger',
+    'Nigeria',
+    'North Korea',
+    'North Macedonia',
+    'Norway',
+    'Oman',
+    'Pakistan',
+    'Palau',
+    'Palestine',
+    'Panama',
+    'Papua New Guinea',
+    'Paraguay',
+    'Peru',
+    'Philippines',
+    'Poland',
+    'Portugal',
+    'Puerto Rico',
+    'Qatar',
+    'Romania',
+    'Russia',
+    'Rwanda',
+    'Saint Kitts and Nevis',
+    'Saint Lucia',
+    'Saint Vincent and the Grenadines',
+    'Samoa',
+    'San Marino',
+    'Sao Tome and Principe',
+    'Saudi Arabia',
+    'Senegal',
+    'Serbia',
+    'Seychelles',
+    'Sierra Leone',
+    'Singapore',
+    'Slovakia',
+    'Slovenia',
+    'Solomon Islands',
+    'Somalia',
+    'South Africa',
+    'South Korea',
+    'South Sudan',
+    'Spain',
+    'Sri Lanka',
+    'Sudan',
+    'Suriname',
+    'Sweden',
+    'Switzerland',
+    'Syria',
+    'Taiwan',
+    'Tajikistan',
+    'Tanzania',
+    'Thailand',
+    'Timor-Leste',
+    'Togo',
+    'Tonga',
+    'Trinidad and Tobago',
+    'Tunisia',
+    'Turkey',
+    'Turkmenistan',
+    'Tuvalu',
+    'UAE',
+    'Uganda',
+    'UK',
+    'Ukraine',
+    'Uruguay',
+    'USA',
+    'Uzbekistan',
+    'Vanuatu',
+    'Vatican City',
+    'Venezuela',
+    'Vietnam',
+    'Yemen',
+    'Zambia',
+    'Zimbabwe',
+];
+
+// ============================================================
+// STYLED COMPONENTS
+// ============================================================
 
 const StyledPaper = styled(Paper)`
     background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
@@ -70,6 +287,10 @@ const StyledTextField = styled(TextField)`
     }
 `;
 
+// ============================================================
+// COMPONENT
+// ============================================================
+
 const CreateVenue = () => {
     const navigate = useNavigate();
     const { id } = useParams();
@@ -95,6 +316,19 @@ const CreateVenue = () => {
         has_reserved_seating: false,
         is_active: true,
     });
+
+    // If the currently-saved country is NOT in our list (e.g. a legacy
+    // value like "United States of America"), inject it so the Select
+    // doesn't render empty. Memoized so we don't rebuild the array on
+    // every render.
+    const countryOptions = useMemo(() => {
+        const current = (formData.country || '').trim();
+        if (current && !COUNTRIES.includes(current)) {
+            // Insert the legacy value at the top so it's visible & selected
+            return [current, ...COUNTRIES];
+        }
+        return COUNTRIES;
+    }, [formData.country]);
 
     useEffect(() => {
         if (id) {
@@ -166,8 +400,26 @@ const CreateVenue = () => {
             navigate('/venues');
         } catch (error) {
             console.error('Submit error:', error);
-            setError(error.response?.data?.message || error.message || 'Failed to save venue');
-            toast.error('Failed to save venue');
+
+            // Surface field-level errors from DRF when available.
+            const data = error.response?.data;
+            let msg = 'Failed to save venue';
+            if (typeof data === 'string') {
+                msg = data;
+            } else if (data && typeof data === 'object') {
+                // Show the first field error, or the first non-field error.
+                const firstKey =
+                    Object.keys(data).find(k => k !== 'non_field_errors') ||
+                    'non_field_errors';
+                const firstVal = data[firstKey];
+                msg = Array.isArray(firstVal)
+                    ? `${firstKey}: ${firstVal[0]}`
+                    : `${firstKey}: ${String(firstVal)}`;
+            } else if (error.message) {
+                msg = error.message;
+            }
+            setError(msg);
+            toast.error(msg);
         }
         setSubmitting(false);
     };
@@ -322,16 +574,19 @@ const CreateVenue = () => {
                                 name="country"
                                 value={formData.country}
                                 onChange={handleChange}
+                                SelectProps={{
+                                    MenuProps: {
+                                        PaperProps: {
+                                            sx: { maxHeight: 400 },
+                                        },
+                                    },
+                                }}
                             >
-                                <MenuItem value="India">India</MenuItem>
-                                <MenuItem value="USA">United States</MenuItem>
-                                <MenuItem value="UK">United Kingdom</MenuItem>
-                                <MenuItem value="Australia">Australia</MenuItem>
-                                <MenuItem value="Canada">Canada</MenuItem>
-                                <MenuItem value="Singapore">Singapore</MenuItem>
-                                <MenuItem value="Malaysia">Malaysia</MenuItem>
-                                <MenuItem value="UAE">UAE</MenuItem>
-                                <MenuItem value="Other">Other</MenuItem>
+                                {countryOptions.map((country) => (
+                                    <MenuItem key={country} value={country}>
+                                        {country}
+                                    </MenuItem>
+                                ))}
                             </StyledTextField>
                         </Grid>
 

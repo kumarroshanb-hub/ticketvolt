@@ -28,7 +28,18 @@ const bookingService = {
     refund: async (id) => {
         const response = await api.post(`/bookings/${id}/refund/`);
         return response.data;
-    }
+    },
+    cancelTickets: async (bookingId, ticketIds, reason = '', allowUsed = false) => {
+        const response = await api.post(
+            `/bookings/${bookingId}/cancel_tickets/`,
+            {
+                ticket_ids: ticketIds,
+                reason,
+                allow_used: allowUsed,
+            },
+        );
+        return response.data;
+    },
 };
 
 export default bookingService;

@@ -3,14 +3,18 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.utils import timezone
+from decimal import Decimal
 import os
 import re
 import logging
 
 from ..models import (
     Event, Venue, Session, TicketTier, Booking, Ticket,
-    CheckInLog, Discount, EventTemplateType, EventTemplate, UserProfile,
+    CheckInLog, Discount, DiscountUsage, EventTemplateType, EventTemplate,
+    UserProfile, CancellationPolicy,
 )
+from ..services.cancellation_policy import validate_cancellation_rules
+
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +83,6 @@ class TicketPayloadSerializer(serializers.Serializer):
     """
     Strict, fail-closed schema for the signed QR payload.
 
-    The mobile scanner and the server-side `_validate_ticket_payload`
-    helper both implement the same contract. This serializer is the
-    canonical definition; keep them in sync.
-
     Accepted shape (exactly these four keys, nothing else):
         {
           "v": 1,
@@ -116,8 +116,6 @@ class TicketPayloadSerializer(serializers.Serializer):
         if not sig:
             raise serializers.ValidationError({'sig': 'Missing signature.'})
 
-        # Reject unknown top-level keys to keep the surface minimal.
-        # DRF strips unknown keys silently by default, so check raw input.
         raw = self.initial_data if isinstance(self.initial_data, dict) else {}
         allowed = {'v', 'type', 'code', 'sig'}
         extra = set(raw.keys()) - allowed
@@ -217,11 +215,66 @@ class PublicEventDetailSerializer(PublicEventSerializer):
         ]
 
 
+# ============================================================
+# Cancellation Policy
+# ============================================================
+class CancellationPolicySerializer(serializers.ModelSerializer):
+    event_count = serializers.SerializerMethodField(read_only=True)
+    organizer_username = serializers.CharField(
+        source='organizer.username', read_only=True,
+    )
+
+    class Meta:
+        model = CancellationPolicy
+        fields = [
+            'id', 'name', 'description', 'rules',
+            'is_active', 'is_default',
+            'organizer', 'organizer_username',
+            'event_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'organizer', 'created_at', 'updated_at']
+
+    def get_event_count(self, obj):
+        return obj.events.count()
+
+    def validate_rules(self, value):
+        try:
+            validate_cancellation_rules(value)
+        except Exception as exc:
+            raise serializers.ValidationError(str(exc))
+        return value
+
+    def validate(self, attrs):
+        is_default = attrs.get('is_default')
+        organizer = attrs.get('organizer') or self.instance and self.instance.organizer
+        if is_default and organizer:
+            qs = CancellationPolicy.objects.filter(
+                organizer=organizer, is_default=True,
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {'is_default': 'This organizer already has a default policy.'}
+                )
+        return attrs
+
+
 class EventSerializer(serializers.ModelSerializer):
     venue = serializers.SerializerMethodField()
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
+
+    cancellation_policy = CancellationPolicySerializer(read_only=True)
+    cancellation_policy_id = serializers.PrimaryKeyRelatedField(
+        source='cancellation_policy',
+        queryset=CancellationPolicy.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
 
     class Meta:
         model = Event
@@ -253,6 +306,24 @@ class EventSerializer(serializers.ModelSerializer):
         result = obj.tiers.aggregate(total=Sum('quantity_total'))
         return result.get('total') or 0
 
+    def validate_cancellation_policy(self, value):
+        if value is None:
+            return value
+
+        request = self.context.get('request')
+        if not request or not request.user:
+            return value
+
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return value
+
+        if value.organizer_id != user.id:
+            raise serializers.ValidationError(
+                'You can only attach your own cancellation policies.'
+            )
+        return value
+
 
 class EventDetailSerializer(serializers.ModelSerializer):
     sessions = serializers.SerializerMethodField()
@@ -261,6 +332,15 @@ class EventDetailSerializer(serializers.ModelSerializer):
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
+
+    cancellation_policy = CancellationPolicySerializer(read_only=True)
+    cancellation_policy_id = serializers.PrimaryKeyRelatedField(
+        source='cancellation_policy',
+        queryset=CancellationPolicy.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
 
     class Meta:
         model = Event
@@ -316,6 +396,24 @@ class EventDetailSerializer(serializers.ModelSerializer):
         result = obj.tiers.aggregate(total=Sum('quantity_total'))
         return result.get('total') or 0
 
+    def validate_cancellation_policy(self, value):
+        if value is None:
+            return value
+
+        request = self.context.get('request')
+        if not request or not request.user:
+            return value
+
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return value
+
+        if value.organizer_id != user.id:
+            raise serializers.ValidationError(
+                'You can only attach your own cancellation policies.'
+            )
+        return value
+
 
 # ============================================================
 # VENUE
@@ -337,6 +435,8 @@ class TicketSerializer(serializers.ModelSerializer):
     booking_reference = serializers.SerializerMethodField()
     is_checked_in = serializers.SerializerMethodField()
 
+    qr_code = serializers.SerializerMethodField()
+
     class Meta:
         model = Ticket
         fields = [
@@ -344,8 +444,15 @@ class TicketSerializer(serializers.ModelSerializer):
             'attendee_phone', 'status', 'check_in_time', 'qr_code',
             'tier_name', 'price', 'event_title', 'booking_reference',
             'is_checked_in', 'created_at',
+            'cancelled_at', 'cancelled_reason', 'refund_amount',
+            'refund_percent_applied', 'cancellation_fee_applied',
+            'net_paid_amount',
         ]
-        read_only_fields = ['id', 'unique_code', 'created_at']
+        read_only_fields = [
+            'id', 'unique_code', 'created_at',
+            'refund_percent_applied', 'cancellation_fee_applied',
+            'net_paid_amount',
+        ]
 
     def get_price(self, obj):
         return float(obj.tier.price) if obj.tier else 0
@@ -354,8 +461,12 @@ class TicketSerializer(serializers.ModelSerializer):
         return obj.booking.booking_reference if obj.booking else None
 
     def get_is_checked_in(self, obj):
-        # Keep this consistent with views._ticket_to_scan_response.
         return obj.status == 'used'
+
+    def get_qr_code(self, obj):
+        if obj.status == 'active':
+            return obj.qr_code
+        return None
 
 
 # ============================================================
@@ -381,9 +492,13 @@ class BookingSerializer(serializers.ModelSerializer):
             'event_title', 'event_id', 'event',
             'ticket_count', 'checked_in_count',
             'tickets', 'formatted_date',
-            'metadata',
+            'metadata', 'refund_amount',
         ]
-        read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'booking_reference', 'created_at', 'updated_at',
+            # discount_applied is computed server-side, never trusted from the client.
+            'discount_applied',
+        ]
 
     def get_ticket_count(self, obj):
         return obj.tickets.count()
@@ -417,6 +532,54 @@ class BookingSerializer(serializers.ModelSerializer):
             )
         return value
 
+    # -----------------------------------------------------------------
+    # HELPER — resolve the tickets payload from wherever it lives
+    # -----------------------------------------------------------------
+    def _resolve_tickets_payload(self, data):
+        """
+        The frontend sends tickets inside `metadata.ticket_types`
+        (and `metadata.tickets`) because the top-level `tickets` field
+        is `read_only=True` and therefore never lands in `validated_data`.
+
+        This helper returns the first non-empty list it finds among:
+          1. data['tickets']                    (top-level, if ever sent)
+          2. data['metadata']['ticket_types']   (what CreateBooking actually sends)
+          3. data['metadata']['tickets']        (alternate shape)
+          4. self.initial_data['tickets']       (raw request fallback)
+          5. self.initial_data['metadata']...   (raw request fallback)
+        """
+        # 1. Top-level `tickets` (rarely populated, but harmless to check).
+        tickets = data.get('tickets')
+        if isinstance(tickets, list) and tickets:
+            return tickets
+
+        # 2./3. From `metadata` inside validated data.
+        md = data.get('metadata')
+        if isinstance(md, dict):
+            for key in ('ticket_types', 'tickets'):
+                candidate = md.get(key)
+                if isinstance(candidate, list) and candidate:
+                    return candidate
+
+        # 4./5. From the raw request data (in case metadata was stripped
+        #       by an earlier serializer pass — belt and braces).
+        raw = self.initial_data if isinstance(self.initial_data, dict) else {}
+        raw_tickets = raw.get('tickets')
+        if isinstance(raw_tickets, list) and raw_tickets:
+            return raw_tickets
+
+        raw_md = raw.get('metadata')
+        if isinstance(raw_md, dict):
+            for key in ('ticket_types', 'tickets'):
+                candidate = raw_md.get(key)
+                if isinstance(candidate, list) and candidate:
+                    return candidate
+
+        return []
+
+    # -----------------------------------------------------------------
+    # VALIDATE — resolves the discount server-side
+    # -----------------------------------------------------------------
     def validate(self, data):
         event_uuid = data.get('event')
         if event_uuid:
@@ -435,7 +598,18 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
             self._event_obj = event
 
-        tickets_payload = data.get('tickets') or []
+        # ------------------------------------------------------------
+        # ✅ Resolve the tickets list from WHEREVER the client put it.
+        #    Before this fix, the code only looked at `data['tickets']`,
+        #    which is read-only on this serializer and therefore always
+        #    empty. That made `computed_total == 0`, which in turn caused
+        #    every discount with `min_order_amount > 0` to be wrongly
+        #    rejected with "Minimum order ₹X required."
+        # ------------------------------------------------------------
+        tickets_payload = self._resolve_tickets_payload(data)
+
+        computed_total = Decimal('0.00')
+
         if tickets_payload and hasattr(self, '_event_obj'):
             valid_tier_ids = {str(t.id) for t in self._event_obj.tiers.all()}
             for i, t in enumerate(tickets_payload):
@@ -453,15 +627,141 @@ class BookingSerializer(serializers.ModelSerializer):
                         {'tickets': f'Tier {tier_id} not found for this event.'}
                     )
 
-            computed_total = 0
             for t in tickets_payload:
                 tier = TicketTier.objects.filter(id=t.get('tier_id')).first()
                 if tier:
-                    computed_total += float(tier.price)
+                    computed_total += Decimal(str(tier.price))
+
+        # ------------------------------------------------------------
+        # ✅ Safety net: if we STILL couldn't compute a total (e.g. the
+        #    client sent only `total_amount` with no per-ticket detail),
+        #    fall back to the client-supplied total_amount so discount
+        #    validation doesn't falsely fail on `min_order_amount`.
+        #
+        #    This is safe because the discount AMOUNT is recomputed from
+        #    `computed_total` — a malicious client inflating total_amount
+        #    only affects the minimum-order threshold, not the money
+        #    actually charged (the booking total is overwritten below).
+        # ------------------------------------------------------------
+        if computed_total == Decimal('0.00'):
+            fallback = (
+                data.get('total_amount')
+                or self.initial_data.get('total_amount')
+            )
+            if fallback:
+                try:
+                    computed_total = Decimal(str(fallback))
+                except (ValueError, TypeError, ArithmeticError):
+                    pass
+
+        # total_amount is ALWAYS the gross subtotal (before discount).
+        # The discount is stored separately in `discount_applied`.
+        if computed_total > 0:
             data['total_amount'] = computed_total
+
+        # ---- Resolve the discount server-side (never trust client) ----
+        raw_code = (
+            data.get('discount_code')
+            or self.initial_data.get('discount_code')
+            or ''
+        )
+        discount_code = str(raw_code).strip().upper()
+        discount_amount = Decimal('0.00')
+
+        if discount_code:
+            try:
+                discount_obj = Discount.objects.get(
+                    code__iexact=discount_code, is_active=True,
+                )
+            except Discount.DoesNotExist:
+                raise serializers.ValidationError(
+                    {'discount_code': 'Invalid or inactive discount code.'}
+                )
+
+            # Organizer ownership check (only relevant if not staff).
+            request = self.context.get('request')
+            requester = getattr(request, 'user', None)
+            if requester and not (requester.is_staff or requester.is_superuser):
+                if discount_obj.organizer_id != self._event_obj.organizer_id:
+                    raise serializers.ValidationError(
+                        {'discount_code': 'This code is not valid for this event.'}
+                    )
+
+            # Time window
+            now = timezone.now()
+            if discount_obj.valid_from and discount_obj.valid_from > now:
+                raise serializers.ValidationError(
+                    {'discount_code': 'This code is not yet valid.'}
+                )
+            if discount_obj.valid_to and discount_obj.valid_to < now:
+                raise serializers.ValidationError(
+                    {'discount_code': 'This code has expired.'}
+                )
+
+            # Global usage limit
+            if discount_obj.max_uses and discount_obj.used_count >= discount_obj.max_uses:
+                raise serializers.ValidationError(
+                    {'discount_code': 'This code has reached its usage limit.'}
+                )
+
+            # Event scoping (empty M2M = organizer-wide)
+            scoped_ids = list(
+                discount_obj.applicable_events.values_list('id', flat=True)
+            )
+            if scoped_ids and self._event_obj.id not in scoped_ids:
+                raise serializers.ValidationError(
+                    {'discount_code': 'This code is not valid for this event.'}
+                )
+
+            # Order constraints
+            if (
+                discount_obj.min_order_amount
+                and computed_total < Decimal(str(discount_obj.min_order_amount))
+            ):
+                raise serializers.ValidationError(
+                    {'discount_code':
+                     f'Minimum order ₹{discount_obj.min_order_amount} required.'}
+                )
+
+            if (
+                discount_obj.min_ticket_count
+                and len(tickets_payload) < discount_obj.min_ticket_count
+            ):
+                raise serializers.ValidationError(
+                    {'discount_code':
+                     f'Minimum {discount_obj.min_ticket_count} tickets required.'}
+                )
+
+            # Compute discount amount
+            if discount_obj.type == 'percentage':
+                discount_amount = (
+                    computed_total * Decimal(str(discount_obj.value)) / Decimal('100')
+                ).quantize(Decimal('0.01'))
+                if (
+                    discount_obj.max_discount
+                    and discount_amount > Decimal(str(discount_obj.max_discount))
+                ):
+                    discount_amount = Decimal(str(discount_obj.max_discount))
+            else:
+                discount_amount = Decimal(str(discount_obj.value))
+                if discount_amount > computed_total:
+                    discount_amount = computed_total
+
+            data['discount_code'] = discount_obj.code
+            data['discount_applied'] = discount_amount
+            # Stash the model instance so create() can persist usage audit.
+            self._discount_obj = discount_obj
+        else:
+            # No code provided — make sure nothing sneaky was passed.
+            data.pop('discount_applied', None)
+            data['discount_applied'] = Decimal('0.00')
+            data['discount_code'] = ''
 
         return data
 
+    # -----------------------------------------------------------------
+    # CREATE — persists the resolved discount and audits its usage
+    # -----------------------------------------------------------------
     def create(self, validated_data):
         event = getattr(self, '_event_obj', None)
         if event is None:
@@ -470,6 +770,10 @@ class BookingSerializer(serializers.ModelSerializer):
 
         tickets_data = validated_data.pop('tickets', [])
         logger.info(f"📊 Tickets received in serializer: {len(tickets_data)}")
+
+        # Pull out the discount fields so we control when they hit the DB.
+        discount_code = validated_data.pop('discount_code', '')
+        discount_applied = validated_data.pop('discount_applied', Decimal('0.00'))
 
         if 'user' not in validated_data:
             customer_email = validated_data.get('customer_email')
@@ -522,17 +826,73 @@ class BookingSerializer(serializers.ModelSerializer):
                 validated_data['user'] = get_or_create_whatsapp_bot_user()
 
         if not validated_data.get('total_amount'):
-            total = 0
+            total = Decimal('0.00')
             for t in tickets_data:
                 tid = t.get('tier_id')
                 if tid:
                     try:
-                        total += float(TicketTier.objects.get(id=tid).price)
+                        total += Decimal(str(TicketTier.objects.get(id=tid).price))
                     except TicketTier.DoesNotExist:
                         pass
             validated_data['total_amount'] = total
 
+        # Persist the discount fields on the model.
+        validated_data['discount_code'] = discount_code
+        validated_data['discount_applied'] = discount_applied
+
         booking = super().create(validated_data)
+
+        # ---- Audit: DiscountUsage + used_count increment ----
+        if discount_code and discount_applied and discount_applied > 0:
+            try:
+                discount_obj = getattr(self, '_discount_obj', None) or Discount.objects.get(
+                    code__iexact=discount_code
+                )
+                DiscountUsage.objects.create(
+                    discount=discount_obj,
+                    booking=booking,
+                    user=booking.user,
+                    amount_applied=discount_applied,
+                )
+                # Atomic increment to avoid lost updates.
+                from django.db.models import F
+                Discount.objects.filter(pk=discount_obj.pk).update(
+                    used_count=F('used_count') + 1
+                )
+                logger.info(
+                    "Recorded discount usage %s on booking %s (₹%s)",
+                    discount_code, booking.booking_reference, discount_applied,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to record DiscountUsage for %s: %s",
+                    booking.booking_reference, exc,
+                )
+
+        # ✅ Snapshot the event's cancellation policy at booking time.
+        try:
+            from ..services.cancellation_policy import snapshot_policy
+
+            if event.cancellation_policy:
+                booking.cancellation_policy_snapshot = snapshot_policy(
+                    event.cancellation_policy
+                )
+            else:
+                booking.cancellation_policy_snapshot = {}
+            booking.save(update_fields=['cancellation_policy_snapshot'])
+
+            logger.info(
+                "Booking %s snapshotted policy %r",
+                booking.booking_reference,
+                booking.cancellation_policy_snapshot.get('policy_name', '<none>'),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to snapshot cancellation policy for booking %s: %s",
+                booking.booking_reference, exc,
+            )
+            booking.cancellation_policy_snapshot = {}
+            booking.save(update_fields=['cancellation_policy_snapshot'])
 
         if not booking.metadata:
             booking.metadata = {}
@@ -677,10 +1037,27 @@ class CheckInLogSerializer(serializers.ModelSerializer):
 # DISCOUNT
 # ============================================================
 class DiscountSerializer(serializers.ModelSerializer):
+    organizer = serializers.PrimaryKeyRelatedField(read_only=True)
+    organizer_username = serializers.CharField(
+        source='organizer.username', read_only=True,
+    )
+
     class Meta:
         model = Discount
-        fields = '__all__'
-        read_only_fields = ['id', 'used_count', 'created_at']
+        fields = [
+            'id', 'code', 'name', 'type', 'value',
+            'min_order_amount', 'max_discount',
+            'max_uses', 'used_count',
+            'valid_from', 'valid_to', 'is_active',
+            'applicable_events',
+            'max_uses_per_user', 'min_ticket_count',
+            'first_time_buyers_only', 'stackable',
+            'organizer', 'organizer_username',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id', 'used_count', 'organizer', 'created_at',
+        ]
 
 
 # ============================================================
@@ -839,6 +1216,9 @@ class BookingListSerializer(serializers.ModelSerializer):
     customer_email = serializers.CharField()
     customer_phone = serializers.CharField()
     total_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    discount_applied = serializers.DecimalField(max_digits=10, decimal_places=2)
+    discount_code = serializers.CharField()
+    net_amount = serializers.SerializerMethodField()
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
     ticket_count = serializers.SerializerMethodField()
@@ -849,7 +1229,8 @@ class BookingListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'booking_reference', 'event_title', 'event_id',
             'customer_name', 'customer_email', 'customer_phone',
-            'total_amount', 'status', 'created_at', 'formatted_date',
+            'total_amount', 'discount_applied', 'discount_code', 'net_amount',
+            'status', 'created_at', 'formatted_date',
             'ticket_count',
         ]
 
@@ -859,55 +1240,76 @@ class BookingListSerializer(serializers.ModelSerializer):
     def get_formatted_date(self, obj):
         return obj.created_at.strftime('%d/%m/%Y') if obj.created_at else None
 
+    def get_net_amount(self, obj):
+        return float((obj.total_amount or 0) - (obj.discount_applied or 0))
+
 
 class BookingAdminSerializer(serializers.ModelSerializer):
+    event_title = serializers.CharField(
+        source='event.title',
+        read_only=True,
+        default='N/A',
+    )
+    event_id = serializers.UUIDField(
+        source='event.id',
+        read_only=True,
+        default=None,
+    )
+
     tickets = TicketSerializer(many=True, read_only=True)
     event_details = serializers.SerializerMethodField()
     user_details = serializers.SerializerMethodField()
     ticket_count = serializers.SerializerMethodField()
     checked_in_count = serializers.SerializerMethodField()
+    net_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             'id', 'booking_reference', 'user', 'user_details',
-            'event', 'event_details', 'session',
+            'event', 'event_id', 'event_title', 'event_details', 'session',
             'customer_name', 'customer_email', 'customer_phone',
             'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'notes',
-            'discount_applied', 'discount_code',
+            'discount_applied', 'discount_code', 'net_amount',
             'paid_at', 'created_at', 'updated_at',
             'tickets', 'ticket_count', 'checked_in_count',
-            'metadata',
+            'metadata', 'refund_amount',
         ]
-        read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'booking_reference', 'created_at', 'updated_at',
+            'event_title', 'event_id',
+        ]
 
     def get_event_details(self, obj):
-        if obj.event:
-            return {
-                'id': str(obj.event.id),
-                'title': obj.event.title,
-                'start_date': obj.event.start_date,
-                'end_date': obj.event.end_date,
-                'status': obj.event.status,
-            }
-        return None
+        if not obj.event:
+            return None
+        return {
+            'id': str(obj.event.id),
+            'title': obj.event.title,
+            'start_date': obj.event.start_date,
+            'end_date': obj.event.end_date,
+            'status': obj.event.status,
+        }
 
     def get_user_details(self, obj):
-        if obj.user:
-            return {
-                'id': obj.user.id,
-                'username': obj.user.username,
-                'email': obj.user.email,
-                'full_name': f"{obj.user.first_name} {obj.user.last_name}".strip(),
-            }
-        return None
+        if not obj.user:
+            return None
+        return {
+            'id': obj.user.id,
+            'username': obj.user.username,
+            'email': obj.user.email,
+            'full_name': f"{obj.user.first_name} {obj.user.last_name}".strip(),
+        }
 
     def get_ticket_count(self, obj):
         return obj.tickets.count()
 
     def get_checked_in_count(self, obj):
         return obj.tickets.filter(status='used').count()
+
+    def get_net_amount(self, obj):
+        return float((obj.total_amount or 0) - (obj.discount_applied or 0))
 
 
 class BulkActionResponseSerializer(serializers.Serializer):

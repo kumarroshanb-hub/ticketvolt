@@ -1,5 +1,6 @@
 # backend/ticket_bookings/api/checkin_api.py
 import logging
+from datetime import timedelta
 
 from django.db import transaction
 from django.shortcuts import get_object_or_404
@@ -34,6 +35,76 @@ logger = logging.getLogger(__name__)
 # file. Inspect the model's save() overrides, signals, or
 # background tasks.
 # ============================================================
+
+
+# ============================================================
+# SLOT TIME VALIDATION
+# ------------------------------------------------------------
+# How early / late a scan is allowed, relative to the ticket's
+# assigned session start/end times.
+#
+# These are module-level constants so they can be tuned without
+# touching the validation logic, and so tests can monkey-patch
+# them to simulate edge cases.
+# ============================================================
+
+# How early can a ticket be scanned before its slot starts?
+CHECKIN_EARLY_GRACE = timedelta(minutes=30)
+
+# How late can a ticket be scanned after its slot ends?
+CHECKIN_LATE_GRACE = timedelta(minutes=15)
+
+
+def _validate_checkin_window(ticket, now=None):
+    """
+    Validate that `now` falls within the allowed check-in window for
+    the ticket's assigned slot.
+
+    The window is defined as:
+        [session.start_time - CHECKIN_EARLY_GRACE,
+         session.end_time   + CHECKIN_LATE_GRACE]
+
+    If the ticket has no session (i.e. the event is not time-slotted),
+    the check-in is always allowed.
+
+    Args:
+        ticket: A Ticket instance (may or may not have a session).
+        now:    A timezone-aware datetime. Defaults to `timezone.now()`.
+                Exposed as a parameter for testability.
+
+    Returns:
+        (allowed: bool, reason: str | None)
+          - (True, None)         → check-in is allowed.
+          - (False, reason_str)  → check-in is rejected, with a
+                                    human-readable reason.
+    """
+    now = now or timezone.now()
+
+    # No slot → no time restriction.
+    if not ticket.session:
+        return True, None
+
+    session = ticket.session
+    window_start = session.start_time - CHECKIN_EARLY_GRACE
+    window_end = session.end_time + CHECKIN_LATE_GRACE
+
+    if now < window_start:
+        reason = (
+            f"Too early for this slot. "
+            f"Check-in opens at "
+            f"{timezone.localtime(window_start).strftime('%I:%M %p')}."
+        )
+        return False, reason
+
+    if now > window_end:
+        reason = (
+            f"Too late for this slot. "
+            f"Check-in closed at "
+            f"{timezone.localtime(window_end).strftime('%I:%M %p')}."
+        )
+        return False, reason
+
+    return True, None
 
 
 def _is_organizer(user):
@@ -81,23 +152,73 @@ class CheckInViewSet(viewsets.ViewSet):
         return False
 
     def _check_and_complete_booking(self, booking):
-        """Mark booking COMPLETED when all its tickets are used."""
+        """
+        Recompute the booking's terminal status from its current tickets.
+
+        A booking is promoted to `completed` iff:
+          • at least one ticket on the booking is `used`, AND
+          • no ticket is still check-in-able (every remaining ticket is
+            in a terminal state: used / cancelled / refunded / expired).
+
+        Cancelled and refunded tickets are excluded from the denominator
+        — they cannot be checked in, so they shouldn't block completion.
+        This matches the exact same rule enforced by
+        BookingViewSet._check_and_complete_booking, so check-in,
+        cancel, and refund all agree on what "completed" means.
+
+        Refuses to touch a booking that is already `cancelled` or
+        `refunded` — those are terminal and must not be re-promoted.
+
+        Returns True if the status was changed.
+        """
         if not booking:
             return False
 
-        total_tickets = booking.tickets.count()
-        used_tickets = booking.tickets.filter(status=TicketStatus.USED).count()
+        # ---- 1. Nothing to do if already terminal ----
+        if booking.status in (
+            BookingStatus.COMPLETED,
+            BookingStatus.CANCELLED,
+            BookingStatus.REFUNDED,
+        ):
+            return False
 
-        if total_tickets > 0 and total_tickets == used_tickets:
-            if booking.status != BookingStatus.COMPLETED:
-                booking.status = BookingStatus.COMPLETED
-                booking.save(update_fields=['status'])
-                logger.info(
-                    "Booking %s auto-completed (%s/%s tickets used)",
-                    booking.booking_reference, used_tickets, total_tickets,
-                )
-                return True
-        return False
+        # ---- 2. Count tickets by category ----
+        terminal_states = (
+            TicketStatus.USED,
+            TicketStatus.CANCELLED,
+            TicketStatus.REFUNDED,
+            TicketStatus.EXPIRED,
+        )
+
+        total_tickets = booking.tickets.count()
+        if total_tickets == 0:
+            return False
+
+        used_tickets = booking.tickets.filter(status=TicketStatus.USED).count()
+        actionable_tickets = booking.tickets.exclude(
+            status__in=terminal_states,
+        ).count()
+
+        # ---- 3. Apply the rules ----
+        # Nothing used → not "completed", regardless of the rest.
+        if used_tickets == 0:
+            return False
+
+        # Any ticket still check-in-able → not done yet.
+        if actionable_tickets > 0:
+            return False
+
+        # ---- 4. Promote ----
+        booking.status = BookingStatus.COMPLETED
+        booking.save(update_fields=['status'])
+        logger.info(
+            "Booking %s auto-completed (%s used, %s total, %s actionable)",
+            booking.booking_reference,
+            used_tickets,
+            total_tickets,
+            actionable_tickets,
+        )
+        return True
 
     def _ticket_payload(self, ticket):
         """Standard ticket summary used in every response."""
@@ -181,6 +302,22 @@ class CheckInViewSet(viewsets.ViewSet):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    def _slot_window_response(self, ticket, reason):
+        """
+        Standard response for a check-in rejected due to the slot window.
+
+        Returned by create / validate / verify so the same JSON shape
+        reaches the client regardless of which endpoint caught it.
+        """
+        return Response(
+            {
+                'detail': reason,
+                'code': 'OUTSIDE_SLOT_WINDOW',
+                'ticket': self._ticket_payload(ticket),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     # ============================================================
     # CREATE  — POST /checkin/
     # ============================================================
@@ -223,7 +360,10 @@ class CheckInViewSet(viewsets.ViewSet):
         logger.info("Processing check-in for code: %s", ticket_code)
 
         try:
-            ticket = get_object_or_404(Ticket, unique_code=ticket_code)
+            ticket = get_object_or_404(
+                Ticket.objects.select_related('session', 'event', 'booking'),
+                unique_code=ticket_code,
+            )
 
             if not self._user_can_manage_event(request.user, ticket.event):
                 return Response(
@@ -238,6 +378,18 @@ class CheckInViewSet(viewsets.ViewSet):
             rejection = self._rejection_for(ticket)
             if rejection is not None:
                 return rejection
+
+            # ============================================================
+            # ✅ SLOT TIME WINDOW VALIDATION
+            # ============================================================
+            is_within_window, reason = _validate_checkin_window(ticket)
+            if not is_within_window:
+                logger.warning(
+                    "Check-in rejected for ticket %s (slot window): %s",
+                    ticket_code,
+                    reason,
+                )
+                return self._slot_window_response(ticket, reason)
 
             # ---- The ONLY place a 'success' CheckInLog is created ----
             checkin_log = CheckInLog.objects.create(
@@ -318,7 +470,10 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
         try:
-            ticket = get_object_or_404(Ticket, unique_code=ticket_code)
+            ticket = get_object_or_404(
+                Ticket.objects.select_related('session', 'event', 'booking'),
+                unique_code=ticket_code,
+            )
 
             if not self._user_can_manage_event(request.user, ticket.event):
                 return Response(
@@ -355,6 +510,21 @@ class CheckInViewSet(viewsets.ViewSet):
                         'ticket': rejection.data.get('ticket'),
                     },
                     status=rejection.status_code,
+                )
+
+            # ============================================================
+            # ✅ SLOT TIME WINDOW VALIDATION (read-only preview)
+            # ============================================================
+            is_within_window, reason = _validate_checkin_window(ticket)
+            if not is_within_window:
+                return Response(
+                    {
+                        'valid': False,
+                        'code': 'OUTSIDE_SLOT_WINDOW',
+                        'detail': reason,
+                        'ticket': self._ticket_payload(ticket),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
             return Response(
@@ -457,6 +627,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 ticket = (
                     Ticket.objects
                     .select_for_update()
+                    .select_related('session', 'event', 'booking')
                     .get(unique_code=ticket_code)
                 )
 
@@ -503,6 +674,20 @@ class CheckInViewSet(viewsets.ViewSet):
                         'status': 'already_used',
                         'code_type': 'TICKET_USED',
                         'message': 'Ticket has already been used',
+                        'attendee_name': ticket.attendee_name or 'Guest',
+                        'event': ticket.event.title if ticket.event else 'Event',
+                    }
+
+                # ============================================================
+                # ✅ SLOT TIME WINDOW VALIDATION (bulk)
+                # ============================================================
+                is_within_window, reason = _validate_checkin_window(ticket)
+                if not is_within_window:
+                    return {
+                        'code': ticket_code,
+                        'status': 'outside_slot_window',
+                        'code_type': 'OUTSIDE_SLOT_WINDOW',
+                        'message': reason,
                         'attendee_name': ticket.attendee_name or 'Guest',
                         'event': ticket.event.title if ticket.event else 'Event',
                     }
@@ -571,7 +756,11 @@ class CheckInViewSet(viewsets.ViewSet):
         ticket_code = self._extract_ticket_code(code)
 
         try:
-            ticket = Ticket.objects.get(unique_code=ticket_code)
+            ticket = (
+                Ticket.objects
+                .select_related('session', 'event', 'booking')
+                .get(unique_code=ticket_code)
+            )
 
             if not self._user_can_manage_event(request.user, ticket.event):
                 return Response(
@@ -600,6 +789,16 @@ class CheckInViewSet(viewsets.ViewSet):
 
             existing = self._existing_checkin(ticket)
 
+            # ============================================================
+            # ✅ SLOT TIME WINDOW VALIDATION (verify)
+            # ------------------------------------------------------------
+            # If the ticket is valid but outside its slot window, we
+            # still return valid=True (the ticket itself is fine), but
+            # include a `slot_window` advisory so the UI can display
+            # "Ticket is valid, but check-in opens at ...".
+            # ============================================================
+            is_within_window, reason = _validate_checkin_window(ticket)
+
             return Response(
                 {
                     'valid': True,
@@ -609,6 +808,10 @@ class CheckInViewSet(viewsets.ViewSet):
                         'checked_in_at': (
                             existing.scanned_at.isoformat() if existing else None
                         ),
+                    },
+                    'slot_window': {
+                        'open': is_within_window,
+                        'message': reason if not is_within_window else None,
                     },
                 },
                 status=status.HTTP_200_OK,

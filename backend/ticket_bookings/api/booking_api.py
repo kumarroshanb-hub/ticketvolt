@@ -1,4 +1,4 @@
-# ticket_bookings/api/booking_api.py
+# backend/ticket_bookings/api/booking_api.py
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -41,6 +41,10 @@ from .ticket_generator import TicketGenerator
 from .ticket_combiner import TicketCombiner
 # ✅ Canonical signed QR payload builder — single source of truth.
 from ..services.qr_payload import serialise_ticket_qr_payload
+
+from ..managers import SOLD_BOOKING_STATUSES
+from ..services.ticket_cancellation import cancel_tickets, CancellationError
+from ..constants import BookingStatus, TicketStatus
 
 logger = logging.getLogger(__name__)
 
@@ -152,9 +156,456 @@ class BookingViewSet(viewsets.ModelViewSet):
             'for_confirm_payment', 'for_mark_payment', 'for_issue_tickets',
             'bulk_action_counts', 'confirm_payment', 'refund', 'apply_discount'
         ]
+        # validate_discount is intentionally public — the cart calls it
+        # before the user has booked anything.
+        if self.action == 'validate_discount':
+            return [permissions.AllowAny()]
         if self.action in admin_actions:
             return [IsAdminOrOrganizer()]
         return [permissions.IsAuthenticated()]
+
+    # ============================================================
+    # ✅ NEW HELPER — normalize a metadata ticket entry's tier_id and
+    # resolve it to a TicketTier. Never returns None unless the event
+    # truly has zero tiers.
+    # ============================================================
+    def _resolve_tier_for_metadata_entry(self, entry, valid_tiers, tiers_in_order, idx):
+        """
+        Given a single ticket entry from `booking.metadata['tickets']`
+        (or `metadata['ticket_types']`), resolve its `tier_id` to a real
+        `TicketTier` instance.
+
+        Resolution strategy (first hit wins):
+          1. Exact match by stringified `tier_id` in `valid_tiers`.
+          2. Match by `tier_name` (case-insensitive) among the event's tiers.
+          3. First tier in `tiers_in_order`.
+
+        Returns (tier_instance, fallback_reason) — `fallback_reason` is
+        None if the exact match was used, or a short string describing
+        why a fallback was chosen.
+        """
+        raw_tier_id = entry.get('tier_id') if isinstance(entry, dict) else None
+        tier_id = None
+
+        # Normalize: handles UUID objects, strings, ints, None.
+        if raw_tier_id is not None:
+            try:
+                tier_id = str(raw_tier_id).strip()
+            except Exception:
+                tier_id = None
+
+            if tier_id == '':
+                tier_id = None
+
+        # ---- 1. Exact tier_id match ----
+        if tier_id and tier_id in valid_tiers:
+            return valid_tiers[tier_id], None
+
+        # ---- 2. Match by tier_name ----
+        tier_name_hint = ''
+        if isinstance(entry, dict):
+            tier_name_hint = (entry.get('tier_name') or '').strip().lower()
+
+        if tier_name_hint:
+            for t in tiers_in_order:
+                if (t.name or '').strip().lower() == tier_name_hint:
+                    logger.warning(
+                        "⚠️ Ticket #%d: tier_id %r not found; "
+                        "matched by tier_name %r instead.",
+                        idx, raw_tier_id, t.name,
+                    )
+                    return t, f'tier_name match ({t.name})'
+
+        # ---- 3. First available tier ----
+        if tiers_in_order:
+            fallback = tiers_in_order[0]
+            logger.warning(
+                "⚠️ Ticket #%d: tier_id %r not found and no tier_name match; "
+                "falling back to first tier %r.",
+                idx, raw_tier_id, fallback.name,
+            )
+            return fallback, f'first-tier fallback ({fallback.name})'
+
+        # No tiers at all — caller must handle this.
+        logger.error(
+            "❌ Ticket #%d: tier_id %r could not be resolved and the "
+            "event has no tiers at all.",
+            idx, raw_tier_id,
+        )
+        return None, 'no-tiers-available'
+
+    def _send_partial_cancellation_email(
+        self, booking, *, cancelled_ids, refund_amount, fully_cancelled,
+    ):
+        """
+        Send a plain-text notification about the cancellation.
+        Doesn't render tickets or attachments — this is a courtesy note.
+        """
+        from django.core.mail import EmailMultiAlternatives
+
+        if fully_cancelled:
+            subject = f'Booking Cancelled - {booking.booking_reference}'
+            intro = 'Your entire booking has been cancelled.'
+        else:
+            subject = f'Tickets Cancelled - {booking.booking_reference}'
+            intro = f'{len(cancelled_ids)} ticket(s) on your booking have been cancelled.'
+
+        html = f"""
+        <p>Hi {booking.customer_name},</p>
+        <p>{intro}</p>
+        <p><strong>Refund amount:</strong> ₹{refund_amount}</p>
+        <p><strong>Booking reference:</strong> {booking.booking_reference}</p>
+        <p>If you did not request this, please contact support.</p>
+        """
+
+        email = EmailMultiAlternatives(
+            subject,
+            '',
+            settings.DEFAULT_FROM_EMAIL,
+            [booking.customer_email],
+        )
+        email.attach_alternative(html, 'text/html')
+        _safe_send_email(email, context_label='partial_cancellation')
+
+    @action(detail=True, methods=['post'])
+    def cancel_tickets(self, request, pk=None):
+        """
+        POST /api/bookings/<id>/cancel_tickets/
+
+        Body:
+            {
+              "ticket_ids": ["<uuid>", "<uuid>"],
+              "reason": "Customer requested",        # optional
+              "allow_used": false                    # staff only
+            }
+
+        Cancels individual tickets within a booking. The booking itself
+        only flips to `cancelled` when every ticket is cancelled, and to
+        `completed` when the remaining tickets are all already used.
+        """
+        booking = self.get_object()
+
+        if booking.status in [
+            BookingStatus.CANCELLED,
+            BookingStatus.REFUNDED,
+            BookingStatus.COMPLETED,
+        ]:
+            return Response(
+                {'error': f'Booking is already {booking.status}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ticket_ids = request.data.get('ticket_ids') or []
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            return Response(
+                {'error': 'ticket_ids must be a non-empty list'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get('reason') or '').strip()
+
+        # Only staff can cancel tickets that have already been scanned.
+        allow_used = bool(request.data.get('allow_used', False))
+        if allow_used and not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {'error': 'Only staff may cancel checked-in tickets'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            result = cancel_tickets(
+                booking=booking,
+                ticket_ids=ticket_ids,
+                actor=request.user,
+                reason=reason,
+                allow_used=allow_used,
+            )
+        except CancellationError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ NEW: reconcile booking status. If the remaining tickets are
+        #    all `used`, this flips the booking to `completed`. If they
+        #    are all `cancelled`/`refunded`, the service already handled
+        #    that case, and this call is a no-op.
+        booking.refresh_from_db()
+        self._check_and_complete_booking(booking)
+        booking.refresh_from_db()
+
+        # Send notification email only when something was actually cancelled.
+        if result['cancelled_ticket_ids']:
+            try:
+                self._send_partial_cancellation_email(
+                    booking,
+                    cancelled_ids=result['cancelled_ticket_ids'],
+                    refund_amount=result['refund_amount_added'],
+                    fully_cancelled=result['fully_cancelled'],
+                )
+            except Exception as exc:
+                logger.warning(
+                    'Partial cancellation email failed (not blocking): %s', exc,
+                )
+
+        return Response(
+            {
+                'status': 'success',
+                'booking_id': str(booking.id),
+                'reference': booking.booking_reference,
+                'cancelled_ticket_ids': result['cancelled_ticket_ids'],
+                'skipped': result['skipped'],
+                'refund_amount_added': float(result['refund_amount_added']),
+                # ✅ Reflect the post-reconciliation status, not the
+                #    pre-reconciliation one returned by the service.
+                'booking_status': booking.status,
+                'fully_cancelled': result['fully_cancelled'],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'])
+    def preview_cancellation(self, request, pk=None):
+        """
+        POST /api/bookings/<id>/preview_cancellation/
+
+        Body: { "ticket_ids": [...] }
+
+        Returns what the refund WOULD be if these tickets were cancelled
+        right now. Does NOT mutate anything.
+        """
+        from ..services.cancellation_policy import compute_refund
+        from ..services.ticket_cancellation import (
+            _policy_rules_for,
+            _compute_net_paid_for_ticket,
+        )
+        from decimal import Decimal
+
+        booking = self.get_object()
+        ticket_ids = request.data.get('ticket_ids') or []
+
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            return Response(
+                {'error': 'ticket_ids must be a non-empty list'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        rules = _policy_rules_for(booking)
+        if not rules:
+            return Response({
+                'cancellable': False,
+                'reason': 'No cancellation policy attached to this booking.',
+            })
+
+        event_start = booking.event.start_date if booking.event else None
+        now = timezone.now()
+        preview = []
+        total_refund = Decimal('0.00')
+
+        tickets = (
+            booking.tickets
+            .filter(id__in=ticket_ids)
+            .select_related('tier')
+        )
+        for ticket in tickets:
+            net = _compute_net_paid_for_ticket(ticket, booking)
+            decision = compute_refund(
+                policy_rules=rules,
+                event_start=event_start,
+                ticket_status=ticket.status,
+                net_paid_amount=net,
+                now=now,
+            )
+            preview.append({
+                'ticket_id': str(ticket.id),
+                'unique_code': ticket.unique_code,
+                'status': ticket.status,
+                'net_paid': float(net),
+                'refund_percent': decision.refund_percent,
+                'refund_amount': float(decision.net_refund),
+                'cancellation_fee': float(decision.cancellation_fee),
+                'tier_label': decision.tier_label,
+                'allowed': decision.allowed,
+                'reason': decision.reason or None,
+            })
+            if decision.allowed:
+                total_refund += decision.net_refund
+
+        return Response({
+            'cancellable': any(p['allowed'] for p in preview),
+            'preview': preview,
+            'total_refund': float(total_refund),
+            'policy_name': (
+                booking.cancellation_policy_snapshot or {}
+            ).get('policy_name'),
+        })
+
+    # ============================================================
+    # DISCOUNT VALIDATION — public, no booking required
+    # ============================================================
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.AllowAny],
+    )
+    def validate_discount(self, request):
+        """
+        POST /api/bookings/validate_discount/
+
+        Body:
+            {
+              "code": "SAVE20",
+              "event_id": "<uuid>",
+              "subtotal": 430.00,
+              "ticket_count": 3
+            }
+
+        Pre-flight validation for the cart page. Never creates a booking.
+        Returns the computed discount amount so the UI can show the
+        correct total *before* the user confirms.
+        """
+        from decimal import Decimal
+        from ticket_bookings.models import Discount, DiscountUsage
+
+        code = (request.data.get('code') or '').strip().upper()
+        event_id = request.data.get('event_id')
+        subtotal = Decimal(str(request.data.get('subtotal') or 0))
+        ticket_count = int(request.data.get('ticket_count') or 0)
+
+        if not code:
+            return Response(
+                {'valid': False, 'reason': 'No code provided.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            discount = Discount.objects.get(code__iexact=code, is_active=True)
+        except Discount.DoesNotExist:
+            return Response(
+                {'valid': False, 'reason': 'Invalid or inactive code.'},
+                status=status.HTTP_200_OK,
+            )
+
+        event = None
+        if event_id:
+            try:
+                event = Event.objects.get(id=event_id)
+            except Event.DoesNotExist:
+                return Response(
+                    {'valid': False, 'reason': 'Event not found.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not (request.user.is_staff or request.user.is_superuser):
+                if discount.organizer_id != event.organizer_id:
+                    return Response(
+                        {
+                            'valid': False,
+                            'reason': 'This code is not valid for this event.',
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+            scoped_ids = list(
+                discount.applicable_events.values_list('id', flat=True)
+            )
+            if scoped_ids and event.id not in scoped_ids:
+                return Response(
+                    {
+                        'valid': False,
+                        'reason': 'This code is not valid for this event.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        now = timezone.now()
+        if discount.valid_from and discount.valid_from > now:
+            return Response(
+                {'valid': False, 'reason': 'This code is not yet valid.'},
+                status=status.HTTP_200_OK,
+            )
+        if discount.valid_to and discount.valid_to < now:
+            return Response(
+                {'valid': False, 'reason': 'This code has expired.'},
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.max_uses and discount.used_count >= discount.max_uses:
+            return Response(
+                {'valid': False, 'reason': 'This code has reached its limit.'},
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.max_uses_per_user and request.user.is_authenticated:
+            used = DiscountUsage.objects.filter(
+                discount=discount,
+                user=request.user,
+                reversed_at__isnull=True,
+            ).count()
+            if used >= discount.max_uses_per_user:
+                return Response(
+                    {
+                        'valid': False,
+                        'reason': 'You have already used this code.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        if discount.first_time_buyers_only and request.user.is_authenticated:
+            prior = Booking.objects.filter(
+                user=request.user,
+                status__in=SOLD_BOOKING_STATUSES,
+            ).exists()
+            if prior:
+                return Response(
+                    {
+                        'valid': False,
+                        'reason': 'This code is only for first-time buyers.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        if discount.min_order_amount and subtotal < Decimal(str(discount.min_order_amount)):
+            return Response(
+                {
+                    'valid': False,
+                    'reason': f'Minimum order ₹{discount.min_order_amount} required.',
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.min_ticket_count and ticket_count < discount.min_ticket_count:
+            return Response(
+                {
+                    'valid': False,
+                    'reason': f'Minimum {discount.min_ticket_count} tickets required.',
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if discount.type == 'percentage':
+            amount = (
+                subtotal * Decimal(str(discount.value)) / Decimal('100')
+            ).quantize(Decimal('0.01'))
+            if discount.max_discount and amount > Decimal(str(discount.max_discount)):
+                amount = Decimal(str(discount.max_discount))
+        else:
+            amount = Decimal(str(discount.value))
+            if amount > subtotal:
+                amount = subtotal
+
+        return Response(
+            {
+                'valid': True,
+                'code': discount.code,
+                'type': discount.type,
+                'value': float(discount.value),
+                'discount_amount': float(amount),
+                'min_order_amount': float(discount.min_order_amount or 0),
+                'new_subtotal': float(subtotal - amount),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=False, methods=['post', 'get'])
     def debug(self, request):
@@ -289,6 +740,11 @@ class BookingViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+        # Note: we deliberately do NOT clobber total_amount here if the
+        # serializer will compute it. The serializer's validate() sets
+        # total_amount = gross subtotal and stores discount separately.
+        # We only fall back to computing it here if the client didn't
+        # send anything at all.
         if 'total_amount' not in request.data or request.data['total_amount'] is None:
             tickets = request.data.get('tickets', [])
             total = 0
@@ -307,22 +763,23 @@ class BookingViewSet(viewsets.ModelViewSet):
     # ==================== HELPER METHOD TO UPDATE EVENT COUNTS ====================
 
     def _update_event_counts(self, event):
-        if event:
-            active_tickets_count = event.tickets.exclude(
-                booking__status__in=['cancelled', 'refunded']
-            ).count()
+        """
+        Delegate to the model so the counting logic lives in exactly one
+        place (managers.py). Called after issuing/cancelling/refunding
+        tickets.
+        """
+        if not event:
+            return False
 
-            active_revenue = event.bookings.filter(
-                status__in=['paid', 'confirmed', 'completed']
-            ).aggregate(total=Sum('total_amount'))['total'] or 0
-
-            event.total_tickets_sold = active_tickets_count
-            event.total_revenue = active_revenue
-            event.save(update_fields=['total_tickets_sold', 'total_revenue', 'updated_at'])
-
-            logger.info(f"✅ Updated event {event.id} counts: tickets={active_tickets_count}, revenue={active_revenue}")
-            return True
-        return False
+        event.update_ticket_counts()
+        logger.info(
+            "✅ Updated event %s counts via update_ticket_counts(): "
+            "tickets=%s revenue=%s",
+            event.id,
+            event.total_tickets_sold,
+            event.total_revenue,
+        )
+        return True
 
     # ==================== FILTERED BOOKING LISTS FOR BULK ACTIONS ====================
 
@@ -1023,8 +1480,29 @@ class BookingViewSet(viewsets.ModelViewSet):
     # ==================== ISSUE TICKETS ====================
 
     def _issue_tickets_for_booking(self, booking):
+        """
+        Create one Ticket row per attendee entry stored on the booking's
+        metadata, then send the ticket email.
+
+        The old implementation silently dropped attendees whose tier_id
+        could not be resolved (e.g. because the UUID had been stored with
+        surrounding whitespace, or because a tier had been deleted). It
+        would then only fall through to the "one fallback ticket" path
+        if ZERO tickets had been created, so a 3-out-of-4 failure was
+        completely invisible.
+
+        This version:
+          • Resolves each entry's tier via `_resolve_tier_for_metadata_entry`,
+            which falls back to tier_name matching and finally to the first
+            available tier — never drops an attendee unless the event has
+            zero tiers.
+          • Logs loudly on every fallback so the operator can investigate.
+          • Compares the number of tickets created against the number of
+            attendee entries and refuses to silently succeed on mismatch.
+        """
         logger.info(f"🔍 Starting _issue_tickets_for_booking for {booking.booking_reference}")
 
+        # ---- 1. Ensure a session is assigned ----
         if not booking.session:
             if hasattr(booking, 'metadata') and booking.metadata:
                 slot_id = booking.metadata.get('slot_id')
@@ -1036,6 +1514,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     except Session.DoesNotExist:
                         logger.error(f"❌ Session {slot_id} from metadata not found")
 
+        # ---- 2. Validate + allocate a slot ----
         is_valid, allocated_slot, allocation_message = self._validate_and_allocate_slot(booking)
 
         if not is_valid:
@@ -1045,6 +1524,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'tickets_created': 0,
             }
 
+        # ---- 3. Persist the allocation message on the booking ----
         if hasattr(booking, 'metadata'):
             if not booking.metadata:
                 booking.metadata = {}
@@ -1052,6 +1532,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             booking.metadata['slot_allocated_at'] = timezone.now().isoformat()
             booking.save(update_fields=['metadata'])
 
+        # ---- 4. Reject if tickets already exist ----
         existing_tickets = booking.tickets.filter(status='active')
         if existing_tickets.exists():
             ticket_details = [{
@@ -1069,9 +1550,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         if booking.status == 'completed':
             return {'error': 'Booking is already completed. All tickets have been used.'}
 
-        tickets_created = 0
-        created_ticket_ids = []
-
+        # ---- 5. Resolve the session to use ----
         session_to_use = booking.session
         if not session_to_use:
             if hasattr(booking, 'metadata') and booking.metadata:
@@ -1084,10 +1563,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                     except Session.DoesNotExist:
                         logger.error(f"❌ Session {slot_id} not found")
 
+        # ---- 6. Gather ticket data from metadata ----
         tickets_data = []
         if hasattr(booking, 'metadata') and booking.metadata:
             tickets_data = booking.metadata.get('tickets', [])
-            logger.info(f"📊 Found {len(tickets_data)} tickets in metadata.tickets for booking {booking.booking_reference}")
+            logger.info(
+                f"📊 Found {len(tickets_data)} tickets in "
+                f"metadata.tickets for booking {booking.booking_reference}"
+            )
 
             if not tickets_data:
                 tickets_data = booking.metadata.get('ticket_types', [])
@@ -1120,52 +1603,155 @@ class BookingViewSet(viewsets.ModelViewSet):
                             'attendee_name': booking.customer_name,
                         })
 
-        if tickets_data:
-            for ticket_data in tickets_data:
-                tier_id = ticket_data.get('tier_id')
-                attendee_name = ticket_data.get('attendee_name', booking.customer_name)
+        expected_count = len(tickets_data) if tickets_data else 0
 
-                if tier_id:
-                    try:
-                        tier = TicketTier.objects.get(id=tier_id)
-                        ticket = Ticket.objects.create(
-                            booking=booking,
-                            tier=tier,
-                            event=booking.event,
-                            session=session_to_use,
-                            status='active',
-                            attendee_name=attendee_name,
-                            attendee_email=booking.customer_email,
-                            attendee_phone=booking.customer_phone,
-                        )
-                        # ✅ Uses the canonical signed payload.
-                        self._generate_qr_code(ticket)
+        # ---- 7. Create tickets (one per attendee) ----
+        tickets_created = 0
+        created_ticket_ids = []
+        fallback_log = []
 
-                        tier.quantity_sold += 1
-                        tier.save()
+        # Preload valid tiers for this event into a dict keyed by
+        # stringified UUID so lookups are O(1) and normalization is simple.
+        valid_tiers = {
+            str(t.id): t
+            for t in TicketTier.objects.filter(event=booking.event)
+        }
+        tiers_in_order = list(valid_tiers.values())
 
-                        booking.event.total_tickets_sold += 1
-                        booking.event.save()
+        if expected_count > 0 and not tiers_in_order:
+            # Hard fail — the event has zero tiers, so no ticket can be
+            # created no matter how we resolve the metadata.
+            return {
+                'error': (
+                    'This event has no ticket tiers configured. '
+                    'Tickets cannot be issued until at least one tier exists.'
+                ),
+                'tickets_created': 0,
+                'debug_info': {
+                    'booking_id': str(booking.id),
+                    'reference': booking.booking_reference,
+                    'expected_tickets': expected_count,
+                    'event_tiers_count': 0,
+                },
+            }
 
-                        tickets_created += 1
-                        created_ticket_ids.append(str(ticket.id))
-                        logger.info(f"✅ Created ticket {ticket.unique_code} for {attendee_name} (Tier: {tier.name})")
-                    except TicketTier.DoesNotExist:
-                        logger.error(f"❌ Ticket tier {tier_id} not found")
-                        continue
-                    except Exception as e:
-                        logger.error(f"❌ Error creating ticket: {str(e)}")
-                        continue
+        for idx, ticket_data in enumerate(tickets_data):
+            attendee_name = (
+                ticket_data.get('attendee_name', booking.customer_name)
+                if isinstance(ticket_data, dict)
+                else booking.customer_name
+            )
 
-            if tickets_created > 0:
-                booking.metadata['ticket_created'] = True
-                booking.metadata['tickets_created_count'] = tickets_created
-                booking.metadata['ticket_ids'] = created_ticket_ids
-                booking.save(update_fields=['metadata'])
-                logger.info(f"✅ Updated metadata: ticket_created=True, count={tickets_created}")
+            tier, fallback_reason = self._resolve_tier_for_metadata_entry(
+                ticket_data, valid_tiers, tiers_in_order, idx,
+            )
 
+            if tier is None:
+                # Only reachable when tiers_in_order was empty, which we
+                # already short-circuited above. Defensive anyway.
+                logger.error(
+                    "❌ Ticket #%d for %s: no tier could be resolved. "
+                    "Skipping attendee %r.",
+                    idx, booking.booking_reference, attendee_name,
+                )
+                fallback_log.append({
+                    'index': idx,
+                    'attendee_name': attendee_name,
+                    'reason': 'no-tier-available',
+                    'created': False,
+                })
+                continue
+
+            if fallback_reason:
+                fallback_log.append({
+                    'index': idx,
+                    'attendee_name': attendee_name,
+                    'reason': fallback_reason,
+                    'created': True,
+                })
+
+            try:
+                ticket = Ticket.objects.create(
+                    booking=booking,
+                    tier=tier,
+                    event=booking.event,
+                    session=session_to_use,
+                    status='active',
+                    attendee_name=attendee_name,
+                    attendee_email=booking.customer_email,
+                    attendee_phone=booking.customer_phone,
+                )
+                self._generate_qr_code(ticket)
+
+                tier.quantity_sold += 1
+                tier.save(update_fields=['quantity_sold'])
+
+                booking.event.total_tickets_sold += 1
+                booking.event.save(update_fields=['total_tickets_sold'])
+
+                tickets_created += 1
+                created_ticket_ids.append(str(ticket.id))
+                logger.info(
+                    "✅ Created ticket %s for %s (Tier: %s)",
+                    ticket.unique_code, attendee_name, tier.name,
+                )
+            except Exception as e:
+                logger.exception(
+                    "❌ Error creating ticket #%d for %r: %s",
+                    idx, attendee_name, e,
+                )
+                fallback_log.append({
+                    'index': idx,
+                    'attendee_name': attendee_name,
+                    'reason': f'exception: {e}',
+                    'created': False,
+                })
+                continue
+
+        if tickets_created > 0:
+            booking.metadata['ticket_created'] = True
+            booking.metadata['tickets_created_count'] = tickets_created
+            booking.metadata['ticket_ids'] = created_ticket_ids
+            if fallback_log:
+                booking.metadata['ticket_issuance_fallback_log'] = fallback_log
+            booking.save(update_fields=['metadata'])
+            logger.info(
+                "✅ Updated metadata: ticket_created=True, count=%d",
+                tickets_created,
+            )
+
+        # ---- 7b. Integrity check: did we create one ticket per attendee? ----
+        if expected_count > 0 and tickets_created < expected_count:
+            missing = expected_count - tickets_created
+            logger.error(
+                "🚨 TICKET ISSUANCE MISMATCH on booking %s: "
+                "expected %d, created %d (%d missing). "
+                "fallback_log=%s",
+                booking.booking_reference,
+                expected_count,
+                tickets_created,
+                missing,
+                fallback_log,
+            )
+            return {
+                'error': (
+                    f'Ticket issuance incomplete: expected '
+                    f'{expected_count} tickets, created '
+                    f'{tickets_created}. {missing} attendee(s) were '
+                    f'dropped. See server logs for details.'
+                ),
+                'tickets_created': tickets_created,
+                'ticket_ids': created_ticket_ids,
+                'expected_count': expected_count,
+                'fallback_log': fallback_log,
+            }
+
+        # ---- 8. Fallback: create one ticket if nothing was created ----
         if tickets_created == 0:
-            logger.warning(f"⚠️ No ticket data found in metadata for booking {booking.booking_reference}")
+            logger.warning(
+                f"⚠️ No ticket data found in metadata for booking "
+                f"{booking.booking_reference}"
+            )
 
             if booking.event and booking.event.tiers.exists():
                 available_tiers = booking.event.tiers.filter(
@@ -1174,8 +1760,13 @@ class BookingViewSet(viewsets.ModelViewSet):
 
                 if available_tiers.exists():
                     tier = available_tiers.first()
-                    tickets_created = self._generate_tickets(booking, tier, 1, session_to_use)
-                    logger.info(f"✅ Created {tickets_created} fallback ticket from tier: {tier.name}")
+                    tickets_created = self._generate_tickets(
+                        booking, tier, 1, session_to_use,
+                    )
+                    logger.info(
+                        f"✅ Created {tickets_created} fallback ticket "
+                        f"from tier: {tier.name}"
+                    )
 
                     booking.metadata['fallback_ticket_created'] = True
                     booking.metadata['fallback_tier_id'] = str(tier.id)
@@ -1183,44 +1774,88 @@ class BookingViewSet(viewsets.ModelViewSet):
                     booking.save(update_fields=['metadata'])
                 else:
                     return {
-                        'error': 'No available ticket tiers found for this event. Please contact support.',
+                        'error': (
+                            'No available ticket tiers found for this '
+                            'event. Please contact support.'
+                        ),
                         'tickets_created': 0,
                         'debug_info': {
                             'booking_id': str(booking.id),
                             'reference': booking.booking_reference,
                             'metadata': booking.metadata,
-                            'event_tiers_count': booking.event.tiers.count() if booking.event else 0,
+                            'event_tiers_count': (
+                                booking.event.tiers.count()
+                                if booking.event else 0
+                            ),
                         },
                     }
             else:
                 return {
-                    'error': 'No ticket information found for this booking. Please contact support.',
+                    'error': (
+                        'No ticket information found for this booking. '
+                        'Please contact support.'
+                    ),
                     'tickets_created': 0,
                     'debug_info': {
                         'booking_id': str(booking.id),
                         'reference': booking.booking_reference,
                         'metadata': booking.metadata,
                         'has_event': booking.event is not None,
-                        'event_tiers_count': booking.event.tiers.count() if booking.event else 0,
+                        'event_tiers_count': (
+                            booking.event.tiers.count()
+                            if booking.event else 0
+                        ),
                     },
                 }
 
+        # ---- 9. Persist per-ticket net_paid_amount ----
+        if tickets_created > 0:
+            from decimal import Decimal, ROUND_HALF_UP
+
+            all_tickets = list(booking.tickets.all())
+            gross_sum = sum(
+                Decimal(str(t.tier.price)) for t in all_tickets if t.tier
+            )
+            discount = Decimal(str(booking.discount_applied or 0))
+            net_total = Decimal(str(booking.total_amount)) - discount
+            if net_total < 0:
+                net_total = Decimal('0.00')
+
+            for t in all_tickets:
+                if gross_sum > 0 and t.tier:
+                    share = Decimal(str(t.tier.price)) / gross_sum
+                    t.net_paid_amount = (net_total * share).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP
+                    )
+                else:
+                    t.net_paid_amount = Decimal('0.00')
+                t.save(update_fields=['net_paid_amount'])
+
+            logger.info(
+                "Distributed ₹%s net across %d tickets on booking %s",
+                net_total, len(all_tickets), booking.booking_reference,
+            )
+
+        # ---- 10. Update session capacity ----
         if booking.session and tickets_created > 0:
-            capacity_success, capacity_message = self._check_and_update_session_capacity(booking.session, tickets_created)
+            capacity_success, capacity_message = self._check_and_update_session_capacity(
+                booking.session, tickets_created
+            )
             if not capacity_success:
                 return {
                     'error': f'Failed to update session capacity: {capacity_message}',
                     'tickets_created': tickets_created,
                 }
 
+        # ---- 11. Promote status from paid → confirmed ----
         if booking.status == 'paid':
             booking.status = 'confirmed'
             booking.save(update_fields=['status'])
 
         booking.refresh_from_db()
-
         final_ticket_count = booking.tickets.count()
 
+        # ---- 12. Send tickets email ----
         try:
             email_result = self._send_tickets_email(booking, allocation_message)
         except Exception as e:
@@ -1228,7 +1863,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             email_result = {'success': False, 'message': str(e)}
 
         return {
-            'success': f'Generated {tickets_created} tickets for slot {booking.session.id if booking.session else "Unknown"}',
+            'success': (
+                f'Generated {tickets_created} tickets for slot '
+                f'{booking.session.id if booking.session else "Unknown"}'
+            ),
             'tickets_created': tickets_created,
             'final_ticket_count': final_ticket_count,
             'ticket_ids': created_ticket_ids,
@@ -1236,8 +1874,14 @@ class BookingViewSet(viewsets.ModelViewSet):
             'email_message': email_result.get('message', ''),
             'slot_allocation': {
                 'slot_id': str(booking.session.id) if booking.session else None,
-                'slot_start': booking.session.start_time.isoformat() if booking.session else None,
-                'slot_end': booking.session.end_time.isoformat() if booking.session else None,
+                'slot_start': (
+                    booking.session.start_time.isoformat()
+                    if booking.session else None
+                ),
+                'slot_end': (
+                    booking.session.end_time.isoformat()
+                    if booking.session else None
+                ),
                 'allocation_message': allocation_message,
             },
         }
@@ -1309,7 +1953,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'has_ticket_types': len(ticket_types) > 0,
                 'has_tier_ids': len(tier_ids) > 0,
                 'has_existing_tickets': len(existing_tickets) > 0,
-                'can_issue_tickets': len(existing_tickets) == 0 and (len(tickets_data) > 0 or len(ticket_types) > 0 or len(tier_ids) > 0),
+                'can_issue_tickets': (
+                    len(existing_tickets) == 0
+                    and (
+                        len(tickets_data) > 0
+                        or len(ticket_types) > 0
+                        or len(tier_ids) > 0
+                    )
+                ),
             },
         }, status=status.HTTP_200_OK)
 
@@ -1437,7 +2088,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             payload = serialise_ticket_qr_payload(ticket)
 
             qr = qrcode.QRCode(
-                version=None,   # let qrcode pick the smallest version that fits
+                version=None,
                 error_correction=qrcode.constants.ERROR_CORRECT_H,
                 box_size=10,
                 border=4,
@@ -1460,17 +2111,74 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.error(f"Error generating QR code for ticket {ticket.unique_code}: {str(e)}")
             return False
 
-    def _check_and_complete_booking(self, booking):
-        total_tickets = booking.tickets.count()
-        used_tickets = booking.tickets.filter(status='used').count()
+    # ==================== BOOKING STATUS RECONCILIATION ====================
 
-        if total_tickets > 0 and total_tickets == used_tickets:
-            if booking.status != 'completed':
-                booking.status = 'completed'
-                booking.save(update_fields=['status'])
-                logger.info(f"✅ Booking {booking.booking_reference} automatically marked as COMPLETED")
-                return True
-        return False
+    def _check_and_complete_booking(self, booking):
+        """
+        Recompute the booking's terminal status from its current tickets.
+
+        A booking is promoted to `completed` iff:
+          • at least one ticket on the booking is `used`, AND
+          • no ticket is still `active` (i.e. every remaining ticket is
+            in a terminal state: used / cancelled / refunded / expired).
+
+        Cancelled and refunded tickets are excluded from the denominator
+        — they cannot be checked in, so they shouldn't block completion.
+        Previously the check used `total == used`, which meant a booking
+        with one used ticket and one cancelled ticket (0 active) stayed
+        in `confirmed` forever.
+
+        Does NOT touch a booking that is already `cancelled` or
+        `refunded` — those are terminal and should not be re-promoted.
+
+        Returns True if the status was changed.
+        """
+        if not booking:
+            return False
+
+        if booking.status in (
+            BookingStatus.COMPLETED,
+            BookingStatus.CANCELLED,
+            BookingStatus.REFUNDED,
+        ):
+            return False
+
+        TERMINAL_TICKET_STATES = (
+            TicketStatus.USED,
+            TicketStatus.CANCELLED,
+            TicketStatus.REFUNDED,
+            TicketStatus.EXPIRED,
+        )
+
+        total_tickets = booking.tickets.count()
+        if total_tickets == 0:
+            return False
+
+        used_tickets = booking.tickets.filter(
+            status=TicketStatus.USED,
+        ).count()
+
+        actionable_tickets = booking.tickets.exclude(
+            status__in=TERMINAL_TICKET_STATES,
+        ).count()
+
+        if used_tickets == 0:
+            return False
+
+        if actionable_tickets > 0:
+            return False
+
+        booking.status = BookingStatus.COMPLETED
+        booking.save(update_fields=['status', 'updated_at'])
+        logger.info(
+            "✅ Booking %s auto-completed "
+            "(used=%d, total=%d, actionable=%d)",
+            booking.booking_reference,
+            used_tickets,
+            total_tickets,
+            actionable_tickets,
+        )
+        return True
 
     def _regenerate_ticket_qr_for_booking(self, booking):
         tickets = booking.tickets.filter(status='active')
@@ -1500,6 +2208,9 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         booking.tickets.filter(status='active').update(status='cancelled')
 
+        # ✅ Keep the denormalized event counters consistent.
+        self._update_event_counts(booking.event)
+
         try:
             email_result = self._send_cancellation_email(booking)
         except Exception as e:
@@ -1525,6 +2236,9 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
 
         booking.tickets.filter(status='active').update(status='refunded')
+
+        # ✅ Keep the denormalized event counters consistent.
+        self._update_event_counts(booking.event)
 
         try:
             email_result = self._send_refund_email(booking)
@@ -2025,15 +2739,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.exception(f"⚠️ Refund email error: {str(e)}")
             return {'success': False, 'error': str(e)}
 
-    # ... (status_info, confirm_payment_and_issue_tickets, mark_payment_received,
-    #      regenerate_ticket_qr, cancel_booking, refund_booking, tickets,
-    #      checkins, verify_tickets, confirm_payment, refund, apply_discount,
-    #      resend_tickets — UNCHANGED from your original file. They call
-    #      self._generate_qr_code(...) which now uses the signed builder.)
+    # ==================== MISC ACTIONS ====================
 
     @action(detail=True, methods=['get'])
     def status_info(self, request, pk=None):
-        # ... (unchanged from your file) ...
         pass
 
     @action(detail=True, methods=['post'])
@@ -2131,10 +2840,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'error': f'Booking is already {booking.status}',
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        event = booking.event
+
         booking.status = 'cancelled'
         booking.save()
 
         booking.tickets.filter(status='active').update(status='cancelled')
+
+        self._update_event_counts(event)
 
         try:
             email_result = self._send_cancellation_email(booking)
@@ -2169,10 +2882,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'error': 'Cannot refund a completed booking (all tickets already used)',
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        event = booking.event
+
         booking.status = 'refunded'
         booking.save()
 
         booking.tickets.filter(status='active').update(status='refunded')
+
+        self._update_event_counts(event)
 
         try:
             email_result = self._send_refund_email(booking)

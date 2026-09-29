@@ -27,6 +27,7 @@ import Unauthorized from './pages/Unauthorized/Unauthorized';
 import Register from './pages/Register/Register';
 import Users from './pages/Users/Users';
 import Profile from './pages/Profile'; // ✅ barrel import (Profile/index.js)
+import CancellationPolicies from './pages/CancellationPolicies';
 //import Organizers from './pages/Organizer/Organizers';
 import { ROLES } from './constants';
 
@@ -186,6 +187,18 @@ const AppRoutes = () => {
                 ============================================ */}
                 <Route path="tickets/:ticketId" element={<TicketView />} />
                 <Route path="tickets/:ticketId/booking/:bookingId" element={<TicketView />} />
+                
+                {/* ============================================
+                    CANCELLATION POLICIES - Organizers and above
+                ============================================ */}
+                <Route
+                    path="cancellation-policies"
+                    element={
+                        <RoleBasedRoute allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
+                            <CancellationPolicies />
+                        </RoleBasedRoute>
+                    }
+                />
                 
                 {/* ============================================
                     USERS - Admin and above

@@ -533,7 +533,7 @@ const Ticket = ({
                 <BrandName>
                     <div className="brand-icon">T</div>
                     <div>
-                        <span className="brand-text">Ticket<span style={{ fontWeight: 400 }}>Voult</span></span>
+                        <span className="brand-text">Tiket<span style={{ fontWeight: 400 }}>Vault</span></span>
                         <span className="brand-sub">• e-Ticket</span>
                     </div>
                 </BrandName>

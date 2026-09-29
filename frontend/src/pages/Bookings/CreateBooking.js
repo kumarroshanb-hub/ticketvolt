@@ -34,6 +34,7 @@ import {
     CalendarMonth as CalendarIcon,
     LocationOn as LocationIcon,
     People as PeopleIcon,
+    LocalOffer as LocalOfferIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
@@ -41,6 +42,7 @@ import { useRole } from '../../context/RoleContext';
 import api from '../../services/api';
 import { PageContainer, PageHeader, PageTitle, PrimaryButton, OutlineButton } from '../../components/Common';
 import { ROLES } from '../../constants';
+import useBookingDraft from '../../hooks/useBookingDraft';
 
 const steps = ['Select Event', 'Choose Slot', 'Choose Tickets', 'Attendee Details', 'Review & Confirm'];
 
@@ -52,13 +54,13 @@ const CreateBooking = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Check user role
+    // Role flags
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
     const isOrganizer = role === ROLES.ORGANIZER;
     const canManageEvents = isAdmin || isOrganizer;
     const isRegularUser = role === ROLES.USER;
 
-    // State
+    // Wizard state
     const [activeStep, setActiveStep] = useState(0);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
@@ -69,25 +71,52 @@ const CreateBooking = () => {
     const [slotPreferences, setSlotPreferences] = useState([]);
     const [slotPreferencesInput, setSlotPreferencesInput] = useState('');
     const [tiers, setTiers] = useState([]);
-    const [quantities, setQuantities] = useState({});
-    const [ticketList, setTicketList] = useState([]);
-    const [totalTickets, setTotalTickets] = useState(0);
-    const [totalAmount, setTotalAmount] = useState(0);
-    const [attendees, setAttendees] = useState([]);
-    const [customer, setCustomer] = useState({
-        name: '',
-        email: '',
-        phone: '',
-        whatsapp: '',
-        notes: '',
-    });
-    const [errors, setErrors] = useState({});
     const [isLoadingEvent, setIsLoadingEvent] = useState(false);
     const [eventLoadError, setEventLoadError] = useState(null);
     const [autoSelectDone, setAutoSelectDone] = useState(false);
 
+    // ---- Discount state ----
+    const [discountInput, setDiscountInput] = useState('');
+    const [appliedDiscount, setAppliedDiscount] = useState(null);
+    const [validatingDiscount, setValidatingDiscount] = useState(false);
+
+    // ✅ All draft state lives in the hook now.
+    const draft = useBookingDraft({
+        tiers,
+        selectedEvent,
+        selectedSession,
+        slotPreferences,
+        bookingSource: isRegularUser ? 'user_portal' : 'admin_portal',
+    });
+
+    const {
+        quantities,
+        customer,
+        attendees,
+        errors,
+        ticketList,
+        totalTickets,
+        totalAmount,
+        updateQuantity,
+        updateAttendee,
+        handleCustomerChange,
+        fillEmptyNamesWithCustomer,
+        resetDraft,
+        validate,
+        buildPayload,
+    } = draft;
+
+    // Derived: net total after discount (only when discount is valid).
+    const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
+    const netAmount = Math.max(0, totalAmount - discountAmount);
+
+    // =========================================================================
+    // Data loading
+    // =========================================================================
+
     useEffect(() => {
         loadEvents();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
@@ -95,26 +124,77 @@ const CreateBooking = () => {
             const params = new URLSearchParams(location.search);
             const eventId = params.get('event');
             if (eventId) {
-                const event = events.find(e => e.id === eventId);
+                const event = events.find((e) => e.id === eventId);
                 if (event) {
-                    console.log(`📅 Auto-selecting event from URL: ${event.title}`);
                     handleSelectEvent(event);
                     setAutoSelectDone(true);
                 } else {
-                    console.log(`📅 Event ${eventId} not in list, loading directly...`);
                     loadEventDetails(eventId);
-                    const minimalEvent = { id: eventId };
-                    setSelectedEvent(minimalEvent);
+                    setSelectedEvent({ id: eventId });
                     setAutoSelectDone(true);
                     setActiveStep(1);
                 }
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [events, location.search, autoSelectDone]);
 
+    // =========================================================================
+    // ✅ Re-validate the discount whenever the ticket composition changes.
+    // -------------------------------------------------------------------------
+    // A code that was valid for 4 tickets may not be valid for 1 ticket
+    // (e.g., min_ticket_count, min_order_amount rules). This effect re-runs
+    // the server-side validation silently, so the UI always reflects the
+    // current subtotal and ticket count.
+    //
+    // We deliberately depend ONLY on totalAmount / totalTickets / event id,
+    // NOT on appliedDiscount itself — otherwise this would loop forever.
+    // =========================================================================
     useEffect(() => {
-        updateTicketList();
-    }, [quantities, tiers]);
+        // If no discount applied yet, nothing to do.
+        if (!appliedDiscount?.valid) return;
+
+        // If there are no tickets left, drop the discount.
+        if (totalTickets === 0) {
+            setAppliedDiscount(null);
+            setDiscountInput('');
+            return;
+        }
+
+        let cancelled = false;
+        const revalidate = async () => {
+            try {
+                const res = await api.post('/bookings/validate_discount/', {
+                    code: appliedDiscount.code,
+                    event_id: selectedEvent?.id,
+                    subtotal: totalAmount,
+                    ticket_count: totalTickets,
+                });
+                if (cancelled) return;
+
+                if (res.data?.valid) {
+                    setAppliedDiscount(res.data);
+                } else {
+                    setAppliedDiscount(null);
+                    setDiscountInput('');
+                    toast.info(
+                        `Discount "${appliedDiscount.code}" is no longer valid: ${
+                            res.data?.reason || 'conditions changed'
+                        }`
+                    );
+                }
+            } catch {
+                if (!cancelled) {
+                    setAppliedDiscount(null);
+                    setDiscountInput('');
+                }
+            }
+        };
+
+        revalidate();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [totalAmount, totalTickets, selectedEvent?.id]);
 
     const loadEvents = async () => {
         setLoading(true);
@@ -122,65 +202,51 @@ const CreateBooking = () => {
         try {
             let data = [];
 
-            console.log('📅 Loading events for role:', role);
-
             try {
-                console.log('📅 Trying /events/public/ endpoint...');
                 const response = await api.get('/events/public/');
-                console.log('📅 Public response:', response.data);
-
                 if (response.data && response.data.results) {
                     data = response.data.results;
                 } else if (Array.isArray(response.data)) {
                     data = response.data;
                 } else if (response.data && typeof response.data === 'object') {
-                    data = Object.values(response.data).filter(item => item.id && item.title);
+                    data = Object.values(response.data).filter((item) => item.id && item.title);
                 }
-                console.log(`📅 Public endpoint found ${data.length} events`);
             } catch (publicError) {
                 console.log('📅 Public endpoint failed:', publicError.message);
             }
 
             if (data.length === 0 && canManageEvents) {
-                console.log('📅 No events from public, trying /events/ endpoint...');
                 try {
                     const response = await api.get('/events/');
-                    console.log('📅 Admin response:', response.data);
-
                     if (Array.isArray(response.data)) {
                         data = response.data;
                     } else if (response.data && response.data.results) {
                         data = response.data.results;
                     } else if (response.data && typeof response.data === 'object') {
-                        data = Object.values(response.data).filter(item => item.id && item.title);
+                        data = Object.values(response.data).filter((item) => item.id && item.title);
                     }
-                    console.log(`📅 Admin endpoint found ${data.length} events`);
                 } catch (adminError) {
                     console.log('📅 Admin endpoint failed:', adminError.message);
                 }
             }
 
             if (isRegularUser && data.length > 0) {
-                const filtered = data.filter((e) => {
+                data = data.filter((e) => {
                     const status = e.status || 'draft';
                     return status === 'active' || status === 'published';
                 });
-                console.log(`📅 Filtered to ${filtered.length} active events for regular user`);
-                data = filtered;
             }
 
             setEvents(data);
 
             if (data.length === 0) {
-                const message = canManageEvents
-                    ? 'No events found. Please create an event first!'
-                    : 'No active events available for booking. Check back later!';
-                setEventLoadError(message);
+                setEventLoadError(
+                    canManageEvents
+                        ? 'No events found. Please create an event first!'
+                        : 'No active events available for booking. Check back later!'
+                );
             }
-
         } catch (error) {
-            console.error('❌ Failed to load events:', error);
-
             let errorMsg = 'Failed to load events';
             if (error.response?.status === 404) {
                 errorMsg = 'Events endpoint not found. Please check the backend.';
@@ -193,7 +259,6 @@ const CreateBooking = () => {
             } else if (error.message) {
                 errorMsg = error.message;
             }
-
             setEventLoadError(errorMsg);
             toast.error(errorMsg);
         } finally {
@@ -205,63 +270,35 @@ const CreateBooking = () => {
         setIsLoadingEvent(true);
         setEventLoadError(null);
         try {
-            let response;
             let data;
-
             try {
-                console.log(`📅 Trying /events/public/${eventId}/`);
-                response = await api.get(`/events/public/${eventId}/`);
+                const response = await api.get(`/events/public/${eventId}/`);
                 data = response.data;
-                console.log('📅 Public detail found');
             } catch (publicError) {
-                console.log('📅 Public detail failed, trying admin endpoint...');
-                try {
-                    response = await api.get(`/events/${eventId}/`);
-                    data = response.data;
-                    console.log('📅 Admin detail found');
-                } catch (adminError) {
-                    throw new Error('Event not found');
-                }
+                const response = await api.get(`/events/${eventId}/`);
+                data = response.data;
             }
 
             setEventDetails(data);
+            if (selectedEvent) setSelectedEvent(data);
 
-            if (selectedEvent) {
-                setSelectedEvent(data);
-            }
+            setSessions(data.sessions || []);
 
-            const eventSessions = data.sessions || [];
-            setSessions(eventSessions);
-
-            const availableTiers = (data.tiers || []).filter((t) =>
-                (t.quantity_total - t.quantity_sold) > 0
+            const availableTiers = (data.tiers || []).filter(
+                (t) => t.quantity_total - t.quantity_sold > 0
             );
-
-            console.log(`📅 Found ${availableTiers.length} available tiers`);
             setTiers(availableTiers);
-
-            const initialQuantities = {};
-            availableTiers.forEach((t) => { initialQuantities[t.id] = 0; });
-            setQuantities(initialQuantities);
 
             if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) {
                 toast.info('All tickets for this event are sold out');
             } else if (availableTiers.length === 0) {
                 toast.info('No tickets available for this event');
             }
-
         } catch (error) {
-            console.error('❌ Failed to load event details:', error);
-
             let errorMsg = 'Failed to load event details';
-            if (error.response?.data?.detail) {
-                errorMsg = error.response.data.detail;
-            } else if (error.response?.data?.error) {
-                errorMsg = error.response.data.error;
-            } else if (error.message) {
-                errorMsg = error.message;
-            }
-
+            if (error.response?.data?.detail) errorMsg = error.response.data.detail;
+            else if (error.response?.data?.error) errorMsg = error.response.data.error;
+            else if (error.message) errorMsg = error.message;
             setEventLoadError(errorMsg);
             toast.error(errorMsg);
         } finally {
@@ -270,21 +307,67 @@ const CreateBooking = () => {
     };
 
     const handleSelectEvent = (event) => {
+        resetDraft();
         setSelectedEvent(event);
         setSelectedSession(null);
         setSlotPreferences([]);
         setSlotPreferencesInput('');
         setTiers([]);
-        setQuantities({});
-        setTicketList([]);
-        setTotalTickets(0);
-        setTotalAmount(0);
-        setAttendees([]);
         setEventDetails(null);
+        // Reset discount — it was scoped to the previous event.
+        setDiscountInput('');
+        setAppliedDiscount(null);
 
         loadEventDetails(event.id);
         setActiveStep(1);
     };
+
+    // =========================================================================
+    // Discount validation
+    // =========================================================================
+
+    const validateDiscount = async () => {
+        if (!discountInput.trim()) return;
+
+        setValidatingDiscount(true);
+        try {
+            const res = await api.post('/bookings/validate_discount/', {
+                code: discountInput.trim(),
+                event_id: selectedEvent?.id,
+                subtotal: totalAmount,
+                ticket_count: totalTickets,
+            });
+
+            const data = res.data;
+            if (data.valid) {
+                setAppliedDiscount(data);
+                toast.success(`Discount applied: −₹${Number(data.discount_amount).toFixed(2)}`);
+            } else {
+                setAppliedDiscount(null);
+                toast.error(data.reason || 'Invalid discount code');
+            }
+        } catch (err) {
+            const reason =
+                err.response?.data?.reason ||
+                err.response?.data?.error ||
+                err.response?.data?.detail ||
+                'Failed to validate code';
+            setAppliedDiscount(null);
+            toast.error(reason);
+        } finally {
+            setValidatingDiscount(false);
+        }
+    };
+
+    const removeDiscount = () => {
+        setAppliedDiscount(null);
+        setDiscountInput('');
+        toast.info('Discount removed');
+    };
+
+    // =========================================================================
+    // Slot selection
+    // =========================================================================
 
     const handleSelectSlot = (sessionId) => {
         const session = sessions.find((s) => s.id === sessionId);
@@ -299,7 +382,7 @@ const CreateBooking = () => {
 
         const preferences = slotPreferencesInput
             .split(',')
-            .map((s) => parseInt(s.trim()))
+            .map((s) => parseInt(s.trim(), 10))
             .filter((n) => !isNaN(n) && n > 0 && n <= sessions.length);
 
         if (preferences.length === 0) {
@@ -319,15 +402,12 @@ const CreateBooking = () => {
         setSlotPreferences(uniquePreferences);
 
         let allocatedSlot = null;
-        let allocatedSlotIndex = null;
         let allocationMessage = '';
 
         for (const pref of uniquePreferences) {
-            const slotIndex = pref - 1;
-            const slot = sessions[slotIndex];
-            if (slot && (slot.capacity - slot.booked) > 0) {
+            const slot = sessions[pref - 1];
+            if (slot && slot.capacity - slot.booked > 0) {
                 allocatedSlot = slot;
-                allocatedSlotIndex = slotIndex;
                 allocationMessage = `Allocated based on your Preference #${uniquePreferences.indexOf(pref) + 1}`;
                 break;
             }
@@ -336,9 +416,8 @@ const CreateBooking = () => {
         if (!allocatedSlot) {
             for (let i = 0; i < sessions.length; i++) {
                 const slot = sessions[i];
-                if ((slot.capacity - slot.booked) > 0) {
+                if (slot.capacity - slot.booked > 0) {
                     allocatedSlot = slot;
-                    allocatedSlotIndex = i;
                     allocationMessage = 'Allocated to next available slot (your preferred slots were full)';
                     break;
                 }
@@ -354,200 +433,55 @@ const CreateBooking = () => {
         toast.success(`✅ Slot allocated: ${allocationMessage}`);
     };
 
-    const updateTicketList = () => {
-        const list = [];
-        let total = 0;
-        let amount = 0;
-
-        Object.keys(quantities).forEach((tierId) => {
-            const qty = quantities[tierId] || 0;
-            if (qty > 0) {
-                const tier = tiers.find((t) => t.id === tierId);
-                if (tier) {
-                    for (let i = 0; i < qty; i++) {
-                        list.push({
-                            tier_id: tierId,
-                            tier_name: tier.name,
-                            price: parseFloat(tier.price),
-                            attendee_name: '',
-                            attendee_email: '',
-                            attendee_phone: '',
-                        });
-                    }
-                    total += qty;
-                    amount += qty * parseFloat(tier.price);
-                }
-            }
-        });
-
-        setTicketList(list);
-        setTotalTickets(total);
-        setTotalAmount(amount);
-
-        const initialAttendees = list.map((ticket, index) => ({
-            index,
-            tier_id: ticket.tier_id,
-            tier_name: ticket.tier_name,
-            name: '',
-            email: '',
-            phone: '',
-        }));
-        setAttendees(initialAttendees);
-    };
-
-    const updateQuantity = (tierId, change) => {
-        const tier = tiers.find((t) => t.id === tierId);
-        if (!tier) return;
-
-        const available = tier.quantity_total - tier.quantity_sold;
-        const maxPerOrder = tier.max_per_order || 10;
-        const maxQty = Math.min(available, maxPerOrder);
-        const current = quantities[tierId] || 0;
-        const newQty = Math.max(0, Math.min(current + change, maxQty));
-
-        setQuantities((prev) => ({ ...prev, [tierId]: newQty }));
-    };
-
-    const updateAttendee = (index, field, value) => {
-        const updated = [...attendees];
-        updated[index] = { ...updated[index], [field]: value };
-        setAttendees(updated);
-    };
-
-    const handleCustomerChange = (field, value) => {
-        setCustomer((prev) => ({ ...prev, [field]: value }));
-        if (errors[field]) {
-            setErrors((prev) => ({ ...prev, [field]: null }));
-        }
-    };
-
-    const validateStep = () => {
-        const newErrors = {};
-
-        if (activeStep === 4) {
-            if (!customer.name?.trim()) {
-                newErrors.name = 'Customer name is required';
-            }
-            if (!customer.email?.trim()) {
-                newErrors.email = 'Email is required';
-            } else if (!/\S+@\S+\.\S+/.test(customer.email)) {
-                newErrors.email = 'Invalid email format';
-            }
-            if (!customer.phone?.trim()) {
-                newErrors.phone = 'Phone number is required';
-            } else if (customer.phone.replace(/\D/g, '').length < 10) {
-                newErrors.phone = 'Phone number must be at least 10 digits';
-            }
-
-            const missingAttendee = attendees.some((a) => !a.name?.trim());
-            if (missingAttendee) {
-                newErrors.attendees = 'All attendees must have names';
-            }
-        }
-
-        setErrors(newErrors);
-        return Object.keys(newErrors).length === 0;
-    };
+    // =========================================================================
+    // Submission
+    // =========================================================================
 
     const handleSubmit = async () => {
-        if (!validateStep()) {
+        if (!validate()) {
             toast.error('Please fix all errors before submitting');
             return;
         }
 
         setLoading(true);
         try {
-            const ticketsWithAttendees = ticketList.map((ticket, index) => ({
-                tier_id: ticket.tier_id,
-                attendee_name: attendees[index]?.name || customer.name,
-                attendee_email: attendees[index]?.email || customer.email,
-                attendee_phone: attendees[index]?.phone || customer.phone,
-                tier_name: ticket.tier_name || 'Unknown',
-                price: ticket.price || 0,
-            }));
+            const payload = buildPayload();
 
-            console.log('📝 Tickets being sent:', ticketsWithAttendees);
-            console.log('📝 Total tickets:', ticketsWithAttendees.length);
+            // ✅ Attach the discount code if a valid one is applied.
+            //    The backend RECOMPUTES the discount amount server-side —
+            //    we only send the code, never the amount. This is critical
+            //    for security: a malicious client cannot spoof a discount.
+            if (appliedDiscount?.valid && appliedDiscount?.code) {
+                payload.discount_code = appliedDiscount.code;
+            }
 
-            const tierQuantities = {};
-            const attendeeNamesByTier = {};
-            const tierIds = [];
+            console.log('📝 Full booking data:', JSON.stringify(payload, null, 2));
 
-            ticketsWithAttendees.forEach((ticket) => {
-                const tierId = String(ticket.tier_id);
-                if (!tierIds.includes(tierId)) {
-                    tierIds.push(tierId);
-                }
-                if (!tierQuantities[tierId]) {
-                    tierQuantities[tierId] = 0;
-                    attendeeNamesByTier[tierId] = [];
-                }
-                tierQuantities[tierId] += 1;
-                attendeeNamesByTier[tierId].push(ticket.attendee_name);
-            });
-
-            const ticketTypes = ticketsWithAttendees.map((t) => ({
-                tier_id: t.tier_id,
-                attendee_name: t.attendee_name,
-                tier_name: t.tier_name || 'Unknown',
-            }));
-
-            const bookingData = {
-                event: selectedEvent.id,
-                customer_name: customer.name,
-                customer_email: customer.email,
-                customer_phone: customer.phone,
-                whatsapp_number: customer.whatsapp || customer.phone,
-                total_amount: totalAmount,
-                tickets: ticketsWithAttendees,
-                metadata: {
-                    booking_source: isRegularUser ? 'user_portal' : 'admin_portal',
-                    notes: customer.notes,
-                    attendee_details: attendees,
-                    slot_id: selectedSession?.id || null,
-                    slot_preferences: slotPreferences,
-                    slot_allocation_message: selectedSession ? 'Slot allocated' : '',
-                    slot_start_time: selectedSession?.start_time || null,
-                    slot_end_time: selectedSession?.end_time || null,
-                    tickets: ticketsWithAttendees,
-                    ticket_types: ticketTypes,
-                    tier_ids: tierIds,
-                    tier_quantities: tierQuantities,
-                    attendee_names: attendeeNamesByTier,
-                    total_tickets: ticketsWithAttendees.length,
-                },
-            };
-
-            console.log('📝 Full booking data:', JSON.stringify(bookingData, null, 2));
-
-            const response = await api.post('/bookings/', bookingData);
+            const response = await api.post('/bookings/', payload);
             const result = response.data;
-
-            console.log('✅ Booking response:', result);
 
             toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
             navigate('/bookings');
-
         } catch (error) {
-            console.error('❌ Booking error:', error);
-            console.error('Response:', error.response?.data);
-
             let errorMsg = 'Failed to create booking';
-            if (error.response?.data?.detail) {
-                errorMsg = error.response.data.detail;
-            } else if (error.response?.data?.error) {
-                errorMsg = error.response.data.error;
-            } else if (error.response?.data?.message) {
-                errorMsg = error.response.data.message;
-            } else if (error.message) {
-                errorMsg = error.message;
-            }
-
+            const data = error.response?.data;
+            if (data?.discount_code) {
+                errorMsg = Array.isArray(data.discount_code)
+                    ? data.discount_code[0]
+                    : data.discount_code;
+            } else if (data?.detail) errorMsg = data.detail;
+            else if (data?.error) errorMsg = data.error;
+            else if (data?.message) errorMsg = data.message;
+            else if (error.message) errorMsg = error.message;
             toast.error(errorMsg);
         } finally {
             setLoading(false);
         }
     };
+
+    // =========================================================================
+    // Step navigation
+    // =========================================================================
 
     const handleBack = () => {
         if (activeStep > 0) setActiveStep(activeStep - 1);
@@ -559,11 +493,7 @@ const CreateBooking = () => {
                 toast.warning('Please select an event');
                 return;
             }
-            if (sessions && sessions.length > 0) {
-                setActiveStep(1);
-            } else {
-                setActiveStep(2);
-            }
+            setActiveStep(sessions && sessions.length > 0 ? 1 : 2);
             return;
         }
 
@@ -596,19 +526,18 @@ const CreateBooking = () => {
         }
     };
 
-    // ============================================
-    // ✅ REWRITTEN: renderEventSelection
-    //    - Uses tier_count / session_count / total_capacity (from the
-    //      updated PublicEventSerializer) for correct Sold-Out detection.
-    //    - Card visuals now match Events.js / Dashboard.js.
-    // ============================================
+    // =========================================================================
+    // Step 1 — Event selection
+    // =========================================================================
+
     const renderEventSelection = () => (
         <Box sx={{ py: 2 }}>
             {eventLoadError || (events.length === 0 && !loading) ? (
                 <Alert severity="info" sx={{ mb: 3 }}>
-                    {eventLoadError || (canManageEvents
-                        ? 'No events available. Create an event first!'
-                        : 'No active events available for booking. Check back later!')}
+                    {eventLoadError ||
+                        (canManageEvents
+                            ? 'No events available. Create an event first!'
+                            : 'No active events available for booking. Check back later!')}
                     {eventLoadError && (
                         <Button size="small" onClick={loadEvents} sx={{ ml: 2 }}>
                             Retry
@@ -618,27 +547,25 @@ const CreateBooking = () => {
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3}>
                     {events.map((event) => {
-                        const isActive = event.status === 'active' || event.status === 'published';
+                        const isActive =
+                            event.status === 'active' || event.status === 'published';
                         const isDraft = event.status === 'draft';
-                        const isPast = event.end_date && new Date(event.end_date) < new Date();
+                        const isPast =
+                            event.end_date && new Date(event.end_date) < new Date();
 
-                        // ✅ FIX: use the summary fields from the listing endpoint.
-                        //    Fallbacks keep this safe if the backend hasn't been redeployed yet.
                         const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
                         const sessionCount = event.session_count ?? event.sessions?.length ?? 0;
                         const totalCapacity = event.total_capacity ?? 0;
                         const totalSold = event.total_tickets_sold ?? 0;
 
-                        // Sold out = active event with zero capacity, OR all capacity sold
-                        const isSoldOut = isActive && (totalCapacity === 0 || totalSold >= totalCapacity);
+                        const isSoldOut =
+                            isActive && (totalCapacity === 0 || totalSold >= totalCapacity);
 
                         const canSelect = canManageEvents ? true : isActive && !isSoldOut;
 
-                        // Venue
                         const venueName = event.venue?.name || null;
                         const venueCity = event.venue?.city || null;
 
-                        // Date
                         const formattedDate = event.start_date
                             ? new Date(event.start_date).toLocaleDateString('en-IN', {
                                   day: '2-digit',
@@ -652,9 +579,10 @@ const CreateBooking = () => {
                                 <Card
                                     sx={{
                                         cursor: canSelect ? 'pointer' : 'not-allowed',
-                                        border: selectedEvent?.id === event.id
-                                            ? '2px solid #4f46e5'
-                                            : isDraft
+                                        border:
+                                            selectedEvent?.id === event.id
+                                                ? '2px solid #4f46e5'
+                                                : isDraft
                                                 ? '1px dashed rgba(255,200,0,0.5)'
                                                 : '1px solid #e2e8f0',
                                         bgcolor: isDraft ? 'rgba(255,200,0,0.03)' : 'white',
@@ -671,20 +599,27 @@ const CreateBooking = () => {
                                                   boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                                               }
                                             : {},
-                                        '&:active': canSelect ? { transform: 'scale(0.99)' } : {},
+                                        '&:active': canSelect
+                                            ? { transform: 'scale(0.99)' }
+                                            : {},
                                     }}
                                     onClick={() => {
-                                        if (canSelect) {
-                                            handleSelectEvent(event);
-                                        } else if (isSoldOut) {
+                                        if (canSelect) handleSelectEvent(event);
+                                        else if (isSoldOut)
                                             toast.warning('This event is sold out');
-                                        } else {
-                                            toast.warning('This event is not available for booking');
-                                        }
+                                        else
+                                            toast.warning(
+                                                'This event is not available for booking'
+                                            );
                                     }}
                                 >
-                                    <CardContent sx={{ flexGrow: 1, p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-                                        {/* Title + Status */}
+                                    <CardContent
+                                        sx={{
+                                            flexGrow: 1,
+                                            p: isMobile ? 1.5 : 2,
+                                            '&:last-child': { pb: isMobile ? 1.5 : 2 },
+                                        }}
+                                    >
                                         <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
                                             <Typography
                                                 variant="h6"
@@ -706,18 +641,18 @@ const CreateBooking = () => {
                                                     isSoldOut
                                                         ? 'SOLD OUT'
                                                         : isDraft
-                                                            ? 'DRAFT'
-                                                            : (event.status?.toUpperCase() || 'ACTIVE')
+                                                        ? 'DRAFT'
+                                                        : event.status?.toUpperCase() || 'ACTIVE'
                                                 }
                                                 size="small"
                                                 color={
                                                     isSoldOut
                                                         ? 'error'
                                                         : isDraft
-                                                            ? 'default'
-                                                            : isActive
-                                                                ? 'success'
-                                                                : 'default'
+                                                        ? 'default'
+                                                        : isActive
+                                                        ? 'success'
+                                                        : 'default'
                                                 }
                                                 sx={{ fontSize: '10px', height: '22px', flexShrink: 0 }}
                                             />
@@ -739,7 +674,6 @@ const CreateBooking = () => {
                                             </Typography>
                                         )}
 
-                                        {/* Meta rows */}
                                         <Box mt={2} display="flex" flexDirection="column" gap={0.75}>
                                             <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                 <CalendarIcon fontSize="small" />
@@ -820,6 +754,10 @@ const CreateBooking = () => {
         </Box>
     );
 
+    // =========================================================================
+    // Step 2 — Slot selection
+    // =========================================================================
+
     const renderSlotSelection = () => {
         const hasSessions = sessions && sessions.length > 0;
 
@@ -853,10 +791,16 @@ const CreateBooking = () => {
                                 <Card
                                     sx={{
                                         cursor: isAvailable ? 'pointer' : 'not-allowed',
-                                        border: isSelected ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                                        border: isSelected
+                                            ? '2px solid #4f46e5'
+                                            : '1px solid #e2e8f0',
                                         opacity: isAvailable ? 1 : 0.5,
-                                        '&:hover': isAvailable ? { borderColor: '#4f46e5' } : {},
-                                        '&:active': isAvailable ? { transform: 'scale(0.99)' } : {},
+                                        '&:hover': isAvailable
+                                            ? { borderColor: '#4f46e5' }
+                                            : {},
+                                        '&:active': isAvailable
+                                            ? { transform: 'scale(0.99)' }
+                                            : {},
                                         transition: 'all 0.2s',
                                     }}
                                     onClick={() => isAvailable && handleSelectSlot(session.id)}
@@ -868,10 +812,21 @@ const CreateBooking = () => {
                                                     Slot #{index + 1}
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ color: '#334155' }}>
-                                                    🕐 {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    🕐{' '}
+                                                    {startTime.toLocaleTimeString([], {
+                                                        hour: '2-digit',
+                                                        minute: '2-digit',
+                                                    })}{' '}
+                                                    -{' '}
+                                                    {endTime.toLocaleTimeString([], {
+                                                        hour: '2-digit',
+                                                        minute: '2-digit',
+                                                    })}
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ color: isAvailable ? '#16a34a' : '#ef4444' }}>
-                                                    {isAvailable ? `✅ ${remaining} seats available` : '❌ Fully booked'}
+                                                    {isAvailable
+                                                        ? `✅ ${remaining} seats available`
+                                                        : '❌ Fully booked'}
                                                 </Typography>
                                             </Box>
                                             {isSelected && (
@@ -900,7 +855,10 @@ const CreateBooking = () => {
                             value={slotPreferencesInput}
                             onChange={(e) => setSlotPreferencesInput(e.target.value)}
                             size="small"
-                            sx={{ minWidth: isMobile ? '100%' : 200, flex: isMobile ? 1 : 'unset' }}
+                            sx={{
+                                minWidth: isMobile ? '100%' : 200,
+                                flex: isMobile ? 1 : 'unset',
+                            }}
                             helperText={`Enter numbers 1-${sessions.length}`}
                         />
                         <PrimaryButton
@@ -924,8 +882,16 @@ const CreateBooking = () => {
                     {selectedSession && (
                         <Box sx={{ mt: 2, p: 2, bgcolor: '#dcfce7', borderRadius: 1 }}>
                             <Typography variant="body2" sx={{ color: '#16a34a' }}>
-                                ✅ Allocated Slot: Slot #{sessions.indexOf(selectedSession) + 1}
-                                ({new Date(selectedSession.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(selectedSession.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                                ✅ Allocated Slot: Slot #{sessions.indexOf(selectedSession) + 1} (
+                                {new Date(selectedSession.start_time).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                })}{' '}
+                                -{' '}
+                                {new Date(selectedSession.end_time).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                })})
                             </Typography>
                         </Box>
                     )}
@@ -933,6 +899,10 @@ const CreateBooking = () => {
             </Box>
         );
     };
+
+    // =========================================================================
+    // Step 3 — Ticket selection (with discount box)
+    // =========================================================================
 
     const renderTicketSelection = () => (
         <Box sx={{ py: 2 }}>
@@ -942,14 +912,25 @@ const CreateBooking = () => {
                     <span>
                         {' • '}
                         <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} />
-                        Slot: {new Date(selectedSession.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(selectedSession.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        Slot:{' '}
+                        {new Date(selectedSession.start_time).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                        })}{' '}
+                        -{' '}
+                        {new Date(selectedSession.end_time).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                        })}
                     </span>
                 )}
             </Alert>
 
             {tiers.length === 0 ? (
                 <Alert severity="warning">
-                    {eventDetails?.tiers?.length > 0 ? 'All tickets are sold out!' : 'No ticket tiers available for this event'}
+                    {eventDetails?.tiers?.length > 0
+                        ? 'All tickets are sold out!'
+                        : 'No ticket tiers available for this event'}
                 </Alert>
             ) : (
                 <Box>
@@ -959,7 +940,18 @@ const CreateBooking = () => {
                         const qty = quantities[tier.id] || 0;
 
                         return (
-                            <Paper key={tier.id} sx={{ p: 2, mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+                            <Paper
+                                key={tier.id}
+                                sx={{
+                                    p: 2,
+                                    mb: 2,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    flexWrap: 'wrap',
+                                    gap: 2,
+                                }}
+                            >
                                 <Box sx={{ minWidth: 0, flex: 1 }}>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a' }}>
                                         {tier.name}
@@ -973,7 +965,11 @@ const CreateBooking = () => {
                                         size="small"
                                         onClick={() => updateQuantity(tier.id, -1)}
                                         disabled={qty <= 0}
-                                        sx={{ bgcolor: qty > 0 ? '#f1f5f9' : '#f8fafc', minWidth: 40, minHeight: 40 }}
+                                        sx={{
+                                            bgcolor: qty > 0 ? '#f1f5f9' : '#f8fafc',
+                                            minWidth: 40,
+                                            minHeight: 40,
+                                        }}
                                     >
                                         <RemoveIcon fontSize="small" />
                                     </IconButton>
@@ -984,7 +980,11 @@ const CreateBooking = () => {
                                         size="small"
                                         onClick={() => updateQuantity(tier.id, 1)}
                                         disabled={qty >= maxQty}
-                                        sx={{ bgcolor: qty < maxQty ? '#eef2ff' : '#f8fafc', minWidth: 40, minHeight: 40 }}
+                                        sx={{
+                                            bgcolor: qty < maxQty ? '#eef2ff' : '#f8fafc',
+                                            minWidth: 40,
+                                            minHeight: 40,
+                                        }}
                                     >
                                         <AddIcon fontSize="small" />
                                     </IconButton>
@@ -1003,10 +1003,103 @@ const CreateBooking = () => {
                             </Typography>
                         </Box>
                     )}
+
+                    {/* ---- Discount input (visible only when tickets are selected) ---- */}
+                    {totalTickets > 0 && (
+                        <Paper sx={{ mt: 3, p: isMobile ? 2 : 3, bgcolor: '#f8fafc' }}>
+                            <Typography
+                                variant="subtitle2"
+                                sx={{
+                                    fontWeight: 700,
+                                    color: '#0f172a',
+                                    mb: 1,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 1,
+                                }}
+                            >
+                                <LocalOfferIcon fontSize="small" />
+                                Have a discount code?
+                            </Typography>
+
+                            <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
+                                <TextField
+                                    label="Discount Code"
+                                    placeholder="SAVE20"
+                                    value={discountInput}
+                                    onChange={(e) => setDiscountInput(e.target.value.toUpperCase())}
+                                    size="small"
+                                    disabled={!!appliedDiscount?.valid || validatingDiscount}
+                                    sx={{
+                                        minWidth: isMobile ? '100%' : 220,
+                                        flex: isMobile ? 1 : 'unset',
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !appliedDiscount?.valid) {
+                                            e.preventDefault();
+                                            validateDiscount();
+                                        }
+                                    }}
+                                />
+                                {appliedDiscount?.valid ? (
+                                    <Button
+                                        variant="outlined"
+                                        size="small"
+                                        onClick={removeDiscount}
+                                        sx={{
+                                            textTransform: 'none',
+                                            color: '#ef4444',
+                                            borderColor: '#fecaca',
+                                            '&:hover': { borderColor: '#ef4444' },
+                                        }}
+                                    >
+                                        Remove
+                                    </Button>
+                                ) : (
+                                    <PrimaryButton
+                                        variant="contained"
+                                        size="small"
+                                        disabled={validatingDiscount || !discountInput.trim()}
+                                        onClick={validateDiscount}
+                                        startIcon={
+                                            validatingDiscount ? <CircularProgress size={16} color="inherit" /> : null
+                                        }
+                                        sx={isMobile ? { width: '100%' } : undefined}
+                                    >
+                                        {validatingDiscount ? 'Checking…' : 'Apply'}
+                                    </PrimaryButton>
+                                )}
+                            </Box>
+
+                            {appliedDiscount?.valid && (
+                                <Box sx={{ mt: 2, p: 1.5, bgcolor: '#dcfce7', borderRadius: 1 }}>
+                                    <Typography variant="body2" sx={{ color: '#15803d', fontWeight: 600 }}>
+                                        ✅ {appliedDiscount.code} applied — you save ₹
+                                        {Number(appliedDiscount.discount_amount).toFixed(2)}
+                                    </Typography>
+                                </Box>
+                            )}
+
+                            {appliedDiscount?.valid && (
+                                <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}>
+                                    <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                        New total
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ color: '#0f172a', fontWeight: 700 }}>
+                                        ₹{netAmount.toFixed(2)}
+                                    </Typography>
+                                </Box>
+                            )}
+                        </Paper>
+                    )}
                 </Box>
             )}
         </Box>
     );
+
+    // =========================================================================
+    // Step 4 — Attendee details
+    // =========================================================================
 
     const renderAttendeeDetails = () => (
         <Box sx={{ py: 2 }}>
@@ -1131,14 +1224,7 @@ const CreateBooking = () => {
                 <Button
                     variant="text"
                     size="small"
-                    onClick={() => {
-                        const filledName = customer.name || 'Guest';
-                        const updated = attendees.map((a) => ({
-                            ...a,
-                            name: a.name || filledName,
-                        }));
-                        setAttendees(updated);
-                    }}
+                    onClick={fillEmptyNamesWithCustomer}
                     sx={{ mt: 1 }}
                 >
                     Fill empty names with customer name
@@ -1146,6 +1232,10 @@ const CreateBooking = () => {
             </Paper>
         </Box>
     );
+
+    // =========================================================================
+    // Step 5 — Review (with discount row)
+    // =========================================================================
 
     const renderReview = () => (
         <Box sx={{ py: 2 }}>
@@ -1168,16 +1258,35 @@ const CreateBooking = () => {
                                 <strong>Venue:</strong> {selectedEvent?.venue?.name || 'TBD'}
                             </Typography>
                             <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                <strong>Date:</strong> {new Date(selectedEvent?.start_date).toLocaleDateString()}
+                                <strong>Date:</strong>{' '}
+                                {selectedEvent?.start_date
+                                    ? new Date(selectedEvent.start_date).toLocaleDateString()
+                                    : 'TBD'}
                             </Typography>
                             {selectedSession && (
                                 <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                    <strong>Slot:</strong> {new Date(selectedSession.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(selectedSession.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    <strong>Slot:</strong>{' '}
+                                    {new Date(selectedSession.start_time).toLocaleTimeString([], {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                    })}{' '}
+                                    -{' '}
+                                    {new Date(selectedSession.end_time).toLocaleTimeString([], {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                    })}
                                 </Typography>
                             )}
+                            {/*
+                              ✅ Slot preferences — rendered as "#1: Slot 2" instead
+                              of a bare "2" that was ambiguous to the operator.
+                            */}
                             {slotPreferences.length > 0 && (
                                 <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                    <strong>Preferences:</strong> {slotPreferences.join(' → ')}
+                                    <strong>Slot Preferences:</strong>{' '}
+                                    {slotPreferences
+                                        .map((n, i) => `#${i + 1}: Slot ${n}`)
+                                        .join(' · ')}
                                 </Typography>
                             )}
                         </Box>
@@ -1222,8 +1331,25 @@ const CreateBooking = () => {
                         </Typography>
                         <Box>
                             {ticketList.map((ticket, index) => (
-                                <Box key={index} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, borderBottom: '1px solid #f1f5f9', gap: 1 }}>
-                                    <Typography variant="body2" sx={{ color: '#334155', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <Box
+                                    key={index}
+                                    sx={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        py: 0.5,
+                                        borderBottom: '1px solid #f1f5f9',
+                                        gap: 1,
+                                    }}
+                                >
+                                    <Typography
+                                        variant="body2"
+                                        sx={{
+                                            color: '#334155',
+                                            minWidth: 0,
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                        }}
+                                    >
                                         #{index + 1} {ticket.tier_name}
                                         {attendees[index]?.name && ` - ${attendees[index].name}`}
                                     </Typography>
@@ -1232,13 +1358,46 @@ const CreateBooking = () => {
                                     </Typography>
                                 </Box>
                             ))}
+
                             <Divider sx={{ my: 2 }} />
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <Typography variant="subtitle1" sx={{ color: '#0f172a' }}>
-                                    Total ({totalTickets} tickets)
+
+                            {/* Subtotal */}
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                    Subtotal ({totalTickets} ticket{totalTickets === 1 ? '' : 's'})
                                 </Typography>
-                                <Typography variant="h6" sx={{ color: '#4f46e5' }}>
+                                <Typography variant="body2" sx={{ color: '#334155' }}>
                                     ₹{totalAmount.toFixed(2)}
+                                </Typography>
+                            </Box>
+
+                            {/* Discount (only if applied) */}
+                            {appliedDiscount?.valid && (
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                                    <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
+                                        Discount ({appliedDiscount.code})
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
+                                        −₹{Number(appliedDiscount.discount_amount).toFixed(2)}
+                                    </Typography>
+                                </Box>
+                            )}
+
+                            {/* Total */}
+                            <Box
+                                sx={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    pt: 1.5,
+                                    mt: 1,
+                                    borderTop: '2px solid #e2e8f0',
+                                }}
+                            >
+                                <Typography variant="subtitle1" sx={{ color: '#0f172a', fontWeight: 700 }}>
+                                    Total
+                                </Typography>
+                                <Typography variant="h6" sx={{ color: '#4f46e5', fontWeight: 700 }}>
+                                    ₹{netAmount.toFixed(2)}
                                 </Typography>
                             </Box>
                         </Box>
@@ -1248,14 +1407,24 @@ const CreateBooking = () => {
         </Box>
     );
 
+    // =========================================================================
+    // Render
+    // =========================================================================
+
     const getStepContent = (step) => {
         switch (step) {
-            case 0: return renderEventSelection();
-            case 1: return renderSlotSelection();
-            case 2: return renderTicketSelection();
-            case 3: return renderAttendeeDetails();
-            case 4: return renderReview();
-            default: return null;
+            case 0:
+                return renderEventSelection();
+            case 1:
+                return renderSlotSelection();
+            case 2:
+                return renderTicketSelection();
+            case 3:
+                return renderAttendeeDetails();
+            case 4:
+                return renderReview();
+            default:
+                return null;
         }
     };
 
@@ -1271,9 +1440,7 @@ const CreateBooking = () => {
                     </PageTitle>
                 </Box>
                 <Box display="flex" gap={1}>
-                    <OutlineButton onClick={() => navigate('/bookings')}>
-                        Cancel
-                    </OutlineButton>
+                    <OutlineButton onClick={() => navigate('/bookings')}>Cancel</OutlineButton>
                 </Box>
             </PageHeader>
 
@@ -1284,9 +1451,7 @@ const CreateBooking = () => {
                     sx={{
                         mb: 4,
                         ...(isMobile && {
-                            '& .MuiStepLabel-label': {
-                                fontSize: '0.85rem',
-                            },
+                            '& .MuiStepLabel-label': { fontSize: '0.85rem' },
                         }),
                     }}
                 >
@@ -1302,9 +1467,7 @@ const CreateBooking = () => {
                         <CircularProgress />
                     </Box>
                 ) : (
-                    <Box>
-                        {getStepContent(activeStep)}
-                    </Box>
+                    <Box>{getStepContent(activeStep)}</Box>
                 )}
 
                 <Box

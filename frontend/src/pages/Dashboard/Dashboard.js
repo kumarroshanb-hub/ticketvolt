@@ -52,6 +52,92 @@ import {
 } from '../../constants';
 
 // ============================================
+// MONEY HELPERS
+// ------------------------------------------------------------
+// The backend exposes three separate money fields on every
+// booking in the dashboard's recent_bookings payload:
+//
+//   • total_amount      — the GROSS subtotal (before discount)
+//   • discount_applied  — the discount amount (>= 0)
+//   • (net is derived)  — total_amount − discount_applied
+//
+// We derive the net defensively so the UI renders correctly
+// regardless of which subset of fields the API happens to send.
+// ============================================
+const getNetAmount = (booking) => {
+    if (!booking) return 0;
+    if (booking.net_amount !== undefined && booking.net_amount !== null) {
+        return Number(booking.net_amount);
+    }
+    return (
+        Number(booking.total_amount || 0) -
+        Number(booking.discount_applied || 0)
+    );
+};
+
+const getGrossAmount = (booking) => Number(booking?.total_amount || 0);
+
+const getDiscountAmount = (booking) => Number(booking?.discount_applied || 0);
+
+const formatMoney = (value) => `₹${Number(value || 0).toFixed(2)}`;
+
+// ============================================
+// AMOUNT DISPLAY
+// ------------------------------------------------------------
+// Reusable component for showing the net amount as the headline
+// figure, with the gross and discount breakdown underneath when
+// a discount was applied. Shared between the mobile card and the
+// desktop table so they stay visually consistent.
+// ============================================
+const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
+    const net = getNetAmount(booking);
+    const gross = getGrossAmount(booking);
+    const discount = getDiscountAmount(booking);
+    const hasDiscount = discount > 0;
+
+    return (
+        <Box sx={{ textAlign: align === 'right' ? 'right' : 'left' }}>
+            <Typography
+                variant={size}
+                sx={{ fontWeight: 700, color: '#0f172a', lineHeight: 1.2 }}
+            >
+                {formatMoney(net)}
+            </Typography>
+
+            {hasDiscount && (
+                <>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: '#94a3b8',
+                            textDecoration: 'line-through',
+                            display: 'block',
+                            mt: 0.25,
+                        }}
+                    >
+                        {formatMoney(gross)}
+                    </Typography>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: '#10b981',
+                            fontWeight: 600,
+                            display: 'block',
+                            fontSize: '10px',
+                        }}
+                    >
+                        −{formatMoney(discount)}
+                        {booking.discount_code
+                            ? ` (${booking.discount_code})`
+                            : ''}
+                    </Typography>
+                </>
+            )}
+        </Box>
+    );
+};
+
+// ============================================
 // STAT CARD — Phase 4 polish
 // ============================================
 const StatCard = ({ title, value, icon, color, subtitle }) => {
@@ -202,10 +288,17 @@ const MobileBookingCard = ({ booking, onClick }) => {
                     </Typography>
                 </Box>
 
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 1.5, borderTop: '1px dashed #e2e8f0' }}>
-                    <Typography variant="h6" sx={{ color: '#4f46e5', fontWeight: 700 }}>
-                        ₹{booking.total_amount}
-                    </Typography>
+                {/* ✅ Amount section now shows NET with struck-through gross */}
+                <Box
+                    sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-end',
+                        pt: 1.5,
+                        borderTop: '1px dashed #e2e8f0',
+                    }}
+                >
+                    <AmountDisplay booking={booking} align="left" size="h6" />
                     <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
                         {booking.ticket_count || 0} ticket{(booking.ticket_count || 0) !== 1 ? 's' : ''}
                     </Typography>
@@ -588,9 +681,12 @@ const Dashboard = () => {
                                                 </TableCell>
                                                 <TableCell sx={{ color: '#334155' }}>{booking.customer_name}</TableCell>
                                                 <TableCell sx={{ color: '#334155' }}>{booking.event_title}</TableCell>
-                                                <TableCell align="right" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                                                    ₹{booking.total_amount}
+
+                                                {/* ✅ Amount column now shows NET with strikethrough gross */}
+                                                <TableCell align="right">
+                                                    <AmountDisplay booking={booking} align="right" size="body2" />
                                                 </TableCell>
+
                                                 <TableCell align="center">
                                                     <StatusChip
                                                         status={booking.status}

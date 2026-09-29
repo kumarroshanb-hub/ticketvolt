@@ -16,6 +16,7 @@ import {
     People as PeopleIcon,
     Close as CloseIcon,
     Logout as LogoutIcon,
+    Policy as PolicyIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
@@ -367,6 +368,13 @@ const MENU_ITEMS = {
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
+    cancellationPolicies: {
+        path: '/cancellation-policies',
+        icon: <PolicyIcon />,
+        label: 'Cancellation Policies',
+        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
+        section: 'management',
+    },
     analytics: {
         path: '/analytics',
         icon: <AnalyticsIcon />,
@@ -471,7 +479,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             <Logo>
                 <LogoIcon>🎫</LogoIcon>
                 <LogoText collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                    Ticket<span>Volt</span>
+                    Tiket<span>Vault</span>
                 </LogoText>
                 {isDrawer && (
                     <DrawerCloseButton

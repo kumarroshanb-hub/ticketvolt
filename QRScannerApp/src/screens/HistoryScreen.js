@@ -1,4 +1,4 @@
-// QRScannerApp/src/screens/HistoryScreen.js - FULLY WORKING WITH SCROLLVIEW
+// QRScannerApp/src/screens/HistoryScreen.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -12,6 +12,49 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { scannerApi } from '../services/api';
 
+// ---------------------------------------------------------------------------
+// Map one backend /checkin/history/ row into the shape this screen renders.
+//
+// The backend contract is:
+//   { id, ticket_code, attendee_name, event, status, scanned_at, scanner }
+//
+// The UI wants:
+//   { id, code, attendee_name, event, status, checked_in_at, scanned_by }
+//
+// We do the translation here, in ONE place, with fallbacks so a future
+// rename on either side is visible (returns null instead of silently
+// substituting "now") and easy to trace.
+// ---------------------------------------------------------------------------
+function mapHistoryRow(item, index) {
+  if (__DEV__ && !item?.ticket_code && !item?.code) {
+    console.warn(
+      `[history] row ${index} has no ticket code. Keys:`,
+      Object.keys(item || {}),
+    );
+  }
+
+  return {
+    id: item?.id || String(index),
+
+    // Backend: `ticket_code`. Legacy fallbacks kept so older builds
+    // / different endpoints don't silently render "N/A".
+    code: item?.ticket_code || item?.code || 'N/A',
+
+    attendee_name: item?.attendee_name || 'Unknown',
+    event: item?.event || 'Event',
+    status: item?.status || 'success',
+
+    // Backend: `scanned_at`. Do NOT fall back to `new Date()` — a fake
+    // timestamp hides bugs. `formatDate()` below renders 'N/A' if null.
+    checked_in_at: item?.scanned_at || item?.checked_in_at || null,
+
+    // Backend: `scanner` (username). Older builds may still send
+    // `scanned_by` / `device_id`; keep those as fallbacks.
+    scanned_by: item?.scanner || item?.scanned_by || 'Unknown',
+    device_id: item?.device_id || null,
+  };
+}
+
 export default function HistoryScreen({ navigation }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,37 +65,24 @@ export default function HistoryScreen({ navigation }) {
     try {
       setLoading(true);
       setError(null);
-      
+
       console.log('📋 Loading history...');
       const response = await scannerApi.getHistory(20);
       console.log('📋 Response:', response.data);
-      
+
       let historyData = [];
       if (response.data?.history && Array.isArray(response.data.history)) {
         historyData = response.data.history;
-        console.log(`✅ Found ${historyData.length} records from API`);
       } else if (Array.isArray(response.data)) {
         historyData = response.data;
-        console.log(`✅ Found ${historyData.length} records (array)`);
       }
-      
-      // Format the data
-      const formatted = historyData.map((item, index) => ({
-        id: String(index),
-        code: item.code || 'N/A',
-        attendee_name: item.attendee_name || 'Unknown',
-        event: item.event || 'Event',
-        checked_in_at: item.checked_in_at || new Date().toISOString(),
-        device_id: item.device_id || 'Unknown',
-        scanned_by: item.scanned_by || 'Unknown',
-        status: item.status || 'success'
-      }));
-      
+
+      const formatted = historyData.map(mapHistoryRow);
+
       setHistory(formatted);
       console.log(`✅ Loaded ${formatted.length} formatted records`);
-      
-    } catch (error) {
-      console.error('❌ Error loading history:', error);
+    } catch (err) {
+      console.error('❌ Error loading history:', err);
       setError('Failed to load authentication history');
     } finally {
       setLoading(false);
@@ -86,38 +116,57 @@ export default function HistoryScreen({ navigation }) {
     }
   };
 
-  // Render a single history item
-  const renderItem = (item, index) => (
-    <View key={item.id || index} style={[styles.item, index % 2 === 0 ? styles.itemEven : styles.itemOdd]}>
-      <View style={styles.itemLeft}>
-        <Text style={styles.index}>#{String(index + 1).padStart(3, '0')}</Text>
-        <View style={styles.itemContent}>
-          <Text style={styles.code}>{item.code}</Text>
-          <Text style={styles.attendee}>{item.attendee_name}</Text>
-          <Text style={styles.event}>{item.event}</Text>
-        </View>
-      </View>
-      <View style={styles.itemRight}>
-        <View style={[
-          styles.badge,
-          item.status === 'success' ? styles.badgeSuccess : styles.badgeError
-        ]}>
-          <Text style={[
-            styles.badgeText,
-            item.status === 'success' ? styles.badgeTextSuccess : styles.badgeTextError
-          ]}>
-            {item.status === 'success' ? '✓' : '✗'}
-          </Text>
-        </View>
-        <Text style={styles.time}>{formatDate(item.checked_in_at)}</Text>
-        {item.device_id && item.device_id !== 'Unknown' && (
-          <Text style={styles.device}>{item.device_id}</Text>
-        )}
-      </View>
-    </View>
-  );
+  const renderItem = (item, index) => {
+    const isSuccess = item.status === 'success';
+    const isCancelled = item.status === 'cancelled';
 
-  // Loading state
+    return (
+      <View
+        key={item.id || index}
+        style={[styles.item, index % 2 === 0 ? styles.itemEven : styles.itemOdd]}
+      >
+        <View style={styles.itemLeft}>
+          <Text style={styles.index}>#{String(index + 1).padStart(3, '0')}</Text>
+          <View style={styles.itemContent}>
+            <Text style={styles.code}>{item.code}</Text>
+            <Text style={styles.attendee}>{item.attendee_name}</Text>
+            <Text style={styles.event}>{item.event}</Text>
+          </View>
+        </View>
+
+        <View style={styles.itemRight}>
+          <View
+            style={[
+              styles.badge,
+              isSuccess && styles.badgeSuccess,
+              !isSuccess && !isCancelled && styles.badgeError,
+              isCancelled && styles.badgeWarning,
+            ]}
+          >
+            <Text
+              style={[
+                styles.badgeText,
+                isSuccess && styles.badgeTextSuccess,
+                !isSuccess && !isCancelled && styles.badgeTextError,
+                isCancelled && styles.badgeTextWarning,
+              ]}
+            >
+              {isSuccess ? '✓' : isCancelled ? '↺' : '✗'}
+            </Text>
+          </View>
+
+          <Text style={styles.time}>{formatDate(item.checked_in_at)}</Text>
+
+          {/* Backend sends `scanner` (username). Only render when it's a
+              real value, not the 'Unknown' placeholder. */}
+          {item.scanned_by && item.scanned_by !== 'Unknown' && (
+            <Text style={styles.device}>by {item.scanned_by}</Text>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   if (loading) {
     return (
       <LinearGradient colors={['#0a0a0f', '#1a0a2e']} style={styles.container}>
@@ -135,7 +184,6 @@ export default function HistoryScreen({ navigation }) {
 
   return (
     <LinearGradient colors={['#0a0a0f', '#1a0a2e']} style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>📋 AUTH LOG</Text>
         <View style={styles.headerRow}>
@@ -147,7 +195,6 @@ export default function HistoryScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Content */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -161,7 +208,6 @@ export default function HistoryScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         {error ? (
-          // Error state
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>⚠️</Text>
             <Text style={styles.emptyTitle}>Connection Error</Text>
@@ -176,7 +222,6 @@ export default function HistoryScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         ) : history.length === 0 ? (
-          // Empty state
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>📡</Text>
             <Text style={styles.emptyTitle}>No Authentication Records</Text>
@@ -196,7 +241,6 @@ export default function HistoryScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         ) : (
-          // List of items
           history.map((item, index) => renderItem(item, index))
         )}
       </ScrollView>
@@ -328,6 +372,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,0,85,0.15)',
     borderColor: 'rgba(255,0,85,0.2)',
   },
+  badgeWarning: {
+    backgroundColor: 'rgba(255,190,0,0.15)',
+    borderColor: 'rgba(255,190,0,0.2)',
+  },
   badgeText: {
     fontSize: 10,
     fontFamily: 'monospace',
@@ -337,6 +385,9 @@ const styles = StyleSheet.create({
   },
   badgeTextError: {
     color: '#ff0055',
+  },
+  badgeTextWarning: {
+    color: '#ffbe00',
   },
   time: {
     color: '#8899aa',

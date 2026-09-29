@@ -5,7 +5,15 @@ import uuid
 
 from django.contrib.auth.models import User
 from django.db import IntegrityError, models
-from django.db.models import Sum
+from django.db.models import Sum, Q
+
+# ✅ Canonical status definitions + manager
+from .managers import (
+    BookingManager,
+    SOLD_BOOKING_STATUSES,
+    EXCLUDED_BOOKING_STATUSES,
+    EXCLUDED_TICKET_STATUSES,
+)
 
 # ============================================
 # IMPORT SHARED CONSTANTS
@@ -80,6 +88,75 @@ class Venue(models.Model):
         return f"{self.name} ({self.city})"
 
 
+# ============================================
+# CANCELLATION POLICY
+# ============================================
+class CancellationPolicy(models.Model):
+    """
+    A reusable, named cancellation rule.
+
+    Events FK to this. Multiple events can share one policy, so an
+    organizer can define "Standard 7-day" once and attach it to every
+    event in a series.
+
+    The `rules` JSONField follows the schema documented in
+    ticket_bookings/services/cancellation_policy.py. Version it so
+    the engine can evolve without breaking old snapshots.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    organizer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='cancellation_policies',
+        help_text="Policy owner. Only the owner (or admin) can edit.",
+    )
+
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    rules = models.JSONField(
+        default=dict,
+        help_text=(
+            'Policy rules. See services/cancellation_policy.py for schema. '
+            'Must include "version" and "refund_tiers".'
+        ),
+    )
+
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(
+        default=False,
+        help_text=(
+            'If true, this policy is preselected when creating a new event '
+            'for this organizer. Only one policy per organizer may be default.'
+        ),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_default', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organizer'],
+                condition=models.Q(is_default=True),
+                name='unique_default_policy_per_organizer',
+            ),
+        ]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        from .services.cancellation_policy import validate_cancellation_rules
+        try:
+            validate_cancellation_rules(self.rules)
+        except ValidationError:
+            raise
+        except Exception as exc:
+            raise ValidationError({'rules': str(exc)})
+
+    def __str__(self):
+        return f'{self.name} ({self.organizer.username})'
+
+
 # ============ EVENT ============
 class Event(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
@@ -110,16 +187,32 @@ class Event(models.Model):
     booking_end_date = models.DateTimeField(null=True, blank=True)
     min_tickets_per_order = models.IntegerField(default=1)
     max_tickets_per_order = models.IntegerField(default=10)
-    cancellation_policy = models.TextField(blank=True)
+
+    cancellation_policy = models.ForeignKey(
+        'ticket_bookings.CancellationPolicy',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='events',
+        help_text=(
+            'Reusable cancellation policy. If null, no structured refunds '
+            'are offered — the free-text field may still be shown.'
+        ),
+    )
+    cancellation_policy_text = models.TextField(
+        blank=True,
+        help_text=(
+            'Free-text cancellation terms. Shown to the customer when no '
+            'structured policy (FK) is attached, or as an additional note.'
+        ),
+    )
+
     refundable_until = models.DateTimeField(null=True, blank=True)
     total_tickets_sold = models.IntegerField(default=0)
     total_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # ============================================
-    # TICKET FORMAT SETTINGS
-    # ============================================
     TICKET_FORMAT_CHOICES = [
         ('pdf', 'PDF - Print Ready'),
         ('png', 'PNG - Image Format'),
@@ -141,32 +234,32 @@ class Event(models.Model):
         help_text="Number of tickets per page (for combined tickets)",
     )
 
-    # ============================================
-    # EVENT HELPER METHODS
-    # ============================================
     def get_active_tickets_count(self):
-        """Count of tickets from non-cancelled/non-refunded bookings."""
-        return self.tickets.exclude(
-            booking__status__in=['cancelled', 'refunded']
+        return self.tickets.filter(
+            ~Q(status__in=EXCLUDED_TICKET_STATUSES),
+            booking__status__in=SOLD_BOOKING_STATUSES,
         ).count()
 
     def get_active_revenue(self):
-        """Revenue from non-cancelled/non-refunded bookings."""
-        return self.bookings.filter(
-            status__in=['paid', 'confirmed', 'completed']
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
+        return (
+            self.bookings
+            .filter(status__in=SOLD_BOOKING_STATUSES)
+            .aggregate(total=Sum('total_amount'))
+            .get('total')
+            or 0
+        )
 
     def get_active_bookings_count(self):
-        """Count of non-cancelled/non-refunded bookings."""
         return self.bookings.exclude(
-            booking__status__in=['cancelled', 'refunded']
+            status__in=EXCLUDED_BOOKING_STATUSES
         ).count()
 
     def update_ticket_counts(self):
-        """Refresh total_tickets_sold and total_revenue."""
         self.total_tickets_sold = self.get_active_tickets_count()
         self.total_revenue = self.get_active_revenue()
-        self.save(update_fields=['total_tickets_sold', 'total_revenue', 'updated_at'])
+        self.save(update_fields=[
+            'total_tickets_sold', 'total_revenue', 'updated_at',
+        ])
 
     def get_tickets_by_booking_status(self, booking_status):
         return self.tickets.filter(booking__status=booking_status)
@@ -249,12 +342,25 @@ class Booking(models.Model):
 
     metadata = models.JSONField(default=dict, blank=True)
 
+    refund_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+    )
+
+    cancellation_policy_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            'Frozen copy of the event policy rules at booking time. '
+            'Do not mutate — used for refund calculation on cancellation.'
+        ),
+    )
+
+    objects = BookingManager()
+
     def save(self, *args, **kwargs):
         if not self.booking_reference:
             self.booking_reference = _generate_code('BK', 10)
 
-            # If the caller passed `update_fields`, our freshly-assigned
-            # reference would be silently dropped. Add it explicitly.
             update_fields = kwargs.get('update_fields')
             if update_fields is not None:
                 kwargs['update_fields'] = set(update_fields) | {'booking_reference'}
@@ -285,19 +391,42 @@ class Ticket(models.Model):
     check_in_time = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # NOTE: There is deliberately NO `qr_image_url` field.
-    #
-    # The URL of a ticket's stored QR PNG is derivable from
-    # (unique_code, storage backend). Persisting it here means:
-    #   1. It can go stale if the storage bucket is renamed.
-    #   2. It's a second source of truth for something already computable.
-    #
-    # `qr_api.QRCodeImageView` no longer reads/writes a model field for
-    # this — it just asks the storage backend for the URL each time.
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_reason = models.CharField(max_length=255, blank=True, default='')
+
+    net_paid_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text=(
+            'Price actually paid for this ticket after any booking-level '
+            'discount proration. This is the base for refund calculation.'
+        ),
+    )
+
+    refund_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text=(
+            'Refund amount for this ticket due to cancellation. '
+            'This is separate from the booking-level refund_amount.'
+        ),
+    )
+
+    refund_percent_applied = models.IntegerField(
+        default=0,
+        help_text='Refund percentage from the policy tier that applied.',
+    )
+    cancellation_fee_applied = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text='Flat cancellation fee deducted from the refund.',
+    )
 
     def save(self, *args, **kwargs):
         if not self.unique_code:
-            # Try up to 5 times to avoid IntegrityError on the unique index.
             for _ in range(5):
                 candidate = _generate_code('TIX', 12)
                 if not Ticket.objects.filter(unique_code=candidate).exists():
@@ -361,8 +490,69 @@ class Discount(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    applicable_events = models.ManyToManyField(
+        'ticket_bookings.Event',
+        blank=True,
+        related_name='applicable_discounts',
+        help_text='If empty, discount applies to all events by this organizer.',
+    )
+
+    max_uses_per_user = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='Max times a single customer can use this code. Null = unlimited.',
+    )
+
+    min_ticket_count = models.IntegerField(
+        default=0,
+        help_text='Minimum number of tickets in the booking to apply. 0 = no minimum.',
+    )
+
+    first_time_buyers_only = models.BooleanField(
+        default=False,
+        help_text='If true, only users with no prior paid bookings can use this.',
+    )
+
+    stackable = models.BooleanField(
+        default=False,
+        help_text='Whether this discount can be combined with others on one booking.',
+    )
+
     def __str__(self):
         return f"{self.code} - {self.type} {self.value}"
+
+
+# ============ DISCOUNT USAGE ============
+class DiscountUsage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    discount = models.ForeignKey(
+        Discount, on_delete=models.PROTECT, related_name='usages',
+    )
+    booking = models.ForeignKey(
+        'ticket_bookings.Booking',
+        on_delete=models.CASCADE,
+        related_name='discount_usages',
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True,
+        related_name='discount_usages',
+    )
+    amount_applied = models.DecimalField(max_digits=10, decimal_places=2)
+    applied_at = models.DateTimeField(auto_now_add=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-applied_at']
+        indexes = [
+            models.Index(fields=['discount', 'user'], name='disc_usage_disc_user_idx'),
+            models.Index(fields=['booking'], name='disc_usage_booking_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.discount.code} → {self.booking.booking_reference} '
+            f'(₹{self.amount_applied})'
+        )
 
 
 # ============================================
@@ -398,8 +588,46 @@ class EventTemplateType(models.Model):
 
 
 class EventTemplate(models.Model):
-    """Templates for events — multiple templates per event."""
+    """
+    A template for an event — the artwork background onto which the
+    ticket generator overlays dynamic text and QR codes.
 
+    Multiple templates can exist per event, one per EventTemplateType.
+    The one with `is_default=True` (for the `ticket` type) is the one
+    used when generating tickets.
+
+    The `config` JSON drives layout. Its schema:
+
+        {
+          "fields": {
+            "<field_name>": {
+              "x": 0.5,          # fraction of canvas width (or px if >1)
+              "y": 0.2,          # fraction of canvas height (or px if >1)
+              "font_size": 32,   # px
+              "color": "#D69E2E",
+              "align": "center", # center | left | right
+              "enabled": true    # optional; false hides the field
+            },
+            ...
+          },
+          "template_type": "ticket",
+          "orientation": "landscape",
+          "shape": "wide_stub"
+        }
+
+    Supported field names (see ticket_generator.DEFAULT_FIELD_CONFIG):
+      organizer, organizer_sub,
+      event_title, event_date, event_date_secondary,
+      ticket_code_label, ticket_code_value,
+      attendee_label, attendee_value,
+      booking_label, booking_value,
+      venue_label, venue_value,
+      ticket_number, slot_time_label, slot_time_value,
+      qr_code, admit_one
+
+    Unknown field names are ignored (safe forward compatibility).
+    Missing fields fall back to defaults in ticket_generator.py.
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='templates')
     template_type = models.ForeignKey(
@@ -413,21 +641,13 @@ class EventTemplate(models.Model):
 
     config = models.JSONField(
         default=dict,
-        help_text="""
-        JSON configuration for dynamic content placement on the template.
-        Example:
-        {
-            "fields": {
-                "event_title": {"x": 0.5, "y": 0.22, "font_size": 32, "color": "#D69E2E", "align": "center"},
-                "event_date": {"x": 0.5, "y": 0.34, "font_size": 36, "color": "#1A202C", "align": "center"},
-                "venue": {"x": 0.5, "y": 0.88, "font_size": 14, "color": "#4A5568", "align": "center"},
-                "qr_code": {"x": 0.18, "y": 0.58, "size": 140}
-            },
-            "template_type": "ticket",
-            "page_size": "A4",
-            "orientation": "landscape"
-        }
-        """,
+        help_text=(
+            'Layout configuration. See the docstring on this model for the '
+            'schema. Coordinates are fractions of canvas width/height '
+            '(0.0–1.0), or absolute pixels if >1. Unknown field names are '
+            'ignored; missing fields fall back to defaults in '
+            'ticket_generator.DEFAULT_FIELD_CONFIG.'
+        ),
     )
 
     is_default = models.BooleanField(default=False)

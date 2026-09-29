@@ -50,6 +50,7 @@ import {
     Error as ErrorIcon,
     Check as CheckIcon,
     Undo as UndoIcon,
+    Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
@@ -362,129 +363,155 @@ const Checkin = () => {
         };
     }, [history]);
 
-    // ============================================================
-    // VERIFY (no state change)
-    // ============================================================
-    const verifyTicket = async (code) => {
-        setVerifying(true);
-        setResult(null);
+// ============================================================
+// VERIFY (read-only)
+// ------------------------------------------------------------
+// The admin UI does NOT hold TICKET_SIGNING_SECRET, so it cannot
+// construct a signed payload. It calls /checkin/manual-verify/
+// which accepts a bare ticket code. The server enforces
+// IsAuthenticated + role checks (admin/staff/organizer with
+// ownership of the event).
+// ============================================================
+const verifyTicket = async (code) => {
+    setVerifying(true);
+    setResult(null);
 
-        try {
-            const response = await api.get(
-                `/checkin/verify/?code=${encodeURIComponent(code)}`
-            );
+    try {
+        const response = await api.post('/checkin/manual-verify/', {
+            code: code.trim(),
+        });
 
-            if (response.data?.valid) {
+        if (response.data?.valid) {
+            const slotWindow = response.data?.slot_window;
+
+            if (slotWindow && slotWindow.open === false) {
+                setResult({
+                    type: 'warning',
+                    title: 'Outside Slot Window',
+                    message:
+                        slotWindow.message ||
+                        'This ticket is valid, but its slot is not currently open for check-in.',
+                    ticket: response.data.ticket,
+                });
+            } else {
                 setResult({
                     type: 'success',
                     title: 'Ticket Valid',
                     message: 'This ticket is valid and ready for check-in',
                     ticket: response.data.ticket,
                 });
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Invalid Ticket',
-                    message: response.data?.detail || 'This ticket is not valid',
-                    ticket: response.data?.ticket,
-                });
             }
-        } catch (error) {
-            const errorData = error.response?.data;
-
-            if (errorData?.ticket?.is_checked_in) {
-                setResult({
-                    type: 'warning',
-                    title: 'Already Checked In',
-                    message: 'This ticket has already been checked in',
-                    ticket: errorData.ticket,
-                });
-            } else if (
-                errorData?.code === 'TICKET_USED' ||
-                errorData?.detail?.includes('already been used')
-            ) {
-                setResult({
-                    type: 'warning',
-                    title: 'Already Used',
-                    message: 'This ticket has already been used',
-                    ticket: errorData?.ticket,
-                });
-            } else if (errorData?.detail) {
-                setResult({
-                    type: 'error',
-                    title: 'Invalid Ticket',
-                    message: errorData.detail,
-                    ticket: errorData?.ticket,
-                });
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Verification Failed',
-                    message: 'Failed to verify ticket. Please try again.',
-                    ticket: null,
-                });
-            }
-        } finally {
-            setVerifying(false);
-        }
-    };
-
-    // ============================================================
-    // CHECK-IN (state-changing)
-    // ============================================================
-    const checkInTicket = async (code) => {
-        setCheckingIn(true);
-
-        try {
-            const response = await api.post('/checkin/', {
-                code: code,
-                device_id: 'admin-panel',
+        } else {
+            setResult({
+                type: 'error',
+                title: 'Invalid Ticket',
+                message: response.data?.detail || 'This ticket is not valid',
+                ticket: response.data?.ticket,
             });
-
-            if (response.data?.success) {
-                setResult({
-                    type: 'success',
-                    title: 'Check-in Successful!',
-                    message: response.data.message,
-                    ticket: response.data.ticket,
-                    checkin_time: response.data.checkin_time,
-                });
-                toast.success('Check-in successful!');
-                // Re-fetch history so the table reflects the new row.
-                loadData();
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Check-in Failed',
-                    message: response.data?.detail || 'The server rejected this check-in.',
-                    ticket: response.data?.ticket,
-                });
-                toast.error(response.data?.detail || 'Check-in failed');
-            }
-        } catch (error) {
-            const errorData = error.response?.data;
-
-            if (errorData?.detail) {
-                setResult({
-                    type: 'error',
-                    title: 'Check-in Failed',
-                    message: errorData.detail,
-                    ticket: errorData?.ticket,
-                });
-                toast.error(errorData.detail);
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Check-in Failed',
-                    message: 'An unexpected error occurred.',
-                    ticket: null,
-                });
-                toast.error('Failed to check in ticket');
-            }
-        } finally {
-            setCheckingIn(false);
         }
-    };
+    } catch (error) {
+        const errorData = error.response?.data;
+
+        if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+            setResult({
+                type: 'warning',
+                title: 'Outside Slot Window',
+                message: errorData.detail,
+                ticket: errorData?.ticket,
+            });
+        } else if (errorData?.ticket?.is_checked_in) {
+            setResult({
+                type: 'warning',
+                title: 'Already Checked In',
+                message: 'This ticket has already been checked in',
+                ticket: errorData.ticket,
+            });
+        } else if (
+            errorData?.code === 'TICKET_USED' ||
+            errorData?.detail?.includes('already been used')
+        ) {
+            setResult({
+                type: 'warning',
+                title: 'Already Used',
+                message: 'This ticket has already been used',
+                ticket: errorData?.ticket,
+            });
+        } else if (errorData?.detail) {
+            setResult({
+                type: 'error',
+                title: 'Invalid Ticket',
+                message: errorData.detail,
+                ticket: errorData?.ticket,
+            });
+        } else {
+            setResult({
+                type: 'error',
+                title: 'Verification Failed',
+                message: 'Failed to verify ticket. Please try again.',
+                ticket: null,
+            });
+        }
+    } finally {
+        setVerifying(false);
+    }
+};
+
+// ============================================================
+// CHECK-IN (state-changing)
+// ------------------------------------------------------------
+// Same rationale as verifyTicket — the admin UI calls the
+// bare-code manual endpoint, not the signed-payload one.
+// ============================================================
+const checkInTicket = async (code) => {
+    setCheckingIn(true);
+
+    try {
+        const response = await api.post('/checkin/manual/', {
+            code: code.trim(),
+            device_id: 'admin-panel',
+        });
+
+        if (response.data?.success) {
+            setResult({
+                type: 'success',
+                title: 'Check-in Successful!',
+                message: response.data.message,
+                ticket: response.data.ticket,
+                checkin_time: response.data.checkin_time,
+            });
+            toast.success('Check-in successful!');
+            loadData();
+        } else {
+            setResult({
+                type: 'error',
+                title: 'Check-in Failed',
+                message: response.data?.detail || 'The server rejected this check-in.',
+                ticket: response.data?.ticket,
+            });
+            toast.error(response.data?.detail || 'Check-in failed');
+        }
+    } catch (error) {
+        const errorData = error.response?.data;
+        let title = 'Check-in Failed';
+        let message = errorData?.detail || 'An unexpected error occurred.';
+        let resultType = 'error';
+
+        if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+            title = 'Invalid Check-in Time';
+            resultType = 'warning';
+        }
+
+        setResult({
+            type: resultType,
+            title: title,
+            message: message,
+            ticket: errorData?.ticket,
+        });
+        toast.error(message);
+    } finally {
+        setCheckingIn(false);
+    }
+};
 
     const handleManualEntry = async (e) => {
         e.preventDefault();
@@ -650,6 +677,20 @@ const Checkin = () => {
                                     </Typography>
                                 </Box>
                             </Box>
+
+                            {/* Slot window info strip */}
+                            <Alert
+                                severity="info"
+                                icon={<ScheduleIcon fontSize="small" />}
+                                sx={{
+                                    mb: 2,
+                                    borderRadius: 2,
+                                    '& .MuiAlert-message': { fontSize: '0.75rem' },
+                                }}
+                            >
+                                Check-in opens <strong>30 min before</strong> slot start and closes{' '}
+                                <strong>15 min after</strong> slot end.
+                            </Alert>
 
                             {/* Manual Entry */}
                             <Box component="form" onSubmit={handleManualEntry} sx={{ mb: 2 }}>

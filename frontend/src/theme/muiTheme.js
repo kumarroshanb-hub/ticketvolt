@@ -3,8 +3,11 @@ import { createTheme, responsiveFontSizes } from '@mui/material/styles';
 
 let muiTheme = createTheme({
   palette: {
-    primary:    { main: '#4f46e5' },
-    secondary:  { main: '#7c3aed' },
+    // Primary is now the brand's Charcoal Gray
+    primary:    { main: '#333333' },
+    // Secondary is now the brand's Vibrant Red for accents
+    secondary:  { main: '#FF2A2A' },
+    // Status colors remain unchanged
     success:    { main: '#10b981' },
     warning:    { main: '#f59e0b' },
     error:      { main: '#ef4444' },
@@ -12,14 +15,15 @@ let muiTheme = createTheme({
     background: { default: '#f8fafc', paper: '#ffffff' },
   },
   typography: {
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    // Fluid type scale
-    h1: { fontSize: 'clamp(1.75rem, 5vw, 2.5rem)' },
-    h2: { fontSize: 'clamp(1.5rem, 4vw, 2rem)' },
-    h3: { fontSize: 'clamp(1.25rem, 3.5vw, 1.75rem)' },
-    h4: { fontSize: 'clamp(1.1rem, 3vw, 1.5rem)' },
-    h5: { fontSize: 'clamp(1rem, 2.5vw, 1.25rem)' },
-    h6: { fontSize: 'clamp(0.95rem, 2.2vw, 1.1rem)' },
+    // Font family is updated to Montserrat
+    fontFamily: "'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    // The fluid type scale is kept for responsiveness.
+    h1: { fontSize: 'clamp(1.75rem, 5vw, 2.5rem)', fontWeight: 700 },
+    h2: { fontSize: 'clamp(1.5rem, 4vw, 2rem)', fontWeight: 700 },
+    h3: { fontSize: 'clamp(1.25rem, 3.5vw, 1.75rem)', fontWeight: 700 },
+    h4: { fontSize: 'clamp(1.1rem, 3vw, 1.5rem)', fontWeight: 700 },
+    h5: { fontSize: 'clamp(1rem, 2.5vw, 1.25rem)', fontWeight: 700 },
+    h6: { fontSize: 'clamp(0.95rem, 2.2vw, 1.1rem)', fontWeight: 600 },
     body1: { fontSize: 'clamp(0.875rem, 2.2vw, 1rem)' },
     body2: { fontSize: 'clamp(0.8rem, 2vw, 0.875rem)' },
   },
@@ -32,6 +36,7 @@ let muiTheme = createTheme({
         root: {
           minHeight: 44,
           textTransform: 'none',
+          fontWeight: 600, // Buttons now use semibold weight
         },
       },
     },
@@ -71,6 +76,7 @@ let muiTheme = createTheme({
       styleOverrides: {
         root: {
           maxWidth: '100%',
+          fontWeight: 600, // Chips are now semibold
         },
         label: {
           overflow: 'hidden',

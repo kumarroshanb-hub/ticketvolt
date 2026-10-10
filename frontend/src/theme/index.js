@@ -1,18 +1,28 @@
-// admin-frontend/src/theme/index.js
+// frontend/src/theme/index.js
+
 export const theme = {
     colors: {
-        // Primary colors
-        primary: '#4f46e5',
-        primaryLight: '#818cf8',
-        primaryDark: '#4338ca',
-        primaryGradient: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+        // --- NEW BRAND COLORS from branding sheet ---
+        // Charcoal Gray MEX #333333
+        brandCharcoal: '#333333',
+        // Vibrant Red HEX #FF2A2A
+        brandRed: '#FF2A2A',
+        // Dark Gray HEX #555555
+        brandDarkGray: '#555555',
+
+        // --- Mapped to Semantic Colors ---
+        // Primary color is the brand's Charcoal Gray for a strong, neutral base.
+        primary: '#333333',
+        primaryLight: '#555555',
+        primaryDark: '#1a1a1a',
+        primaryGradient: 'linear-gradient(135deg, #333333 0%, #555555 100%)',
+
+        // Secondary color is now the brand's Vibrant Red, used for highlighting actions.
+        secondary: '#FF2A2A',
+        secondaryLight: '#FF6B6B',
+        secondaryDark: '#CC0000',
         
-        // Secondary colors
-        secondary: '#7c3aed',
-        secondaryLight: '#a78bfa',
-        secondaryDark: '#6d28d9',
-        
-        // Status colors
+        // Status colors remain as they are essential for UI feedback.
         success: '#10b981',
         successLight: '#34d399',
         successDark: '#059669',
@@ -26,7 +36,7 @@ export const theme = {
         infoLight: '#60a5fa',
         infoDark: '#2563eb',
         
-        // Background colors
+        // Background colors remain mostly the same for readability.
         bgPrimary: '#f8fafc',
         bgSecondary: '#ffffff',
         bgCard: '#ffffff',
@@ -34,37 +44,43 @@ export const theme = {
         bgSidebar: '#ffffff',
         bgInput: '#f1f5f9',
         bgHover: '#f8fafc',
-        
-        // Text colors
-        textPrimary: '#0f172a',
-        textSecondary: '#334155',
-        textMuted: '#64748b',
+
+        // Text colors are now based on the brand's charcoal and gray.
+        textPrimary: '#333333',
+        textSecondary: '#555555',
+        textMuted: '#777777',
         textLight: '#94a3b8',
         textInverse: '#ffffff',
-        
+
         // Border colors
         borderLight: '#e2e8f0',
-        borderHover: '#c7d2fe',
-        borderActive: '#818cf8',
+        borderHover: '#cbd5e1',
+        borderActive: '#333333',
         
         // Gradients
-        gradientPrimary: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+        gradientPrimary: 'linear-gradient(135deg, #333333 0%, #555555 100%)',
         gradientSuccess: 'linear-gradient(135deg, #10b981 0%, #34d399 100%)',
         gradientWarning: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)',
         gradientError: 'linear-gradient(135deg, #ef4444 0%, #f87171 100%)',
         gradientCard: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
     },
     
+    // Typography is set to Montserrat.
+    typography: {
+        fontFamily: "'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    },
+
     shadows: {
+        // Shadows are updated to be more neutral.
         card: '0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04)',
-        cardHover: '0 4px 24px rgba(79, 70, 229, 0.10), 0 2px 8px rgba(0, 0, 0, 0.04)',
-        glow: '0 0 40px rgba(79, 70, 229, 0.08)',
-        glowStrong: '0 0 60px rgba(79, 70, 229, 0.12)',
+        cardHover: '0 4px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04)',
+        glow: '0 0 40px rgba(51, 51, 51, 0.08)',
+        glowStrong: '0 0 60px rgba(51, 51, 51, 0.12)',
         sidebar: '4px 0 24px rgba(0, 0, 0, 0.04)',
         dropdown: '0 8px 32px rgba(0, 0, 0, 0.08)',
         modal: '0 24px 64px rgba(0, 0, 0, 0.12)',
-        button: '0 2px 8px rgba(79, 70, 229, 0.20)',
-        buttonHover: '0 4px 16px rgba(79, 70, 229, 0.30)',
+        button: '0 2px 8px rgba(51, 51, 51, 0.20)',
+        buttonHover: '0 4px 16px rgba(51, 51, 51, 0.30)',
     },
     
     borderRadius: {
@@ -130,6 +146,16 @@ export const theme = {
         popover: 500,
         tooltip: 600,
     },
+
+    // A dedicated section for brand-specific assets like logos.
+    branding: {
+        logoText: 'TiKetVault', // Can be used for text-based logos
+        logoCharcoal: '#333333',
+        logoRed: '#FF2A2A',
+        // You can add paths to your SVG logo files here
+        // logoPrimary: '/assets/logo-primary.svg',
+        // logoIcon: '/assets/logo-icon.svg',
+    }
 };
 
 export default theme;

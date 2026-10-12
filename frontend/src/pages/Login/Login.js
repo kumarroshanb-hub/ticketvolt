@@ -4,30 +4,18 @@ import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'react-toastify';
 import {
-    Box,
-    Paper,
-    Typography,
-    TextField,
-    Button,
-    Alert,
-    CircularProgress,
-    Link,
-    useMediaQuery,
-    useTheme,
+    Box, Paper, Typography, TextField, Button, Alert,
+    CircularProgress, Link, useMediaQuery, useTheme,
 } from '@mui/material';
+import { theme as appTheme } from '../../theme/tokens';
 
-/**
- * Build-time configuration for demo credentials.
- * These are inlined by CRA at build time from REACT_APP_* env vars.
- * In production (Render), REACT_APP_SHOW_DEMO_CREDS is unset/false,
- * so `DEMO_CREDS` becomes an empty array and the UI block never renders.
- * No production password ever appears in the shipped bundle.
- */
+const C = appTheme.colors;
+const F = appTheme.fonts;
+
 const SHOW_DEMO_CREDS = process.env.REACT_APP_SHOW_DEMO_CREDS === 'true';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-// ✅ Fail the build if someone mistakenly enables demo creds in production.
-//    This prevents a compromised build even if the env var is misconfigured.
+// Fail fast if demo creds are enabled in a production build.
 if (IS_PRODUCTION && SHOW_DEMO_CREDS) {
     throw new Error(
         '🚨 SECURITY: REACT_APP_SHOW_DEMO_CREDS must NOT be "true" in production builds.'
@@ -56,7 +44,7 @@ const DEMO_CREDS = SHOW_DEMO_CREDS
               email: process.env.REACT_APP_DEMO_USER_EMAIL,
               password: process.env.REACT_APP_DEMO_USER_PASSWORD,
           },
-      ].filter((c) => c.email && c.password) // drop incomplete entries
+      ].filter((c) => c.email && c.password)
     : [];
 
 const Login = () => {
@@ -71,7 +59,6 @@ const Login = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
-        // No credential pre-fill. Ever.
         if (isAuthenticated && !loading) {
             console.log('ℹ️ Already authenticated, but staying on login page');
         }
@@ -123,13 +110,27 @@ const Login = () => {
                     alignItems: 'center',
                     minHeight: '100vh',
                     minHeight: '100dvh',
-                    bgcolor: '#0A0B1A',
+                    bgcolor: C.bgDark,
                 }}
             >
-                <CircularProgress sx={{ color: '#5B5FEF' }} />
+                <CircularProgress sx={{ color: C.secondary }} />
             </Box>
         );
     }
+
+    // Shared styles for the dark-mode text fields (computed once)
+    const darkFieldSx = {
+        mb: 2,
+        '& .MuiOutlinedInput-root': {
+            color: C.textInverse,
+            '& fieldset': { borderColor: C.bgDarkBorder },
+            '&:hover fieldset': { borderColor: C.secondary },
+            '&.Mui-focused fieldset': { borderColor: C.secondary },
+        },
+        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+        '& .MuiInputLabel-root.Mui-focused': { color: C.secondary },
+        '& .MuiInputBase-input': { fontSize: 16, fontFamily: F.family },
+    };
 
     return (
         <Box
@@ -139,12 +140,13 @@ const Login = () => {
                 alignItems: 'center',
                 minHeight: '100vh',
                 minHeight: '100dvh',
-                bgcolor: '#0A0B1A',
+                bgcolor: C.bgDark,
                 p: isMobile ? 1.5 : 2,
                 pt: isMobile ? 'max(12px, env(safe-area-inset-top))' : 2,
                 pb: isMobile ? 'max(12px, env(safe-area-inset-bottom))' : 2,
                 pl: isMobile ? 'max(12px, env(safe-area-inset-left))' : 2,
                 pr: isMobile ? 'max(12px, env(safe-area-inset-right))' : 2,
+                fontFamily: F.family,
             }}
         >
             <Paper
@@ -153,8 +155,8 @@ const Login = () => {
                     maxWidth: 420,
                     width: '100%',
                     borderRadius: 3,
-                    bgcolor: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    bgcolor: C.bgDarkCard,
+                    border: `1px solid ${C.bgDarkBorder}`,
                     boxShadow: 'none',
                     my: isMobile ? 1 : 0,
                 }}
@@ -164,25 +166,43 @@ const Login = () => {
                         variant="h4"
                         sx={{
                             fontWeight: 800,
-                            color: 'white',
+                            color: C.textInverse,
                             fontSize: { xs: '1.75rem', sm: '2rem' },
+                            fontFamily: F.family,
                         }}
                     >
-                        Tiket<span style={{ color: '#5B5FEF' }}>Vault</span>
+                        TiKet<span style={{ color: C.secondary }}>Vault</span>
                     </Typography>
-                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}>
+                    <Typography
+                        variant="body2"
+                        sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}
+                    >
                         Sign in to manage your events
                     </Typography>
                 </Box>
 
                 {error && (
-                    <Alert severity="error" sx={{ mb: 3, bgcolor: 'rgba(255,0,0,0.1)', color: '#FF6B6B' }}>
+                    <Alert
+                        severity="error"
+                        sx={{
+                            mb: 3,
+                            bgcolor: 'rgba(255,0,0,0.1)',
+                            color: C.errorLight,
+                        }}
+                    >
                         {error}
                     </Alert>
                 )}
 
                 {isAuthenticated && !loading && !isMobile && (
-                    <Alert severity="info" sx={{ mb: 3, bgcolor: 'rgba(91,95,239,0.1)', color: '#5B5FEF' }}>
+                    <Alert
+                        severity="info"
+                        sx={{
+                            mb: 3,
+                            bgcolor: 'rgba(51,51,51,0.1)',
+                            color: C.primaryLight,
+                        }}
+                    >
                         You are already logged in. Click "Sign In" to continue to dashboard.
                     </Alert>
                 )}
@@ -197,18 +217,7 @@ const Login = () => {
                         required
                         autoComplete="email"
                         inputProps={{ inputMode: 'email' }}
-                        sx={{
-                            mb: 2,
-                            '& .MuiOutlinedInput-root': {
-                                color: 'white',
-                                '& fieldset': { borderColor: 'rgba(255,255,255,0.06)' },
-                                '&:hover fieldset': { borderColor: 'rgba(91,95,239,0.4)' },
-                                '&.Mui-focused fieldset': { borderColor: '#5B5FEF' },
-                            },
-                            '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
-                            '& .MuiInputLabel-root.Mui-focused': { color: '#5B5FEF' },
-                            '& .MuiInputBase-input': { fontSize: 16 },
-                        }}
+                        sx={darkFieldSx}
                         disabled={isSubmitting}
                     />
                     <TextField
@@ -219,18 +228,7 @@ const Login = () => {
                         onChange={(e) => setPassword(e.target.value)}
                         required
                         autoComplete="current-password"
-                        sx={{
-                            mb: 3,
-                            '& .MuiOutlinedInput-root': {
-                                color: 'white',
-                                '& fieldset': { borderColor: 'rgba(255,255,255,0.06)' },
-                                '&:hover fieldset': { borderColor: 'rgba(91,95,239,0.4)' },
-                                '&.Mui-focused fieldset': { borderColor: '#5B5FEF' },
-                            },
-                            '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
-                            '& .MuiInputLabel-root.Mui-focused': { color: '#5B5FEF' },
-                            '& .MuiInputBase-input': { fontSize: 16 },
-                        }}
+                        sx={{ ...darkFieldSx, mb: 3 }}
                         disabled={isSubmitting}
                     />
                     <Button
@@ -241,34 +239,29 @@ const Login = () => {
                         sx={{
                             py: 1.5,
                             minHeight: 48,
-                            background: 'linear-gradient(135deg, #5B5FEF 0%, #8B5CF6 100%)',
+                            background: C.secondaryGradient,
                             '&:hover': {
-                                background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)',
+                                background: `linear-gradient(135deg, ${C.secondaryDark} 0%, ${C.secondary} 100%)`,
                                 transform: 'translateY(-2px)',
-                                boxShadow: '0 0 40px rgba(91, 95, 239, 0.2)',
+                                boxShadow: `0 0 40px rgba(255,42,42,0.25)`,
                             },
                             textTransform: 'none',
                             fontSize: '16px',
                             fontWeight: 600,
+                            fontFamily: F.family,
+                            color: C.textInverse,
                         }}
                     >
                         {isSubmitting ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
                     </Button>
                 </form>
 
-                {/*
-                  Demo Credentials block.
-                  Renders ONLY when REACT_APP_SHOW_DEMO_CREDS === 'true'
-                  (i.e. local development with a populated .env.development.local).
-                  In production this whole block is dead code that gets tree-shaken
-                  or is simply skipped at runtime because DEMO_CREDS.length === 0.
-                */}
                 {DEMO_CREDS.length > 0 && (
                     <Box
                         sx={{
                             mt: 3,
                             pt: 2,
-                            borderTop: '1px solid rgba(255,255,255,0.06)',
+                            borderTop: `1px solid ${C.bgDarkBorder}`,
                             textAlign: 'center',
                             maxHeight: isMobile ? 180 : 'none',
                             overflowY: isMobile ? 'auto' : 'visible',
@@ -304,7 +297,7 @@ const Login = () => {
                                     onClick={() => fillCredentials(cred.email, cred.password)}
                                 >
                                     {cred.role}:{' '}
-                                    <span style={{ color: '#5B5FEF' }}>{cred.email}</span> /{' '}
+                                    <span style={{ color: C.secondary }}>{cred.email}</span> /{' '}
                                     {cred.password}
                                 </Typography>
                             ))}
@@ -315,7 +308,11 @@ const Login = () => {
                 <Box textAlign="center" mt={2}>
                     <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>
                         Don't have an account?{' '}
-                        <Link component={RouterLink} to="/register" sx={{ color: '#5B5FEF' }}>
+                        <Link
+                            component={RouterLink}
+                            to="/register"
+                            sx={{ color: C.secondary }}
+                        >
                             Register
                         </Link>
                     </Typography>

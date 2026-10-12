@@ -16,6 +16,7 @@ import {
 import { Button, Box, Chip, IconButton, useMediaQuery, useTheme } from '@mui/material';
 import { toast } from 'react-toastify';
 import { theme } from '../../theme/tokens';
+import Logo from '../Logo';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -78,35 +79,16 @@ const TicketHeader = styled.div`
 const BrandName = styled.div`
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     margin-bottom: 4px;
     position: relative;
     z-index: 1;
 
-    .brand-icon {
-        width: 36px;
-        height: 36px;
-        background: rgba(255, 255, 255, 0.2);
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 800;
-        font-size: 18px;
-        backdrop-filter: blur(10px);
-    }
-
-    .brand-text {
-        font-size: 22px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-    }
-
     .brand-sub {
         font-size: 11px;
-        opacity: 0.8;
+        opacity: 0.85;
         font-weight: 400;
-        margin-left: 4px;
+        white-space: nowrap;
     }
 `;
 
@@ -535,13 +517,8 @@ const Ticket = ({
         <TicketContainer ref={ticketRef}>
             <TicketHeader>
                 <BrandName>
-                    <div className="brand-icon">T</div>
-                    <div>
-                        <span className="brand-text">
-                            Tiket<span style={{ fontWeight: 400 }}>Vault</span>
-                        </span>
-                        <span className="brand-sub">• e-Ticket</span>
-                    </div>
+                    <Logo variant="both" size={16} inverse />
+                    <span className="brand-sub">• e-Ticket</span>
                 </BrandName>
                 <TicketType>
                     <span>{eventType?.toUpperCase() || 'GENERAL ADMISSION'}</span>

@@ -43,7 +43,7 @@ const Dashboard = () => {
                     Recent Activity
                 </Typography>
                 <Typography color="textSecondary">
-                    Welcome to TicketVolt Admin Dashboard!
+                    Welcome to TiKetVault Admin Dashboard!
                 </Typography>
             </Paper>
         </Container>

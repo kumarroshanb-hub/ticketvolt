@@ -8,6 +8,7 @@ import {
     CircularProgress, Link, useMediaQuery, useTheme,
 } from '@mui/material';
 import { theme as appTheme } from '../../theme/tokens';
+import Logo from '../../components/Logo';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
@@ -162,17 +163,15 @@ const Login = () => {
                 }}
             >
                 <Box textAlign="center" mb={3}>
-                    <Typography
-                        variant="h4"
+                    <Box
                         sx={{
-                            fontWeight: 800,
-                            color: C.textInverse,
-                            fontSize: { xs: '1.75rem', sm: '2rem' },
-                            fontFamily: F.family,
+                            display: 'flex',
+                            justifyContent: 'center',
+                            mb: 1,
                         }}
                     >
-                        TiKet<span style={{ color: C.secondary }}>Vault</span>
-                    </Typography>
+                        <Logo variant="full" size={32} inverse />
+                    </Box>
                     <Typography
                         variant="body2"
                         sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}

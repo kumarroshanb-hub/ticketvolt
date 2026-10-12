@@ -12,7 +12,6 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 
-// frontend/src/pages/Profile/Profile.js — ADD THIS IMPORT
 import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
@@ -29,11 +28,11 @@ const PageWrapper = styled.div`
 `;
 
 const Card = styled.div`
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
     border-radius: 16px;
     padding: 28px;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+    box-shadow: ${theme.shadows.card};
 `;
 
 const Header = styled.div`
@@ -42,7 +41,7 @@ const Header = styled.div`
     gap: 20px;
     margin-bottom: 28px;
     padding-bottom: 24px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid ${C.bgInput};
 
     @media (max-width: 600px) {
         flex-direction: column;
@@ -55,14 +54,14 @@ const Avatar = styled.div`
     height: 88px;
     min-width: 88px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    background: ${C.primaryGradient};
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: ${C.textInverse};
     font-weight: 700;
     font-size: 36px;
-    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.25);
+    box-shadow: 0 8px 20px rgba(51, 51, 51, 0.25);
 `;
 
 const HeaderText = styled.div`
@@ -75,7 +74,7 @@ const HeaderText = styled.div`
 const Name = styled.h1`
     font-size: 24px;
     font-weight: 700;
-    color: #0f172a;
+    color: ${C.textPrimary};
     margin: 0;
     word-break: break-word;
 `;
@@ -94,18 +93,18 @@ const RolePill = styled.span`
 
     background: ${p => {
         switch (p.$role) {
-            case 'super_admin': return '#dcfce7';
-            case 'admin':       return '#dbeafe';
-            case 'organizer':   return '#fef3c7';
-            default:            return '#f1f5f9';
+            case 'super_admin': return `${C.success}1A`;
+            case 'admin':       return `${C.info}1A`;
+            case 'organizer':   return `${C.warning}1A`;
+            default:            return C.bgInput;
         }
     }};
     color: ${p => {
         switch (p.$role) {
-            case 'super_admin': return '#16a34a';
-            case 'admin':       return '#2563eb';
-            case 'organizer':   return '#d97706';
-            default:            return '#64748b';
+            case 'super_admin': return C.successDark;
+            case 'admin':       return C.infoDark;
+            case 'organizer':   return C.warningDark;
+            default:            return C.textSecondary;
         }
     }};
 
@@ -117,7 +116,7 @@ const RolePill = styled.span`
 const SectionTitle = styled.h2`
     font-size: 14px;
     font-weight: 700;
-    color: #64748b;
+    color: ${C.textSecondary};
     text-transform: uppercase;
     letter-spacing: 0.6px;
     margin: 0 0 16px;
@@ -128,7 +127,7 @@ const Field = styled.div`
     align-items: flex-start;
     gap: 14px;
     padding: 14px 0;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid ${C.bgInput};
 
     &:last-of-type {
         border-bottom: none;
@@ -140,11 +139,11 @@ const FieldIcon = styled.div`
     height: 38px;
     min-width: 38px;
     border-radius: 10px;
-    background: #f1f5f9;
+    background: ${C.bgInput};
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #4f46e5;
+    color: ${C.primary};
 
     svg {
         font-size: 20px;
@@ -161,32 +160,33 @@ const FieldBody = styled.div`
 
 const FieldLabel = styled.span`
     font-size: 12px;
-    color: #64748b;
+    color: ${C.textSecondary};
     font-weight: 500;
 `;
 
 const FieldValue = styled.span`
     font-size: 15px;
-    color: #0f172a;
+    color: ${C.textPrimary};
     font-weight: 500;
     word-break: break-word;
 `;
 
 const Input = styled.input`
     font-size: 15px;
-    color: #0f172a;
+    color: ${C.textPrimary};
     font-weight: 500;
     padding: 8px 12px;
-    border: 1px solid #cbd5e1;
+    border: 1px solid ${C.borderHover};
     border-radius: 8px;
     outline: none;
     width: 100%;
     box-sizing: border-box;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    font-family: ${F.family};
 
     &:focus {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+        border-color: ${C.primary};
+        box-shadow: 0 0 0 4px ${C.primary}1A;
     }
 `;
 
@@ -209,7 +209,7 @@ const Button = styled.button`
     cursor: pointer;
     transition: all 0.15s ease;
     min-height: 44px;
-    font-family: inherit;
+    font-family: ${F.family};
 
     svg { font-size: 18px; }
 
@@ -220,22 +220,22 @@ const Button = styled.button`
 `;
 
 const PrimaryButton = styled(Button)`
-    background: #333333;
-    color: #ffffff;
+    background: ${C.primary};
+    color: ${C.textInverse};
 
     &:hover:not(:disabled) {
-        background: #4338ca;
+        background: ${C.primaryDark};
     }
 `;
 
 const GhostButton = styled(Button)`
-    background: #ffffff;
-    color: #0f172a;
-    border-color: #e2e8f0;
+    background: ${C.bgCard};
+    color: ${C.textPrimary};
+    border-color: ${C.borderLight};
 
     &:hover:not(:disabled) {
-        background: #f8fafc;
-        border-color: #cbd5e1;
+        background: ${C.bgPrimary};
+        border-color: ${C.borderHover};
     }
 `;
 
@@ -246,9 +246,9 @@ const Message = styled.div`
     font-size: 13px;
     font-weight: 500;
 
-    background: ${p => (p.$error ? '#fef2f2' : '#ecfdf5')};
-    color:      ${p => (p.$error ? '#b91c1c' : '#047857')};
-    border: 1px solid ${p => (p.$error ? '#fecaca' : '#a7f3d0')};
+    background: ${p => (p.$error ? `${C.error}1A` : `${C.success}1A`)};
+    color:      ${p => (p.$error ? C.errorDark : C.successDark)};
+    border: 1px solid ${p => (p.$error ? `${C.error}4D` : `${C.success}4D`)};
 `;
 
 // ============================================
@@ -263,7 +263,7 @@ const Profile = () => {
     const [editing, setEditing] = useState(false);
     const [name, setName] = useState(user?.name || user?.username || '');
     const [saving, setSaving] = useState(false);
-    const [message, setMessage] = useState(null); // { text, error }
+    const [message, setMessage] = useState(null);
 
     const getRoleLabel = () => {
         if (isSuperAdmin) return 'Super Admin';

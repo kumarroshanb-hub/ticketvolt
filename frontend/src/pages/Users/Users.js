@@ -1,15 +1,13 @@
 // frontend/src/pages/Users/Users.js
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useMediaQuery, useTheme } from '@mui/material';
 import { toast } from 'react-toastify';
 import {
   Search,
-  Add,
   Edit,
   Delete,
-  MoreVert,
   Person,
   PersonAdd,
   Block,
@@ -28,13 +26,9 @@ import {
   Close,
   Save,
   Cancel,
-  FilterList,
 } from '@mui/icons-material';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
-import { ROLES } from '../../constants';
-
-// frontend/src/pages/Users/Users.js — ADD THIS IMPORT
 import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
@@ -65,14 +59,16 @@ const PageHeader = styled.div`
 const PageTitle = styled.h1`
     font-size: 24px;
     font-weight: 700;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${C.textPrimary};
     margin: 0;
+    font-family: ${F.family};
 `;
 
 const PageSubtitle = styled.p`
     font-size: 14px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
     margin: 4px 0 0;
+    font-family: ${F.family};
 `;
 
 const HeaderActions = styled.div`
@@ -104,16 +100,16 @@ const StatsGrid = styled.div`
 `;
 
 const StatCard = styled.div`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
+    background: ${C.bgCard};
     border-radius: 12px;
     padding: 20px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    border: 1px solid ${C.borderLight};
+    box-shadow: ${theme.shadows.card};
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 
     &:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        box-shadow: ${theme.shadows.cardHover};
     }
 
     @media (max-width: 600px) {
@@ -129,8 +125,8 @@ const StatIcon = styled.div`
     align-items: center;
     justify-content: center;
     margin-bottom: 12px;
-    background: ${props => props.bg || 'rgba(79, 70, 229, 0.1)'};
-    color: ${props => props.color || '#4f46e5'};
+    background: ${props => props.$bg};
+    color: ${props => props.$color};
 
     @media (max-width: 600px) {
         width: 34px;
@@ -142,8 +138,9 @@ const StatIcon = styled.div`
 const StatValue = styled.h3`
     font-size: 28px;
     font-weight: 700;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${C.textPrimary};
     margin: 0;
+    font-family: ${F.family};
 
     @media (max-width: 600px) {
         font-size: 22px;
@@ -152,10 +149,11 @@ const StatValue = styled.h3`
 
 const StatLabel = styled.p`
     font-size: 12px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
     margin: 4px 0 0;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    font-family: ${F.family};
 
     @media (max-width: 600px) {
         font-size: 10px;
@@ -164,11 +162,11 @@ const StatLabel = styled.p`
 
 // Filter Card
 const FilterCard = styled.div`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
+    background: ${C.bgCard};
     border-radius: 12px;
     padding: 20px;
     margin-bottom: 24px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
 
     @media (max-width: 600px) {
         padding: 14px;
@@ -190,23 +188,24 @@ const FilterGrid = styled.div`
 const SearchInput = styled.input`
     width: 100%;
     padding: 10px 14px 10px 40px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
     border-radius: 8px;
     font-size: 16px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-    background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
+    color: ${C.textPrimary};
+    background: ${C.bgSecondary};
     outline: none;
     transition: all 0.2s ease;
     min-height: 44px;
     box-sizing: border-box;
+    font-family: ${F.family};
 
     &:focus {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        border-color: ${C.primary};
+        box-shadow: 0 0 0 3px ${C.primary}1A;
     }
 
     &::placeholder {
-        color: #94a3b8;
+        color: ${C.textLight};
     }
 `;
 
@@ -218,36 +217,37 @@ const SearchWrapper = styled.div`
         left: 12px;
         top: 50%;
         transform: translateY(-50%);
-        color: #94a3b8;
+        color: ${C.textLight};
     }
 `;
 
 const Select = styled.select`
     width: 100%;
     padding: 10px 14px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
     border-radius: 8px;
     font-size: 16px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-    background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
+    color: ${C.textPrimary};
+    background: ${C.bgSecondary};
     outline: none;
     cursor: pointer;
     transition: all 0.2s ease;
     min-height: 44px;
     box-sizing: border-box;
+    font-family: ${F.family};
 
     &:focus {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        border-color: ${C.primary};
+        box-shadow: 0 0 0 3px ${C.primary}1A;
     }
 `;
 
 // Table Styles
 const TableContainer = styled.div`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
+    background: ${C.bgCard};
     border-radius: 12px;
     overflow: hidden;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
 `;
 
 const Table = styled.table`
@@ -256,8 +256,8 @@ const Table = styled.table`
 `;
 
 const TableHead = styled.thead`
-    background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
-    border-bottom: 2px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    background: ${C.bgSecondary};
+    border-bottom: 2px solid ${C.borderLight};
 `;
 
 const TableHeaderCell = styled.th`
@@ -265,23 +265,24 @@ const TableHeaderCell = styled.th`
     text-align: ${props => props.align || 'left'};
     font-size: 12px;
     font-weight: 600;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
+    font-family: ${F.family};
 `;
 
 const TableBody = styled.tbody`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
+    background: ${C.bgCard};
 `;
 
 const TableRow = styled.tr`
-    border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-bottom: 1px solid ${C.borderLight};
     cursor: pointer;
     transition: background 0.2s ease;
 
     &:hover {
-        background: ${props => props.theme?.colors?.bgHover || '#f8fafc'};
+        background: ${C.bgHover};
     }
 
     &:last-child {
@@ -292,14 +293,15 @@ const TableRow = styled.tr`
 const TableCell = styled.td`
     padding: 12px 16px;
     font-size: 14px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${C.textPrimary};
     vertical-align: middle;
+    font-family: ${F.family};
 `;
 
-// Mobile User Card (Phase 3)
+// Mobile User Card
 const MobileUserCard = styled.div`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
     border-radius: 12px;
     padding: 16px;
     margin-bottom: 12px;
@@ -308,7 +310,7 @@ const MobileUserCard = styled.div`
 
     &:active {
         transform: scale(0.99);
-        background: ${props => props.theme?.colors?.bgHover || '#f8fafc'};
+        background: ${C.bgHover};
     }
 
     &:last-child {
@@ -328,7 +330,7 @@ const MobileUserBody = styled.div`
     grid-template-columns: 1fr 1fr;
     gap: 10px;
     padding-top: 12px;
-    border-top: 1px dashed ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-top: 1px dashed ${C.borderLight};
     margin-bottom: 12px;
 
     .field-label {
@@ -336,15 +338,17 @@ const MobileUserBody = styled.div`
         text-transform: uppercase;
         letter-spacing: 0.5px;
         font-weight: 600;
-        color: #94a3b8;
+        color: ${C.textLight};
         display: block;
         margin-bottom: 2px;
+        font-family: ${F.family};
     }
 
     .field-value {
         font-size: 13px;
-        color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+        color: ${C.textPrimary};
         word-break: break-word;
+        font-family: ${F.family};
     }
 
     .full-width {
@@ -356,7 +360,7 @@ const MobileUserActions = styled.div`
     display: flex;
     gap: 8px;
     padding-top: 12px;
-    border-top: 1px solid #f1f5f9;
+    border-top: 1px solid ${C.bgInput};
 
     button {
         flex: 1;
@@ -381,22 +385,24 @@ const UserAvatar = styled.div`
     justify-content: center;
     font-size: 14px;
     font-weight: 600;
-    color: white;
-    background: ${props => props.bg || '#4f46e5'};
+    color: ${C.textInverse};
+    background: ${props => props.$bg};
 `;
 
 const UserName = styled.div`
     font-weight: 600;
     font-size: 14px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${C.textPrimary};
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: ${F.family};
 `;
 
 const UserUsername = styled.div`
     font-size: 12px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
+    font-family: ${F.family};
 `;
 
 // Badges
@@ -409,15 +415,16 @@ const Badge = styled.span`
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
+    font-family: ${F.family};
 
     &.active {
-        background: #dcfce7;
-        color: #16a34a;
+        background: ${C.success}1A;
+        color: ${C.successDark};
     }
 
     &.inactive {
-        background: #fee2e2;
-        color: #dc2626;
+        background: ${C.error}1A;
+        color: ${C.errorDark};
     }
 `;
 
@@ -429,25 +436,26 @@ const RoleBadge = styled.span`
     border-radius: 12px;
     font-size: 12px;
     font-weight: 600;
+    font-family: ${F.family};
 
     &.super_admin {
-        background: #dcfce7;
-        color: #16a34a;
+        background: ${C.success}1A;
+        color: ${C.successDark};
     }
 
     &.admin {
-        background: #dbeafe;
-        color: #2563eb;
+        background: ${C.info}1A;
+        color: ${C.infoDark};
     }
 
     &.organizer {
-        background: #fef3c7;
-        color: #d97706;
+        background: ${C.warning}1A;
+        color: ${C.warningDark};
     }
 
     &.user {
-        background: #f1f5f9;
-        color: #64748b;
+        background: ${C.bgInput};
+        color: ${C.textSecondary};
     }
 `;
 
@@ -457,7 +465,7 @@ const ActionButton = styled.button`
     border-radius: 8px;
     border: none;
     background: transparent;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -465,13 +473,13 @@ const ActionButton = styled.button`
     transition: all 0.2s ease;
 
     &:hover {
-        background: rgba(79, 70, 229, 0.1);
-        color: #4f46e5;
+        background: ${C.primary}1A;
+        color: ${C.primary};
     }
 
     &.danger:hover {
-        background: rgba(239, 68, 68, 0.1);
-        color: #ef4444;
+        background: ${C.error}1A;
+        color: ${C.error};
     }
 `;
 
@@ -481,7 +489,7 @@ const PaginationContainer = styled.div`
     justify-content: space-between;
     align-items: center;
     padding: 16px 20px;
-    border-top: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-top: 1px solid ${C.borderLight};
     flex-wrap: wrap;
     gap: 12px;
 
@@ -494,7 +502,8 @@ const PaginationContainer = styled.div`
 
 const PaginationInfo = styled.span`
     font-size: 14px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
+    font-family: ${F.family};
 
     @media (max-width: 600px) {
         text-align: center;
@@ -518,18 +527,19 @@ const PageButton = styled.button`
     padding: 8px 12px;
     min-width: 40px;
     min-height: 40px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
     border-radius: 8px;
-    background: ${props => props.active ? '#4f46e5' : 'transparent'};
-    color: ${props => props.active ? 'white' : props.theme?.colors?.textSecondary || '#64748b'};
+    background: ${props => props.$active ? C.primary : 'transparent'};
+    color: ${props => props.$active ? C.textInverse : C.textSecondary};
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s ease;
     touch-action: manipulation;
+    font-family: ${F.family};
 
     &:hover {
-        border-color: #4f46e5;
-        color: ${props => props.active ? 'white' : '#4f46e5'};
+        border-color: ${C.primary};
+        color: ${props => props.$active ? C.textInverse : C.primary};
     }
 
     &:disabled {
@@ -558,18 +568,18 @@ const ModalOverlay = styled.div`
 `;
 
 const Modal = styled.div`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
+    background: ${C.bgCard};
     border-radius: 12px;
-    width: ${props => props.width || '600px'};
+    width: ${props => props.$width || '600px'};
     max-width: 100%;
     max-height: 90vh;
     overflow-y: auto;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+    box-shadow: ${theme.shadows.modal};
 `;
 
 const ModalHeader = styled.div`
     padding: 20px 24px;
-    border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-bottom: 1px solid ${C.borderLight};
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -582,11 +592,12 @@ const ModalHeader = styled.div`
 const ModalTitle = styled.h2`
     font-size: 18px;
     font-weight: 700;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${C.textPrimary};
     margin: 0;
     display: flex;
     align-items: center;
     gap: 8px;
+    font-family: ${F.family};
 
     @media (max-width: 600px) {
         font-size: 16px;
@@ -598,16 +609,16 @@ const ModalClose = styled.button`
     height: 32px;
     border-radius: 8px;
     border: none;
-    background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    background: ${C.bgSecondary};
+    color: ${C.textSecondary};
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
 
     &:hover {
-        background: #fee2e2;
-        color: #ef4444;
+        background: ${C.error}1A;
+        color: ${C.error};
     }
 `;
 
@@ -621,7 +632,7 @@ const ModalBody = styled.div`
 
 const ModalFooter = styled.div`
     padding: 16px 24px;
-    border-top: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-top: 1px solid ${C.borderLight};
     display: flex;
     justify-content: flex-end;
     gap: 12px;
@@ -658,55 +669,59 @@ const FormGroup = styled.div`
 const FormLabel = styled.label`
     font-size: 12px;
     font-weight: 600;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    font-family: ${F.family};
 `;
 
 const FormInput = styled.input`
     padding: 10px 14px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
     border-radius: 8px;
     font-size: 16px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-    background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
+    color: ${C.textPrimary};
+    background: ${C.bgSecondary};
     outline: none;
     transition: all 0.2s ease;
     min-height: 44px;
     box-sizing: border-box;
+    font-family: ${F.family};
 
     &:focus {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        border-color: ${C.primary};
+        box-shadow: 0 0 0 3px ${C.primary}1A;
     }
 
     &::placeholder {
-        color: #94a3b8;
+        color: ${C.textLight};
     }
 `;
 
 const FormSelect = styled.select`
     padding: 10px 14px;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border: 1px solid ${C.borderLight};
     border-radius: 8px;
     font-size: 16px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-    background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
+    color: ${C.textPrimary};
+    background: ${C.bgSecondary};
     outline: none;
     cursor: pointer;
     min-height: 44px;
     box-sizing: border-box;
+    font-family: ${F.family};
 
     &:focus {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        border-color: ${C.primary};
+        box-shadow: 0 0 0 3px ${C.primary}1A;
     }
 `;
 
 const FormError = styled.p`
-    color: #ef4444;
+    color: ${C.error};
     font-size: 12px;
     margin: 4px 0 0;
+    font-family: ${F.family};
 `;
 
 // Buttons
@@ -723,41 +738,42 @@ const Button = styled.button`
     cursor: pointer;
     transition: all 0.2s ease;
     touch-action: manipulation;
+    font-family: ${F.family};
 
     &.primary {
-        background: #333333;
-        color: white;
+        background: ${C.primary};
+        color: ${C.textInverse};
 
         &:hover {
-            background: #4338ca;
+            background: ${C.primaryDark};
         }
     }
 
     &.secondary {
-        background: ${props => props.theme?.colors?.bgSecondary || '#f8fafc'};
-        color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-        border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+        background: ${C.bgSecondary};
+        color: ${C.textPrimary};
+        border: 1px solid ${C.borderLight};
 
         &:hover {
-            background: #e2e8f0;
+            background: ${C.bgInput};
         }
     }
 
     &.danger {
-        background: #ef4444;
-        color: white;
+        background: ${C.error};
+        color: ${C.textInverse};
 
         &:hover {
-            background: #dc2626;
+            background: ${C.errorDark};
         }
     }
 
     &.success {
-        background: #10b981;
-        color: white;
+        background: ${C.success};
+        color: ${C.textInverse};
 
         &:hover {
-            background: #059669;
+            background: ${C.successDark};
         }
     }
 
@@ -786,7 +802,7 @@ const Switch = styled.label`
         left: 0;
         right: 0;
         bottom: 0;
-        background: #cbd5e1;
+        background: ${C.borderHover};
         transition: 0.3s;
         border-radius: 24px;
     }
@@ -798,13 +814,13 @@ const Switch = styled.label`
         width: 18px;
         left: 3px;
         bottom: 3px;
-        background: white;
+        background: ${C.bgCard};
         transition: 0.3s;
         border-radius: 50%;
     }
 
     input:checked + .slider {
-        background: #333333;
+        background: ${C.primary};
     }
 
     input:checked + .slider:before {
@@ -828,7 +844,8 @@ const SwitchRow = styled.div`
         align-items: center;
         gap: 6px;
         font-size: 14px;
-        color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+        color: ${C.textPrimary};
+        font-family: ${F.family};
     }
 `;
 
@@ -837,11 +854,21 @@ const LoadingState = styled.div`
     justify-content: center;
     align-items: center;
     padding: 60px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
 
     @media (max-width: 600px) {
         padding: 40px 16px;
     }
+`;
+
+const Spinner = styled.div`
+    width: 40px;
+    height: 40px;
+    border: 3px solid ${C.primary}1A;
+    border-top: 3px solid ${C.primary};
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 16px;
 `;
 
 const EmptyState = styled.div`
@@ -865,30 +892,33 @@ const EmptyIcon = styled.div`
 const EmptyText = styled.h3`
     font-size: 18px;
     font-weight: 600;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${C.textPrimary};
     margin: 0 0 8px;
+    font-family: ${F.family};
 `;
 
 const EmptySubtext = styled.p`
     font-size: 14px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${C.textSecondary};
     margin: 0;
+    font-family: ${F.family};
 `;
 
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
 
-// Replace the hardcoded AVATAR_COLORS array
+// Avatar palette — all tokens. The two literal slots are
+// intentionally unused extensions; feel free to add
+// `pink`/`cyan`/`lime` tokens to tokens.js and reference
+// them here later.
 const AVATAR_COLORS = [
     C.warning,
     C.info,
     C.secondary,
-    '#ec4899',   // pink — no token for this, leave as-is or add to tokens
     C.success,
     C.error,
-    '#06b6d4',   // cyan — no token
-    '#84cc16',   // lime — no token
+    C.primary,
 ];
 
 const getInitials = (name) => {
@@ -898,8 +928,9 @@ const getInitials = (name) => {
 
 const getAvatarColor = (name) => {
     let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    const source = name || 'user';
+    for (let i = 0; i < source.length; i++) {
+        hash = source.charCodeAt(i) + ((hash << 5) - hash);
     }
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 };
@@ -936,7 +967,6 @@ const formatDate = (date) => {
 
 const Users = () => {
     const { user: currentUser } = useAuth();
-    const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -1053,7 +1083,7 @@ const Users = () => {
 
     // Handle create user
     const handleCreateUser = async (e) => {
-        e.preventDefault();
+        if (e?.preventDefault) e.preventDefault();
 
         if (formData.password !== formData.password_confirm) {
             toast.error('Passwords do not match');
@@ -1066,7 +1096,7 @@ const Users = () => {
         }
 
         try {
-            const response = await api.post('/users/', formData);
+            await api.post('/users/', formData);
             toast.success('User created successfully');
             setShowCreateModal(false);
             resetForm();
@@ -1080,7 +1110,7 @@ const Users = () => {
 
     // Handle update user
     const handleUpdateUser = async (e) => {
-        e.preventDefault();
+        if (e?.preventDefault) e.preventDefault();
 
         if (!selectedUser) return;
 
@@ -1096,7 +1126,7 @@ const Users = () => {
                 delete updateData.password_confirm;
             }
 
-            const response = await api.patch(`/users/${selectedUser.id}/`, updateData);
+            await api.patch(`/users/${selectedUser.id}/`, updateData);
             toast.success('User updated successfully');
             setShowEditModal(false);
             setSelectedUser(null);
@@ -1164,7 +1194,7 @@ const Users = () => {
 
     // Render user avatar
     const renderAvatar = (user) => (
-        <UserAvatar bg={getAvatarColor(user.username || 'user')}>
+        <UserAvatar $bg={getAvatarColor(user.username || 'user')}>
             {getInitials(user.username)}
         </UserAvatar>
     );
@@ -1178,8 +1208,6 @@ const Users = () => {
     );
 
     // Render status badge
-    // ✅ Treat only explicit `false` as inactive. This keeps the UI correct
-    //    even if the API response is missing `is_active` (defensive fallback).
     const renderStatusBadge = (isActive) => {
         const active = isActive !== false;
         return (
@@ -1194,13 +1222,12 @@ const Users = () => {
     // SUB-COMPONENTS
     // ============================================
 
-    // Create/Edit User Modal
     const UserFormModal = ({ mode, onClose, onSubmit }) => {
         const isEdit = mode === 'edit';
 
         return (
             <ModalOverlay onClick={onClose}>
-                <Modal width="700px" onClick={(e) => e.stopPropagation()}>
+                <Modal $width="700px" onClick={(e) => e.stopPropagation()}>
                     <ModalHeader>
                         <ModalTitle>
                             {isEdit ? <Edit /> : <PersonAdd />}
@@ -1259,7 +1286,7 @@ const Users = () => {
                                                 placeholder="********"
                                                 required
                                                 style={{
-                                                    borderColor: formData.password !== formData.password_confirm ? '#ef4444' : undefined
+                                                    borderColor: formData.password !== formData.password_confirm ? C.error : undefined
                                                 }}
                                             />
                                             {formData.password !== formData.password_confirm && (
@@ -1289,7 +1316,7 @@ const Users = () => {
                                                 onChange={(e) => setFormData({ ...formData, password_confirm: e.target.value })}
                                                 placeholder="Leave blank to keep current"
                                                 style={{
-                                                    borderColor: formData.password !== formData.password_confirm ? '#ef4444' : undefined
+                                                    borderColor: formData.password !== formData.password_confirm ? C.error : undefined
                                                 }}
                                             />
                                             {formData.password !== formData.password_confirm && (
@@ -1393,7 +1420,7 @@ const Users = () => {
                                 </FormGroup>
                             </FormGrid>
 
-                            <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(226, 232, 240, 1)' }}>
+                            <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}` }}>
                                 <FormLabel style={{ marginBottom: '8px', display: 'block' }}>Account Status</FormLabel>
                                 <SwitchRow>
                                     <Switch>
@@ -1428,13 +1455,12 @@ const Users = () => {
         );
     };
 
-    // View User Modal
     const ViewUserModal = ({ user, onClose, onEdit }) => {
         if (!user) return null;
 
         return (
             <ModalOverlay onClick={onClose}>
-                <Modal width="500px" onClick={(e) => e.stopPropagation()}>
+                <Modal $width="500px" onClick={(e) => e.stopPropagation()}>
                     <ModalHeader>
                         <ModalTitle>
                             <Visibility />
@@ -1449,10 +1475,10 @@ const Users = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
                             {renderAvatar(user)}
                             <div style={{ minWidth: 0 }}>
-                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: F.family }}>
                                     {user.first_name} {user.last_name}
                                 </h3>
-                                <p style={{ margin: '4px 0', fontSize: '14px', color: 'text.secondary' }}>
+                                <p style={{ margin: '4px 0', fontSize: '14px', color: C.textSecondary, fontFamily: F.family }}>
                                     @{user.username}
                                 </p>
                                 {renderRoleBadge(user.role)}
@@ -1461,39 +1487,39 @@ const Users = () => {
 
                         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Email</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px', wordBreak: 'break-all' }}>
-                                    <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Email</p>
+                                <p style={{ margin: '4px 0', fontSize: '14px', wordBreak: 'break-all', fontFamily: F.family }}>
+                                    <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
                                     {user.email}
                                 </p>
                             </div>
 
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Phone</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px' }}>
-                                    <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Phone</p>
+                                <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
+                                    <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
                                     {user.profile?.phone || 'N/A'}
                                 </p>
                             </div>
 
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Location</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px' }}>
-                                    <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Location</p>
+                                <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
+                                    <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
                                     {[user.profile?.city, user.profile?.state].filter(Boolean).join(', ') || 'N/A'}
                                 </p>
                             </div>
 
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Joined</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px' }}>
-                                    <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Joined</p>
+                                <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
+                                    <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
                                     {formatDate(user.date_joined)}
                                 </p>
                             </div>
                         </div>
 
-                        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(226, 232, 240, 1)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}`, display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                             {renderStatusBadge(user.is_active !== false)}
                             {user.is_staff && (
                                 <Badge className="active">
@@ -1518,13 +1544,12 @@ const Users = () => {
         );
     };
 
-    // Delete Confirmation Modal
     const DeleteUserModal = ({ user, onClose, onConfirm }) => {
         if (!user) return null;
 
         return (
             <ModalOverlay onClick={onClose}>
-                <Modal width="400px" onClick={(e) => e.stopPropagation()}>
+                <Modal $width="400px" onClick={(e) => e.stopPropagation()}>
                     <ModalHeader>
                         <ModalTitle>
                             <Delete />
@@ -1536,10 +1561,10 @@ const Users = () => {
                     </ModalHeader>
 
                     <ModalBody>
-                        <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6 }}>
+                        <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6, fontFamily: F.family }}>
                             Are you sure you want to delete the user <strong>{user.username}</strong>?
                         </p>
-                        <p style={{ margin: 0, fontSize: '14px', color: 'error.main' }}>
+                        <p style={{ margin: 0, fontSize: '14px', color: C.error, fontFamily: F.family }}>
                             This action cannot be undone. All associated data will be permanently deleted.
                         </p>
                     </ModalBody>
@@ -1589,7 +1614,7 @@ const Users = () => {
             {/* Stats Cards */}
             <StatsGrid>
                 <StatCard>
-                    <StatIcon bg="rgba(79, 70, 229, 0.1)" color="#4f46e5">
+                    <StatIcon $bg={`${C.primary}1A`} $color={C.primary}>
                         <Group />
                     </StatIcon>
                     <StatValue>{totalUsers}</StatValue>
@@ -1597,7 +1622,7 @@ const Users = () => {
                 </StatCard>
 
                 <StatCard>
-                    <StatIcon bg="rgba(16, 185, 129, 0.1)" color="#10b981">
+                    <StatIcon $bg={`${C.success}1A`} $color={C.success}>
                         <CheckCircle />
                     </StatIcon>
                     <StatValue>{stats.active}</StatValue>
@@ -1605,7 +1630,7 @@ const Users = () => {
                 </StatCard>
 
                 <StatCard>
-                    <StatIcon bg="rgba(217, 119, 6, 0.1)" color="#d97706">
+                    <StatIcon $bg={`${C.warning}1A`} $color={C.warningDark}>
                         <Storefront />
                     </StatIcon>
                     <StatValue>{stats.organizers}</StatValue>
@@ -1613,7 +1638,7 @@ const Users = () => {
                 </StatCard>
 
                 <StatCard>
-                    <StatIcon bg="rgba(37, 99, 235, 0.1)" color="#2563eb">
+                    <StatIcon $bg={`${C.info}1A`} $color={C.infoDark}>
                         <AdminPanelSettings />
                     </StatIcon>
                     <StatValue>{stats.admins}</StatValue>
@@ -1667,23 +1692,15 @@ const Users = () => {
                 {loading ? (
                     <LoadingState>
                         <div style={{ textAlign: 'center' }}>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                border: '3px solid rgba(79,70,229,0.1)',
-                                borderTop: '3px solid #4f46e5',
-                                borderRadius: '50%',
-                                animation: 'spin 1s linear infinite',
-                                margin: '0 auto 16px'
-                            }} />
+                            <Spinner />
                             Loading users...
                         </div>
                     </LoadingState>
                 ) : error ? (
                     <LoadingState>
-                        <div style={{ textAlign: 'center', color: 'error.main' }}>
-                            <p style={{ fontSize: '16px', fontWeight: 600 }}>Error loading users</p>
-                            <p style={{ fontSize: '14px' }}>{error}</p>
+                        <div style={{ textAlign: 'center', color: C.error }}>
+                            <p style={{ fontSize: '16px', fontWeight: 600, fontFamily: F.family }}>Error loading users</p>
+                            <p style={{ fontSize: '14px', fontFamily: F.family }}>{error}</p>
                         </div>
                     </LoadingState>
                 ) : users.length === 0 ? (
@@ -1748,7 +1765,7 @@ const Users = () => {
                                             e.stopPropagation();
                                             handleToggleActive(user);
                                         }}
-                                        style={{ color: user.is_active !== false ? '#ef4444' : '#10b981' }}
+                                        style={{ color: user.is_active !== false ? C.error : C.success }}
                                     >
                                         {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
                                         {user.is_active !== false ? 'Block' : 'Unblock'}
@@ -1863,7 +1880,7 @@ const Users = () => {
                                     return (
                                         <PageButton
                                             key={pageNum}
-                                            active={page === pageNum}
+                                            $active={page === pageNum}
                                             onClick={() => setPage(pageNum)}
                                         >
                                             {pageNum}

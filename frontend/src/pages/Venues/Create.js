@@ -22,6 +22,12 @@ import styled from 'styled-components';
 //    but not used on this page — safe to remove in a future cleanup)
 import { EVENT_STATUS } from '../../constants';
 
+// frontend/src/pages/Venues/Create.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ============================================================
 // COUNTRY LIST
 // ------------------------------------------------------------
@@ -428,7 +434,7 @@ const CreateVenue = () => {
         return (
             <PageContainer>
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                    <CircularProgress sx={{ color: '#4f46e5' }} />
+                    <CircularProgress sx={{ color: 'primary.main' }} />
                 </Box>
             </PageContainer>
         );
@@ -450,7 +456,7 @@ const CreateVenue = () => {
                         {/* Basic Information */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Basic Information</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
@@ -507,7 +513,7 @@ const CreateVenue = () => {
                         {/* Address */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Address</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
@@ -593,7 +599,7 @@ const CreateVenue = () => {
                         {/* Contact Information */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Contact Information</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
@@ -623,7 +629,7 @@ const CreateVenue = () => {
                         {/* Settings */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Settings</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
@@ -634,13 +640,13 @@ const CreateVenue = () => {
                                         onChange={handleChange}
                                         name="has_reserved_seating"
                                         sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
+                                            '& .MuiSwitch-switchBase.Mui-checked': { color: 'primary.main' },
                                             '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
                                         }}
                                     />
                                 }
                                 label="Has Reserved Seating"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
 
@@ -652,13 +658,13 @@ const CreateVenue = () => {
                                         onChange={handleChange}
                                         name="is_active"
                                         sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
+                                            '& .MuiSwitch-switchBase.Mui-checked': { color: 'primary.main' },
                                             '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
                                         }}
                                     />
                                 }
                                 label="Active"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
 

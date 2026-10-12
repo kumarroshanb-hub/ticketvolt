@@ -104,7 +104,7 @@ const TicketView = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }

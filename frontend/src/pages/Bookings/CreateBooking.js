@@ -581,11 +581,11 @@ const CreateBooking = () => {
                                         cursor: canSelect ? 'pointer' : 'not-allowed',
                                         border:
                                             selectedEvent?.id === event.id
-                                                ? '2px solid #4f46e5'
+                                                ? '2px solid rgba(51, 51, 51, 1)'
                                                 : isDraft
                                                 ? '1px dashed rgba(255,200,0,0.5)'
                                                 : '1px solid #e2e8f0',
-                                        bgcolor: isDraft ? 'rgba(255,200,0,0.03)' : 'white',
+                                        bgcolor: isDraft ? 'rgba(255,200,0,0.03)' : 'background.paper',
                                         opacity: canSelect ? 1 : 0.7,
                                         height: '100%',
                                         display: 'flex',
@@ -594,7 +594,7 @@ const CreateBooking = () => {
                                         transition: 'all 0.2s ease',
                                         '&:hover': canSelect
                                             ? {
-                                                  borderColor: '#4f46e5',
+                                                  borderColor: 'primary.main',
                                                   transform: 'translateY(-2px)',
                                                   boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                                               }
@@ -662,7 +662,7 @@ const CreateBooking = () => {
                                             <Typography
                                                 variant="body2"
                                                 sx={{
-                                                    color: '#64748b',
+                                                    color: 'text.secondary',
                                                     mt: 1,
                                                     display: '-webkit-box',
                                                     WebkitLineClamp: 2,
@@ -675,7 +675,7 @@ const CreateBooking = () => {
                                         )}
 
                                         <Box mt={2} display="flex" flexDirection="column" gap={0.75}>
-                                            <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                 <CalendarIcon fontSize="small" />
                                                 {formattedDate}
                                             </Typography>
@@ -684,7 +684,7 @@ const CreateBooking = () => {
                                                 <Typography
                                                     variant="body2"
                                                     sx={{
-                                                        color: '#475569',
+                                                        color: 'text.secondary',
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         gap: 1,
@@ -701,7 +701,7 @@ const CreateBooking = () => {
                                                 <Typography
                                                     variant="body2"
                                                     sx={{
-                                                        color: '#94a3b8',
+                                                        color: 'text.disabled',
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         gap: 1,
@@ -714,18 +714,18 @@ const CreateBooking = () => {
                                             )}
 
                                             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                                                <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                     <TicketIcon fontSize="small" />
                                                     {tierCount} tier{tierCount === 1 ? '' : 's'}
                                                 </Typography>
-                                                <Typography variant="body2" sx={{ color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                     <ScheduleIcon fontSize="small" />
                                                     {sessionCount} session{sessionCount === 1 ? '' : 's'}
                                                 </Typography>
                                             </Box>
 
                                             {totalCapacity > 0 && (
-                                                <Typography variant="caption" sx={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                <Typography variant="caption" sx={{ color: 'text.disabled', display: 'flex', alignItems: 'center', gap: 1 }}>
                                                     <PeopleIcon sx={{ fontSize: 14 }} />
                                                     {totalCapacity} total capacity
                                                     {totalSold > 0 && ` • ${totalSold} sold`}
@@ -740,7 +740,7 @@ const CreateBooking = () => {
                                                 sx={{
                                                     mt: 1,
                                                     bgcolor: 'rgba(100,116,139,0.1)',
-                                                    color: '#64748b',
+                                                    color: 'text.secondary',
                                                 }}
                                             />
                                         )}
@@ -792,11 +792,11 @@ const CreateBooking = () => {
                                     sx={{
                                         cursor: isAvailable ? 'pointer' : 'not-allowed',
                                         border: isSelected
-                                            ? '2px solid #4f46e5'
+                                            ? '2px solid rgba(51, 51, 51, 1)'
                                             : '1px solid #e2e8f0',
                                         opacity: isAvailable ? 1 : 0.5,
                                         '&:hover': isAvailable
-                                            ? { borderColor: '#4f46e5' }
+                                            ? { borderColor: 'primary.main' }
                                             : {},
                                         '&:active': isAvailable
                                             ? { transform: 'scale(0.99)' }
@@ -808,10 +808,10 @@ const CreateBooking = () => {
                                     <CardContent>
                                         <Box display="flex" justifyContent="space-between" alignItems="center">
                                             <Box>
-                                                <Typography variant="h6" sx={{ color: '#0f172a' }}>
+                                                <Typography variant="h6" sx={{ color: 'text.primary' }}>
                                                     Slot #{index + 1}
                                                 </Typography>
-                                                <Typography variant="body2" sx={{ color: '#334155' }}>
+                                                <Typography variant="body2" sx={{ color: 'text.primary' }}>
                                                     🕐{' '}
                                                     {startTime.toLocaleTimeString([], {
                                                         hour: '2-digit',
@@ -840,11 +840,11 @@ const CreateBooking = () => {
                     })}
                 </Grid>
 
-                <Paper sx={{ p: isMobile ? 2 : 3, bgcolor: '#f8fafc' }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a', mb: 2 }}>
+                <Paper sx={{ p: isMobile ? 2 : 3, bgcolor: 'background.default' }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                         📋 Slot Preferences (Optional)
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#64748b', mb: 2 }}>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
                         Enter your slot preferences in order (e.g., 1,3,2 means Slot 1 is your first preference)
                     </Typography>
 
@@ -872,16 +872,16 @@ const CreateBooking = () => {
                     </Box>
 
                     {slotPreferences.length > 0 && (
-                        <Box sx={{ mt: 2, p: 2, bgcolor: '#eef2ff', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ color: '#4f46e5' }}>
+                        <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(51, 51, 51, 0.08)', borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ color: 'primary.main' }}>
                                 ✅ Preferences: {slotPreferences.join(' → ')}
                             </Typography>
                         </Box>
                     )}
 
                     {selectedSession && (
-                        <Box sx={{ mt: 2, p: 2, bgcolor: '#dcfce7', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ color: '#16a34a' }}>
+                        <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ color: 'success.main' }}>
                                 ✅ Allocated Slot: Slot #{sessions.indexOf(selectedSession) + 1} (
                                 {new Date(selectedSession.start_time).toLocaleTimeString([], {
                                     hour: '2-digit',
@@ -953,10 +953,10 @@ const CreateBooking = () => {
                                 }}
                             >
                                 <Box sx={{ minWidth: 0, flex: 1 }}>
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                         {tier.name}
                                     </Typography>
-                                    <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                         ₹{parseFloat(tier.price).toFixed(2)} each • {available} available
                                     </Typography>
                                 </Box>
@@ -966,14 +966,14 @@ const CreateBooking = () => {
                                         onClick={() => updateQuantity(tier.id, -1)}
                                         disabled={qty <= 0}
                                         sx={{
-                                            bgcolor: qty > 0 ? '#f1f5f9' : '#f8fafc',
+                                            bgcolor: qty > 0 ? 'action.hover' : 'background.default',
                                             minWidth: 40,
                                             minHeight: 40,
                                         }}
                                     >
                                         <RemoveIcon fontSize="small" />
                                     </IconButton>
-                                    <Typography variant="h6" sx={{ minWidth: 40, textAlign: 'center', color: '#0f172a' }}>
+                                    <Typography variant="h6" sx={{ minWidth: 40, textAlign: 'center', color: 'text.primary' }}>
                                         {qty}
                                     </Typography>
                                     <IconButton
@@ -981,7 +981,7 @@ const CreateBooking = () => {
                                         onClick={() => updateQuantity(tier.id, 1)}
                                         disabled={qty >= maxQty}
                                         sx={{
-                                            bgcolor: qty < maxQty ? '#eef2ff' : '#f8fafc',
+                                            bgcolor: qty < maxQty ? 'rgba(51, 51, 51, 0.08)' : 'background.default',
                                             minWidth: 40,
                                             minHeight: 40,
                                         }}
@@ -994,11 +994,11 @@ const CreateBooking = () => {
                     })}
 
                     {totalTickets > 0 && (
-                        <Box sx={{ mt: 3, p: 2, bgcolor: '#f8fafc', borderRadius: 2 }}>
-                            <Typography variant="subtitle1" sx={{ color: '#0f172a' }}>
+                        <Box sx={{ mt: 3, p: 2, bgcolor: 'background.default', borderRadius: 2 }}>
+                            <Typography variant="subtitle1" sx={{ color: 'text.primary' }}>
                                 🎫 {totalTickets} ticket(s) selected
                             </Typography>
-                            <Typography variant="h6" sx={{ color: '#4f46e5' }}>
+                            <Typography variant="h6" sx={{ color: 'primary.main' }}>
                                 Total: ₹{totalAmount.toFixed(2)}
                             </Typography>
                         </Box>
@@ -1006,12 +1006,12 @@ const CreateBooking = () => {
 
                     {/* ---- Discount input (visible only when tickets are selected) ---- */}
                     {totalTickets > 0 && (
-                        <Paper sx={{ mt: 3, p: isMobile ? 2 : 3, bgcolor: '#f8fafc' }}>
+                        <Paper sx={{ mt: 3, p: isMobile ? 2 : 3, bgcolor: 'background.default' }}>
                             <Typography
                                 variant="subtitle2"
                                 sx={{
                                     fontWeight: 700,
-                                    color: '#0f172a',
+                                    color: 'text.primary',
                                     mb: 1,
                                     display: 'flex',
                                     alignItems: 'center',
@@ -1048,7 +1048,7 @@ const CreateBooking = () => {
                                         onClick={removeDiscount}
                                         sx={{
                                             textTransform: 'none',
-                                            color: '#ef4444',
+                                            color: 'error.main',
                                             borderColor: '#fecaca',
                                             '&:hover': { borderColor: '#ef4444' },
                                         }}
@@ -1072,8 +1072,8 @@ const CreateBooking = () => {
                             </Box>
 
                             {appliedDiscount?.valid && (
-                                <Box sx={{ mt: 2, p: 1.5, bgcolor: '#dcfce7', borderRadius: 1 }}>
-                                    <Typography variant="body2" sx={{ color: '#15803d', fontWeight: 600 }}>
+                                <Box sx={{ mt: 2, p: 1.5, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}>
+                                    <Typography variant="body2" sx={{ color: 'success.dark', fontWeight: 600 }}>
                                         ✅ {appliedDiscount.code} applied — you save ₹
                                         {Number(appliedDiscount.discount_amount).toFixed(2)}
                                     </Typography>
@@ -1082,10 +1082,10 @@ const CreateBooking = () => {
 
                             {appliedDiscount?.valid && (
                                 <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}>
-                                    <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                         New total
                                     </Typography>
-                                    <Typography variant="body2" sx={{ color: '#0f172a', fontWeight: 700 }}>
+                                    <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 700 }}>
                                         ₹{netAmount.toFixed(2)}
                                     </Typography>
                                 </Box>
@@ -1108,7 +1108,7 @@ const CreateBooking = () => {
             </Alert>
 
             <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a', mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                     <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                     Customer Details
                 </Typography>
@@ -1171,11 +1171,11 @@ const CreateBooking = () => {
             </Paper>
 
             <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a', mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                     <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                     Attendee Details
                     {errors.attendees && (
-                        <Typography variant="caption" sx={{ color: '#dc2626', ml: 2 }}>
+                        <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>
                             {errors.attendees}
                         </Typography>
                     )}
@@ -1183,8 +1183,8 @@ const CreateBooking = () => {
 
                 <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
                     {attendees.map((attendee, index) => (
-                        <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: '#f8fafc' }}>
-                            <Typography variant="caption" sx={{ color: '#64748b' }}>
+                        <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                                 #{index + 1} • {attendee.tier_name}
                             </Typography>
                             <Grid container spacing={2} sx={{ mt: 0.5 }}>
@@ -1246,25 +1246,25 @@ const CreateBooking = () => {
             <Grid container spacing={isMobile ? 2 : 3}>
                 <Grid item xs={12} md={6}>
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a', mb: 2 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                             <EventIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                             Event Details
                         </Typography>
                         <Box>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Event:</strong> {selectedEvent?.title}
                             </Typography>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Venue:</strong> {selectedEvent?.venue?.name || 'TBD'}
                             </Typography>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Date:</strong>{' '}
                                 {selectedEvent?.start_date
                                     ? new Date(selectedEvent.start_date).toLocaleDateString()
                                     : 'TBD'}
                             </Typography>
                             {selectedSession && (
-                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     <strong>Slot:</strong>{' '}
                                     {new Date(selectedSession.start_time).toLocaleTimeString([], {
                                         hour: '2-digit',
@@ -1282,7 +1282,7 @@ const CreateBooking = () => {
                               of a bare "2" that was ambiguous to the operator.
                             */}
                             {slotPreferences.length > 0 && (
-                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     <strong>Slot Preferences:</strong>{' '}
                                     {slotPreferences
                                         .map((n, i) => `#${i + 1}: Slot ${n}`)
@@ -1295,27 +1295,27 @@ const CreateBooking = () => {
 
                 <Grid item xs={12} md={6}>
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a', mb: 2 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                             <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                             Customer Details
                         </Typography>
                         <Box>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Name:</strong> {customer.name}
                             </Typography>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Email:</strong> {customer.email}
                             </Typography>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Phone:</strong> {customer.phone}
                             </Typography>
                             {customer.whatsapp && (
-                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     <strong>WhatsApp:</strong> {customer.whatsapp}
                                 </Typography>
                             )}
                             {customer.notes && (
-                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     <strong>Notes:</strong> {customer.notes}
                                 </Typography>
                             )}
@@ -1325,7 +1325,7 @@ const CreateBooking = () => {
 
                 <Grid item xs={12}>
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#0f172a', mb: 2 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                             <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                             Tickets ({totalTickets})
                         </Typography>
@@ -1344,7 +1344,7 @@ const CreateBooking = () => {
                                     <Typography
                                         variant="body2"
                                         sx={{
-                                            color: '#334155',
+                                            color: 'text.primary',
                                             minWidth: 0,
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
@@ -1353,7 +1353,7 @@ const CreateBooking = () => {
                                         #{index + 1} {ticket.tier_name}
                                         {attendees[index]?.name && ` - ${attendees[index].name}`}
                                     </Typography>
-                                    <Typography variant="body2" sx={{ color: '#0f172a', flexShrink: 0 }}>
+                                    <Typography variant="body2" sx={{ color: 'text.primary', flexShrink: 0 }}>
                                         ₹{ticket.price.toFixed(2)}
                                     </Typography>
                                 </Box>
@@ -1363,10 +1363,10 @@ const CreateBooking = () => {
 
                             {/* Subtotal */}
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     Subtotal ({totalTickets} ticket{totalTickets === 1 ? '' : 's'})
                                 </Typography>
-                                <Typography variant="body2" sx={{ color: '#334155' }}>
+                                <Typography variant="body2" sx={{ color: 'text.primary' }}>
                                     ₹{totalAmount.toFixed(2)}
                                 </Typography>
                             </Box>
@@ -1374,10 +1374,10 @@ const CreateBooking = () => {
                             {/* Discount (only if applied) */}
                             {appliedDiscount?.valid && (
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                                    <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
+                                    <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
                                         Discount ({appliedDiscount.code})
                                     </Typography>
-                                    <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
+                                    <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
                                         −₹{Number(appliedDiscount.discount_amount).toFixed(2)}
                                     </Typography>
                                 </Box>
@@ -1393,10 +1393,10 @@ const CreateBooking = () => {
                                     borderTop: '2px solid #e2e8f0',
                                 }}
                             >
-                                <Typography variant="subtitle1" sx={{ color: '#0f172a', fontWeight: 700 }}>
+                                <Typography variant="subtitle1" sx={{ color: 'text.primary', fontWeight: 700 }}>
                                     Total
                                 </Typography>
-                                <Typography variant="h6" sx={{ color: '#4f46e5', fontWeight: 700 }}>
+                                <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>
                                     ₹{netAmount.toFixed(2)}
                                 </Typography>
                             </Box>
@@ -1478,7 +1478,7 @@ const CreateBooking = () => {
                         gap: isMobile ? 1.5 : 0,
                         mt: 4,
                         pt: 2,
-                        borderTop: '1px solid #e2e8f0',
+                        borderTop: '1px solid rgba(226, 232, 240, 1)',
                     }}
                 >
                     <Button

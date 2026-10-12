@@ -33,6 +33,12 @@ import {
 } from '../../components/Common';
 import styled from 'styled-components';
 
+// frontend/src/pages/Analytics/Analytics.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 const ChartCard = styled(Paper)`
     background: ${props => props.theme.colors.bgCard};
     border: 1px solid ${props => props.theme.colors.borderLight};
@@ -96,7 +102,15 @@ const StatIcon = styled(Box)`
     flex-shrink: 0;
 `;
 
-const COLORS = ['#4f46e5', '#7c3aed', '#10b981', '#f59e0b', '#ef4444', '#3b82f6'];
+// Replace this array
+const COLORS = [
+    C.primary,
+    C.secondary,
+    C.success,
+    C.warning,
+    C.error,
+    C.info,
+];
 
 const EMPTY_ANALYTICS = {
     overview: {
@@ -182,7 +196,7 @@ const Analytics = () => {
     if (loading && analytics.revenueData.length === 0) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -194,28 +208,28 @@ const Analytics = () => {
             title: 'Total Events',
             value: overview.total_events || 0,
             icon: <EventIcon />,
-            color: '#4f46e5',
+            color: 'primary.main',
             bg: 'rgba(79, 70, 229, 0.08)',
         },
         {
             title: 'Total Bookings',
             value: overview.total_bookings || 0,
             icon: <PeopleIcon />,
-            color: '#7c3aed',
+            color: 'secondary.main',
             bg: 'rgba(124, 58, 237, 0.08)',
         },
         {
             title: 'Revenue',
             value: `₹${(overview.total_revenue || 0).toLocaleString()}`,
             icon: <MoneyIcon />,
-            color: '#10b981',
+            color: 'success.main',
             bg: 'rgba(16, 185, 129, 0.08)',
         },
         {
             title: 'Tickets Issued',
             value: overview.total_tickets || 0,
             icon: <TicketIcon />,
-            color: '#f59e0b',
+            color: 'warning.main',
             bg: 'rgba(245, 158, 11, 0.08)',
         },
     ];
@@ -260,8 +274,8 @@ const Analytics = () => {
                                         color: 'white',
                                     }),
                                     ...(timeframe !== tf && {
-                                        borderColor: '#e2e8f0',
-                                        color: '#64748b',
+                                        borderColor: 'divider',
+                                        color: 'text.secondary',
                                     }),
                                 }}
                             >
@@ -273,7 +287,7 @@ const Analytics = () => {
                             size="small"
                             startIcon={<RefreshIcon />}
                             onClick={loadAnalytics}
-                            sx={{ textTransform: 'none', borderColor: '#e2e8f0', color: '#64748b' }}
+                            sx={{ textTransform: 'none', borderColor: 'divider', color: 'text.secondary' }}
                         >
                             Refresh
                         </Button>
@@ -282,7 +296,7 @@ const Analytics = () => {
                             size="small"
                             startIcon={<DownloadIcon />}
                             onClick={handleExport}
-                            sx={{ textTransform: 'none', borderColor: '#e2e8f0', color: '#64748b' }}
+                            sx={{ textTransform: 'none', borderColor: 'divider', color: 'text.secondary' }}
                         >
                             Export
                         </Button>
@@ -307,7 +321,7 @@ const Analytics = () => {
                                     <Typography
                                         variant="caption"
                                         sx={{
-                                            color: '#64748b',
+                                            color: 'text.secondary',
                                             fontWeight: 600,
                                             letterSpacing: 0.5,
                                             fontSize: isSmall ? '10px' : '12px',
@@ -320,7 +334,7 @@ const Analytics = () => {
                                         variant="h4"
                                         sx={{
                                             fontWeight: 700,
-                                            color: '#0f172a',
+                                            color: 'text.primary',
                                             mt: 1,
                                             fontSize: isSmall ? '1.25rem' : '1.75rem',
                                             overflow: 'hidden',
@@ -344,17 +358,17 @@ const Analytics = () => {
                 <Grid item xs={12} sm={6}>
                     <StatCard>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <StatIcon sx={{ backgroundColor: 'rgba(16, 185, 129, 0.08)', color: '#10b981' }}>
+                            <StatIcon sx={{ backgroundColor: 'rgba(16, 185, 129, 0.08)', color: 'success.main' }}>
                                 <TrendingUp />
                             </StatIcon>
                             <Box>
-                                <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
                                     Conversion Rate
                                 </Typography>
-                                <Typography variant="h6" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
                                     {overview.conversion_rate || 0}%
                                 </Typography>
-                                <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                     check-ins / tickets issued
                                 </Typography>
                             </Box>
@@ -364,17 +378,17 @@ const Analytics = () => {
                 <Grid item xs={12} sm={6}>
                     <StatCard>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <StatIcon sx={{ backgroundColor: 'rgba(59, 130, 246, 0.08)', color: '#3b82f6' }}>
+                            <StatIcon sx={{ backgroundColor: 'rgba(59, 130, 246, 0.08)', color: 'info.main' }}>
                                 <CheckCircleIcon />
                             </StatIcon>
                             <Box>
-                                <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
                                     Total Check-ins
                                 </Typography>
-                                <Typography variant="h6" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
                                     {overview.total_checkins || 0}
                                 </Typography>
-                                <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                     tickets scanned
                                 </Typography>
                             </Box>
@@ -398,7 +412,7 @@ const Analytics = () => {
                         <ChartWrapper>
                             {revenueData.length === 0 ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: '#94a3b8' }}>No data for this timeframe</Typography>
+                                    <Typography sx={{ color: 'text.disabled' }}>No data for this timeframe</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -419,7 +433,7 @@ const Analytics = () => {
                                         <Tooltip
                                             contentStyle={{
                                                 background: '#ffffff',
-                                                border: '1px solid #e2e8f0',
+                                                border: '1px solid rgba(226, 232, 240, 1)',
                                                 borderRadius: '8px',
                                                 boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                                             }}
@@ -442,7 +456,7 @@ const Analytics = () => {
                         <ChartWrapper>
                             {deviceData.length === 0 || deviceData.every(d => d.value === 0) ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: '#94a3b8' }}>No data yet</Typography>
+                                    <Typography sx={{ color: 'text.disabled' }}>No data yet</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -465,7 +479,7 @@ const Analytics = () => {
                                         <Tooltip
                                             contentStyle={{
                                                 background: '#ffffff',
-                                                border: '1px solid #e2e8f0',
+                                                border: '1px solid rgba(226, 232, 240, 1)',
                                                 borderRadius: '8px',
                                                 boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                                             }}
@@ -486,7 +500,7 @@ const Analytics = () => {
                         <ChartWrapper>
                             {eventData.length === 0 || eventData.every(d => d.value === 0) ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: '#94a3b8' }}>No revenue yet</Typography>
+                                    <Typography sx={{ color: 'text.disabled' }}>No revenue yet</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -497,7 +511,7 @@ const Analytics = () => {
                                         <Tooltip
                                             contentStyle={{
                                                 background: '#ffffff',
-                                                border: '1px solid #e2e8f0',
+                                                border: '1px solid rgba(226, 232, 240, 1)',
                                                 borderRadius: '8px',
                                                 boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                                             }}
@@ -523,7 +537,7 @@ const Analytics = () => {
                         </ChartHeader>
                         <Box>
                             {topEvents.length === 0 ? (
-                                <Typography sx={{ color: '#94a3b8', textAlign: 'center', py: 4 }}>
+                                <Typography sx={{ color: 'text.disabled', textAlign: 'center', py: 4 }}>
                                     No event data available
                                 </Typography>
                             ) : (
@@ -534,7 +548,7 @@ const Analytics = () => {
                                             mb: 2,
                                             p: isMobile ? 1.25 : 2,
                                             borderRadius: 1,
-                                            bgcolor: '#f8fafc',
+                                            bgcolor: 'background.default',
                                         }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
@@ -543,7 +557,7 @@ const Analytics = () => {
                                                     variant="body2"
                                                     fontWeight="500"
                                                     sx={{
-                                                        color: '#0f172a',
+                                                        color: 'text.primary',
                                                         overflow: 'hidden',
                                                         textOverflow: 'ellipsis',
                                                         whiteSpace: 'nowrap',
@@ -551,7 +565,7 @@ const Analytics = () => {
                                                 >
                                                     {event.name}
                                                 </Typography>
-                                                <Typography variant="caption" sx={{ color: '#64748b' }}>
+                                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                                                     {event.bookings || 0} bookings • ₹{(event.revenue || 0).toLocaleString()}
                                                 </Typography>
                                             </Box>
@@ -560,7 +574,7 @@ const Analytics = () => {
                                                 size="small"
                                                 sx={{
                                                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                                                    color: '#10b981',
+                                                    color: 'success.main',
                                                     fontWeight: 600,
                                                     flexShrink: 0,
                                                 }}
@@ -591,7 +605,7 @@ const Analytics = () => {
                             <ChartTitle>Bookings by Status</ChartTitle>
                         </ChartHeader>
                         {statusBreakdown.length === 0 ? (
-                            <Typography sx={{ color: '#94a3b8', textAlign: 'center', py: 2 }}>
+                            <Typography sx={{ color: 'text.disabled', textAlign: 'center', py: 2 }}>
                                 No bookings yet
                             </Typography>
                         ) : (
@@ -603,7 +617,7 @@ const Analytics = () => {
                                         size="small"
                                         sx={{
                                             backgroundColor: '#f1f5f9',
-                                            color: '#334155',
+                                            color: 'text.primary',
                                             fontWeight: 600,
                                             textTransform: 'capitalize',
                                         }}

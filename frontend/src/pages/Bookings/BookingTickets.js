@@ -38,6 +38,12 @@ import {
     PrimaryButton,
 } from '../../components/Common';
 
+// frontend/src/pages/Bookings/BookingTickets.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ---------------------------------------------------------------------------
 // QRCodeSVG is optional. If the package isn't installed, we degrade
 // gracefully — the dialog still shows the raw code.
@@ -398,8 +404,8 @@ const BookingTickets = () => {
         if (!qrData) {
             return (
                 <Box sx={{ textAlign: 'center', py: 4 }}>
-                    <QrCodeIcon sx={{ fontSize: 60, color: '#94a3b8' }} />
-                    <Typography sx={{ color: '#94a3b8' }}>
+                    <QrCodeIcon sx={{ fontSize: 60, color: 'text.disabled' }} />
+                    <Typography sx={{ color: 'text.disabled' }}>
                         QR Code not available
                     </Typography>
                 </Box>
@@ -472,8 +478,8 @@ const BookingTickets = () => {
 
         return (
             <Box sx={{ textAlign: 'center', py: 4 }}>
-                <QrCodeIcon sx={{ fontSize: 60, color: '#94a3b8' }} />
-                <Typography sx={{ color: '#94a3b8', mt: 2 }}>
+                <QrCodeIcon sx={{ fontSize: 60, color: 'text.disabled' }} />
+                <Typography sx={{ color: 'text.disabled', mt: 2 }}>
                     QR Code data available
                 </Typography>
             </Box>
@@ -487,7 +493,7 @@ const BookingTickets = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -563,7 +569,7 @@ const BookingTickets = () => {
                     <StyledCard>
                         <CardContent>
                             <Typography
-                                sx={{ color: '#64748b' }}
+                                sx={{ color: 'text.secondary' }}
                                 gutterBottom
                                 variant="caption"
                             >
@@ -571,19 +577,19 @@ const BookingTickets = () => {
                             </Typography>
                             <Typography
                                 variant="h6"
-                                sx={{ color: '#0f172a', wordBreak: 'break-word' }}
+                                sx={{ color: 'text.primary', wordBreak: 'break-word' }}
                             >
                                 {booking.customer_name}
                             </Typography>
                             <Typography
                                 variant="body2"
-                                sx={{ color: '#334155', wordBreak: 'break-word' }}
+                                sx={{ color: 'text.primary', wordBreak: 'break-word' }}
                             >
                                 {booking.customer_email}
                             </Typography>
                             <Typography
                                 variant="body2"
-                                sx={{ color: '#334155' }}
+                                sx={{ color: 'text.primary' }}
                             >
                                 {booking.customer_phone}
                             </Typography>
@@ -596,7 +602,7 @@ const BookingTickets = () => {
                     <StyledCard>
                         <CardContent>
                             <Typography
-                                sx={{ color: '#64748b' }}
+                                sx={{ color: 'text.secondary' }}
                                 gutterBottom
                                 variant="caption"
                             >
@@ -604,17 +610,17 @@ const BookingTickets = () => {
                             </Typography>
                             <Typography
                                 variant="h6"
-                                sx={{ color: '#0f172a', wordBreak: 'break-word' }}
+                                sx={{ color: 'text.primary', wordBreak: 'break-word' }}
                             >
                                 {booking.event_title || booking.event?.title || 'N/A'}
                             </Typography>
 
                             {/* Subtotal */}
                             <Box sx={{ mt: 1.5, display: 'flex', justifyContent: 'space-between' }}>
-                                <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     Subtotal
                                 </Typography>
-                                <Typography variant="body2" sx={{ color: '#334155' }}>
+                                <Typography variant="body2" sx={{ color: 'text.primary' }}>
                                     ₹{subtotal.toFixed(2)}
                                 </Typography>
                             </Box>
@@ -622,11 +628,11 @@ const BookingTickets = () => {
                             {/* Discount (only if any) */}
                             {discountApplied > 0 && (
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-                                    <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
+                                    <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
                                         Discount
                                         {booking.discount_code ? ` (${booking.discount_code})` : ''}
                                     </Typography>
-                                    <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
+                                    <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
                                         −₹{discountApplied.toFixed(2)}
                                     </Typography>
                                 </Box>
@@ -639,13 +645,13 @@ const BookingTickets = () => {
                                     justifyContent: 'space-between',
                                     mt: 1,
                                     pt: 1,
-                                    borderTop: '1px solid #e2e8f0',
+                                    borderTop: '1px solid rgba(226, 232, 240, 1)',
                                 }}
                             >
-                                <Typography variant="body2" sx={{ color: '#0f172a', fontWeight: 700 }}>
+                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 700 }}>
                                     Net Paid
                                 </Typography>
-                                <Typography variant="body2" sx={{ color: '#4f46e5', fontWeight: 700 }}>
+                                <Typography variant="body2" sx={{ color: 'primary.main', fontWeight: 700 }}>
                                     ₹{netPaid.toFixed(2)}
                                 </Typography>
                             </Box>
@@ -670,7 +676,7 @@ const BookingTickets = () => {
                     <StyledCard>
                         <CardContent>
                             <Typography
-                                sx={{ color: '#64748b' }}
+                                sx={{ color: 'text.secondary' }}
                                 gutterBottom
                                 variant="caption"
                             >
@@ -721,7 +727,7 @@ const BookingTickets = () => {
                 InputProps={{
                     startAdornment: (
                         <InputAdornment position="start">
-                            <SearchIcon sx={{ color: '#94a3b8' }} />
+                            <SearchIcon sx={{ color: 'text.disabled' }} />
                         </InputAdornment>
                     ),
                 }}
@@ -738,14 +744,14 @@ const BookingTickets = () => {
                         alignItems: 'center',
                         gap: 2,
                         flexWrap: 'wrap',
-                        border: '1px solid #fecaca',
-                        bgcolor: 'rgba(254, 202, 202, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.30)',
+                        bgcolor: 'rgba(239, 68, 68, 0.06)',
                         borderRadius: 2,
                     }}
                 >
                     <Typography
                         variant="body2"
-                        sx={{ fontWeight: 600, color: '#b91c1c', flex: 1, minWidth: 0 }}
+                        sx={{ fontWeight: 600, color: 'error.dark', flex: 1, minWidth: 0 }}
                     >
                         {selectedTicketIds.length} ticket(s) selected
                     </Typography>
@@ -777,10 +783,10 @@ const BookingTickets = () => {
                             p: 4,
                             textAlign: 'center',
                             borderRadius: 2,
-                            border: '1px solid #e2e8f0',
+                            border: '1px solid rgba(226, 232, 240, 1)',
                         }}
                     >
-                        <Typography sx={{ color: '#94a3b8' }}>
+                        <Typography sx={{ color: 'text.disabled' }}>
                             {tickets.length === 0
                                 ? 'No tickets found for this booking'
                                 : 'No matching tickets found'}
@@ -824,9 +830,9 @@ const BookingTickets = () => {
                                                     }
                                                     sx={{
                                                         p: 0.5,
-                                                        color: '#94a3b8',
+                                                        color: 'text.disabled',
                                                         '&.Mui-checked': {
-                                                            color: '#ef4444',
+                                                            color: 'error.main',
                                                         },
                                                         mt: -0.5,
                                                     }}
@@ -838,7 +844,7 @@ const BookingTickets = () => {
                                                     sx={{
                                                         fontFamily: 'monospace',
                                                         fontWeight: 700,
-                                                        color: '#0f172a',
+                                                        color: 'text.primary',
                                                         overflow: 'hidden',
                                                         textOverflow: 'ellipsis',
                                                         whiteSpace: 'nowrap',
@@ -848,7 +854,7 @@ const BookingTickets = () => {
                                                 </Typography>
                                                 <Typography
                                                     variant="caption"
-                                                    sx={{ color: '#94a3b8' }}
+                                                    sx={{ color: 'text.disabled' }}
                                                 >
                                                     #{index + 1}
                                                 </Typography>
@@ -868,7 +874,7 @@ const BookingTickets = () => {
                                             <Typography
                                                 variant="caption"
                                                 sx={{
-                                                    color: '#94a3b8',
+                                                    color: 'text.disabled',
                                                     textTransform: 'uppercase',
                                                     fontWeight: 600,
                                                 }}
@@ -877,7 +883,7 @@ const BookingTickets = () => {
                                             </Typography>
                                             <Typography
                                                 variant="body2"
-                                                sx={{ color: '#334155', fontWeight: 500 }}
+                                                sx={{ color: 'text.primary', fontWeight: 500 }}
                                             >
                                                 {ticket.attendee_name || 'Guest'}
                                             </Typography>
@@ -892,7 +898,7 @@ const BookingTickets = () => {
                                             <Typography
                                                 variant="caption"
                                                 sx={{
-                                                    color: '#94a3b8',
+                                                    color: 'text.disabled',
                                                     textTransform: 'uppercase',
                                                     fontWeight: 600,
                                                 }}
@@ -901,7 +907,7 @@ const BookingTickets = () => {
                                             </Typography>
                                             <Typography
                                                 variant="body2"
-                                                sx={{ color: '#334155' }}
+                                                sx={{ color: 'text.primary' }}
                                             >
                                                 {ticket.tier_name || 'N/A'}
                                             </Typography>
@@ -916,7 +922,7 @@ const BookingTickets = () => {
                                             <Typography
                                                 variant="caption"
                                                 sx={{
-                                                    color: '#94a3b8',
+                                                    color: 'text.disabled',
                                                     textTransform: 'uppercase',
                                                     fontWeight: 600,
                                                 }}
@@ -925,7 +931,7 @@ const BookingTickets = () => {
                                             </Typography>
                                             <Typography
                                                 variant="body2"
-                                                sx={{ color: '#334155', fontWeight: 600 }}
+                                                sx={{ color: 'text.primary', fontWeight: 600 }}
                                             >
                                                 ₹{ticket.price || '0'}
                                             </Typography>
@@ -941,7 +947,7 @@ const BookingTickets = () => {
                                                 <Typography
                                                     variant="caption"
                                                     sx={{
-                                                        color: '#94a3b8',
+                                                        color: 'text.disabled',
                                                         textTransform: 'uppercase',
                                                         fontWeight: 600,
                                                     }}
@@ -950,7 +956,7 @@ const BookingTickets = () => {
                                                 </Typography>
                                                 <Typography
                                                     variant="caption"
-                                                    sx={{ color: '#10b981', fontWeight: 600 }}
+                                                    sx={{ color: 'success.main', fontWeight: 600 }}
                                                 >
                                                     {new Date(
                                                         ticket.check_in_time,
@@ -966,8 +972,8 @@ const BookingTickets = () => {
                                             onClick={() => handleViewQr(ticket)}
                                             sx={{
                                                 mt: 1.5,
-                                                borderColor: '#c7d2fe',
-                                                color: '#4f46e5',
+                                                borderColor: 'rgba(51, 51, 51, 0.30)',
+                                                color: 'primary.main',
                                                 textTransform: 'none',
                                             }}
                                         >
@@ -989,7 +995,7 @@ const BookingTickets = () => {
                                     <TableCell
                                         padding="checkbox"
                                         sx={{
-                                            borderBottom: '1px solid #e2e8f0',
+                                            borderBottom: '1px solid rgba(226, 232, 240, 1)',
                                         }}
                                     >
                                         <Checkbox
@@ -999,10 +1005,10 @@ const BookingTickets = () => {
                                             onChange={handleToggleAll}
                                             disabled={cancellableTickets.length === 0}
                                             sx={{
-                                                color: '#94a3b8',
-                                                '&.Mui-checked': { color: '#ef4444' },
+                                                color: 'text.disabled',
+                                                '&.Mui-checked': { color: 'error.main' },
                                                 '&.MuiCheckbox-indeterminate': {
-                                                    color: '#ef4444',
+                                                    color: 'error.main',
                                                 },
                                             }}
                                         />
@@ -1021,9 +1027,9 @@ const BookingTickets = () => {
                                             key={h.label}
                                             align={h.align}
                                             sx={{
-                                                color: '#475569',
+                                                color: 'text.secondary',
                                                 fontWeight: 600,
-                                                borderBottom: '1px solid #e2e8f0',
+                                                borderBottom: '1px solid rgba(226, 232, 240, 1)',
                                             }}
                                         >
                                             {h.label}
@@ -1035,7 +1041,7 @@ const BookingTickets = () => {
                                 {filteredTickets.length === 0 ? (
                                     <TableRow>
                                         <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
-                                            <Typography sx={{ color: '#94a3b8' }}>
+                                            <Typography sx={{ color: 'text.disabled' }}>
                                                 {tickets.length === 0
                                                     ? 'No tickets found for this booking'
                                                     : 'No matching tickets found'}
@@ -1080,38 +1086,38 @@ const BookingTickets = () => {
                                                                 )
                                                             }
                                                             sx={{
-                                                                color: '#94a3b8',
+                                                                color: 'text.disabled',
                                                                 '&.Mui-checked': {
-                                                                    color: '#ef4444',
+                                                                    color: 'error.main',
                                                                 },
                                                             }}
                                                         />
                                                     )}
                                                 </TableCell>
-                                                <TableCell sx={{ color: '#64748b' }}>
+                                                <TableCell sx={{ color: 'text.secondary' }}>
                                                     {index + 1}
                                                 </TableCell>
                                                 <TableCell>
                                                     <Typography
                                                         variant="body2"
                                                         fontWeight="bold"
-                                                        sx={{ color: '#0f172a' }}
+                                                        sx={{ color: 'text.primary' }}
                                                     >
                                                         {ticket.unique_code}
                                                     </Typography>
                                                 </TableCell>
-                                                <TableCell sx={{ color: '#334155' }}>
+                                                <TableCell sx={{ color: 'text.primary' }}>
                                                     {ticket.attendee_name || 'Guest'}
                                                 </TableCell>
                                                 <TableCell align="center">
                                                     {getStatusChip(ticket.status)}
                                                 </TableCell>
-                                                <TableCell sx={{ color: '#334155' }}>
+                                                <TableCell sx={{ color: 'text.primary' }}>
                                                     {ticket.tier_name || 'N/A'}
                                                 </TableCell>
                                                 <TableCell
                                                     align="right"
-                                                    sx={{ color: '#334155' }}
+                                                    sx={{ color: 'text.primary' }}
                                                 >
                                                     ₹{ticket.price || '0'}
                                                 </TableCell>
@@ -1142,8 +1148,8 @@ const BookingTickets = () => {
                                                             size="small"
                                                             variant="outlined"
                                                             sx={{
-                                                                borderColor: '#e2e8f0',
-                                                                color: '#94a3b8',
+                                                                borderColor: 'divider',
+                                                                color: 'text.disabled',
                                                             }}
                                                         />
                                                     )}
@@ -1152,7 +1158,7 @@ const BookingTickets = () => {
                                                     <Tooltip title="View QR Code">
                                                         <IconButton
                                                             size="small"
-                                                            sx={{ color: '#4f46e5' }}
+                                                            sx={{ color: 'primary.main' }}
                                                             onClick={() =>
                                                                 handleViewQr(ticket)
                                                             }
@@ -1174,10 +1180,10 @@ const BookingTickets = () => {
             {/* ============ Footer summary ============ */}
             {filteredTickets.length > 0 && (
                 <FooterSummary>
-                    <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                    <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                         Showing {filteredTickets.length} of {tickets.length} tickets
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                    <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                         Total: {stats.total} | Active: {stats.active} | Used:{' '}
                         {stats.used} | Cancelled: {stats.cancelled}
                     </Typography>
@@ -1193,7 +1199,7 @@ const BookingTickets = () => {
                 PaperProps={{
                     sx: {
                         background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        border: '1px solid rgba(226, 232, 240, 1)',
                         borderRadius: '16px',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
                     },
@@ -1209,7 +1215,7 @@ const BookingTickets = () => {
                     >
                         <Typography
                             variant="h6"
-                            sx={{ color: '#0f172a', fontWeight: 600 }}
+                            sx={{ color: 'text.primary', fontWeight: 600 }}
                         >
                             QR Code
                         </Typography>
@@ -1219,14 +1225,14 @@ const BookingTickets = () => {
                 <DialogContent>
                     {selectedTicket && (
                         <Box sx={{ textAlign: 'center', py: 2 }}>
-                            <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                            <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                 Ticket Code
                             </Typography>
                             <Typography
                                 variant="h5"
                                 gutterBottom
                                 sx={{
-                                    color: '#0f172a',
+                                    color: 'text.primary',
                                     fontWeight: 700,
                                     wordBreak: 'break-all',
                                 }}
@@ -1238,13 +1244,13 @@ const BookingTickets = () => {
                                 sx={{
                                     my: 3,
                                     p: 3,
-                                    bgcolor: '#f8fafc',
+                                    bgcolor: 'background.default',
                                     borderRadius: 2,
                                     display: 'flex',
                                     justifyContent: 'center',
                                     alignItems: 'center',
                                     minHeight: 250,
-                                    border: '1px solid #e2e8f0',
+                                    border: '1px solid rgba(226, 232, 240, 1)',
                                 }}
                             >
                                 {selectedTicket.qr_code ? (
@@ -1252,9 +1258,9 @@ const BookingTickets = () => {
                                 ) : (
                                     <Box sx={{ textAlign: 'center', py: 4 }}>
                                         <QrCodeIcon
-                                            sx={{ fontSize: 60, color: '#94a3b8' }}
+                                            sx={{ fontSize: 60, color: 'text.disabled' }}
                                         />
-                                        <Typography sx={{ color: '#94a3b8' }}>
+                                        <Typography sx={{ color: 'text.disabled' }}>
                                             QR Code not available
                                         </Typography>
                                     </Box>
@@ -1265,14 +1271,14 @@ const BookingTickets = () => {
                                 <Grid item xs={6}>
                                     <Typography
                                         variant="caption"
-                                        sx={{ color: '#94a3b8' }}
+                                        sx={{ color: 'text.disabled' }}
                                     >
                                         Attendee
                                     </Typography>
                                     <Typography
                                         variant="body2"
                                         fontWeight="bold"
-                                        sx={{ color: '#0f172a' }}
+                                        sx={{ color: 'text.primary' }}
                                     >
                                         {selectedTicket.attendee_name || 'Guest'}
                                     </Typography>
@@ -1280,14 +1286,14 @@ const BookingTickets = () => {
                                 <Grid item xs={6}>
                                     <Typography
                                         variant="caption"
-                                        sx={{ color: '#94a3b8' }}
+                                        sx={{ color: 'text.disabled' }}
                                     >
                                         Status
                                     </Typography>
                                     <Typography
                                         variant="body2"
                                         fontWeight="bold"
-                                        sx={{ color: '#0f172a' }}
+                                        sx={{ color: 'text.primary' }}
                                     >
                                         {selectedTicket.status?.toUpperCase()}
                                     </Typography>
@@ -1295,13 +1301,13 @@ const BookingTickets = () => {
                                 <Grid item xs={6}>
                                     <Typography
                                         variant="caption"
-                                        sx={{ color: '#94a3b8' }}
+                                        sx={{ color: 'text.disabled' }}
                                     >
                                         Tier
                                     </Typography>
                                     <Typography
                                         variant="body2"
-                                        sx={{ color: '#334155' }}
+                                        sx={{ color: 'text.primary' }}
                                     >
                                         {selectedTicket.tier_name || 'N/A'}
                                     </Typography>
@@ -1309,13 +1315,13 @@ const BookingTickets = () => {
                                 <Grid item xs={6}>
                                     <Typography
                                         variant="caption"
-                                        sx={{ color: '#94a3b8' }}
+                                        sx={{ color: 'text.disabled' }}
                                     >
                                         Price
                                     </Typography>
                                     <Typography
                                         variant="body2"
-                                        sx={{ color: '#334155' }}
+                                        sx={{ color: 'text.primary' }}
                                     >
                                         ₹{selectedTicket.price || '0'}
                                     </Typography>
@@ -1364,13 +1370,13 @@ const BookingTickets = () => {
                 PaperProps={{
                     sx: {
                         background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        border: '1px solid rgba(226, 232, 240, 1)',
                         borderRadius: '16px',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
                     },
                 }}
             >
-                <DialogTitle sx={{ color: '#0f172a', fontWeight: 700 }}>
+                <DialogTitle sx={{ color: 'text.primary', fontWeight: 700 }}>
                     Cancel {selectedTicketIds.length} Ticket
                     {selectedTicketIds.length === 1 ? '' : 's'}?
                 </DialogTitle>
@@ -1392,7 +1398,7 @@ const BookingTickets = () => {
                             }}
                         >
                             <CircularProgress size={18} />
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 Calculating refund...
                             </Typography>
                         </Box>
@@ -1404,15 +1410,15 @@ const BookingTickets = () => {
                             sx={{
                                 p: 2,
                                 mb: 2,
-                                bgcolor: '#f8fafc',
-                                border: '1px solid #e2e8f0',
+                                bgcolor: 'background.default',
+                                border: '1px solid rgba(226, 232, 240, 1)',
                                 borderRadius: 2,
                             }}
                         >
                             <Typography
                                 variant="caption"
                                 sx={{
-                                    color: '#64748b',
+                                    color: 'text.secondary',
                                     fontWeight: 600,
                                     textTransform: 'uppercase',
                                     letterSpacing: 0.5,
@@ -1444,7 +1450,7 @@ const BookingTickets = () => {
                                                 sx={{
                                                     fontFamily: 'monospace',
                                                     fontWeight: 600,
-                                                    color: '#0f172a',
+                                                    color: 'text.primary',
                                                     overflow: 'hidden',
                                                     textOverflow: 'ellipsis',
                                                 }}
@@ -1479,7 +1485,7 @@ const BookingTickets = () => {
                                             {row.cancellation_fee > 0 && (
                                                 <Typography
                                                     variant="caption"
-                                                    sx={{ color: '#ef4444' }}
+                                                    sx={{ color: 'error.main' }}
                                                 >
                                                     −₹{row.cancellation_fee.toFixed(2)} fee
                                                 </Typography>
@@ -1499,13 +1505,13 @@ const BookingTickets = () => {
                                 >
                                     <Typography
                                         variant="body2"
-                                        sx={{ fontWeight: 700, color: '#0f172a' }}
+                                        sx={{ fontWeight: 700, color: 'text.primary' }}
                                     >
                                         Total refund
                                     </Typography>
                                     <Typography
                                         variant="body2"
-                                        sx={{ fontWeight: 700, color: '#10b981' }}
+                                        sx={{ fontWeight: 700, color: 'success.main' }}
                                     >
                                         ₹{previewData.total_refund.toFixed(2)}
                                     </Typography>

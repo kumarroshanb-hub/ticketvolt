@@ -6,7 +6,7 @@ const StatLabel = ({ children }) => (
     <Typography 
         variant="caption" 
         sx={{ 
-            color: '#64748b', 
+            color: 'text.secondary', 
             textTransform: 'uppercase', 
             letterSpacing: 0.5,
             fontWeight: 600,

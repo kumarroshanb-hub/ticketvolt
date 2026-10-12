@@ -1,18 +1,21 @@
 // src/components/Common/OutlineButton.js
 import { styled } from '@mui/material/styles';
 import { Button } from '@mui/material';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 const OutlineButton = styled(Button)`
     text-transform: none;
     font-weight: 600;
     border-radius: 8px;
-    border-color: #e2e8f0;
-    color: #475569;
-    
+    border-color: ${C.borderLight};
+    color: ${C.textSecondary};
+
     &:hover {
-        border-color: #4f46e5;
-        color: #4f46e5;
-        background: rgba(79, 70, 229, 0.04);
+        border-color: ${C.primary};
+        color: ${C.primary};
+        background: rgba(51, 51, 51, 0.04);
     }
 `;
 

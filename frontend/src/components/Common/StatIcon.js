@@ -1,21 +1,24 @@
-// admin-frontend/src/components/Common/StatIcon.js
+// src/components/Common/StatIcon.js
 import React from 'react';
 import { Box } from '@mui/material';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 /**
  * StatIcon - A wrapper component for statistics icons
- * 
+ *
  * @param {ReactNode} children - The icon to display
- * @param {string} color - The color for the icon (defaults to primary)
+ * @param {string} color - The color for the icon (defaults to primary brand charcoal)
  * @param {string|number} size - The size of the icon wrapper
  * @param {object} sx - Additional MUI styles
  */
-const StatIcon = ({ 
-    children, 
-    color = '#4f46e5', 
+const StatIcon = ({
+    children,
+    color = C.primary,
     size = 40,
     sx = {},
-    ...props 
+    ...props
 }) => {
     return (
         <Box

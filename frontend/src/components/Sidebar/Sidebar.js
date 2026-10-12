@@ -2,7 +2,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import styled from 'styled-components';
-import { 
+import {
     Dashboard as DashboardIcon,
     Event as EventIcon,
     Place as VenueIcon,
@@ -21,15 +21,15 @@ import {
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
 import { ROLES } from '../../constants';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
 
 // ============================================
 // STYLED COMPONENTS
 // ============================================
 
-// ✅ When used inside a mobile Drawer, the parent (Drawer) already provides
-//     the fixed positioning. So we switch `position: fixed` → `position: relative`
-//     via the `$drawer` transient prop. (styled-components v6 needs `$` prefix
-//     for transient props, otherwise it forwards to the DOM and warns.)
 const SidebarContainer = styled.aside`
     position: ${props => (props.$drawer ? 'relative' : 'fixed')};
     top: ${props => (props.$drawer ? 'auto' : '0')};
@@ -39,17 +39,18 @@ const SidebarContainer = styled.aside`
         if (props.$drawer) return '100%';
         return props.collapsed ? '80px' : '260px';
     }};
-    background: ${props => props.theme?.colors?.bgSidebar || '#ffffff'};
-    border-right: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    background: ${props => props.theme?.colors?.bgSidebar || C.bgSidebar};
+    border-right: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
     transition: ${props => (props.$drawer ? 'none' : 'width 0.3s ease')};
     padding: 20px;
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
     overflow: hidden;
     z-index: 1000;
     display: flex;
     flex-direction: column;
-    box-shadow: ${props => (props.$drawer ? 'none' : '0 1px 3px rgba(0,0,0,0.06)')};
+    box-shadow: ${props => (props.$drawer ? 'none' : theme.shadows.card)};
     box-sizing: border-box;
+    font-family: ${F.family};
 `;
 
 const Logo = styled.div`
@@ -57,7 +58,7 @@ const Logo = styled.div`
     align-items: center;
     gap: 12px;
     padding-bottom: 20px;
-    border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
     margin-bottom: 20px;
     min-height: 60px;
     position: relative;
@@ -67,27 +68,27 @@ const LogoIcon = styled.div`
     width: 40px;
     height: 40px;
     min-width: 40px;
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    background: ${C.primaryGradient};
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 18px;
     font-weight: bold;
-    color: white;
+    color: ${C.textInverse};
 `;
 
 const LogoText = styled.h3`
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
     margin: 0;
     font-weight: 700;
     font-size: 20px;
     white-space: nowrap;
     opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
     transition: opacity 0.3s ease;
-    
+
     span {
-        color: #4f46e5;
+        color: ${C.secondary};
     }
 `;
 
@@ -103,29 +104,29 @@ const RoleBadge = styled.div`
     text-transform: uppercase;
     letter-spacing: 0.5px;
     background: ${props => {
-        if (props.role === 'super_admin') return '#dcfce7';
-        if (props.role === 'admin') return '#dbeafe';
-        if (props.role === 'organizer') return '#fef3c7';
-        return '#f1f5f9';
+        if (props.role === 'super_admin') return `${C.success}1A`;
+        if (props.role === 'admin')       return `${C.info}1A`;
+        if (props.role === 'organizer')   return `${C.warning}1A`;
+        return C.bgInput;
     }};
     color: ${props => {
-        if (props.role === 'super_admin') return '#16a34a';
-        if (props.role === 'admin') return '#2563eb';
-        if (props.role === 'organizer') return '#d97706';
-        return '#64748b';
+        if (props.role === 'super_admin') return C.successDark;
+        if (props.role === 'admin')       return C.infoDark;
+        if (props.role === 'organizer')   return C.warningDark;
+        return C.textSecondary;
     }};
     opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
     transition: opacity 0.3s ease;
-    
+
     .role-dot {
         width: 6px;
         height: 6px;
         border-radius: 50%;
         background: ${props => {
-            if (props.role === 'super_admin') return '#16a34a';
-            if (props.role === 'admin') return '#2563eb';
-            if (props.role === 'organizer') return '#d97706';
-            return '#64748b';
+            if (props.role === 'super_admin') return C.successDark;
+            if (props.role === 'admin')       return C.infoDark;
+            if (props.role === 'organizer')   return C.warningDark;
+            return C.textSecondary;
         }};
     }
 `;
@@ -138,7 +139,6 @@ const NavItems = styled.nav`
     overflow-y: auto;
     padding-bottom: 10px;
 
-    /* nicer scrollbar when inside drawer */
     &::-webkit-scrollbar { width: 4px; }
     &::-webkit-scrollbar-thumb {
         background: rgba(0, 0, 0, 0.1);
@@ -153,7 +153,7 @@ const NavSection = styled.div`
 const NavSectionLabel = styled.div`
     font-size: 10px;
     font-weight: 600;
-    color: #94a3b8;
+    color: ${C.textLight};
     text-transform: uppercase;
     letter-spacing: 0.5px;
     padding: 8px 14px 4px;
@@ -169,7 +169,7 @@ const NavItem = styled(NavLink)`
     padding: 12px 14px;
     min-height: 44px;
     border-radius: 10px;
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
     text-decoration: none;
     font-size: 14px;
     font-weight: 500;
@@ -185,43 +185,43 @@ const NavItem = styled(NavLink)`
         display: flex;
         align-items: center;
         justify-content: center;
-        color: ${props => props.theme?.colors?.textMuted || '#94a3b8'};
+        color: ${props => props.theme?.colors?.textMuted || C.textMuted};
     }
-    
+
     .label {
         opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
         transition: opacity 0.3s ease;
     }
-    
+
     .badge {
         margin-left: auto;
         padding: 2px 10px;
         border-radius: 20px;
         font-size: 11px;
         font-weight: 600;
-        background: #4f46e5;
-        color: white;
+        background: ${C.primary};
+        color: ${C.textInverse};
         opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
         transition: opacity 0.3s ease;
     }
-    
+
     &:hover {
-        color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-        background: ${props => props.theme?.colors?.bgCardHover || '#f1f5f9'};
-        
+        color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
+        background: ${props => props.theme?.colors?.bgCardHover || C.bgCardHover};
+
         .icon {
-            color: #4f46e5;
+            color: ${C.primary};
         }
     }
-    
+
     &.active {
-        color: #4f46e5;
-        background: rgba(79, 70, 229, 0.08);
-        
+        color: ${C.primary};
+        background: rgba(51, 51, 51, 0.08);
+
         .icon {
-            color: #4f46e5;
+            color: ${C.primary};
         }
-        
+
         &::before {
             content: '';
             position: absolute;
@@ -230,7 +230,7 @@ const NavItem = styled(NavLink)`
             transform: translateY(-50%);
             width: 3px;
             height: 24px;
-            background: #4f46e5;
+            background: ${C.primary};
             border-radius: 0 3px 3px 0;
         }
     }
@@ -238,7 +238,7 @@ const NavItem = styled(NavLink)`
 
 const LogoutSection = styled.div`
     margin-top: auto;
-    border-top: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    border-top: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
     padding-top: 12px;
 `;
 
@@ -251,7 +251,7 @@ const LogoutButton = styled.button`
     border-radius: 10px;
     border: none;
     background: transparent;
-    color: #ef4444;
+    color: ${C.error};
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
@@ -259,7 +259,8 @@ const LogoutButton = styled.button`
     width: 100%;
     white-space: nowrap;
     touch-action: manipulation;
-    
+    font-family: ${F.family};
+
     .icon {
         min-width: 24px;
         font-size: 20px;
@@ -267,18 +268,17 @@ const LogoutButton = styled.button`
         align-items: center;
         justify-content: center;
     }
-    
+
     .label {
         opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
         transition: opacity 0.3s ease;
     }
-    
+
     &:hover {
-        background: rgba(239, 68, 68, 0.1);
+        background: ${C.error}1A;
     }
 `;
 
-// ✅ Toggle button — hidden when in drawer mode (mobile), shown on desktop
 const ToggleButton = styled.button`
     position: absolute;
     bottom: 20px;
@@ -286,24 +286,23 @@ const ToggleButton = styled.button`
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
-    background: ${props => props.theme?.colors?.bgSecondary || '#ffffff'};
-    color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+    border: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
+    background: ${props => props.theme?.colors?.bgSecondary || C.bgSecondary};
+    color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
     cursor: pointer;
     display: ${props => (props.$drawer ? 'none' : 'flex')};
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+
     &:hover {
-        border-color: #4f46e5;
-        color: #4f46e5;
-        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+        border-color: ${C.primary};
+        color: ${C.primary};
+        box-shadow: 0 0 0 4px rgba(51, 51, 51, 0.1);
     }
 `;
 
-// ✅ Close (X) button — only rendered when in drawer mode
 const DrawerCloseButton = styled.button`
     position: absolute;
     top: 10px;
@@ -313,7 +312,7 @@ const DrawerCloseButton = styled.button`
     border-radius: 8px;
     border: none;
     background: transparent;
-    color: #64748b;
+    color: ${C.textSecondary};
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -323,12 +322,12 @@ const DrawerCloseButton = styled.button`
 
     &:hover {
         background: rgba(0, 0, 0, 0.05);
-        color: #0f172a;
+        color: ${C.textPrimary};
     }
 `;
 
 // ============================================
-// MENU DEFINITIONS WITH ROLE CHECKS
+// MENU DEFINITIONS
 // ============================================
 
 const MENU_ITEMS = {
@@ -396,16 +395,6 @@ const MENU_ITEMS = {
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
-    // ❌ REMOVE ORGANIZERS MENU ITEM
-    /*
-    organizers: {
-        path: '/organizers',
-        icon: <GroupIcon />,
-        label: 'Organizers',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-    */
     settings: {
         path: '/settings',
         icon: <SettingsIcon />,
@@ -425,27 +414,13 @@ const SECTION_LABELS = {
 // COMPONENT
 // ============================================
 
-/**
- * Sidebar
- *
- * Props:
- *   collapsed  {boolean}  — desktop collapse state
- *   onToggle   {function} — desktop toggle button handler
- *   onNavigate {function} — optional. When provided, the sidebar is being
- *                           rendered inside a Drawer; clicking a nav item
- *                           will call this (usually to close the drawer).
- *                           The X button in the top-right also calls this.
- */
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const { role, isSuperAdmin } = useRole();
     const { logout } = useAuth();
 
-    // When onNavigate is provided, we're inside a mobile drawer.
-    // In drawer mode we never visually collapse — everything shows at full width.
     const isDrawer = Boolean(onNavigate);
     const effectiveCollapsed = isDrawer ? false : collapsed;
 
-    // Filter menu items based on user role
     const getVisibleItems = () => {
         return Object.entries(MENU_ITEMS)
             .filter(([key, item]) => {
@@ -457,7 +432,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
 
     const visibleItems = getVisibleItems();
 
-    // Group items by section
     const groupedItems = visibleItems.reduce((acc, item) => {
         const section = item.section || 'main';
         if (!acc[section]) acc[section] = [];
@@ -472,32 +446,26 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     };
 
     return (
-        <SidebarContainer
-            collapsed={effectiveCollapsed}
-            $drawer={isDrawer}
-        >
+        <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
             <Logo>
                 <LogoIcon>🎫</LogoIcon>
                 <LogoText collapsed={effectiveCollapsed} $drawer={isDrawer}>
                     Tiket<span>Vault</span>
                 </LogoText>
                 {isDrawer && (
-                    <DrawerCloseButton
-                        onClick={onNavigate}
-                        aria-label="Close menu"
-                    >
+                    <DrawerCloseButton onClick={onNavigate} aria-label="Close menu">
                         <CloseIcon fontSize="small" />
                     </DrawerCloseButton>
                 )}
             </Logo>
-            
+
             <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
                 <span className="role-dot" />
-                {role === ROLES.SUPER_ADMIN ? 'Super Admin' : 
-                 role === ROLES.ADMIN ? 'Admin' : 
+                {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
+                 role === ROLES.ADMIN ? 'Admin' :
                  role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
             </RoleBadge>
-            
+
             <NavItems>
                 {Object.entries(groupedItems).map(([section, items]) => (
                     <NavSection key={section}>
@@ -505,14 +473,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                             {SECTION_LABELS[section] || section.toUpperCase()}
                         </NavSectionLabel>
                         {items.map((item) => (
-                            <NavItem 
-                                key={item.key} 
+                            <NavItem
+                                key={item.key}
                                 to={item.path}
                                 collapsed={effectiveCollapsed}
                                 $drawer={isDrawer}
                                 activeClassName="active"
                                 onClick={() => {
-                                    // In drawer mode, close the drawer after navigation
                                     if (onNavigate) onNavigate();
                                 }}
                             >
@@ -537,7 +504,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                     <span className="label">Logout</span>
                 </LogoutButton>
             </LogoutSection>
-            
+
             <ToggleButton
                 onClick={onToggle}
                 $drawer={isDrawer}

@@ -10,6 +10,10 @@ import {
     Person as PersonIcon,
     Logout as LogoutIcon,
 } from '@mui/icons-material';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
 
 // ============================================
 // STYLED COMPONENTS
@@ -24,13 +28,14 @@ const NavbarContainer = styled.nav`
     background: ${props => (props.$fixed ? 'rgba(255, 255, 255, 0.95)' : 'transparent')};
     backdrop-filter: ${props => (props.$fixed ? 'blur(8px)' : 'none')};
     -webkit-backdrop-filter: ${props => (props.$fixed ? 'blur(8px)' : 'none')};
-    border-bottom: ${props => (props.$fixed ? '1px solid #e2e8f0' : 'none')};
+    border-bottom: ${props => (props.$fixed ? `1px solid ${C.borderLight}` : 'none')};
     position: ${props => (props.$fixed ? 'fixed' : 'relative')};
     top: ${props => (props.$fixed ? '0' : 'auto')};
     left: ${props => (props.$fixed ? '0' : 'auto')};
     right: ${props => (props.$fixed ? '0' : 'auto')};
     z-index: 1100;
     box-sizing: border-box;
+    font-family: ${F.family};
 
     padding-top: ${props => (props.$fixed ? 'max(12px, env(safe-area-inset-top))' : '12px')};
     padding-left: ${props => (props.$fixed ? 'max(16px, env(safe-area-inset-left))' : '0')};
@@ -49,7 +54,7 @@ const MenuButton = styled.button`
     display: none;
     background: none;
     border: none;
-    color: #0f172a;
+    color: ${C.textPrimary};
     cursor: pointer;
     padding: 8px;
     border-radius: 8px;
@@ -72,7 +77,7 @@ const MenuButton = styled.button`
 const PageTitle = styled.h1`
     font-size: ${props => (props.$compact ? '18px' : '24px')};
     font-weight: 700;
-    color: #0f172a;
+    color: ${C.textPrimary};
     margin: 0;
     white-space: nowrap;
     overflow: hidden;
@@ -97,21 +102,21 @@ const UserInfo = styled.button`
     gap: 10px;
     padding: 6px 12px 6px 6px;
     border-radius: 30px;
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
     cursor: pointer;
     transition: all 0.2s ease;
     min-height: 44px;
     touch-action: manipulation;
-    font-family: inherit;
+    font-family: ${F.family};
 
     &:hover {
-        border-color: #4f46e5;
-        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.08);
+        border-color: ${C.primary};
+        box-shadow: 0 0 0 4px rgba(51, 51, 51, 0.08);
     }
 
     &:focus-visible {
-        outline: 2px solid #4f46e5;
+        outline: 2px solid ${C.primary};
         outline-offset: 2px;
     }
 
@@ -126,11 +131,11 @@ const UserAvatar = styled.div`
     height: 32px;
     min-width: 32px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    background: ${C.primaryGradient};
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: ${C.textInverse};
     font-weight: 600;
     font-size: 14px;
 `;
@@ -149,7 +154,7 @@ const UserDetails = styled.div`
 const UserName = styled.span`
     font-size: 13px;
     font-weight: 600;
-    color: #0f172a;
+    color: ${C.textPrimary};
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -158,7 +163,7 @@ const UserName = styled.span`
 
 const UserRole = styled.span`
     font-size: 10px;
-    color: #64748b;
+    color: ${C.textSecondary};
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.3px;
@@ -170,18 +175,18 @@ const RoleBadge = styled.span`
     border-radius: 12px;
     background: ${props => {
         switch (props.role) {
-            case 'super_admin': return '#dcfce7';
-            case 'admin':       return '#dbeafe';
-            case 'organizer':   return '#fef3c7';
-            default:            return '#f1f5f9';
+            case 'super_admin': return `${C.success}1A`;
+            case 'admin':       return `${C.info}1A`;
+            case 'organizer':   return `${C.warning}1A`;
+            default:            return C.bgInput;
         }
     }};
     color: ${props => {
         switch (props.role) {
-            case 'super_admin': return '#16a34a';
-            case 'admin':       return '#2563eb';
-            case 'organizer':   return '#d97706';
-            default:            return '#64748b';
+            case 'super_admin': return C.successDark;
+            case 'admin':       return C.infoDark;
+            case 'organizer':   return C.warningDark;
+            default:            return C.textSecondary;
         }
     }};
     font-weight: 600;
@@ -192,7 +197,7 @@ const RoleBadge = styled.span`
 `;
 
 const Chevron = styled(KeyboardArrowDownIcon)`
-    color: #64748b;
+    color: ${C.textSecondary};
     font-size: 18px !important;
     transition: transform 0.2s ease;
     transform: rotate(${props => (props.$open ? '180deg' : '0deg')});
@@ -207,8 +212,8 @@ const Dropdown = styled.div`
     top: calc(100% + 8px);
     right: 0;
     min-width: 200px;
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
     border-radius: 12px;
     box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
     padding: 6px;
@@ -223,14 +228,14 @@ const Dropdown = styled.div`
 
 const DropdownHeader = styled.div`
     padding: 10px 12px 8px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid ${C.bgInput};
     margin-bottom: 4px;
 `;
 
 const DropdownName = styled.div`
     font-size: 13px;
     font-weight: 600;
-    color: #0f172a;
+    color: ${C.textPrimary};
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -238,7 +243,7 @@ const DropdownName = styled.div`
 
 const DropdownEmail = styled.div`
     font-size: 11px;
-    color: #64748b;
+    color: ${C.textSecondary};
     margin-top: 2px;
     white-space: nowrap;
     overflow: hidden;
@@ -255,22 +260,22 @@ const DropdownItem = styled.button`
     background: none;
     border-radius: 8px;
     font-size: 14px;
-    font-family: inherit;
-    color: #0f172a;
+    font-family: ${F.family};
+    color: ${C.textPrimary};
     cursor: pointer;
     text-align: left;
     transition: background 0.15s ease;
 
-    svg { font-size: 18px; color: #64748b; }
+    svg { font-size: 18px; color: ${C.textSecondary}; }
 
     &:hover {
-        background: #f1f5f9;
+        background: ${C.bgInput};
     }
 
     &.danger {
-        color: #dc2626;
-        svg { color: #dc2626; }
-        &:hover { background: #fef2f2; }
+        color: ${C.errorDark};
+        svg { color: ${C.errorDark}; }
+        &:hover { background: ${C.error}1A; }
     }
 `;
 
@@ -377,10 +382,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
     return (
         <NavbarContainer $fixed={isMobile}>
             <NavLeft>
-                <MenuButton
-                    onClick={onMenuToggle}
-                    aria-label="Toggle navigation menu"
-                >
+                <MenuButton onClick={onMenuToggle} aria-label="Toggle navigation menu">
                     <MenuIcon />
                 </MenuButton>
                 <PageTitle $compact={isMobile} title={pageTitle}>
@@ -418,10 +420,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                 )}
                             </DropdownHeader>
 
-                            <DropdownItem
-                                role="menuitem"
-                                onClick={handleGoToProfile}
-                            >
+                            <DropdownItem role="menuitem" onClick={handleGoToProfile}>
                                 <PersonIcon />
                                 Profile
                             </DropdownItem>

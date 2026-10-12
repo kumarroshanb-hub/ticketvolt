@@ -386,7 +386,7 @@ const CancellationPolicies = () => {
     if (loading && policies.length === 0) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -417,12 +417,12 @@ const CancellationPolicies = () => {
             </PageHeader>
 
             {policies.length === 0 ? (
-                <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                     <PolicyIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 2 }} />
-                    <Typography variant="h6" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                         No policies yet
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#64748b', mt: 1, mb: 3 }}>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1, mb: 3 }}>
                         Create your first cancellation policy. You can attach it to any event.
                     </Typography>
                     <PrimaryButton
@@ -450,7 +450,7 @@ const CancellationPolicies = () => {
                             >
                                 <CardContent sx={{ flexGrow: 1 }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, mb: 1 }}>
-                                        <Typography variant="h6" sx={{ color: '#0f172a', fontWeight: 600, flex: 1, minWidth: 0 }}>
+                                        <Typography variant="h6" sx={{ color: 'text.primary', fontWeight: 600, flex: 1, minWidth: 0 }}>
                                             {policy.name}
                                         </Typography>
                                         {policy.is_default && (
@@ -464,29 +464,29 @@ const CancellationPolicies = () => {
                                     </Box>
 
                                     {policy.description && (
-                                        <Typography variant="body2" sx={{ color: '#64748b', mb: 2 }}>
+                                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
                                             {policy.description}
                                         </Typography>
                                     )}
 
                                     <Divider sx={{ my: 1.5 }} />
 
-                                    <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                    <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                         Refund tiers
                                     </Typography>
                                     <Box sx={{ mt: 1 }}>
                                         {(policy.rules?.refund_tiers || []).map((tier, i) => (
-                                            <Typography key={i} variant="body2" sx={{ color: '#334155', mb: 0.5 }}>
+                                            <Typography key={i} variant="body2" sx={{ color: 'text.primary', mb: 0.5 }}>
                                                 • {describeTier(tier)}
                                             </Typography>
                                         ))}
                                         {policy.rules?.cancellation_fee > 0 && (
-                                            <Typography variant="body2" sx={{ color: '#ef4444', mt: 1 }}>
+                                            <Typography variant="body2" sx={{ color: 'error.main', mt: 1 }}>
                                                 Fee: ₹{policy.rules.cancellation_fee}
                                             </Typography>
                                         )}
                                         {!policy.rules?.allow_partial_cancellation && (
-                                            <Typography variant="body2" sx={{ color: '#64748b', mt: 1 }}>
+                                            <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
                                                 All-or-nothing cancellation
                                             </Typography>
                                         )}
@@ -506,12 +506,12 @@ const CancellationPolicies = () => {
                                     </Box>
                                 </CardContent>
 
-                                <Box sx={{ p: 2, pt: 0, borderTop: '1px solid #f1f5f9', display: 'flex', gap: 0.5 }}>
+                                <Box sx={{ p: 2, pt: 0, borderTop: '1px solid rgba(241, 245, 249, 1)', display: 'flex', gap: 0.5 }}>
                                     {!policy.is_default && (
                                         <Tooltip title="Set as default">
                                             <IconButton
                                                 size="small"
-                                                sx={{ color: '#22c55e' }}
+                                                sx={{ color: 'success.main' }}
                                                 onClick={() => handleSetDefault(policy)}
                                             >
                                                 <StarBorderIcon fontSize="small" />
@@ -520,7 +520,7 @@ const CancellationPolicies = () => {
                                     )}
                                     {policy.is_default && (
                                         <Tooltip title="This is the default">
-                                            <IconButton size="small" sx={{ color: '#22c55e' }} disabled>
+                                            <IconButton size="small" sx={{ color: 'success.main' }} disabled>
                                                 <StarIcon fontSize="small" />
                                             </IconButton>
                                         </Tooltip>
@@ -528,7 +528,7 @@ const CancellationPolicies = () => {
                                     <Tooltip title="Edit">
                                         <IconButton
                                             size="small"
-                                            sx={{ color: '#4f46e5' }}
+                                            sx={{ color: 'primary.main' }}
                                             onClick={() => handleOpenDialog(policy)}
                                         >
                                             <EditIcon fontSize="small" />
@@ -537,7 +537,7 @@ const CancellationPolicies = () => {
                                     <Tooltip title="Delete">
                                         <IconButton
                                             size="small"
-                                            sx={{ color: '#ef4444' }}
+                                            sx={{ color: 'error.main' }}
                                             onClick={() =>
                                                 setDeleteDialog({ open: true, id: policy.id, name: policy.name })
                                             }
@@ -562,12 +562,12 @@ const CancellationPolicies = () => {
                     sx: {
                         background: '#ffffff',
                         borderRadius: '16px',
-                        border: '1px solid #e2e8f0',
+                        border: '1px solid rgba(226, 232, 240, 1)',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
                     },
                 }}
             >
-                <DialogTitle sx={{ fontWeight: 700, color: '#0f172a' }}>
+                <DialogTitle sx={{ fontWeight: 700, color: 'text.primary' }}>
                     {editing ? 'Edit Policy' : 'New Cancellation Policy'}
                 </DialogTitle>
 
@@ -628,10 +628,10 @@ const CancellationPolicies = () => {
 
                         <Grid item xs={12}>
                             <Divider sx={{ my: 1 }} />
-                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a', mb: 1 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', mb: 1 }}>
                                 Refund Tiers
                             </Typography>
-                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mb: 2 }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 2 }}>
                                 Tiers are checked top-down. The first one whose hours threshold is met wins.
                                 Enter the hours remaining before the event starts.
                             </Typography>
@@ -639,7 +639,7 @@ const CancellationPolicies = () => {
 
                         {formData.rules.refund_tiers.map((tier, index) => (
                             <Grid item xs={12} key={index}>
-                                <Paper sx={{ p: 2, bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                                <Paper sx={{ p: 2, bgcolor: 'background.default', border: '1px solid rgba(226, 232, 240, 1)' }}>
                                     <Grid container spacing={2} alignItems="center">
                                         <Grid item xs={12} sm={3}>
                                             <TextField
@@ -682,7 +682,7 @@ const CancellationPolicies = () => {
                                         <Grid item xs={12} sm={1} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
                                             <IconButton
                                                 size="small"
-                                                sx={{ color: '#ef4444' }}
+                                                sx={{ color: 'error.main' }}
                                                 onClick={() => handleRemoveTier(index)}
                                                 disabled={formData.rules.refund_tiers.length <= 1}
                                             >
@@ -690,7 +690,7 @@ const CancellationPolicies = () => {
                                             </IconButton>
                                         </Grid>
                                     </Grid>
-                                    <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mt: 1 }}>
+                                    <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
                                         → {describeTier(tier)}
                                     </Typography>
                                 </Paper>

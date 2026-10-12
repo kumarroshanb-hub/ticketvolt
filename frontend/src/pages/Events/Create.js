@@ -32,6 +32,12 @@ import {
     EventTemplateTypeUtils,
 } from '../../constants';
 
+// frontend/src/pages/Events/Create.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ============================================
 // TIMEZONES
 // ============================================
@@ -575,7 +581,7 @@ const CreateEvent = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -596,7 +602,7 @@ const CreateEvent = () => {
                         {/* ============ BASIC INFO ============ */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Basic Information</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
@@ -733,7 +739,7 @@ const CreateEvent = () => {
                                         PaperProps: { sx: { maxHeight: 400 } },
                                     }}
                                     renderValue={(selected) => (
-                                        <Typography variant="body2" sx={{ color: '#0f172a' }}>
+                                        <Typography variant="body2" sx={{ color: 'text.primary' }}>
                                             {getTimezoneLabel(selected) || 'Select timezone'}
                                         </Typography>
                                     )}
@@ -746,10 +752,10 @@ const CreateEvent = () => {
                                                 fontWeight: 700,
                                                 fontSize: '11px',
                                                 textTransform: 'uppercase',
-                                                color: '#4f46e5',
-                                                bgcolor: '#f8fafc',
+                                                color: 'primary.main',
+                                                bgcolor: 'background.default',
                                                 opacity: '1 !important',
-                                                borderTop: '1px solid #e2e8f0',
+                                                borderTop: '1px solid rgba(226, 232, 240, 1)',
                                             }}
                                         >
                                             {group.region}
@@ -794,7 +800,7 @@ const CreateEvent = () => {
                                         onChange={handleChange}
                                         name="is_public"
                                         sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
+                                            '& .MuiSwitch-switchBase.Mui-checked': { color: 'primary.main' },
                                             '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
                                                 backgroundColor: '#4f46e5',
                                             },
@@ -802,14 +808,14 @@ const CreateEvent = () => {
                                     />
                                 }
                                 label="Public Event"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
 
                         {/* ============ CANCELLATION POLICY ============ */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Cancellation Policy</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
@@ -841,7 +847,7 @@ const CreateEvent = () => {
                                         to="/cancellation-policies"
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        sx={{ color: '#4f46e5', fontWeight: 600 }}
+                                        sx={{ color: 'primary.main', fontWeight: 600 }}
                                     >
                                         Manage policies →
                                     </Link>
@@ -865,12 +871,12 @@ const CreateEvent = () => {
                         {/* ============ TICKET SETTINGS ============ */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Ticket Settings</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12} md={6}>
                             <FormControl fullWidth>
-                                <FormLabel sx={{ color: '#0f172a', fontWeight: 600, mb: 1 }}>
+                                <FormLabel sx={{ color: 'text.primary', fontWeight: 600, mb: 1 }}>
                                     Ticket Format
                                 </FormLabel>
                                 <RadioGroup
@@ -909,7 +915,7 @@ const CreateEvent = () => {
                                         onChange={handleChange}
                                         name="combine_tickets"
                                         sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
+                                            '& .MuiSwitch-switchBase.Mui-checked': { color: 'primary.main' },
                                             '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
                                                 backgroundColor: '#4f46e5',
                                             },
@@ -917,7 +923,7 @@ const CreateEvent = () => {
                                     />
                                 }
                                 label="Combine tickets into single file"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: 'text.secondary' }}
                             />
                             <FormHelperText>
                                 Combine all tickets into one file instead of individual files
@@ -959,11 +965,11 @@ const CreateEvent = () => {
                                     onClick={addSession}
                                     size="small"
                                     sx={{
-                                        borderColor: '#e2e8f0',
-                                        color: '#475569',
+                                        borderColor: 'divider',
+                                        color: 'text.secondary',
                                         '&:hover': {
-                                            borderColor: '#4f46e5',
-                                            color: '#4f46e5',
+                                            borderColor: 'primary.main',
+                                            color: 'primary.main',
                                             backgroundColor: 'rgba(79, 70, 229, 0.04)',
                                         },
                                     }}
@@ -971,7 +977,7 @@ const CreateEvent = () => {
                                     Add Session
                                 </Button>
                             </Box>
-                            <Divider sx={{ mt: 1, borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ mt: 1, borderColor: 'divider' }} />
                         </Grid>
 
                         {sessions.map((session, index) => (
@@ -986,14 +992,14 @@ const CreateEvent = () => {
                                     >
                                         <Typography
                                             variant="subtitle1"
-                                            sx={{ color: '#0f172a', fontWeight: 600 }}
+                                            sx={{ color: 'text.primary', fontWeight: 600 }}
                                         >
                                             Session #{index + 1}
                                         </Typography>
                                         <IconButton
                                             size="small"
                                             onClick={() => removeSession(index)}
-                                            sx={{ color: '#ef4444' }}
+                                            sx={{ color: 'error.main' }}
                                         >
                                             <DeleteIcon />
                                         </IconButton>
@@ -1067,11 +1073,11 @@ const CreateEvent = () => {
                                     onClick={addTier}
                                     size="small"
                                     sx={{
-                                        borderColor: '#e2e8f0',
-                                        color: '#475569',
+                                        borderColor: 'divider',
+                                        color: 'text.secondary',
                                         '&:hover': {
-                                            borderColor: '#4f46e5',
-                                            color: '#4f46e5',
+                                            borderColor: 'primary.main',
+                                            color: 'primary.main',
                                             backgroundColor: 'rgba(79, 70, 229, 0.04)',
                                         },
                                     }}
@@ -1079,7 +1085,7 @@ const CreateEvent = () => {
                                     Add Tier
                                 </Button>
                             </Box>
-                            <Divider sx={{ mt: 1, borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ mt: 1, borderColor: 'divider' }} />
                         </Grid>
 
                         {tiers.map((tier, index) => (
@@ -1094,14 +1100,14 @@ const CreateEvent = () => {
                                     >
                                         <Typography
                                             variant="subtitle1"
-                                            sx={{ color: '#0f172a', fontWeight: 600 }}
+                                            sx={{ color: 'text.primary', fontWeight: 600 }}
                                         >
                                             Tier #{index + 1}
                                         </Typography>
                                         <IconButton
                                             size="small"
                                             onClick={() => removeTier(index)}
-                                            sx={{ color: '#ef4444' }}
+                                            sx={{ color: 'error.main' }}
                                         >
                                             <DeleteIcon />
                                         </IconButton>
@@ -1158,10 +1164,10 @@ const CreateEvent = () => {
                         {/* ============ TEMPLATES ============ */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Event Templates</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                             <Typography
                                 variant="body2"
-                                sx={{ color: '#64748b', mb: 2, mt: 1 }}
+                                sx={{ color: 'text.secondary', mb: 2, mt: 1 }}
                             >
                                 Upload templates for different purposes (Announcement, Ticket, Flyer, etc.)
                             </Typography>
@@ -1215,13 +1221,13 @@ const CreateEvent = () => {
                                                 </Typography>
                                                 <Typography
                                                     variant="subtitle2"
-                                                    sx={{ fontWeight: 600, color: '#0f172a' }}
+                                                    sx={{ fontWeight: 600, color: 'text.primary' }}
                                                 >
                                                     {type.label}
                                                 </Typography>
                                                 <Typography
                                                     variant="caption"
-                                                    sx={{ color: '#64748b', display: 'block' }}
+                                                    sx={{ color: 'text.secondary', display: 'block' }}
                                                 >
                                                     {hasTemplates
                                                         ? `${typeTemplates.length} template(s)`
@@ -1309,13 +1315,13 @@ const CreateEvent = () => {
                 PaperProps={{
                     sx: {
                         background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        border: '1px solid rgba(226, 232, 240, 1)',
                         borderRadius: '16px',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
                     },
                 }}
             >
-                <DialogTitle sx={{ color: '#0f172a', fontWeight: 700 }}>
+                <DialogTitle sx={{ color: 'text.primary', fontWeight: 700 }}>
                     Upload Template
                 </DialogTitle>
                 <DialogContent>
@@ -1375,7 +1381,7 @@ const CreateEvent = () => {
                                 p: isMobile ? 2 : 3,
                                 textAlign: 'center',
                                 cursor: 'pointer',
-                                '&:hover': { borderColor: '#4f46e5' },
+                                '&:hover': { borderColor: 'primary.main' },
                             }}
                             onClick={() =>
                                 document.getElementById('template-file-input').click()
@@ -1409,7 +1415,7 @@ const CreateEvent = () => {
                                     <Typography
                                         variant="caption"
                                         sx={{
-                                            color: '#94a3b8',
+                                            color: 'text.disabled',
                                             display: 'block',
                                             mt: 1,
                                         }}
@@ -1419,11 +1425,11 @@ const CreateEvent = () => {
                                 </Box>
                             ) : (
                                 <>
-                                    <UploadIcon sx={{ fontSize: 40, color: '#94a3b8' }} />
-                                    <Typography variant="body1" sx={{ color: '#64748b' }}>
+                                    <UploadIcon sx={{ fontSize: 40, color: 'text.disabled' }} />
+                                    <Typography variant="body1" sx={{ color: 'text.secondary' }}>
                                         Click to select template image
                                     </Typography>
-                                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                         PNG or JPG • Max 5MB
                                     </Typography>
                                 </>
@@ -1457,7 +1463,7 @@ const CreateEvent = () => {
                             uploadingTemplate ? <CircularProgress size={20} /> : <UploadIcon />
                         }
                         sx={{
-                            background: '#4f46e5',
+                            background: 'primary.main',
                             '&:hover': { background: '#4338ca' },
                             '&:disabled': { opacity: 0.5 },
                         }}

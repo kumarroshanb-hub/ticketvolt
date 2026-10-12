@@ -34,6 +34,12 @@ import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { ROLES } from '../../constants';
 
+// frontend/src/pages/Users/Users.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ============================================
 // STYLED COMPONENTS
 // ============================================
@@ -719,7 +725,7 @@ const Button = styled.button`
     touch-action: manipulation;
 
     &.primary {
-        background: #4f46e5;
+        background: #333333;
         color: white;
 
         &:hover {
@@ -798,7 +804,7 @@ const Switch = styled.label`
     }
 
     input:checked + .slider {
-        background: #4f46e5;
+        background: #333333;
     }
 
     input:checked + .slider:before {
@@ -873,7 +879,17 @@ const EmptySubtext = styled.p`
 // HELPER FUNCTIONS
 // ============================================
 
-const AVATAR_COLORS = ['#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#ef4444', '#06b6d4', '#84cc16'];
+// Replace the hardcoded AVATAR_COLORS array
+const AVATAR_COLORS = [
+    C.warning,
+    C.info,
+    C.secondary,
+    '#ec4899',   // pink — no token for this, leave as-is or add to tokens
+    C.success,
+    C.error,
+    '#06b6d4',   // cyan — no token
+    '#84cc16',   // lime — no token
+];
 
 const getInitials = (name) => {
     if (!name) return 'U';
@@ -1377,7 +1393,7 @@ const Users = () => {
                                 </FormGroup>
                             </FormGrid>
 
-                            <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #e2e8f0' }}>
+                            <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(226, 232, 240, 1)' }}>
                                 <FormLabel style={{ marginBottom: '8px', display: 'block' }}>Account Status</FormLabel>
                                 <SwitchRow>
                                     <Switch>
@@ -1436,7 +1452,7 @@ const Users = () => {
                                 <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     {user.first_name} {user.last_name}
                                 </h3>
-                                <p style={{ margin: '4px 0', fontSize: '14px', color: '#64748b' }}>
+                                <p style={{ margin: '4px 0', fontSize: '14px', color: 'text.secondary' }}>
                                     @{user.username}
                                 </p>
                                 {renderRoleBadge(user.role)}
@@ -1445,39 +1461,39 @@ const Users = () => {
 
                         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Email</p>
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Email</p>
                                 <p style={{ margin: '4px 0', fontSize: '14px', wordBreak: 'break-all' }}>
-                                    <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: '#4f46e5' }} />
+                                    <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
                                     {user.email}
                                 </p>
                             </div>
 
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Phone</p>
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Phone</p>
                                 <p style={{ margin: '4px 0', fontSize: '14px' }}>
-                                    <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: '#4f46e5' }} />
+                                    <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
                                     {user.profile?.phone || 'N/A'}
                                 </p>
                             </div>
 
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Location</p>
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Location</p>
                                 <p style={{ margin: '4px 0', fontSize: '14px' }}>
-                                    <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: '#4f46e5' }} />
+                                    <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
                                     {[user.profile?.city, user.profile?.state].filter(Boolean).join(', ') || 'N/A'}
                                 </p>
                             </div>
 
                             <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Joined</p>
+                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: 'text.secondary' }}>Joined</p>
                                 <p style={{ margin: '4px 0', fontSize: '14px' }}>
-                                    <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: '#4f46e5' }} />
+                                    <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: 'primary.main' }} />
                                     {formatDate(user.date_joined)}
                                 </p>
                             </div>
                         </div>
 
-                        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(226, 232, 240, 1)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                             {renderStatusBadge(user.is_active !== false)}
                             {user.is_staff && (
                                 <Badge className="active">
@@ -1523,7 +1539,7 @@ const Users = () => {
                         <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6 }}>
                             Are you sure you want to delete the user <strong>{user.username}</strong>?
                         </p>
-                        <p style={{ margin: 0, fontSize: '14px', color: '#ef4444' }}>
+                        <p style={{ margin: 0, fontSize: '14px', color: 'error.main' }}>
                             This action cannot be undone. All associated data will be permanently deleted.
                         </p>
                     </ModalBody>
@@ -1665,7 +1681,7 @@ const Users = () => {
                     </LoadingState>
                 ) : error ? (
                     <LoadingState>
-                        <div style={{ textAlign: 'center', color: '#ef4444' }}>
+                        <div style={{ textAlign: 'center', color: 'error.main' }}>
                             <p style={{ fontSize: '16px', fontWeight: 600 }}>Error loading users</p>
                             <p style={{ fontSize: '14px' }}>{error}</p>
                         </div>

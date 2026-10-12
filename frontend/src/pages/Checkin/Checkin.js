@@ -66,6 +66,12 @@ import {
     LoadingWrapper,
 } from '../../components/Common';
 
+// frontend/src/pages/Checkin/Checkin.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ============================================
 // CHECK-IN LOG STATUS → UI PRESENTATION
 // ------------------------------------------------------------
@@ -107,18 +113,18 @@ const getLogStatusUI = (status) =>
 // STAT CARD
 // ============================================
 const StatCard = ({ title, value, icon, color, subtitle }) => (
-    <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+    <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
         <CardContent>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <Box>
-                    <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, letterSpacing: 0.5 }}>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: 0.5 }}>
                         {title}
                     </Typography>
-                    <Typography variant="h4" sx={{ fontWeight: 700, color: '#0f172a', mt: 1 }}>
+                    <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary', mt: 1 }}>
                         {value}
                     </Typography>
                     {subtitle && (
-                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                             {subtitle}
                         </Typography>
                     )}
@@ -158,11 +164,11 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
 
     const getResultIcon = () => {
         switch (result.type) {
-            case 'success': return <CheckCircleIcon sx={{ fontSize: 48, color: '#10b981' }} />;
-            case 'error': return <CancelIcon sx={{ fontSize: 48, color: '#ef4444' }} />;
-            case 'warning': return <WarningIcon sx={{ fontSize: 48, color: '#f59e0b' }} />;
-            case 'info': return <InfoIcon sx={{ fontSize: 48, color: '#3b82f6' }} />;
-            default: return <InfoIcon sx={{ fontSize: 48, color: '#64748b' }} />;
+            case 'success': return <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main' }} />;
+            case 'error': return <CancelIcon sx={{ fontSize: 48, color: 'error.main' }} />;
+            case 'warning': return <WarningIcon sx={{ fontSize: 48, color: 'warning.main' }} />;
+            case 'info': return <InfoIcon sx={{ fontSize: 48, color: 'info.main' }} />;
+            default: return <InfoIcon sx={{ fontSize: 48, color: 'text.secondary' }} />;
         }
     };
 
@@ -181,7 +187,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         <Typography variant="h6" sx={{ fontWeight: 600, color: getResultColor() }}>
                             {result.title}
                         </Typography>
-                        <Typography variant="body2" sx={{ color: '#64748b' }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                             {result.message}
                         </Typography>
                     </Box>
@@ -189,7 +195,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
             </Alert>
 
             {result.ticket && (
-                <Paper sx={{ p: 2, mt: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                <Paper sx={{ p: 2, mt: 2, borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                     <Grid container spacing={2}>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -197,7 +203,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                                     <PersonIcon />
                                 </Avatar>
                                 <Box>
-                                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                         Attendee
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -208,9 +214,9 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         </Grid>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <VerifiedIcon sx={{ color: '#4f46e5' }} />
+                                <VerifiedIcon sx={{ color: 'primary.main' }} />
                                 <Box>
-                                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                         Ticket Code
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-all' }}>
@@ -221,9 +227,9 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         </Grid>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <EventIcon sx={{ color: '#4f46e5' }} />
+                                <EventIcon sx={{ color: 'primary.main' }} />
                                 <Box>
-                                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                         Event
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontWeight: 500 }}>
@@ -235,9 +241,9 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         {result.checkin_time && (
                             <Grid item xs={12} sm={6}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <AccessTimeIcon sx={{ color: '#10b981' }} />
+                                    <AccessTimeIcon sx={{ color: 'success.main' }} />
                                     <Box>
-                                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                             Checked In
                                         </Typography>
                                         <Typography variant="body1" sx={{ fontWeight: 500 }}>
@@ -568,7 +574,7 @@ const checkInTicket = async (code) => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -579,7 +585,7 @@ const checkInTicket = async (code) => {
                 <PageHeaderLeft>
                     <PageTitle variant="h4">QR Scanner &amp; Check-in</PageTitle>
                     {!isMobile && (
-                        <Typography variant="body2" sx={{ color: '#64748b', ml: 2 }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
                             Scan and verify tickets at event entrance
                         </Typography>
                     )}
@@ -597,7 +603,7 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Total Scans"
                         value={stats.total_scans}
-                        icon={<ScannerIcon sx={{ color: '#4f46e5' }} />}
+                        icon={<ScannerIcon sx={{ color: 'primary.main' }} />}
                         color="#4f46e5"
                         subtitle={isMobile ? undefined : 'All time check-ins'}
                     />
@@ -606,7 +612,7 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Today"
                         value={stats.today_scans}
-                        icon={<TodayIcon sx={{ color: '#10b981' }} />}
+                        icon={<TodayIcon sx={{ color: 'success.main' }} />}
                         color="#10b981"
                         subtitle={isMobile ? undefined : "Today's check-ins"}
                     />
@@ -615,7 +621,7 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Success"
                         value={stats.success_scans}
-                        icon={<CheckCircleIcon sx={{ color: '#3b82f6' }} />}
+                        icon={<CheckCircleIcon sx={{ color: 'info.main' }} />}
                         color="#3b82f6"
                         subtitle={isMobile ? undefined : 'Valid tickets'}
                     />
@@ -624,7 +630,7 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Failed"
                         value={stats.failed_scans}
-                        icon={<ErrorIcon sx={{ color: '#ef4444' }} />}
+                        icon={<ErrorIcon sx={{ color: 'error.main' }} />}
                         color="#ef4444"
                         subtitle={isMobile ? undefined : 'Invalid tickets'}
                     />
@@ -635,10 +641,10 @@ const checkInTicket = async (code) => {
             <Grid container spacing={3}>
                 {/* Left Column - Scanner */}
                 <Grid item xs={12} md={5}>
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                         <CardContent>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                <Typography variant="h6" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                     <ScannerIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                                     Ticket Scanner
                                 </Typography>
@@ -646,7 +652,7 @@ const checkInTicket = async (code) => {
                                     <IconButton
                                         color="primary"
                                         onClick={() => setOpenScanner(true)}
-                                        sx={{ border: '1px solid #4f46e5' }}
+                                        sx={{ border: '1px solid rgba(51, 51, 51, 1)' }}
                                     >
                                         <CameraIcon />
                                     </IconButton>
@@ -694,7 +700,7 @@ const checkInTicket = async (code) => {
 
                             {/* Manual Entry */}
                             <Box component="form" onSubmit={handleManualEntry} sx={{ mb: 2 }}>
-                                <Typography variant="subtitle2" sx={{ color: '#64748b', mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ color: 'text.secondary', mb: 1 }}>
                                     <KeyboardIcon sx={{ mr: 0.5, verticalAlign: 'middle' }} />
                                     Manual Code Entry
                                 </Typography>
@@ -707,7 +713,7 @@ const checkInTicket = async (code) => {
                                     InputProps={{
                                         startAdornment: (
                                             <InputAdornment position="start">
-                                                <VerifiedIcon sx={{ color: '#4f46e5' }} />
+                                                <VerifiedIcon sx={{ color: 'primary.main' }} />
                                             </InputAdornment>
                                         ),
                                     }}
@@ -737,7 +743,7 @@ const checkInTicket = async (code) => {
 
                 {/* Right Column - History */}
                 <Grid item xs={12} md={7}>
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                         <CardContent>
                             <Box
                                 sx={{
@@ -749,7 +755,7 @@ const checkInTicket = async (code) => {
                                     mb: 2,
                                 }}
                             >
-                                <Typography variant="h6" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                     <HistoryIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                                     Recent Check-ins
                                 </Typography>
@@ -798,7 +804,7 @@ const checkInTicket = async (code) => {
                                                     key={rowKey}
                                                     sx={{
                                                         borderRadius: 2,
-                                                        border: '1px solid #e2e8f0',
+                                                        border: '1px solid rgba(226, 232, 240, 1)',
                                                         overflow: 'hidden',
                                                     }}
                                                 >
@@ -809,7 +815,7 @@ const checkInTicket = async (code) => {
                                                                 sx={{
                                                                     fontFamily: 'monospace',
                                                                     fontWeight: 700,
-                                                                    color: '#0f172a',
+                                                                    color: 'text.primary',
                                                                     overflow: 'hidden',
                                                                     textOverflow: 'ellipsis',
                                                                     whiteSpace: 'nowrap',
@@ -830,30 +836,30 @@ const checkInTicket = async (code) => {
                                                         <Divider sx={{ my: 1 }} />
 
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                                            <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                                            <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                                                 Attendee
                                                             </Typography>
-                                                            <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                                                            <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
                                                                 {item.attendee_name || 'Guest'}
                                                             </Typography>
                                                         </Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                                            <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                                            <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                                                 Event
                                                             </Typography>
-                                                            <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                                                            <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
                                                                 {item.event || 'N/A'}
                                                             </Typography>
                                                         </Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                            <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                                            <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                                                 Time
                                                             </Typography>
                                                             <Box sx={{ textAlign: 'right' }}>
-                                                                <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: '#334155' }}>
+                                                                <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: 'text.primary' }}>
                                                                     {time}
                                                                 </Typography>
-                                                                <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                                                <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                                                     {date}
                                                                 </Typography>
                                                             </Box>
@@ -864,27 +870,27 @@ const checkInTicket = async (code) => {
                                         })}
                                     </Box>
                                 ) : (
-                                    <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                    <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                                         <HistoryIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 1 }} />
                                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
                                             No Check-in History
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                                        <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                                             {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
                                         </Typography>
                                     </Paper>
                                 )
                             ) : (
                                 /* ---------- DESKTOP: TABLE ---------- */
-                                <TableContainer component={Paper} sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                <TableContainer component={Paper} sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                                     <Table size="small">
                                         <TableHead>
                                             <TableRow>
-                                                <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Ticket</TableCell>
-                                                <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Attendee</TableCell>
-                                                <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Event</TableCell>
-                                                <TableCell align="center" sx={{ fontWeight: 600, color: '#475569' }}>Status</TableCell>
-                                                <TableCell align="center" sx={{ fontWeight: 600, color: '#475569' }}>Time</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Ticket</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Attendee</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Event</TableCell>
+                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>Status</TableCell>
+                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>Time</TableCell>
                                             </TableRow>
                                         </TableHead>
                                         <TableBody>
@@ -903,13 +909,13 @@ const checkInTicket = async (code) => {
                                                                 '&:hover': { backgroundColor: '#f8fafc' },
                                                             }}
                                                         >
-                                                            <TableCell sx={{ fontFamily: 'monospace', color: '#0f172a', fontWeight: 600 }}>
+                                                            <TableCell sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 600 }}>
                                                                 {item.code || 'N/A'}
                                                             </TableCell>
-                                                            <TableCell sx={{ color: '#334155' }}>
+                                                            <TableCell sx={{ color: 'text.primary' }}>
                                                                 {item.attendee_name || 'Guest'}
                                                             </TableCell>
-                                                            <TableCell sx={{ color: '#334155' }}>
+                                                            <TableCell sx={{ color: 'text.primary' }}>
                                                                 {item.event || 'N/A'}
                                                             </TableCell>
                                                             <TableCell align="center">
@@ -921,12 +927,12 @@ const checkInTicket = async (code) => {
                                                                     variant="outlined"
                                                                 />
                                                             </TableCell>
-                                                            <TableCell align="center" sx={{ color: '#64748b' }}>
+                                                            <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                                 <Box>
                                                                     <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
                                                                         {time}
                                                                     </Typography>
-                                                                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                                                    <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                                                         {date}
                                                                     </Typography>
                                                                 </Box>
@@ -936,13 +942,13 @@ const checkInTicket = async (code) => {
                                                 })
                                             ) : (
                                                 <TableRow>
-                                                    <TableCell colSpan={5} align="center" sx={{ py: 4, color: '#94a3b8' }}>
+                                                    <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.disabled' }}>
                                                         <Box sx={{ textAlign: 'center' }}>
                                                             <HistoryIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 1 }} />
                                                             <Typography variant="body1" sx={{ fontWeight: 600 }}>
                                                                 No Check-in History
                                                             </Typography>
-                                                            <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                                                            <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                                                                 {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
                                                             </Typography>
                                                         </Box>

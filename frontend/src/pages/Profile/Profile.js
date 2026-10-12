@@ -12,6 +12,12 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 
+// frontend/src/pages/Profile/Profile.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ============================================
 // STYLED COMPONENTS
 // ============================================
@@ -214,7 +220,7 @@ const Button = styled.button`
 `;
 
 const PrimaryButton = styled(Button)`
-    background: #4f46e5;
+    background: #333333;
     color: #ffffff;
 
     &:hover:not(:disabled) {

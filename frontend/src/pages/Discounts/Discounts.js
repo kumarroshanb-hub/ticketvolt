@@ -33,6 +33,12 @@ import {
 } from '../../components/Common';
 import styled from 'styled-components';
 
+// frontend/src/pages/Discounts/Discounts.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
 // ---------------------------------------------------------------------------
 // Local styled components — mirrored from Analytics.js so the two pages
 // look and feel identical without depending on any Common theme tokens.
@@ -105,7 +111,7 @@ const EmptyState = ({ children, py = 4 }) => (
             py,
         }}
     >
-        <Typography sx={{ color: '#94a3b8' }}>{children}</Typography>
+        <Typography sx={{ color: 'text.disabled' }}>{children}</Typography>
     </Box>
 );
 
@@ -441,28 +447,28 @@ const Discounts = () => {
             title: 'Total Discounts',
             value: stats.total,
             icon: <DiscountIcon />,
-            color: '#4f46e5',
+            color: 'primary.main',
             bg: 'rgba(79, 70, 229, 0.08)',
         },
         {
             title: 'Active',
             value: stats.active,
             icon: <CheckCircleIcon />,
-            color: '#10b981',
+            color: 'success.main',
             bg: 'rgba(16, 185, 129, 0.08)',
         },
         {
             title: 'Used',
             value: stats.used,
             icon: <PeopleIcon />,
-            color: '#7c3aed',
+            color: 'secondary.main',
             bg: 'rgba(124, 58, 237, 0.08)',
         },
         {
             title: 'Expired',
             value: stats.expired,
             icon: <CancelIcon />,
-            color: '#ef4444',
+            color: 'error.main',
             bg: 'rgba(239, 68, 68, 0.08)',
         },
     ];
@@ -470,7 +476,7 @@ const Discounts = () => {
     if (loading && discounts.length === 0) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -503,8 +509,8 @@ const Discounts = () => {
                             onClick={loadDiscounts}
                             sx={{
                                 textTransform: 'none',
-                                borderColor: '#e2e8f0',
-                                color: '#64748b',
+                                borderColor: 'divider',
+                                color: 'text.secondary',
                             }}
                         >
                             Refresh
@@ -544,7 +550,7 @@ const Discounts = () => {
                                     <Typography
                                         variant="caption"
                                         sx={{
-                                            color: '#64748b',
+                                            color: 'text.secondary',
                                             fontWeight: 600,
                                             letterSpacing: 0.5,
                                             fontSize: isSmall ? '10px' : '12px',
@@ -557,7 +563,7 @@ const Discounts = () => {
                                         variant="h4"
                                         sx={{
                                             fontWeight: 700,
-                                            color: '#0f172a',
+                                            color: 'text.primary',
                                             mt: 1,
                                             fontSize: isSmall ? '1.25rem' : '1.75rem',
                                             overflow: 'hidden',
@@ -591,7 +597,7 @@ const Discounts = () => {
                                 key={discount.id}
                                 sx={{
                                     borderRadius: 2,
-                                    border: '1px solid #e2e8f0',
+                                    border: '1px solid rgba(226, 232, 240, 1)',
                                     overflow: 'hidden',
                                     background: '#ffffff',
                                 }}
@@ -603,7 +609,7 @@ const Discounts = () => {
                                             sx={{
                                                 fontFamily: 'monospace',
                                                 fontWeight: 700,
-                                                color: '#0f172a',
+                                                color: 'text.primary',
                                                 flex: 1,
                                                 minWidth: 0,
                                                 overflow: 'hidden',
@@ -614,7 +620,7 @@ const Discounts = () => {
                                         </Typography>
                                         <IconButton
                                             size="small"
-                                            sx={{ color: '#94a3b8' }}
+                                            sx={{ color: 'text.disabled' }}
                                             onClick={() => handleCopyCode(discount.code)}
                                         >
                                             <ContentCopyIcon fontSize="small" />
@@ -623,7 +629,7 @@ const Discounts = () => {
 
                                     {discount.name && (
                                         <Box sx={{ mb: 1 }}>
-                                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                                 {discount.name}
                                             </Typography>
                                         </Box>
@@ -643,7 +649,7 @@ const Discounts = () => {
                                             {
                                                 label: 'Type',
                                                 value: (discount.type || 'percentage').toUpperCase(),
-                                                color: '#4f46e5',
+                                                color: 'primary.main',
                                                 weight: 600,
                                             },
                                             {
@@ -652,7 +658,7 @@ const Discounts = () => {
                                                     discount.type === 'percentage'
                                                         ? `${discount.value}%`
                                                         : `₹${discount.value}`,
-                                                color: '#0f172a',
+                                                color: 'text.primary',
                                                 weight: 700,
                                             },
                                             {
@@ -660,7 +666,7 @@ const Discounts = () => {
                                                 value: `${discount.used_count || 0}${
                                                     discount.max_uses ? ` / ${discount.max_uses}` : ''
                                                 }`,
-                                                color: '#334155',
+                                                color: 'text.primary',
                                                 weight: 500,
                                             },
                                             {
@@ -669,7 +675,7 @@ const Discounts = () => {
                                                 value: discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
                                                     : 'Never',
-                                                color: '#334155',
+                                                color: 'text.primary',
                                                 weight: 500,
                                             },
                                         ].map((item) => (
@@ -677,7 +683,7 @@ const Discounts = () => {
                                                 <Typography
                                                     variant="caption"
                                                     sx={{
-                                                        color: '#94a3b8',
+                                                        color: 'text.disabled',
                                                         textTransform: 'uppercase',
                                                         fontSize: '10px',
                                                         fontWeight: 600,
@@ -705,8 +711,8 @@ const Discounts = () => {
                                             startIcon={<EditIcon />}
                                             onClick={() => handleOpenDialog(discount)}
                                             sx={{
-                                                borderColor: '#c7d2fe',
-                                                color: '#4f46e5',
+                                                borderColor: 'rgba(51, 51, 51, 0.30)',
+                                                color: 'primary.main',
                                                 textTransform: 'none',
                                             }}
                                         >
@@ -726,7 +732,7 @@ const Discounts = () => {
                                             }
                                             sx={{
                                                 borderColor: '#fecaca',
-                                                color: '#ef4444',
+                                                color: 'error.main',
                                                 textTransform: 'none',
                                             }}
                                         >
@@ -759,9 +765,9 @@ const Discounts = () => {
                                             key={h.label}
                                             align={h.align}
                                             sx={{
-                                                color: '#475569',
+                                                color: 'text.secondary',
                                                 fontWeight: 600,
-                                                borderBottom: '1px solid #e2e8f0',
+                                                borderBottom: '1px solid rgba(226, 232, 240, 1)',
                                                 background: '#f8fafc',
                                             }}
                                         >
@@ -792,7 +798,7 @@ const Discounts = () => {
                                                         variant="body2"
                                                         fontWeight="bold"
                                                         sx={{
-                                                            color: '#0f172a',
+                                                            color: 'text.primary',
                                                             fontFamily: 'monospace',
                                                         }}
                                                     >
@@ -801,7 +807,7 @@ const Discounts = () => {
                                                     <Tooltip title="Copy code">
                                                         <IconButton
                                                             size="small"
-                                                            sx={{ color: '#94a3b8' }}
+                                                            sx={{ color: 'text.disabled' }}
                                                             onClick={() => handleCopyCode(discount.code)}
                                                         >
                                                             <ContentCopyIcon fontSize="small" />
@@ -809,7 +815,7 @@ const Discounts = () => {
                                                     </Tooltip>
                                                 </Box>
                                             </TableCell>
-                                            <TableCell sx={{ color: '#334155' }}>
+                                            <TableCell sx={{ color: 'text.primary' }}>
                                                 {discount.name || '-'}
                                             </TableCell>
                                             <TableCell align="center">
@@ -818,24 +824,24 @@ const Discounts = () => {
                                                     size="small"
                                                     variant="outlined"
                                                     sx={{
-                                                        borderColor: '#c7d2fe',
-                                                        color: '#4f46e5',
+                                                        borderColor: 'rgba(51, 51, 51, 0.30)',
+                                                        color: 'primary.main',
                                                         fontSize: '11px',
                                                         fontWeight: 600,
                                                     }}
                                                 />
                                             </TableCell>
-                                            <TableCell align="center" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                                            <TableCell align="center" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                                 {discount.type === 'percentage'
                                                     ? `${discount.value}%`
                                                     : `₹${discount.value}`}
                                             </TableCell>
-                                            <TableCell align="center" sx={{ color: '#475569' }}>
+                                            <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                 {discount.used_count || 0}
                                                 {discount.max_uses && ` / ${discount.max_uses}`}
                                             </TableCell>
                                             <TableCell align="center">{getStatusChip(discount)}</TableCell>
-                                            <TableCell align="center" sx={{ color: '#64748b' }}>
+                                            <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                 {/* ✅ Format with local timezone */}
                                                 {discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
@@ -845,7 +851,7 @@ const Discounts = () => {
                                                 <Tooltip title="Edit">
                                                     <IconButton
                                                         size="small"
-                                                        sx={{ color: '#4f46e5' }}
+                                                        sx={{ color: 'primary.main' }}
                                                         onClick={() => handleOpenDialog(discount)}
                                                     >
                                                         <EditIcon fontSize="small" />
@@ -854,7 +860,7 @@ const Discounts = () => {
                                                 <Tooltip title="Delete">
                                                     <IconButton
                                                         size="small"
-                                                        sx={{ color: '#ef4444' }}
+                                                        sx={{ color: 'error.main' }}
                                                         onClick={() =>
                                                             setDeleteDialog({
                                                                 open: true,
@@ -885,13 +891,13 @@ const Discounts = () => {
                 PaperProps={{
                     sx: {
                         background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        border: '1px solid rgba(226, 232, 240, 1)',
                         borderRadius: '16px',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
                     },
                 }}
             >
-                <DialogTitle sx={{ color: '#0f172a', fontWeight: 700 }}>
+                <DialogTitle sx={{ color: 'text.primary', fontWeight: 700 }}>
                     {editingDiscount ? 'Edit Discount' : 'Create New Discount'}
                 </DialogTitle>
                 <DialogContent>
@@ -1129,7 +1135,7 @@ const Discounts = () => {
                                 justifyContent: 'flex-end',
                                 mt: 3,
                                 pt: 2,
-                                borderTop: '1px solid #e2e8f0',
+                                borderTop: '1px solid rgba(226, 232, 240, 1)',
                                 flexWrap: 'wrap',
                             }}
                         >
@@ -1141,8 +1147,8 @@ const Discounts = () => {
                                 disabled={saving}
                                 sx={{
                                     textTransform: 'none',
-                                    borderColor: '#e2e8f0',
-                                    color: '#64748b',
+                                    borderColor: 'divider',
+                                    color: 'text.secondary',
                                 }}
                             >
                                 Cancel
@@ -1180,20 +1186,20 @@ const Discounts = () => {
                 PaperProps={{
                     sx: {
                         background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        border: '1px solid rgba(226, 232, 240, 1)',
                         borderRadius: '16px',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
                     },
                 }}
             >
-                <DialogTitle sx={{ color: '#0f172a', fontWeight: 700 }}>
+                <DialogTitle sx={{ color: 'text.primary', fontWeight: 700 }}>
                     Delete Discount
                 </DialogTitle>
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2 }}>
                         This action cannot be undone.
                     </Alert>
-                    <Typography sx={{ color: '#475569' }}>
+                    <Typography sx={{ color: 'text.secondary' }}>
                         Are you sure you want to delete the discount code "{deleteDialog.code}"?
                     </Typography>
                 </DialogContent>
@@ -1204,8 +1210,8 @@ const Discounts = () => {
                         onClick={() => setDeleteDialog({ open: false, id: null, code: '' })}
                         sx={{
                             textTransform: 'none',
-                            borderColor: '#e2e8f0',
-                            color: '#64748b',
+                            borderColor: 'divider',
+                            color: 'text.secondary',
                         }}
                     >
                         Cancel

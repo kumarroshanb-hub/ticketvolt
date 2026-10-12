@@ -90,7 +90,7 @@ const VenueDetail = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -98,7 +98,7 @@ const VenueDetail = () => {
     if (!venue) {
         return (
             <Box sx={{ p: 3, textAlign: 'center' }}>
-                <Typography sx={{ color: '#94a3b8' }}>Venue not found</Typography>
+                <Typography sx={{ color: 'text.disabled' }}>Venue not found</Typography>
                 <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/venues')}>
                     Back to Venues
                 </Button>
@@ -110,14 +110,14 @@ const VenueDetail = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <IconButton onClick={() => navigate('/venues')} sx={{ color: '#64748b' }}>
+                    <IconButton onClick={() => navigate('/venues')} sx={{ color: 'text.secondary' }}>
                         <ArrowBackIcon />
                     </IconButton>
                     <Box sx={{ minWidth: 0 }}>
                         <PageTitle variant="h5" sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {venue.name}
                         </PageTitle>
-                        <Typography variant="body2" sx={{ color: '#64748b' }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                             {venue.city}, {venue.state} • {venue.country}
                         </Typography>
                     </Box>
@@ -166,12 +166,12 @@ const VenueDetail = () => {
 
             <Grid container spacing={isMobile ? 2 : 3}>
                 <Grid item xs={12} md={8}>
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0', mb: 3 }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)', mb: 3 }}>
                         <CardContent>
-                            <Typography variant="subtitle2" sx={{ color: '#4f46e5', fontWeight: 600, mb: 2 }}>
+                            <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600, mb: 2 }}>
                                 Description
                             </Typography>
-                            <Typography variant="body2" sx={{ color: '#334155', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            <Typography variant="body2" sx={{ color: 'text.primary', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                                 {venue.description || 'No description provided'}
                             </Typography>
                         </CardContent>
@@ -179,9 +179,9 @@ const VenueDetail = () => {
                 </Grid>
 
                 <Grid item xs={12} md={4}>
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0', mb: 3 }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)', mb: 3 }}>
                         <CardContent>
-                            <Typography variant="subtitle2" sx={{ color: '#4f46e5', fontWeight: 600, mb: 2 }}>
+                            <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600, mb: 2 }}>
                                 Contact Information
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -196,13 +196,13 @@ const VenueDetail = () => {
                                             minHeight: 44,
                                             px: 1,
                                             borderRadius: 1,
-                                            color: '#334155',
+                                            color: 'text.primary',
                                             textDecoration: 'none',
                                             transition: 'background 0.2s',
                                             '&:hover': { background: '#f1f5f9' },
                                         }}
                                     >
-                                        <PhoneIcon sx={{ fontSize: 18, color: '#4f46e5', flexShrink: 0 }} />
+                                        <PhoneIcon sx={{ fontSize: 18, color: 'primary.main', flexShrink: 0 }} />
                                         <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
                                             {venue.contact_phone}
                                         </Typography>
@@ -219,13 +219,13 @@ const VenueDetail = () => {
                                             minHeight: 44,
                                             px: 1,
                                             borderRadius: 1,
-                                            color: '#334155',
+                                            color: 'text.primary',
                                             textDecoration: 'none',
                                             transition: 'background 0.2s',
                                             '&:hover': { background: '#f1f5f9' },
                                         }}
                                     >
-                                        <EmailIcon sx={{ fontSize: 18, color: '#4f46e5', flexShrink: 0 }} />
+                                        <EmailIcon sx={{ fontSize: 18, color: 'primary.main', flexShrink: 0 }} />
                                         <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
                                             {venue.contact_email}
                                         </Typography>
@@ -244,13 +244,13 @@ const VenueDetail = () => {
                                             minHeight: 44,
                                             px: 1,
                                             borderRadius: 1,
-                                            color: '#4f46e5',
+                                            color: 'primary.main',
                                             textDecoration: 'none',
                                             transition: 'background 0.2s',
                                             '&:hover': { background: '#eef2ff' },
                                         }}
                                     >
-                                        <LanguageIcon sx={{ fontSize: 18, color: '#4f46e5', flexShrink: 0 }} />
+                                        <LanguageIcon sx={{ fontSize: 18, color: 'primary.main', flexShrink: 0 }} />
                                         <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
                                             Visit Website
                                         </Typography>
@@ -260,15 +260,15 @@ const VenueDetail = () => {
                         </CardContent>
                     </Card>
 
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                         <CardContent>
-                            <Typography variant="subtitle2" sx={{ color: '#4f46e5', fontWeight: 600, mb: 2 }}>
+                            <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600, mb: 2 }}>
                                 Capacity
                             </Typography>
-                            <Typography variant="h4" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                            <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary' }}>
                                 {venue.capacity || 'N/A'}
                             </Typography>
-                            <Typography variant="body2" sx={{ color: '#64748b' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 {venue.has_reserved_seating ? 'Reserved Seating' : 'General Admission'}
                             </Typography>
                         </CardContent>

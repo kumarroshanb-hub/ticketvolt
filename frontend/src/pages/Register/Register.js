@@ -1,9 +1,16 @@
 // frontend/src/pages/Register/Register.js
 import React, { useState } from 'react';
-import { Box, Paper, Typography, TextField, Button, Link, Alert, CircularProgress, useMediaQuery, useTheme } from '@mui/material';
+import {
+    Box, Paper, Typography, TextField, Button, Link,
+    Alert, CircularProgress, useMediaQuery, useTheme,
+} from '@mui/material';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
+import { theme as appTheme } from '../../theme/tokens';
+
+const C = appTheme.colors;
+const F = appTheme.fonts;
 
 const Register = () => {
     const navigate = useNavigate();
@@ -61,10 +68,11 @@ const Register = () => {
                 alignItems: 'center',
                 minHeight: '100vh',
                 minHeight: '100dvh',
-                bgcolor: '#f8fafc',
+                bgcolor: 'background.default',
                 p: isMobile ? 1.5 : 2,
                 pt: isMobile ? 'max(12px, env(safe-area-inset-top))' : 2,
                 pb: isMobile ? 'max(12px, env(safe-area-inset-bottom))' : 2,
+                fontFamily: F.family,
             }}
         >
             <Paper
@@ -74,16 +82,19 @@ const Register = () => {
                     width: '100%',
                     borderRadius: 3,
                     my: isMobile ? 1 : 0,
+                    bgcolor: 'background.paper',
+                    border: `1px solid ${C.borderLight}`,
                 }}
             >
                 <Typography
                     variant="h4"
                     sx={{
                         fontWeight: 700,
-                        color: '#0f172a',
+                        color: 'text.primary',
                         textAlign: 'center',
                         mb: 3,
                         fontSize: { xs: '1.5rem', sm: '2rem' },
+                        fontFamily: F.family,
                     }}
                 >
                     🎫 Create Account
@@ -114,7 +125,6 @@ const Register = () => {
                         inputProps={{ inputMode: 'email' }}
                         sx={{ mb: 2, '& .MuiInputBase-input': { fontSize: 16 } }}
                     />
-                    {/* Name fields stack on mobile */}
                     <Box sx={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 2, mb: 2 }}>
                         <TextField
                             fullWidth
@@ -163,23 +173,26 @@ const Register = () => {
                         variant="contained"
                         disabled={loading}
                         sx={{
-                            bgcolor: '#4f46e5',
-                            '&:hover': { bgcolor: '#4338ca' },
                             py: 1.5,
                             minHeight: 48,
                             textTransform: 'none',
                             fontSize: 16,
                             fontWeight: 600,
+                            background: C.primaryGradient,
+                            color: C.textInverse,
+                            '&:hover': {
+                                background: `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`,
+                            },
                         }}
                     >
-                        {loading ? <CircularProgress size={24} /> : 'Register'}
+                        {loading ? <CircularProgress size={24} sx={{ color: C.textInverse }} /> : 'Register'}
                     </Button>
                 </form>
 
                 <Box textAlign="center" mt={3}>
-                    <Typography variant="body2" sx={{ color: '#64748b' }}>
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                         Already have an account?{' '}
-                        <Link component={RouterLink} to="/login" sx={{ color: '#4f46e5' }}>
+                        <Link component={RouterLink} to="/login" sx={{ color: 'primary.main', fontWeight: 600 }}>
                             Login
                         </Link>
                     </Typography>

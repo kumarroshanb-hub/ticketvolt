@@ -2,20 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Box,
-    Container,
-    Typography,
-    Grid,
-    Card,
-    CardContent,
-    CardActions,
-    Button,
-    Chip,
-    CircularProgress,
-    Alert,
-    Paper,
-    useMediaQuery,
-    useTheme,
+    Box, Container, Typography, Grid, Card, CardContent,
+    CardActions, Button, Chip, CircularProgress, Alert,
+    Paper, useMediaQuery, useTheme,
 } from '@mui/material';
 import {
     Event as EventIcon,
@@ -29,6 +18,10 @@ import { toast } from 'react-toastify';
 import { PageContainer, PageTitle, OutlineButton, LoadingWrapper } from '../../components/Common';
 import { useRole } from '../../context/RoleContext';
 import { ROLES } from '../../constants';
+import { theme as appTheme } from '../../theme/tokens';
+
+const C = appTheme.colors;
+const F = appTheme.fonts;
 
 const PublicEvents = () => {
     const navigate = useNavigate();
@@ -47,6 +40,7 @@ const PublicEvents = () => {
 
     useEffect(() => {
         loadEvents();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const loadEvents = async () => {
@@ -151,9 +145,7 @@ const PublicEvents = () => {
         try {
             const date = new Date(dateString);
             return date.toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
+                month: 'short', day: 'numeric', year: 'numeric',
             });
         } catch {
             return 'TBD';
@@ -165,8 +157,7 @@ const PublicEvents = () => {
         try {
             const date = new Date(dateString);
             return date.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
+                hour: '2-digit', minute: '2-digit',
             });
         } catch {
             return 'TBD';
@@ -177,7 +168,6 @@ const PublicEvents = () => {
         if (!event.tiers || !Array.isArray(event.tiers) || event.tiers.length === 0) {
             return false;
         }
-
         return event.tiers.some(tier => {
             const total = tier.quantity_total || 0;
             const sold = tier.quantity_sold || 0;
@@ -188,7 +178,7 @@ const PublicEvents = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: C.primary }} />
             </LoadingWrapper>
         );
     }
@@ -210,7 +200,12 @@ const PublicEvents = () => {
                         <PageTitle variant="h4" sx={{ fontSize: isMobile ? '1.5rem' : '2rem' }}>
                             {canManageEvents ? 'All Events' : '🎫 Book Tickets'}
                         </PageTitle>
-                        <Typography sx={{ color: 'rgba(255,255,255,0.6)', fontSize: isMobile ? '0.85rem' : '0.875rem' }}>
+                        <Typography
+                            sx={{
+                                color: C.textMuted,
+                                fontSize: isMobile ? '0.85rem' : '0.875rem',
+                            }}
+                        >
                             {canManageEvents
                                 ? 'Manage and book tickets for all events'
                                 : 'Browse and book tickets for upcoming events'}
@@ -232,15 +227,15 @@ const PublicEvents = () => {
                         sx={{
                             mb: 3,
                             bgcolor: 'rgba(59,130,246,0.1)',
-                            color: '#60a5fa',
-                            border: '1px solid rgba(59,130,246,0.2)',
+                            color: C.infoLight,
+                            border: `1px solid rgba(59,130,246,0.2)`,
                         }}
                     >
                         {error}
                         <Button
                             size="small"
                             onClick={loadEvents}
-                            sx={{ ml: 2, color: '#60a5fa' }}
+                            sx={{ ml: 2, color: C.infoLight }}
                         >
                             Retry
                         </Button>
@@ -248,17 +243,19 @@ const PublicEvents = () => {
                 )}
 
                 {events.length === 0 && !error ? (
-                    <Paper sx={{
-                        p: 4,
-                        textAlign: 'center',
-                        bgcolor: 'rgba(255,255,255,0.02)',
-                        border: '1px solid rgba(255,255,255,0.06)',
-                        borderRadius: 3,
-                    }}>
-                        <Typography variant="h6" sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                    <Paper
+                        sx={{
+                            p: 4,
+                            textAlign: 'center',
+                            bgcolor: C.bgDarkCard,
+                            border: `1px solid ${C.bgDarkBorder}`,
+                            borderRadius: 3,
+                        }}
+                    >
+                        <Typography variant="h6" sx={{ color: C.textMuted }}>
                             No events available
                         </Typography>
-                        <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.4)', mt: 1 }}>
+                        <Typography variant="body2" sx={{ color: C.textLight, mt: 1 }}>
                             {canManageEvents
                                 ? 'Create an event first to get started!'
                                 : 'Check back later for upcoming events'}
@@ -274,27 +271,41 @@ const PublicEvents = () => {
 
                             return (
                                 <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                    <Card sx={{
-                                        bgcolor: 'rgba(255,255,255,0.02)',
-                                        border: isDraft ? '1px dashed rgba(255,200,0,0.3)' : '1px solid rgba(255,255,255,0.06)',
-                                        borderRadius: 3,
-                                        height: '100%',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        transition: 'all 0.3s ease',
-                                        opacity: isDraft && !canManageEvents ? 0.5 : 1,
-                                        '&:hover': {
-                                            transform: isBookable ? 'translateY(-4px)' : 'none',
-                                            borderColor: isBookable ? 'rgba(91,95,239,0.3)' : 'rgba(255,255,255,0.06)',
-                                            boxShadow: isBookable ? '0 0 40px rgba(91, 95, 239, 0.1)' : 'none',
-                                        }
-                                    }}>
-                                        <CardContent sx={{ flex: 1, p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
+                                    <Card
+                                        sx={{
+                                            bgcolor: C.bgDarkCard,
+                                            border: isDraft
+                                                ? `1px dashed rgba(255,200,0,0.3)`
+                                                : `1px solid ${C.bgDarkBorder}`,
+                                            borderRadius: 3,
+                                            height: '100%',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            transition: 'all 0.3s ease',
+                                            opacity: isDraft && !canManageEvents ? 0.5 : 1,
+                                            '&:hover': {
+                                                transform: isBookable ? 'translateY(-4px)' : 'none',
+                                                borderColor: isBookable
+                                                    ? `${C.primary}4D`
+                                                    : C.bgDarkBorder,
+                                                boxShadow: isBookable
+                                                    ? `0 0 40px rgba(51, 51, 51, 0.15)`
+                                                    : 'none',
+                                            },
+                                        }}
+                                    >
+                                        <CardContent
+                                            sx={{
+                                                flex: 1,
+                                                p: isMobile ? 1.5 : 2,
+                                                '&:last-child': { pb: isMobile ? 1.5 : 2 },
+                                            }}
+                                        >
                                             <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
                                                 <Typography
                                                     variant="h6"
                                                     sx={{
-                                                        color: 'white',
+                                                        color: C.textInverse,
                                                         fontWeight: 600,
                                                         mb: 1,
                                                         minWidth: 0,
@@ -311,13 +322,17 @@ const PublicEvents = () => {
                                                     label={isDraft ? 'DRAFT' : (event.status?.toUpperCase() || 'ACTIVE')}
                                                     size="small"
                                                     sx={{
-                                                        bgcolor: isDraft ? 'rgba(255,200,0,0.15)' :
-                                                            event.status === 'active' ? 'rgba(34,197,94,0.15)' :
-                                                                'rgba(59,130,246,0.15)',
-                                                        color: isDraft ? '#fbbf24' :
-                                                            event.status === 'active' ? '#22c55e' :
-                                                                '#60a5fa',
-                                                        border: '1px solid rgba(255,255,255,0.06)',
+                                                        bgcolor: isDraft
+                                                            ? 'rgba(255,200,0,0.15)'
+                                                            : event.status === 'active'
+                                                                ? `${C.success}26`
+                                                                : `${C.info}26`,
+                                                        color: isDraft
+                                                            ? C.warningLight
+                                                            : event.status === 'active'
+                                                                ? C.success
+                                                                : C.infoLight,
+                                                        border: `1px solid ${C.bgDarkBorder}`,
                                                         fontSize: '10px',
                                                         height: '20px',
                                                         flexShrink: 0,
@@ -329,7 +344,7 @@ const PublicEvents = () => {
                                                 <Typography
                                                     variant="body2"
                                                     sx={{
-                                                        color: 'rgba(255,255,255,0.6)',
+                                                        color: C.textMuted,
                                                         mb: 2,
                                                         display: '-webkit-box',
                                                         WebkitLineClamp: 3,
@@ -344,21 +359,28 @@ const PublicEvents = () => {
 
                                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <CalendarToday sx={{ fontSize: 16, color: 'rgba(255,255,255,0.4)', flexShrink: 0 }} />
-                                                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                                                    <CalendarToday sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
+                                                    <Typography variant="body2" sx={{ color: C.textMuted }}>
                                                         {formatDate(event.start_date)}
                                                     </Typography>
                                                 </Box>
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <EventIcon sx={{ fontSize: 16, color: 'rgba(255,255,255,0.4)', flexShrink: 0 }} />
-                                                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                                                    <EventIcon sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
+                                                    <Typography variant="body2" sx={{ color: C.textMuted }}>
                                                         {formatTime(event.start_date)}
                                                     </Typography>
                                                 </Box>
                                                 {event.venue && (
                                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                        <LocationOn sx={{ fontSize: 16, color: 'rgba(255,255,255,0.4)', flexShrink: 0 }} />
-                                                        <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        <LocationOn sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
+                                                        <Typography
+                                                            variant="body2"
+                                                            sx={{
+                                                                color: C.textMuted,
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                            }}
+                                                        >
                                                             {event.venue.name || event.venue.city || 'TBD'}
                                                         </Typography>
                                                     </Box>
@@ -371,8 +393,8 @@ const PublicEvents = () => {
                                                     size="small"
                                                     sx={{
                                                         bgcolor: 'rgba(255,255,255,0.05)',
-                                                        color: 'rgba(255,255,255,0.6)',
-                                                        border: '1px solid rgba(255,255,255,0.06)',
+                                                        color: C.textMuted,
+                                                        border: `1px solid ${C.bgDarkBorder}`,
                                                     }}
                                                 />
                                                 {event.tiers && event.tiers.length > 0 && (
@@ -380,9 +402,9 @@ const PublicEvents = () => {
                                                         label={`${event.tiers.length} tiers`}
                                                         size="small"
                                                         sx={{
-                                                            bgcolor: 'rgba(91,95,239,0.15)',
-                                                            color: '#8B5CF6',
-                                                            border: '1px solid rgba(255,255,255,0.06)',
+                                                            bgcolor: `${C.primary}26`,
+                                                            color: C.primaryLight,
+                                                            border: `1px solid ${C.bgDarkBorder}`,
                                                         }}
                                                     />
                                                 )}
@@ -391,9 +413,9 @@ const PublicEvents = () => {
                                                         label="Sold Out"
                                                         size="small"
                                                         sx={{
-                                                            bgcolor: 'rgba(239,68,68,0.15)',
-                                                            color: '#ef4444',
-                                                            border: '1px solid rgba(255,255,255,0.06)',
+                                                            bgcolor: `${C.error}26`,
+                                                            color: C.error,
+                                                            border: `1px solid ${C.bgDarkBorder}`,
                                                         }}
                                                     />
                                                 )}
@@ -410,18 +432,18 @@ const PublicEvents = () => {
                                                 sx={{
                                                     minHeight: 44,
                                                     background: isBookable
-                                                        ? 'linear-gradient(135deg, #5B5FEF 0%, #8B5CF6 100%)'
+                                                        ? C.primaryGradient
                                                         : 'rgba(255,255,255,0.05)',
                                                     '&:hover': {
                                                         background: isBookable
-                                                            ? 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)'
+                                                            ? `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`
                                                             : 'rgba(255,255,255,0.05)',
                                                         transform: isBookable ? 'translateY(-2px)' : 'none',
                                                     },
                                                     textTransform: 'none',
                                                     fontWeight: 600,
                                                     borderRadius: 2,
-                                                    color: isBookable ? 'white' : 'rgba(255,255,255,0.3)',
+                                                    color: isBookable ? C.textInverse : C.textLight,
                                                 }}
                                             >
                                                 {isBookable ? 'Book Tickets' : 'Not Available'}

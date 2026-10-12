@@ -30,43 +30,23 @@ import { useRole } from '../../context/RoleContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 
-// Import from Common
 import {
-    PageContainer,
-    PageHeader,
-    PageTitle,
-    PageHeaderLeft,
-    PageHeaderRight,
-    PrimaryButton,
-    OutlineButton,
-    StatusChip,
-    StyledTableContainer,
-    BulkActionsBar,
-    LoadingWrapper,
+    PageContainer, PageHeader, PageTitle, PageHeaderLeft, PageHeaderRight,
+    PrimaryButton, OutlineButton, StatusChip, StyledTableContainer,
+    BulkActionsBar, LoadingWrapper,
 } from '../../components/Common';
 
-// Import shared constants
-import {
-    BOOKING_STATUS,
-    BookingStatusUtils,
-    ROLES,
-} from '../../constants';
+import { BOOKING_STATUS, BookingStatusUtils, ROLES } from '../../constants';
 
 import Ticket from '../../components/Ticket/E-Ticket';
 
+import { theme as appTheme } from '../../theme/tokens';
+
+const C = appTheme.colors;
+const F = appTheme.fonts;
+
 // ============================================
 // MONEY HELPERS
-// ------------------------------------------------------------
-// The backend exposes three separate money fields on every
-// booking in the list response:
-//
-//   • total_amount      — the GROSS subtotal (before discount)
-//   • discount_applied  — the discount amount (>= 0)
-//   • net_amount        — total_amount − discount_applied
-//
-// To keep the UI consistent regardless of which subset of fields
-// the API happens to return, we derive the net amount defensively
-// from whatever is present.
 // ============================================
 const getNetAmount = (booking) => {
     if (!booking) return 0;
@@ -77,27 +57,25 @@ const getNetAmount = (booking) => {
 };
 
 const getGrossAmount = (booking) => Number(booking?.total_amount || 0);
-
 const getDiscountAmount = (booking) => Number(booking?.discount_applied || 0);
-
 const formatMoney = (value) => `₹${Number(value || 0).toFixed(2)}`;
 
 // ============================================
-// STAT CARD — matches Dashboard.js
+// STAT CARD
 // ============================================
 const StatCard = ({ title, value, icon, color }) => {
     const theme = useTheme();
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
 
     return (
-        <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+        <Card sx={{ height: '100%', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
             <CardContent sx={{ p: isSmall ? 1.5 : 2, '&:last-child': { pb: isSmall ? 1.5 : 2 } }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
                     <Box sx={{ minWidth: 0, flex: 1 }}>
                         <Typography
                             variant="caption"
                             sx={{
-                                color: '#64748b',
+                                color: C.textSecondary,
                                 fontWeight: 600,
                                 letterSpacing: 0.5,
                                 fontSize: isSmall ? '10px' : '12px',
@@ -109,7 +87,7 @@ const StatCard = ({ title, value, icon, color }) => {
                             variant="h4"
                             sx={{
                                 fontWeight: 700,
-                                color: '#0f172a',
+                                color: C.textPrimary,
                                 mt: 1,
                                 fontSize: isSmall ? '1.25rem' : '2rem',
                                 overflow: 'hidden',
@@ -141,11 +119,6 @@ const StatCard = ({ title, value, icon, color }) => {
 
 // ============================================
 // AMOUNT DISPLAY
-// ------------------------------------------------------------
-// Reusable component for showing the net amount as the headline
-// figure, with the gross and discount breakdown underneath when
-// a discount was applied. Used in both the desktop table and the
-// mobile card so they stay visually consistent.
 // ============================================
 const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
     const net = getNetAmount(booking);
@@ -155,10 +128,7 @@ const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
 
     return (
         <Box sx={{ textAlign: align === 'right' ? 'right' : 'left' }}>
-            <Typography
-                variant={size}
-                sx={{ fontWeight: 700, color: '#0f172a', lineHeight: 1.2 }}
-            >
+            <Typography variant={size} sx={{ fontWeight: 700, color: C.textPrimary, lineHeight: 1.2 }}>
                 {formatMoney(net)}
             </Typography>
 
@@ -167,7 +137,7 @@ const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
                     <Typography
                         variant="caption"
                         sx={{
-                            color: '#94a3b8',
+                            color: C.textLight,
                             textDecoration: 'line-through',
                             display: 'block',
                             mt: 0.25,
@@ -177,12 +147,7 @@ const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
                     </Typography>
                     <Typography
                         variant="caption"
-                        sx={{
-                            color: '#10b981',
-                            fontWeight: 600,
-                            display: 'block',
-                            fontSize: '10px',
-                        }}
+                        sx={{ color: C.success, fontWeight: 600, display: 'block', fontSize: '10px' }}
                     >
                         −{formatMoney(discount)}
                         {booking.discount_code ? ` (${booking.discount_code})` : ''}
@@ -194,7 +159,7 @@ const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
 };
 
 // ============================================
-// MOBILE BOOKING CARD — matches Dashboard.js
+// MOBILE BOOKING CARD
 // ============================================
 const MobileBookingCard = ({ booking, onClick, renderActions, isSelected, showCheckbox, onToggleSelect }) => {
     const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
@@ -203,21 +168,20 @@ const MobileBookingCard = ({ booking, onClick, renderActions, isSelected, showCh
         <Card
             sx={{
                 borderRadius: 2,
-                border: isSelected ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                border: isSelected ? `2px solid ${C.primary}` : `1px solid ${C.borderLight}`,
                 opacity: isCompleted ? 0.75 : 1,
                 overflow: 'hidden',
                 transition: 'all 0.2s ease',
             }}
         >
             <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                {/* Header: Reference + Status */}
                 <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1.5 }}>
                     {showCheckbox && (
                         <Checkbox
                             checked={isSelected}
                             onChange={(e) => onToggleSelect && onToggleSelect(e, booking.id)}
                             disabled={isCompleted}
-                            sx={{ color: '#94a3b8', p: 0.5, mt: -0.5 }}
+                            sx={{ color: C.textLight, p: 0.5, mt: -0.5 }}
                             size="small"
                         />
                     )}
@@ -233,9 +197,9 @@ const MobileBookingCard = ({ booking, onClick, renderActions, isSelected, showCh
                         <Typography
                             variant="subtitle1"
                             sx={{
-                                fontFamily: 'monospace',
+                                fontFamily: F.familyMono,
                                 fontWeight: 700,
-                                color: '#0f172a',
+                                color: C.textPrimary,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
@@ -243,43 +207,51 @@ const MobileBookingCard = ({ booking, onClick, renderActions, isSelected, showCh
                         >
                             {booking.booking_reference}
                         </Typography>
-                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                        <Typography variant="caption" sx={{ color: C.textSecondary, display: 'block' }}>
                             {booking.formatted_date || new Date(booking.created_at).toLocaleDateString()}
                         </Typography>
                     </Box>
-                    <StatusChip
-                        status={booking.status}
-                        type="booking"
-                        size="small"
-                        showIcon={true}
-                        variant="filled"
-                    />
+                    <StatusChip status={booking.status} type="booking" size="small" showIcon variant="filled" />
                 </Box>
 
                 <Divider sx={{ mb: 1.5 }} />
 
-                {/* Customer + Event */}
-                <Box
-                    onClick={onClick}
-                    sx={{ cursor: 'pointer', '&:active': { opacity: 0.7 } }}
-                >
+                <Box onClick={onClick} sx={{ cursor: 'pointer', '&:active': { opacity: 0.7 } }}>
                     <Box sx={{ mb: 1 }}>
-                        <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
+                        <Typography
+                            variant="caption"
+                            sx={{
+                                color: C.textLight,
+                                textTransform: 'uppercase',
+                                fontSize: '10px',
+                                fontWeight: 600,
+                                letterSpacing: 0.5,
+                            }}
+                        >
                             Customer
                         </Typography>
-                        <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                        <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 500 }}>
                             {booking.customer_name || 'N/A'}
                         </Typography>
                     </Box>
 
                     <Box sx={{ mb: 1.5 }}>
-                        <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
+                        <Typography
+                            variant="caption"
+                            sx={{
+                                color: C.textLight,
+                                textTransform: 'uppercase',
+                                fontSize: '10px',
+                                fontWeight: 600,
+                                letterSpacing: 0.5,
+                            }}
+                        >
                             Event
                         </Typography>
                         <Typography
                             variant="body2"
                             sx={{
-                                color: '#334155',
+                                color: C.textPrimary,
                                 fontWeight: 500,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
@@ -290,32 +262,30 @@ const MobileBookingCard = ({ booking, onClick, renderActions, isSelected, showCh
                         </Typography>
                     </Box>
 
-                    {/* ✅ Amount section now shows NET with struck-through gross */}
                     <Box
                         sx={{
                             display: 'flex',
                             justifyContent: 'space-between',
                             alignItems: 'flex-end',
                             pt: 1.5,
-                            borderTop: '1px dashed #e2e8f0',
+                            borderTop: `1px dashed ${C.borderLight}`,
                         }}
                     >
                         <AmountDisplay booking={booking} align="left" size="h6" />
-                        <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                        <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
                             {booking.ticket_count || 0} ticket{(booking.ticket_count || 0) !== 1 ? 's' : ''}
                         </Typography>
                     </Box>
 
                     {isCompleted && (
-                        <Typography variant="caption" sx={{ color: '#10b981', display: 'block', mt: 1, fontWeight: 600 }}>
+                        <Typography variant="caption" sx={{ color: C.success, display: 'block', mt: 1, fontWeight: 600 }}>
                             ✅ All tickets used
                         </Typography>
                     )}
                 </Box>
 
-                {/* Actions */}
                 {renderActions && (
-                    <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #f1f5f9' }}>
+                    <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${C.bgInput}` }}>
                         {renderActions(booking)}
                     </Box>
                 )}
@@ -334,7 +304,6 @@ const Bookings = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Determine user permissions
     const isSuperAdmin = role === ROLES.SUPER_ADMIN;
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
     const isOrganizer = role === ROLES.ORGANIZER;
@@ -350,26 +319,12 @@ const Bookings = () => {
     const [bulkAction, setBulkAction] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
     const [confirmDialog, setConfirmDialog] = useState({
-        open: false,
-        title: '',
-        message: '',
-        action: null,
-        bookingId: null,
-        bookingIds: []
+        open: false, title: '', message: '', action: null, bookingId: null, bookingIds: [],
     });
     const [eticketOpen, setEticketOpen] = useState(false);
-    const [eticketData, setEticketData] = useState({
-        tickets: [],
-        booking: null,
-        event: null,
-    });
+    const [eticketData, setEticketData] = useState({ tickets: [], booking: null, event: null });
     const [stats, setStats] = useState({
-        total: 0,
-        pending: 0,
-        confirmed: 0,
-        completed: 0,
-        cancelled: 0,
-        refunded: 0,
+        total: 0, pending: 0, confirmed: 0, completed: 0, cancelled: 0, refunded: 0,
     });
 
     const loadBookings = async () => {
@@ -396,7 +351,6 @@ const Bookings = () => {
             setBookings(bookingsData);
             setSelectedIds([]);
             calculateStats(bookingsData);
-
         } catch (error) {
             console.error('❌ Bookings error:', error);
             console.error('  Status:', error.response?.status);
@@ -431,6 +385,7 @@ const Bookings = () => {
 
     useEffect(() => {
         loadBookings();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleViewTickets = (bookingId) => {
@@ -468,8 +423,8 @@ const Bookings = () => {
             const eventRes = await api.get(`/events/${eventId}/`);
 
             setEticketData({
-                tickets: tickets,
-                booking: booking,
+                tickets,
+                booking,
                 event: eventRes.data,
             });
             setEticketOpen(true);
@@ -479,18 +434,6 @@ const Bookings = () => {
         }
     };
 
-    // ============================================================
-    // ✅ FIXED: handleSendEmailFromTable
-    // ------------------------------------------------------------
-    // SECURITY: The email recipient is determined SERVER-SIDE from
-    // the booking record. We deliberately do NOT send `email` in the
-    // request body — that would imply the endpoint trusts client
-    // input for the recipient, which is a potential abuse vector if
-    // the backend ever changed to read it.
-    //
-    // The backend's `resend_tickets` action reads `booking.customer_email`
-    // and ignores any client-supplied email, so sending none is correct.
-    // ============================================================
     const handleSendEmailFromTable = async (booking) => {
         try {
             console.log('📧 Resending tickets for booking:', booking.booking_reference);
@@ -499,9 +442,7 @@ const Bookings = () => {
 
             console.log('📧 Email response:', response.data);
 
-            const formatInfo = response.data?.formats
-                ? ` (${response.data.formats})`
-                : '';
+            const formatInfo = response.data?.formats ? ` (${response.data.formats})` : '';
             const attachmentsInfo = response.data?.attachments
                 ? ` — ${response.data.attachments} attachment(s)`
                 : '';
@@ -522,15 +463,14 @@ const Bookings = () => {
         }
     };
 
-    // ============ ACTION HANDLERS ============
     const handleMarkPaymentReceived = async (bookingId) => {
         setConfirmDialog({
             open: true,
             title: '💰 Mark Payment Received',
             message: 'This will mark the payment as received but NOT generate QR codes yet. Continue?',
             action: 'mark_payment_received',
-            bookingId: bookingId,
-            bookingIds: []
+            bookingId,
+            bookingIds: [],
         });
     };
 
@@ -540,8 +480,8 @@ const Bookings = () => {
             title: '💰 Confirm Payment & Issue Tickets',
             message: 'This will mark the payment as received and generate QR codes for all tickets. Continue?',
             action: 'confirm_payment_and_issue_tickets',
-            bookingId: bookingId,
-            bookingIds: []
+            bookingId,
+            bookingIds: [],
         });
     };
 
@@ -551,8 +491,8 @@ const Bookings = () => {
             title: '🎫 Issue Tickets',
             message: 'This will generate QR codes for all tickets in this booking. Continue?',
             action: 'issue_tickets',
-            bookingId: bookingId,
-            bookingIds: []
+            bookingId,
+            bookingIds: [],
         });
     };
 
@@ -562,8 +502,8 @@ const Bookings = () => {
             title: '🔄 Regenerate QR Codes',
             message: 'This will regenerate QR codes for all tickets. Existing QR codes will be replaced. Continue?',
             action: 'regenerate_ticket_qr',
-            bookingId: bookingId,
-            bookingIds: []
+            bookingId,
+            bookingIds: [],
         });
     };
 
@@ -573,8 +513,8 @@ const Bookings = () => {
             title: '❌ Cancel Booking',
             message: 'Are you sure you want to cancel this booking? This action cannot be undone.',
             action: 'cancel_booking',
-            bookingId: bookingId,
-            bookingIds: []
+            bookingId,
+            bookingIds: [],
         });
     };
 
@@ -584,8 +524,8 @@ const Bookings = () => {
             title: '💸 Refund Booking',
             message: 'Are you sure you want to refund this booking? This action cannot be undone.',
             action: 'refund_booking',
-            bookingId: bookingId,
-            bookingIds: []
+            bookingId,
+            bookingIds: [],
         });
     };
 
@@ -604,7 +544,7 @@ const Bookings = () => {
                     data = {
                         payment_method: 'offline',
                         payment_reference: 'MANUAL-' + Date.now(),
-                        notes: 'Payment marked as received by admin'
+                        notes: 'Payment marked as received by admin',
                     };
                     break;
                 case 'confirm_payment_and_issue_tickets':
@@ -612,42 +552,31 @@ const Bookings = () => {
                     data = {
                         payment_method: 'offline',
                         payment_reference: 'MANUAL-' + Date.now(),
-                        notes: 'Payment confirmed and tickets issued by admin'
+                        notes: 'Payment confirmed and tickets issued by admin',
                     };
                     break;
                 case 'issue_tickets':
                     endpoint = `/bookings/${bookingId}/issue_tickets/`;
-                    data = {
-                        notes: 'Tickets issued by admin'
-                    };
+                    data = { notes: 'Tickets issued by admin' };
                     break;
                 case 'regenerate_ticket_qr':
                     endpoint = `/bookings/${bookingId}/regenerate_ticket_qr/`;
-                    data = {
-                        notes: 'QR codes regenerated by admin'
-                    };
+                    data = { notes: 'QR codes regenerated by admin' };
                     break;
                 case 'cancel_booking':
                     endpoint = `/bookings/${bookingId}/cancel_booking/`;
-                    data = {
-                        notes: 'Booking cancelled by admin'
-                    };
+                    data = { notes: 'Booking cancelled by admin' };
                     break;
                 case 'refund_booking':
                     endpoint = `/bookings/${bookingId}/refund_booking/`;
-                    data = {
-                        notes: 'Booking refunded by admin'
-                    };
+                    data = { notes: 'Booking refunded by admin' };
                     break;
                 case 'bulk':
                     endpoint = `/bookings/bulk_action/`;
                     const formattedIds = Array.isArray(bookingIds)
                         ? bookingIds.map(id => String(id))
                         : [String(bookingIds)];
-                    data = {
-                        action: bulkAction,
-                        booking_ids: formattedIds
-                    };
+                    data = { action: bulkAction, booking_ids: formattedIds };
                     break;
                 default:
                     return;
@@ -698,9 +627,7 @@ const Bookings = () => {
                 }
             } else {
                 if (response.data.status === 'success' || response.data.success !== false) {
-                    const message = response.data.message ||
-                                response.data.status ||
-                                'Action completed successfully';
+                    const message = response.data.message || response.data.status || 'Action completed successfully';
                     toast.success(message);
 
                     if (response.data.email_sent !== undefined) {
@@ -746,7 +673,6 @@ const Bookings = () => {
         }
     };
 
-    // ============ BULK ACTIONS ============
     const handleBulkAction = async () => {
         if (!bulkAction || selectedIds.length === 0) {
             toast.warning('Please select bookings and an action');
@@ -754,11 +680,11 @@ const Bookings = () => {
         }
 
         const actionLabels = {
-            'mark_payment_received': 'Mark Payment Received',
-            'confirm_payment_and_issue_tickets': 'Confirm Payment & Issue Tickets',
-            'issue_tickets': 'Issue Tickets',
-            'regenerate_ticket_qr': 'Regenerate QR Codes',
-            'cancel_booking': 'Cancel Bookings'
+            mark_payment_received: 'Mark Payment Received',
+            confirm_payment_and_issue_tickets: 'Confirm Payment & Issue Tickets',
+            issue_tickets: 'Issue Tickets',
+            regenerate_ticket_qr: 'Regenerate QR Codes',
+            cancel_booking: 'Cancel Bookings',
         };
 
         setConfirmDialog({
@@ -767,11 +693,10 @@ const Bookings = () => {
             message: `This will apply "${actionLabels[bulkAction]}" to ${selectedIds.length} booking(s). Continue?`,
             action: 'bulk',
             bookingId: null,
-            bookingIds: selectedIds
+            bookingIds: selectedIds,
         });
     };
 
-    // ============ SELECTION HANDLERS ============
     const handleSelectAll = (event) => {
         if (event.target.checked) {
             setSelectedIds(bookings.map(b => b.id));
@@ -788,7 +713,6 @@ const Bookings = () => {
         }
     };
 
-    // Get action buttons based on user role
     const getAvailableActions = (booking) => {
         const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
         const isCancelled = booking.status === BOOKING_STATUS.CANCELLED;
@@ -798,35 +722,41 @@ const Bookings = () => {
         if (isRegularUser) {
             return {
                 canView: true,
-                canViewETicket: booking.status === BOOKING_STATUS.CONFIRMED ||
-                               booking.status === BOOKING_STATUS.PAID ||
-                               booking.status === BOOKING_STATUS.COMPLETED,
-                canSendEmail: booking.status === BOOKING_STATUS.CONFIRMED ||
-                             booking.status === BOOKING_STATUS.PAID ||
-                             booking.status === BOOKING_STATUS.COMPLETED,
+                canViewETicket:
+                    booking.status === BOOKING_STATUS.CONFIRMED ||
+                    booking.status === BOOKING_STATUS.PAID ||
+                    booking.status === BOOKING_STATUS.COMPLETED,
+                canSendEmail:
+                    booking.status === BOOKING_STATUS.CONFIRMED ||
+                    booking.status === BOOKING_STATUS.PAID ||
+                    booking.status === BOOKING_STATUS.COMPLETED,
                 canManage: false,
-                isReadonly: isReadonly,
+                isReadonly,
             };
         }
 
         return {
             canView: true,
-            canViewETicket: booking.status === BOOKING_STATUS.CONFIRMED ||
-                           booking.status === BOOKING_STATUS.PAID ||
-                           booking.status === BOOKING_STATUS.COMPLETED,
-            canSendEmail: booking.status === BOOKING_STATUS.CONFIRMED ||
-                         booking.status === BOOKING_STATUS.PAID ||
-                         booking.status === BOOKING_STATUS.COMPLETED,
+            canViewETicket:
+                booking.status === BOOKING_STATUS.CONFIRMED ||
+                booking.status === BOOKING_STATUS.PAID ||
+                booking.status === BOOKING_STATUS.COMPLETED,
+            canSendEmail:
+                booking.status === BOOKING_STATUS.CONFIRMED ||
+                booking.status === BOOKING_STATUS.PAID ||
+                booking.status === BOOKING_STATUS.COMPLETED,
             canMarkPayment: booking.status === BOOKING_STATUS.PENDING,
             canConfirmPayment: booking.status === BOOKING_STATUS.PENDING,
             canIssueTickets: booking.status === BOOKING_STATUS.PAID,
-            canRegenerateQR: booking.status === BOOKING_STATUS.PAID ||
-                           booking.status === BOOKING_STATUS.CONFIRMED,
+            canRegenerateQR:
+                booking.status === BOOKING_STATUS.PAID ||
+                booking.status === BOOKING_STATUS.CONFIRMED,
             canCancel: !isReadonly && booking.status !== BOOKING_STATUS.CANCELLED,
-            canRefund: booking.status === BOOKING_STATUS.PAID ||
-                      booking.status === BOOKING_STATUS.CONFIRMED,
+            canRefund:
+                booking.status === BOOKING_STATUS.PAID ||
+                booking.status === BOOKING_STATUS.CONFIRMED,
             canManage: true,
-            isReadonly: isReadonly,
+            isReadonly,
         };
     };
 
@@ -837,7 +767,7 @@ const Bookings = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: C.primary }} />
             </LoadingWrapper>
         );
     }
@@ -852,15 +782,13 @@ const Bookings = () => {
                     <Typography
                         variant="body2"
                         sx={{
-                            color: '#64748b',
+                            color: C.textSecondary,
                             ml: isMobile ? 0 : 2,
                             display: 'block',
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
-                        {isRegularUser
-                            ? 'View and manage your bookings'
-                            : 'Manage all customer bookings'}
+                        {isRegularUser ? 'View and manage your bookings' : 'Manage all customer bookings'}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
@@ -873,61 +801,57 @@ const Bookings = () => {
                 </PageHeaderRight>
             </PageHeader>
 
-            {/* ============================================ */}
-            {/* STATS CARDS — Matches Dashboard styling */}
-            {/* ============================================ */}
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={2}>
                     <StatCard
                         title="Total"
                         value={stats.total}
-                        icon={<EventIcon sx={{ color: '#4f46e5', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#4f46e5"
+                        icon={<EventIcon sx={{ color: C.primary, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.primary}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={2}>
                     <StatCard
                         title="Pending"
                         value={stats.pending}
-                        icon={<PaymentIcon sx={{ color: '#f59e0b', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#f59e0b"
+                        icon={<PaymentIcon sx={{ color: C.warning, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.warning}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={2}>
                     <StatCard
                         title="Confirmed"
                         value={stats.confirmed}
-                        icon={<QrCodeIcon sx={{ color: '#22c55e', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#22c55e"
+                        icon={<QrCodeIcon sx={{ color: C.success, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.success}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={2}>
                     <StatCard
                         title="Completed"
                         value={stats.completed}
-                        icon={<ReceiptIcon sx={{ color: '#10b981', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#10b981"
+                        icon={<ReceiptIcon sx={{ color: C.successDark, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.successDark}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={2}>
                     <StatCard
                         title="Cancelled"
                         value={stats.cancelled}
-                        icon={<CancelIcon sx={{ color: '#ef4444', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#ef4444"
+                        icon={<CancelIcon sx={{ color: C.error, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.error}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={2}>
                     <StatCard
                         title="Refunded"
                         value={stats.refunded}
-                        icon={<MoneyIcon sx={{ color: '#8b5cf6', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#8b5cf6"
+                        icon={<MoneyIcon sx={{ color: C.secondary, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.secondary}
                     />
                 </Grid>
             </Grid>
 
-            {/* Error Alert */}
             {error && (
                 <Alert severity="error" sx={{ mb: 3 }}>
                     {error}
@@ -937,30 +861,28 @@ const Bookings = () => {
                 </Alert>
             )}
 
-            {/* Info Alert for Regular Users */}
             {isRegularUser && bookings.length === 0 && !error && (
                 <Alert severity="info" sx={{ mb: 3 }}>
                     You don't have any bookings yet. Click "Book Tickets" to browse events and book your first ticket!
                 </Alert>
             )}
 
-            {/* Bulk Actions Bar */}
             {canManageAllBookings && selectedIds.length > 0 && (
                 <BulkActionsBar>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', width: '100%' }}>
-                        <Typography variant="body2" fontWeight="bold" sx={{ color: '#0f172a' }}>
+                        <Typography variant="body2" fontWeight="bold" sx={{ color: C.textPrimary }}>
                             {selectedIds.length} booking(s) selected
                         </Typography>
                         <FormControl size="small" sx={{ minWidth: 200, flex: isMobile ? 1 : 'unset' }}>
-                            <InputLabel sx={{ color: '#64748b' }}>Bulk Action</InputLabel>
+                            <InputLabel sx={{ color: C.textSecondary }}>Bulk Action</InputLabel>
                             <Select
                                 value={bulkAction}
                                 onChange={(e) => setBulkAction(e.target.value)}
                                 label="Bulk Action"
                                 sx={{
-                                    color: '#0f172a',
-                                    '& .MuiOutlinedInput-notchedOutline': { borderColor: '#e2e8f0' },
-                                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#c7d2fe' }
+                                    color: C.textPrimary,
+                                    '& .MuiOutlinedInput-notchedOutline': { borderColor: C.borderLight },
+                                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: C.primary },
                                 }}
                             >
                                 <MenuItem value="mark_payment_received">💰 Mark Payment Received</MenuItem>
@@ -984,12 +906,12 @@ const Bookings = () => {
                             size="small"
                             onClick={() => setSelectedIds([])}
                             sx={{
-                                borderColor: '#fecaca',
-                                color: '#dc2626',
+                                borderColor: C.errorLight,
+                                color: C.errorDark,
                                 '&:hover': {
-                                    borderColor: '#dc2626',
-                                    backgroundColor: 'rgba(220, 38, 38, 0.04)'
-                                }
+                                    borderColor: C.errorDark,
+                                    backgroundColor: 'rgba(220, 38, 38, 0.04)',
+                                },
                             }}
                         >
                             Clear
@@ -998,11 +920,10 @@ const Bookings = () => {
                 </BulkActionsBar>
             )}
 
-            {/* ==================== MOBILE VIEW ==================== */}
             {isMobile ? (
                 bookings.length === 0 ? (
-                    <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid #e2e8f0' }}>
-                        <Typography sx={{ color: '#94a3b8' }}>
+                    <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
+                        <Typography sx={{ color: C.textLight }}>
                             {isRegularUser ? 'No bookings found. Book your first event!' : 'No bookings found'}
                         </Typography>
                     </Paper>
@@ -1011,8 +932,8 @@ const Bookings = () => {
                         {bookings.map((booking) => {
                             const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
                             const isCancelled = booking.status === BOOKING_STATUS.CANCELLED;
-                            const isRefunded  = booking.status === BOOKING_STATUS.REFUNDED;
-                            const isReadonly  = isCompleted || isCancelled || isRefunded;
+                            const isRefunded = booking.status === BOOKING_STATUS.REFUNDED;
+                            const isReadonly = isCompleted || isCancelled || isRefunded;
                             const actions = getAvailableActions(booking);
 
                             return (
@@ -1040,8 +961,8 @@ const Bookings = () => {
                                                     disabled={actionLoading}
                                                     sx={{
                                                         flex: '1 1 45%',
-                                                        borderColor: '#bbf7d0',
-                                                        color: '#10b981',
+                                                        borderColor: C.successLight,
+                                                        color: C.success,
                                                         textTransform: 'none',
                                                     }}
                                                 >
@@ -1060,8 +981,8 @@ const Bookings = () => {
                                                     disabled={actionLoading}
                                                     sx={{
                                                         flex: '1 1 45%',
-                                                        borderColor: '#bfdbfe',
-                                                        color: '#3b82f6',
+                                                        borderColor: C.infoLight,
+                                                        color: C.info,
                                                         textTransform: 'none',
                                                     }}
                                                 >
@@ -1080,7 +1001,7 @@ const Bookings = () => {
                                                                 handleMarkPaymentReceived(b.id);
                                                             }}
                                                             disabled={actionLoading}
-                                                            sx={{ flex: '1 1 45%', borderColor: '#fde68a', color: '#f59e0b', textTransform: 'none' }}
+                                                            sx={{ flex: '1 1 45%', borderColor: C.warningLight, color: C.warning, textTransform: 'none' }}
                                                         >
                                                             Mark Paid
                                                         </Button>
@@ -1095,7 +1016,7 @@ const Bookings = () => {
                                                                 handleConfirmPaymentAndIssue(b.id);
                                                             }}
                                                             disabled={actionLoading}
-                                                            sx={{ flex: '1 1 45%', borderColor: '#bbf7d0', color: '#10b981', textTransform: 'none' }}
+                                                            sx={{ flex: '1 1 45%', borderColor: C.successLight, color: C.success, textTransform: 'none' }}
                                                         >
                                                             Confirm & Issue
                                                         </Button>
@@ -1110,7 +1031,7 @@ const Bookings = () => {
                                                                 handleIssueTickets(b.id);
                                                             }}
                                                             disabled={actionLoading}
-                                                            sx={{ flex: '1 1 45%', borderColor: '#c7d2fe', color: '#4f46e5', textTransform: 'none' }}
+                                                            sx={{ flex: '1 1 45%', borderColor: C.primaryLight, color: C.primary, textTransform: 'none' }}
                                                         >
                                                             Issue
                                                         </Button>
@@ -1125,7 +1046,7 @@ const Bookings = () => {
                                                                 handleRegenerateQR(b.id);
                                                             }}
                                                             disabled={actionLoading}
-                                                            sx={{ flex: '1 1 45%', borderColor: '#ddd6fe', color: '#7c3aed', textTransform: 'none' }}
+                                                            sx={{ flex: '1 1 45%', borderColor: C.secondaryLight, color: C.secondary, textTransform: 'none' }}
                                                         >
                                                             Regen QR
                                                         </Button>
@@ -1140,7 +1061,7 @@ const Bookings = () => {
                                                                 handleCancelBooking(b.id);
                                                             }}
                                                             disabled={actionLoading}
-                                                            sx={{ flex: '1 1 45%', borderColor: '#fecaca', color: '#ef4444', textTransform: 'none' }}
+                                                            sx={{ flex: '1 1 45%', borderColor: C.errorLight, color: C.error, textTransform: 'none' }}
                                                         >
                                                             Cancel
                                                         </Button>
@@ -1155,7 +1076,7 @@ const Bookings = () => {
                                                                 handleRefundBooking(b.id);
                                                             }}
                                                             disabled={actionLoading}
-                                                            sx={{ flex: '1 1 45%', borderColor: '#ddd6fe', color: '#8b5cf6', textTransform: 'none' }}
+                                                            sx={{ flex: '1 1 45%', borderColor: C.secondaryLight, color: C.secondary, textTransform: 'none' }}
                                                         >
                                                             Refund
                                                         </Button>
@@ -1173,8 +1094,12 @@ const Bookings = () => {
                                                 }}
                                                 sx={{
                                                     flex: '1 1 100%',
-                                                    background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                                                    background: C.primaryGradient,
+                                                    color: C.textInverse,
                                                     textTransform: 'none',
+                                                    '&:hover': {
+                                                        background: `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`,
+                                                    },
                                                 }}
                                             >
                                                 View Details
@@ -1187,37 +1112,36 @@ const Bookings = () => {
                     </Box>
                 )
             ) : (
-                /* ==================== DESKTOP VIEW ==================== */
                 <StyledTableContainer>
                     <TableContainer>
                         <Table>
                             <TableHead>
                                 <TableRow>
                                     {canManageAllBookings && (
-                                        <TableCell padding="checkbox" sx={{ borderBottom: '1px solid #e2e8f0' }}>
+                                        <TableCell padding="checkbox" sx={{ borderBottom: `1px solid ${C.borderLight}` }}>
                                             <Checkbox
                                                 indeterminate={selectedIds.length > 0 && selectedIds.length < bookings.length}
                                                 checked={bookings.length > 0 && selectedIds.length === bookings.length}
                                                 onChange={handleSelectAll}
-                                                sx={{ color: '#94a3b8' }}
+                                                sx={{ color: C.textLight }}
                                             />
                                         </TableCell>
                                     )}
-                                    <TableCell sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Reference</TableCell>
-                                    <TableCell sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Customer</TableCell>
-                                    <TableCell sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Event</TableCell>
-                                    <TableCell align="right" sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Amount</TableCell>
-                                    <TableCell align="center" sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Tickets</TableCell>
-                                    <TableCell align="center" sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Status</TableCell>
-                                    <TableCell align="center" sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Date</TableCell>
-                                    <TableCell align="center" sx={{ color: '#475569', fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>Actions</TableCell>
+                                    <TableCell sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Reference</TableCell>
+                                    <TableCell sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Customer</TableCell>
+                                    <TableCell sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Event</TableCell>
+                                    <TableCell align="right" sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Amount</TableCell>
+                                    <TableCell align="center" sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Tickets</TableCell>
+                                    <TableCell align="center" sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Status</TableCell>
+                                    <TableCell align="center" sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Date</TableCell>
+                                    <TableCell align="center" sx={{ color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` }}>Actions</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
                                 {bookings.length === 0 ? (
                                     <TableRow>
                                         <TableCell colSpan={canManageAllBookings ? 9 : 8} align="center" sx={{ py: 4 }}>
-                                            <Typography sx={{ color: '#94a3b8' }}>
+                                            <Typography sx={{ color: C.textLight }}>
                                                 {isRegularUser ? 'No bookings found. Book your first event!' : 'No bookings found'}
                                             </Typography>
                                         </TableCell>
@@ -1237,8 +1161,8 @@ const Bookings = () => {
                                                 hover
                                                 selected={selectedIds.includes(booking.id)}
                                                 sx={{
-                                                    '&:hover': { backgroundColor: '#f8fafc' },
-                                                    '&.Mui-selected': { backgroundColor: '#eef2ff' },
+                                                    '&:hover': { backgroundColor: C.bgPrimary },
+                                                    '&.Mui-selected': { backgroundColor: C.bgInput },
                                                     opacity: isTerminal ? 0.7 : 1,
                                                 }}
                                             >
@@ -1247,67 +1171,64 @@ const Bookings = () => {
                                                         <Checkbox
                                                             checked={selectedIds.includes(booking.id)}
                                                             onChange={(e) => handleSelectOne(e, booking.id)}
-                                                            sx={{ color: '#94a3b8' }}
+                                                            sx={{ color: C.textLight }}
                                                             disabled={isReadonly}
                                                         />
                                                     </TableCell>
                                                 )}
                                                 <TableCell>
-                                                    <Typography variant="body2" fontWeight="bold" sx={{ color: '#0f172a' }}>
+                                                    <Typography variant="body2" fontWeight="bold" sx={{ color: C.textPrimary }}>
                                                         {booking.booking_reference}
                                                     </Typography>
                                                     {isCompleted && (
-                                                        <Typography variant="caption" sx={{ color: '#10b981', display: 'block' }}>
+                                                        <Typography variant="caption" sx={{ color: C.success, display: 'block' }}>
                                                             ✅ All tickets used
                                                         </Typography>
                                                     )}
                                                 </TableCell>
-                                                <TableCell sx={{ color: '#334155' }}>{booking.customer_name}</TableCell>
-                                                <TableCell sx={{ color: '#334155' }}>{booking.event_title || booking.event?.title || 'N/A'}</TableCell>
-
-                                                {/* ✅ Amount column now shows NET with strikethrough gross */}
+                                                <TableCell sx={{ color: C.textPrimary }}>{booking.customer_name}</TableCell>
+                                                <TableCell sx={{ color: C.textPrimary }}>{booking.event_title || booking.event?.title || 'N/A'}</TableCell>
                                                 <TableCell align="right">
                                                     <AmountDisplay booking={booking} align="right" size="body2" />
                                                 </TableCell>
-
                                                 <TableCell align="center">
                                                     <Chip
                                                         label={`${booking.ticket_count || 0} tickets`}
                                                         size="small"
-                                                        color={isCompleted ? "success" : "primary"}
-                                                        variant={isCompleted ? "filled" : "outlined"}
+                                                        color={isCompleted ? 'success' : 'primary'}
+                                                        variant={isCompleted ? 'filled' : 'outlined'}
                                                         icon={<ArrowForwardIcon sx={{ fontSize: 16 }} />}
                                                         clickable={!isReadonly}
                                                         onClick={() => !isReadonly && handleViewTickets(booking.id)}
                                                         sx={{
-                                                            borderColor: isCompleted ? '#10b981' : '#c7d2fe',
-                                                            color: isCompleted ? '#fff' : '#4f46e5',
-                                                            backgroundColor: isCompleted ? '#10b981' : 'transparent',
+                                                            borderColor: isCompleted ? C.success : C.primaryLight,
+                                                            color: isCompleted ? C.textInverse : C.primary,
+                                                            backgroundColor: isCompleted ? C.success : 'transparent',
                                                             '&:hover': {
-                                                                borderColor: '#4f46e5',
-                                                                backgroundColor: isCompleted ? '#059669' : '#eef2ff'
-                                                            }
+                                                                borderColor: C.primary,
+                                                                backgroundColor: isCompleted ? C.successDark : C.bgInput,
+                                                            },
                                                         }}
                                                     />
                                                 </TableCell>
                                                 <TableCell align="center">
-                                                    <StatusChip status={booking.status} type="booking" size="small" showIcon={true} variant="filled" />
+                                                    <StatusChip status={booking.status} type="booking" size="small" showIcon variant="filled" />
                                                 </TableCell>
-                                                <TableCell align="center" sx={{ color: '#64748b' }}>
+                                                <TableCell align="center" sx={{ color: C.textSecondary }}>
                                                     {booking.formatted_date || new Date(booking.created_at).toLocaleDateString()}
                                                 </TableCell>
                                                 <TableCell align="center">
                                                     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', justifyContent: 'center' }}>
                                                         {actions.canViewETicket && (
                                                             <Tooltip title="View E-Ticket">
-                                                                <IconButton size="small" sx={{ color: '#10b981' }} onClick={() => handleViewETicket(booking)} disabled={actionLoading}>
+                                                                <IconButton size="small" sx={{ color: C.success }} onClick={() => handleViewETicket(booking)} disabled={actionLoading}>
                                                                     <ReceiptIcon fontSize="small" />
                                                                 </IconButton>
                                                             </Tooltip>
                                                         )}
                                                         {actions.canSendEmail && (
                                                             <Tooltip title="Send E-Ticket Email">
-                                                                <IconButton size="small" sx={{ color: '#3b82f6' }} onClick={() => handleSendEmailFromTable(booking)} disabled={actionLoading}>
+                                                                <IconButton size="small" sx={{ color: C.info }} onClick={() => handleSendEmailFromTable(booking)} disabled={actionLoading}>
                                                                     <EmailIcon fontSize="small" />
                                                                 </IconButton>
                                                             </Tooltip>
@@ -1316,42 +1237,42 @@ const Bookings = () => {
                                                             <>
                                                                 {actions.canMarkPayment && (
                                                                     <Tooltip title="Mark Payment Received (No Tickets)">
-                                                                        <IconButton size="small" sx={{ color: '#f59e0b' }} onClick={() => handleMarkPaymentReceived(booking.id)} disabled={actionLoading || isReadonly}>
+                                                                        <IconButton size="small" sx={{ color: C.warning }} onClick={() => handleMarkPaymentReceived(booking.id)} disabled={actionLoading || isReadonly}>
                                                                             <PaymentIcon fontSize="small" />
                                                                         </IconButton>
                                                                     </Tooltip>
                                                                 )}
                                                                 {actions.canConfirmPayment && (
                                                                     <Tooltip title="Confirm Payment & Issue Tickets">
-                                                                        <IconButton size="small" sx={{ color: '#10b981' }} onClick={() => handleConfirmPaymentAndIssue(booking.id)} disabled={actionLoading || isReadonly}>
+                                                                        <IconButton size="small" sx={{ color: C.success }} onClick={() => handleConfirmPaymentAndIssue(booking.id)} disabled={actionLoading || isReadonly}>
                                                                             <QrCodeIcon fontSize="small" />
                                                                         </IconButton>
                                                                     </Tooltip>
                                                                 )}
                                                                 {actions.canIssueTickets && (
                                                                     <Tooltip title="Issue Tickets">
-                                                                        <IconButton size="small" sx={{ color: '#4f46e5' }} onClick={() => handleIssueTickets(booking.id)} disabled={actionLoading || isReadonly}>
+                                                                        <IconButton size="small" sx={{ color: C.primary }} onClick={() => handleIssueTickets(booking.id)} disabled={actionLoading || isReadonly}>
                                                                             <QrCodeIcon fontSize="small" />
                                                                         </IconButton>
                                                                     </Tooltip>
                                                                 )}
                                                                 {actions.canRegenerateQR && (
                                                                     <Tooltip title="Regenerate QR Codes">
-                                                                        <IconButton size="small" sx={{ color: '#7c3aed' }} onClick={() => handleRegenerateQR(booking.id)} disabled={actionLoading || isReadonly}>
+                                                                        <IconButton size="small" sx={{ color: C.secondary }} onClick={() => handleRegenerateQR(booking.id)} disabled={actionLoading || isReadonly}>
                                                                             <RefreshIcon2 fontSize="small" />
                                                                         </IconButton>
                                                                     </Tooltip>
                                                                 )}
                                                                 {actions.canCancel && (
                                                                     <Tooltip title="Cancel Booking">
-                                                                        <IconButton size="small" sx={{ color: '#ef4444' }} onClick={() => handleCancelBooking(booking.id)} disabled={actionLoading || isReadonly}>
+                                                                        <IconButton size="small" sx={{ color: C.error }} onClick={() => handleCancelBooking(booking.id)} disabled={actionLoading || isReadonly}>
                                                                             <CancelIcon fontSize="small" />
                                                                         </IconButton>
                                                                     </Tooltip>
                                                                 )}
                                                                 {actions.canRefund && (
                                                                     <Tooltip title="Refund Booking">
-                                                                        <IconButton size="small" sx={{ color: '#8b5cf6' }} onClick={() => handleRefundBooking(booking.id)} disabled={actionLoading || isReadonly}>
+                                                                        <IconButton size="small" sx={{ color: C.secondary }} onClick={() => handleRefundBooking(booking.id)} disabled={actionLoading || isReadonly}>
                                                                             <PaymentIcon fontSize="small" />
                                                                         </IconButton>
                                                                     </Tooltip>
@@ -1361,7 +1282,7 @@ const Bookings = () => {
                                                         <Tooltip title="View Details">
                                                             <IconButton
                                                                 size="small"
-                                                                sx={{ color: '#64748b' }}
+                                                                sx={{ color: C.textSecondary }}
                                                                 onClick={() => {
                                                                     setSelectedBooking(booking);
                                                                     setDetailsOpen(true);
@@ -1382,22 +1303,21 @@ const Bookings = () => {
                 </StyledTableContainer>
             )}
 
-            {/* Confirmation Dialog */}
             <Dialog
                 open={confirmDialog.open}
                 onClose={() => setConfirmDialog({ ...confirmDialog, open: false })}
                 PaperProps={{
                     sx: {
-                        background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        background: C.bgCard,
+                        border: `1px solid ${C.borderLight}`,
                         borderRadius: '16px',
-                        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)'
-                    }
+                        boxShadow: appTheme.shadows.modal,
+                    },
                 }}
             >
-                <DialogTitle sx={{ color: '#0f172a' }}>{confirmDialog.title}</DialogTitle>
+                <DialogTitle sx={{ color: C.textPrimary }}>{confirmDialog.title}</DialogTitle>
                 <DialogContent>
-                    <Typography sx={{ color: '#475569' }}>{confirmDialog.message}</Typography>
+                    <Typography sx={{ color: C.textSecondary }}>{confirmDialog.message}</Typography>
                 </DialogContent>
                 <DialogActions sx={{ p: 2 }}>
                     <OutlineButton onClick={() => setConfirmDialog({ ...confirmDialog, open: false })}>
@@ -1409,7 +1329,6 @@ const Bookings = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* Details Dialog */}
             <Dialog
                 open={detailsOpen}
                 onClose={() => setDetailsOpen(false)}
@@ -1417,20 +1336,20 @@ const Bookings = () => {
                 fullWidth
                 PaperProps={{
                     sx: {
-                        background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        background: C.bgCard,
+                        border: `1px solid ${C.borderLight}`,
                         borderRadius: '16px',
-                        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)'
-                    }
+                        boxShadow: appTheme.shadows.modal,
+                    },
                 }}
             >
                 <DialogTitle>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="h6" sx={{ color: '#0f172a', fontWeight: 600 }}>
+                        <Typography variant="h6" sx={{ color: C.textPrimary, fontWeight: 600 }}>
                             Booking Details
                         </Typography>
                         {selectedBooking && (
-                            <StatusChip status={selectedBooking.status} type="booking" size="small" showIcon={true} />
+                            <StatusChip status={selectedBooking.status} type="booking" size="small" showIcon />
                         )}
                     </Box>
                 </DialogTitle>
@@ -1439,63 +1358,57 @@ const Bookings = () => {
                         <Box sx={{ mt: 2 }}>
                             <Grid container spacing={2}>
                                 <Grid item xs={12} md={6}>
-                                    <Paper sx={{ p: 2, bgcolor: '#f8fafc' }}>
-                                        <Typography variant="subtitle2" sx={{ color: '#4f46e5', fontWeight: 600, mb: 1 }}>
+                                    <Paper sx={{ p: 2, bgcolor: C.bgPrimary }}>
+                                        <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 1 }}>
                                             Customer Details
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                             <strong>Name:</strong> {selectedBooking.customer_name}
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#334155', wordBreak: 'break-word' }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary, wordBreak: 'break-word' }}>
                                             <strong>Email:</strong> {selectedBooking.customer_email}
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                             <strong>Phone:</strong> {selectedBooking.customer_phone}
                                         </Typography>
                                         {selectedBooking.whatsapp_number && (
-                                            <Typography variant="body2" sx={{ color: '#334155' }}>
+                                            <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                                 <strong>WhatsApp:</strong> {selectedBooking.whatsapp_number}
                                             </Typography>
                                         )}
                                     </Paper>
                                 </Grid>
                                 <Grid item xs={12} md={6}>
-                                    <Paper sx={{ p: 2, bgcolor: '#f8fafc' }}>
-                                        <Typography variant="subtitle2" sx={{ color: '#4f46e5', fontWeight: 600, mb: 1 }}>
+                                    <Paper sx={{ p: 2, bgcolor: C.bgPrimary }}>
+                                        <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 1 }}>
                                             Booking Details
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                             <strong>Reference:</strong> {selectedBooking.booking_reference}
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                             <strong>Event:</strong> {selectedBooking.event_title || selectedBooking.event?.title || 'N/A'}
                                         </Typography>
 
-                                        {/* ✅ Money breakdown: Subtotal → Discount → Net Paid */}
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
-                                            <strong>Subtotal:</strong>{' '}
-                                            {formatMoney(getGrossAmount(selectedBooking))}
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
+                                            <strong>Subtotal:</strong> {formatMoney(getGrossAmount(selectedBooking))}
                                         </Typography>
 
                                         {getDiscountAmount(selectedBooking) > 0 && (
-                                            <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 600 }}>
-                                                <strong>Discount:</strong>{' '}
-                                                −{formatMoney(getDiscountAmount(selectedBooking))}
-                                                {selectedBooking.discount_code
-                                                    ? ` (${selectedBooking.discount_code})`
-                                                    : ''}
+                                            <Typography variant="body2" sx={{ color: C.success, fontWeight: 600 }}>
+                                                <strong>Discount:</strong> −{formatMoney(getDiscountAmount(selectedBooking))}
+                                                {selectedBooking.discount_code ? ` (${selectedBooking.discount_code})` : ''}
                                             </Typography>
                                         )}
 
-                                        <Typography variant="body2" sx={{ color: '#0f172a', fontWeight: 700 }}>
-                                            <strong>Net Paid:</strong>{' '}
-                                            {formatMoney(getNetAmount(selectedBooking))}
+                                        <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 700 }}>
+                                            <strong>Net Paid:</strong> {formatMoney(getNetAmount(selectedBooking))}
                                         </Typography>
 
-                                        <Typography variant="body2" sx={{ color: '#334155', mt: 0.5 }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary, mt: 0.5 }}>
                                             <strong>Status:</strong> {BookingStatusUtils.getLabel(selectedBooking.status)}
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                             <strong>Created:</strong> {new Date(selectedBooking.created_at).toLocaleString()}
                                         </Typography>
                                     </Paper>
@@ -1503,11 +1416,11 @@ const Bookings = () => {
                             </Grid>
                             {selectedBooking.notes && (
                                 <Box sx={{ mt: 2 }}>
-                                    <Typography variant="subtitle2" sx={{ color: '#4f46e5', fontWeight: 600, mb: 1 }}>
+                                    <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 1 }}>
                                         Notes
                                     </Typography>
-                                    <Paper sx={{ p: 2, bgcolor: '#f8fafc' }}>
-                                        <Typography variant="body2" sx={{ color: '#334155' }}>
+                                    <Paper sx={{ p: 2, bgcolor: C.bgPrimary }}>
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                             {selectedBooking.notes}
                                         </Typography>
                                     </Paper>
@@ -1545,17 +1458,13 @@ const Bookings = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* E-Ticket Dialog */}
             <Dialog
                 open={eticketOpen}
                 onClose={() => setEticketOpen(false)}
                 maxWidth="sm"
                 fullWidth
                 PaperProps={{
-                    sx: {
-                        background: 'transparent',
-                        boxShadow: 'none',
-                    }
+                    sx: { background: 'transparent', boxShadow: 'none' },
                 }}
             >
                 <DialogContent sx={{ p: 0 }}>
@@ -1564,8 +1473,8 @@ const Bookings = () => {
                             tickets={eticketData.tickets}
                             booking={eticketData.booking}
                             event={eticketData.event}
-                            showActions={true}
-                            showNavigation={true}
+                            showActions
+                            showNavigation
                             onDownload={(ticket) => {
                                 console.log('📥 Downloading ticket:', ticket);
                                 toast.success('Ticket downloaded!');

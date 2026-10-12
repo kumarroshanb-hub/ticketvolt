@@ -193,7 +193,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                     <Grid container spacing={2}>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Avatar sx={{ bgcolor: '#4f46e5', width: 48, height: 48 }}>
+                                <Avatar sx={{ bgcolor: 'primary.main', width: 48, height: 48 }}>
                                     <PersonIcon />
                                 </Avatar>
                                 <Box>

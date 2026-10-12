@@ -33,11 +33,18 @@ import {
 } from '../../components/Common';
 import styled from 'styled-components';
 
-// frontend/src/pages/Analytics/Analytics.js — ADD THIS IMPORT
 import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
 const F = theme.fonts;
+
+// Shared tooltip style object — reuses tokens, no hardcoded hex
+const TOOLTIP_CONTENT_STYLE = {
+    background: C.bgCard,
+    border: `1px solid ${C.borderLight}`,
+    borderRadius: '8px',
+    boxShadow: theme.shadows.dropdown,
+};
 
 const ChartCard = styled(Paper)`
     background: ${props => props.theme.colors.bgCard};
@@ -102,7 +109,7 @@ const StatIcon = styled(Box)`
     flex-shrink: 0;
 `;
 
-// Replace this array
+// All tokens — no hardcoded hex
 const COLORS = [
     C.primary,
     C.secondary,
@@ -138,14 +145,12 @@ const Analytics = () => {
     const [timeframe, setTimeframe] = useState('week');
     const [analytics, setAnalytics] = useState(EMPTY_ANALYTICS);
 
-    // ✅ Memoized so the effect dep list is stable.
     const loadAnalytics = useCallback(async () => {
         setLoading(true);
         try {
             const response = await api.get('/analytics/', {
                 params: { timeframe },
             });
-            // Defensive: fall back to EMPTY_ANALYTICS for any missing keys
             setAnalytics({
                 ...EMPTY_ANALYTICS,
                 ...response.data,
@@ -196,41 +201,42 @@ const Analytics = () => {
     if (loading && analytics.revenueData.length === 0) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: 'primary.main' }} />
+                <CircularProgress sx={{ color: C.primary }} />
             </LoadingWrapper>
         );
     }
 
     const overview = analytics.overview || EMPTY_ANALYTICS.overview;
 
+    // ✅ All colors + alphas derived from tokens
     const overviewStats = [
         {
             title: 'Total Events',
             value: overview.total_events || 0,
             icon: <EventIcon />,
-            color: 'primary.main',
-            bg: 'rgba(79, 70, 229, 0.08)',
+            color: C.primary,
+            bg: `${C.primary}14`,
         },
         {
             title: 'Total Bookings',
             value: overview.total_bookings || 0,
             icon: <PeopleIcon />,
-            color: 'secondary.main',
-            bg: 'rgba(124, 58, 237, 0.08)',
+            color: C.secondary,
+            bg: `${C.secondary}14`,
         },
         {
             title: 'Revenue',
             value: `₹${(overview.total_revenue || 0).toLocaleString()}`,
             icon: <MoneyIcon />,
-            color: 'success.main',
-            bg: 'rgba(16, 185, 129, 0.08)',
+            color: C.success,
+            bg: `${C.success}14`,
         },
         {
             title: 'Tickets Issued',
             value: overview.total_tickets || 0,
             icon: <TicketIcon />,
-            color: 'warning.main',
-            bg: 'rgba(245, 158, 11, 0.08)',
+            color: C.warning,
+            bg: `${C.warning}14`,
         },
     ];
 
@@ -269,13 +275,12 @@ const Analytics = () => {
                                 sx={{
                                     textTransform: 'capitalize',
                                     ...(timeframe === tf && {
-                                        background:
-                                            'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-                                        color: 'white',
+                                        background: C.primaryGradient,
+                                        color: C.textInverse,
                                     }),
                                     ...(timeframe !== tf && {
-                                        borderColor: 'divider',
-                                        color: 'text.secondary',
+                                        borderColor: C.borderLight,
+                                        color: C.textSecondary,
                                     }),
                                 }}
                             >
@@ -287,7 +292,7 @@ const Analytics = () => {
                             size="small"
                             startIcon={<RefreshIcon />}
                             onClick={loadAnalytics}
-                            sx={{ textTransform: 'none', borderColor: 'divider', color: 'text.secondary' }}
+                            sx={{ textTransform: 'none', borderColor: C.borderLight, color: C.textSecondary }}
                         >
                             Refresh
                         </Button>
@@ -296,7 +301,7 @@ const Analytics = () => {
                             size="small"
                             startIcon={<DownloadIcon />}
                             onClick={handleExport}
-                            sx={{ textTransform: 'none', borderColor: 'divider', color: 'text.secondary' }}
+                            sx={{ textTransform: 'none', borderColor: C.borderLight, color: C.textSecondary }}
                         >
                             Export
                         </Button>
@@ -321,7 +326,7 @@ const Analytics = () => {
                                     <Typography
                                         variant="caption"
                                         sx={{
-                                            color: 'text.secondary',
+                                            color: C.textSecondary,
                                             fontWeight: 600,
                                             letterSpacing: 0.5,
                                             fontSize: isSmall ? '10px' : '12px',
@@ -334,7 +339,7 @@ const Analytics = () => {
                                         variant="h4"
                                         sx={{
                                             fontWeight: 700,
-                                            color: 'text.primary',
+                                            color: C.textPrimary,
                                             mt: 1,
                                             fontSize: isSmall ? '1.25rem' : '1.75rem',
                                             overflow: 'hidden',
@@ -358,17 +363,17 @@ const Analytics = () => {
                 <Grid item xs={12} sm={6}>
                     <StatCard>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <StatIcon sx={{ backgroundColor: 'rgba(16, 185, 129, 0.08)', color: 'success.main' }}>
+                            <StatIcon sx={{ backgroundColor: `${C.success}14`, color: C.success }}>
                                 <TrendingUp />
                             </StatIcon>
                             <Box>
-                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                                <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
                                     Conversion Rate
                                 </Typography>
-                                <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 700, color: C.textPrimary }}>
                                     {overview.conversion_rate || 0}%
                                 </Typography>
-                                <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+                                <Typography variant="caption" sx={{ color: C.textLight }}>
                                     check-ins / tickets issued
                                 </Typography>
                             </Box>
@@ -378,17 +383,17 @@ const Analytics = () => {
                 <Grid item xs={12} sm={6}>
                     <StatCard>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <StatIcon sx={{ backgroundColor: 'rgba(59, 130, 246, 0.08)', color: 'info.main' }}>
+                            <StatIcon sx={{ backgroundColor: `${C.info}14`, color: C.info }}>
                                 <CheckCircleIcon />
                             </StatIcon>
                             <Box>
-                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                                <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
                                     Total Check-ins
                                 </Typography>
-                                <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 700, color: C.textPrimary }}>
                                     {overview.total_checkins || 0}
                                 </Typography>
-                                <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+                                <Typography variant="caption" sx={{ color: C.textLight }}>
                                     tickets scanned
                                 </Typography>
                             </Box>
@@ -405,41 +410,54 @@ const Analytics = () => {
                         <ChartHeader>
                             <ChartTitle>Revenue &amp; Bookings Overview</ChartTitle>
                             <Box sx={{ display: 'flex', gap: 1 }}>
-                                <Chip label="Revenue" size="small" sx={{ backgroundColor: '#4f46e5', color: 'white' }} />
-                                <Chip label="Bookings" size="small" sx={{ backgroundColor: '#7c3aed', color: 'white' }} />
+                                <Chip
+                                    label="Revenue"
+                                    size="small"
+                                    sx={{ backgroundColor: C.primary, color: C.textInverse }}
+                                />
+                                <Chip
+                                    label="Bookings"
+                                    size="small"
+                                    sx={{ backgroundColor: C.secondary, color: C.textInverse }}
+                                />
                             </Box>
                         </ChartHeader>
                         <ChartWrapper>
                             {revenueData.length === 0 ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: 'text.disabled' }}>No data for this timeframe</Typography>
+                                    <Typography sx={{ color: C.textLight }}>No data for this timeframe</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
                                     <AreaChart data={revenueData}>
                                         <defs>
                                             <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.2}/>
-                                                <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                                                <stop offset="5%" stopColor={C.primary} stopOpacity={0.2}/>
+                                                <stop offset="95%" stopColor={C.primary} stopOpacity={0}/>
                                             </linearGradient>
                                             <linearGradient id="colorBookings" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.2}/>
-                                                <stop offset="95%" stopColor="#7c3aed" stopOpacity={0}/>
+                                                <stop offset="5%" stopColor={C.secondary} stopOpacity={0.2}/>
+                                                <stop offset="95%" stopColor={C.secondary} stopOpacity={0}/>
                                             </linearGradient>
                                         </defs>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                                        <XAxis dataKey="month" stroke="#94a3b8" axisLine={false} tickLine={false} />
-                                        <YAxis stroke="#94a3b8" axisLine={false} tickLine={false} />
-                                        <Tooltip
-                                            contentStyle={{
-                                                background: '#ffffff',
-                                                border: '1px solid rgba(226, 232, 240, 1)',
-                                                borderRadius: '8px',
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                            }}
+                                        <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} vertical={false} />
+                                        <XAxis dataKey="month" stroke={C.textLight} axisLine={false} tickLine={false} />
+                                        <YAxis stroke={C.textLight} axisLine={false} tickLine={false} />
+                                        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
+                                        <Area
+                                            type="monotone"
+                                            dataKey="revenue"
+                                            stroke={C.primary}
+                                            fill="url(#colorRevenue)"
+                                            strokeWidth={2.5}
                                         />
-                                        <Area type="monotone" dataKey="revenue" stroke="#4f46e5" fill="url(#colorRevenue)" strokeWidth={2.5} />
-                                        <Area type="monotone" dataKey="bookings" stroke="#7c3aed" fill="url(#colorBookings)" strokeWidth={2.5} />
+                                        <Area
+                                            type="monotone"
+                                            dataKey="bookings"
+                                            stroke={C.secondary}
+                                            fill="url(#colorBookings)"
+                                            strokeWidth={2.5}
+                                        />
                                     </AreaChart>
                                 </ResponsiveContainer>
                             )}
@@ -456,7 +474,7 @@ const Analytics = () => {
                         <ChartWrapper>
                             {deviceData.length === 0 || deviceData.every(d => d.value === 0) ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: 'text.disabled' }}>No data yet</Typography>
+                                    <Typography sx={{ color: C.textLight }}>No data yet</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -476,14 +494,7 @@ const Analytics = () => {
                                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                             ))}
                                         </Pie>
-                                        <Tooltip
-                                            contentStyle={{
-                                                background: '#ffffff',
-                                                border: '1px solid rgba(226, 232, 240, 1)',
-                                                borderRadius: '8px',
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                            }}
-                                        />
+                                        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
                                     </PieChart>
                                 </ResponsiveContainer>
                             )}
@@ -500,21 +511,16 @@ const Analytics = () => {
                         <ChartWrapper>
                             {eventData.length === 0 || eventData.every(d => d.value === 0) ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: 'text.disabled' }}>No revenue yet</Typography>
+                                    <Typography sx={{ color: C.textLight }}>No revenue yet</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={eventData}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                                        <XAxis dataKey="name" stroke="#94a3b8" axisLine={false} tickLine={false} />
-                                        <YAxis stroke="#94a3b8" axisLine={false} tickLine={false} />
+                                        <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} vertical={false} />
+                                        <XAxis dataKey="name" stroke={C.textLight} axisLine={false} tickLine={false} />
+                                        <YAxis stroke={C.textLight} axisLine={false} tickLine={false} />
                                         <Tooltip
-                                            contentStyle={{
-                                                background: '#ffffff',
-                                                border: '1px solid rgba(226, 232, 240, 1)',
-                                                borderRadius: '8px',
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                            }}
+                                            contentStyle={TOOLTIP_CONTENT_STYLE}
                                             formatter={(value) => [`₹${Number(value).toLocaleString()}`, 'Revenue']}
                                         />
                                         <Bar dataKey="value" radius={[4, 4, 0, 0]}>
@@ -537,7 +543,7 @@ const Analytics = () => {
                         </ChartHeader>
                         <Box>
                             {topEvents.length === 0 ? (
-                                <Typography sx={{ color: 'text.disabled', textAlign: 'center', py: 4 }}>
+                                <Typography sx={{ color: C.textLight, textAlign: 'center', py: 4 }}>
                                     No event data available
                                 </Typography>
                             ) : (
@@ -548,7 +554,7 @@ const Analytics = () => {
                                             mb: 2,
                                             p: isMobile ? 1.25 : 2,
                                             borderRadius: 1,
-                                            bgcolor: 'background.default',
+                                            bgcolor: C.bgPrimary,
                                         }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
@@ -557,7 +563,7 @@ const Analytics = () => {
                                                     variant="body2"
                                                     fontWeight="500"
                                                     sx={{
-                                                        color: 'text.primary',
+                                                        color: C.textPrimary,
                                                         overflow: 'hidden',
                                                         textOverflow: 'ellipsis',
                                                         whiteSpace: 'nowrap',
@@ -565,7 +571,7 @@ const Analytics = () => {
                                                 >
                                                     {event.name}
                                                 </Typography>
-                                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                                <Typography variant="caption" sx={{ color: C.textSecondary }}>
                                                     {event.bookings || 0} bookings • ₹{(event.revenue || 0).toLocaleString()}
                                                 </Typography>
                                             </Box>
@@ -573,14 +579,14 @@ const Analytics = () => {
                                                 label={`${event.percentage || 0}%`}
                                                 size="small"
                                                 sx={{
-                                                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                                                    color: 'success.main',
+                                                    backgroundColor: `${C.success}1A`,
+                                                    color: C.success,
                                                     fontWeight: 600,
                                                     flexShrink: 0,
                                                 }}
                                             />
                                         </Box>
-                                        <Box sx={{ mt: 1, height: 4, bgcolor: '#e2e8f0', borderRadius: 2, overflow: 'hidden' }}>
+                                        <Box sx={{ mt: 1, height: 4, bgcolor: C.borderLight, borderRadius: 2, overflow: 'hidden' }}>
                                             <Box
                                                 sx={{
                                                     width: `${event.percentage || 0}%`,
@@ -605,7 +611,7 @@ const Analytics = () => {
                             <ChartTitle>Bookings by Status</ChartTitle>
                         </ChartHeader>
                         {statusBreakdown.length === 0 ? (
-                            <Typography sx={{ color: 'text.disabled', textAlign: 'center', py: 2 }}>
+                            <Typography sx={{ color: C.textLight, textAlign: 'center', py: 2 }}>
                                 No bookings yet
                             </Typography>
                         ) : (
@@ -616,8 +622,8 @@ const Analytics = () => {
                                         label={`${row.status}: ${row.count}`}
                                         size="small"
                                         sx={{
-                                            backgroundColor: '#f1f5f9',
-                                            color: 'text.primary',
+                                            backgroundColor: C.bgInput,
+                                            color: C.textPrimary,
                                             fontWeight: 600,
                                             textTransform: 'capitalize',
                                         }}

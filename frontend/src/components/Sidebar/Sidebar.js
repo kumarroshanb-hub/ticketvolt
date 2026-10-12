@@ -22,6 +22,7 @@ import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
 import { ROLES } from '../../constants';
 import { theme } from '../../theme/tokens';
+import Logo from '../Logo';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -53,7 +54,7 @@ const SidebarContainer = styled.aside`
     font-family: ${F.family};
 `;
 
-const Logo = styled.div`
+const LogoWrap = styled.div`
     display: flex;
     align-items: center;
     gap: 12px;
@@ -62,34 +63,6 @@ const Logo = styled.div`
     margin-bottom: 20px;
     min-height: 60px;
     position: relative;
-`;
-
-const LogoIcon = styled.div`
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    background: ${C.primaryGradient};
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    font-weight: bold;
-    color: ${C.textInverse};
-`;
-
-const LogoText = styled.h3`
-    color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
-    margin: 0;
-    font-weight: 700;
-    font-size: 20px;
-    white-space: nowrap;
-    opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-    transition: opacity 0.3s ease;
-
-    span {
-        color: ${C.secondary};
-    }
 `;
 
 const RoleBadge = styled.div`
@@ -447,17 +420,18 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
 
     return (
         <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
-            <Logo>
-                <LogoIcon>🎫</LogoIcon>
-                <LogoText collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                    Tiket<span>Vault</span>
-                </LogoText>
+            <LogoWrap>
+                <Logo
+                    variant="both"
+                    size={20}
+                    hidden={effectiveCollapsed && !isDrawer}
+                />
                 {isDrawer && (
                     <DrawerCloseButton onClick={onNavigate} aria-label="Close menu">
                         <CloseIcon fontSize="small" />
                     </DrawerCloseButton>
                 )}
-            </Logo>
+            </LogoWrap>
 
             <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
                 <span className="role-dot" />

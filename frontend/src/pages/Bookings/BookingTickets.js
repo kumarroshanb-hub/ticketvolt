@@ -684,7 +684,7 @@ const BookingTickets = () => {
                             </Typography>
                             <Grid container spacing={1}>
                                 <Grid item xs={3}>
-                                    <StatValue color="#4f46e5">
+                                    <StatValue color={C.primary}>
                                         {stats.total}
                                     </StatValue>
                                     <StatLabel>Total</StatLabel>

@@ -603,8 +603,8 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Total Scans"
                         value={stats.total_scans}
-                        icon={<ScannerIcon sx={{ color: 'primary.main' }} />}
-                        color="#4f46e5"
+                        icon={<ScannerIcon sx={{ color: C.primary }} />}
+                        color={C.primary}
                         subtitle={isMobile ? undefined : 'All time check-ins'}
                     />
                 </Grid>
@@ -612,8 +612,8 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Today"
                         value={stats.today_scans}
-                        icon={<TodayIcon sx={{ color: 'success.main' }} />}
-                        color="#10b981"
+                        icon={<TodayIcon sx={{ color: C.success }} />}
+                        color={C.success}
                         subtitle={isMobile ? undefined : "Today's check-ins"}
                     />
                 </Grid>
@@ -621,8 +621,8 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Success"
                         value={stats.success_scans}
-                        icon={<CheckCircleIcon sx={{ color: 'info.main' }} />}
-                        color="#3b82f6"
+                        icon={<CheckCircleIcon sx={{ color: C.info }} />}
+                        color={C.info}
                         subtitle={isMobile ? undefined : 'Valid tickets'}
                     />
                 </Grid>
@@ -630,8 +630,8 @@ const checkInTicket = async (code) => {
                     <StatCard
                         title="Failed"
                         value={stats.failed_scans}
-                        icon={<ErrorIcon sx={{ color: 'error.main' }} />}
-                        color="#ef4444"
+                        icon={<ErrorIcon sx={{ color: C.error }} />}
+                        color={C.error}
                         subtitle={isMobile ? undefined : 'Invalid tickets'}
                     />
                 </Grid>

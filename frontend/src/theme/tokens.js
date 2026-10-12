@@ -17,6 +17,10 @@ export const BRAND = {
     charcoal: '#333333',   // Primary brand — MEX #333333
     red:      '#FF2A2A',   // Accent brand — Vibrant Red
     darkGray: '#555555',   // Secondary brand — Dark Gray
+    // Additional accent hues used sparingly for data viz / avatars
+    pink:     '#ec4899',
+    cyan:     '#06b6d4',
+    lime:     '#84cc16',
 };
 
 // -------- NEUTRAL PALETTE --------
@@ -48,6 +52,8 @@ export const STATUS = {
     info:         '#3b82f6',
     infoLight:    '#60a5fa',
     infoDark:     '#2563eb',
+    // Focus ring — single source for all input focus states
+    focusRing:    'rgba(51, 51, 51, 0.10)',
 };
 
 // -------- TYPOGRAPHY --------
@@ -122,6 +128,14 @@ export const theme = {
         gradientWarning: `linear-gradient(135deg, ${STATUS.warning} 0%, ${STATUS.warningLight} 100%)`,
         gradientError:   `linear-gradient(135deg, ${STATUS.error} 0%, ${STATUS.errorLight} 100%)`,
         gradientCard:    'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+
+        // --- Extra accent hues ---
+        pink: BRAND.pink,
+        cyan: BRAND.cyan,
+        lime: BRAND.lime,
+
+        // --- Focus ring (used by all form inputs) ---
+        focusRing: STATUS.focusRing,
     },
 
     fonts: FONT,

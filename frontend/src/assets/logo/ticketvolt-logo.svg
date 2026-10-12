@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 260" role="img" aria-label="TicketVolt">
+  <title>TicketVolt</title>
+
+  <!-- ============================================================
+       Outer ticket silhouette — charcoal, with concave notches
+       on left and right sides (the classic ticket shape).
+       ============================================================ -->
+  <path
+    d="M 60,20
+       H 560
+       A 20,20 0 0 1 580,40
+       V 90
+       A 40,40 0 0 0 580,170
+       V 220
+       A 20,20 0 0 1 560,240
+       H 60
+       A 20,20 0 0 1 40,220
+       V 170
+       A 40,40 0 0 0 40,90
+       V 40
+       A 20,20 0 0 1 60,20
+       Z"
+    fill="#333333"
+  />
+
+  <!-- ============================================================
+       Inner white panel — creates the ticket "face" where the
+       wordmark sits.
+       ============================================================ -->
+  <rect x="70" y="30" width="480" height="200" rx="4" fill="#FFFFFF"/>
+
+  <!-- ============================================================
+       Wordmark: "TiKetVault"
+       "Ti" + "ket" + "Vault" in charcoal, with "k" in vibrant red.
+       Using Montserrat Bold via system fallback — for pixel-perfect
+       reproduction, embed Montserrat as a webfont or convert text
+       to paths in production.
+       ============================================================ -->
+  <g font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
+     font-weight="700"
+     font-size="96"
+     text-anchor="start">
+
+    <!-- "Ti" — charcoal -->
+    <text x="110" y="160" fill="#333333" letter-spacing="-2">Ti</text>
+
+    <!-- "k" — vibrant red (the accent) -->
+    <text x="218" y="160" fill="#FF2A2A" letter-spacing="-2">k</text>
+
+    <!-- "etVault" — charcoal -->
+    <text x="278" y="160" fill="#333333" letter-spacing="-2">etVault</text>
+  </g>
+</svg>

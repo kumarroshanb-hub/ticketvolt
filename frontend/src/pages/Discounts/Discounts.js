@@ -33,15 +33,13 @@ import {
 } from '../../components/Common';
 import styled from 'styled-components';
 
-// frontend/src/pages/Discounts/Discounts.js — ADD THIS IMPORT
 import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
 const F = theme.fonts;
 
 // ---------------------------------------------------------------------------
-// Local styled components — mirrored from Analytics.js so the two pages
-// look and feel identical without depending on any Common theme tokens.
+// Local styled components
 // ---------------------------------------------------------------------------
 
 const StatCard = styled(Paper)`
@@ -97,10 +95,6 @@ const StatusBadge = styled(Chip)`
     font-size: 11px;
 `;
 
-// ---------------------------------------------------------------------------
-// Small shared presentational helpers
-// ---------------------------------------------------------------------------
-
 const EmptyState = ({ children, py = 4 }) => (
     <Box
         sx={{
@@ -115,9 +109,6 @@ const EmptyState = ({ children, py = 4 }) => (
     </Box>
 );
 
-// ---------------------------------------------------------------------------
-// Canonical defaults for a fresh discount draft.
-// ---------------------------------------------------------------------------
 const EMPTY_DISCOUNT = {
     code: '',
     name: '',
@@ -145,25 +136,6 @@ const generateDiscountCode = () => {
     return code;
 };
 
-// ===========================================================================
-// ✅ TIMEZONE-SAFE DATE HELPERS
-// ---------------------------------------------------------------------------
-// The bug: `new Date(value).toISOString()` converts to UTC before
-// formatting. If the backend stores "midnight in the user's local
-// timezone" as a UTC timestamp (e.g. 2026-09-27T16:00:00Z for HK's
-// 2026-09-28T00:00:00+08:00), `toISOString()` will output "2026-09-27",
-// causing the off-by-one date shift.
-//
-// The fix: format the date in the user's LOCAL timezone, not UTC.
-// We use `getFullYear()`, `getMonth()`, `getDate()` — all of which
-// return local-time values — instead of `toISOString()`.
-// ===========================================================================
-
-/**
- * Convert a backend date string → `yyyy-mm-dd` for <input type="date">.
- * Formats using LOCAL time so a timestamp like `2026-09-27T16:00:00Z`
- * renders as `2026-09-28` for a user in UTC+8.
- */
 const toDateInput = (value) => {
     if (!value) return '';
     try {
@@ -180,26 +152,12 @@ const toDateInput = (value) => {
     }
 };
 
-/**
- * Convert `yyyy-mm-dd` from <input type="date"> → an ISO 8601 string
- * that preserves the calendar date in the user's LOCAL timezone.
- *
- * We deliberately do NOT send a UTC midnight timestamp, because that
- * would let the backend re-interpret the date in its own timezone
- * and drift. Instead we send the local calendar date at 00:00 local
- * time, which the backend stores as-is when USE_TZ=False, or as a
- * timezone-aware timestamp when USE_TZ=True (interpreted in the
- * project's TIME_ZONE setting).
- */
 const fromDateInput = (value, { endOfDay = false } = {}) => {
     if (!value) return null;
     try {
-        // `value` is always `yyyy-mm-dd`.
         const [year, month, day] = value.split('-').map((n) => parseInt(n, 10));
         if (!year || !month || !day) return null;
 
-        // For "valid_to" we want the very end of the day so that a
-        // discount valid "until 28-Sep" still works at 23:59 on the 28th.
         const hours = endOfDay ? 23 : 0;
         const minutes = endOfDay ? 59 : 0;
         const seconds = endOfDay ? 59 : 0;
@@ -212,10 +170,6 @@ const fromDateInput = (value, { endOfDay = false } = {}) => {
         return null;
     }
 };
-
-// ===========================================================================
-// COMPONENT
-// ===========================================================================
 
 const Discounts = () => {
     const theme = useTheme();
@@ -241,9 +195,6 @@ const Discounts = () => {
     });
     const [formData, setFormData] = useState({ ...EMPTY_DISCOUNT });
 
-    // -----------------------------------------------------------------------
-    // Load discounts + events
-    // -----------------------------------------------------------------------
     const loadDiscounts = async () => {
         setLoading(true);
         try {
@@ -289,9 +240,6 @@ const Discounts = () => {
         loadEvents();
     }, []);
 
-    // -----------------------------------------------------------------------
-    // Dialog open / change / submit
-    // -----------------------------------------------------------------------
     const handleOpenDialog = (discount = null) => {
         if (discount) {
             setEditingDiscount(discount);
@@ -307,9 +255,6 @@ const Discounts = () => {
                 min_ticket_count: discount.min_ticket_count ?? 0,
                 first_time_buyers_only: !!discount.first_time_buyers_only,
                 stackable: !!discount.stackable,
-                // ✅ Use the timezone-safe formatter so an event stored as
-                //    2026-09-27T16:00:00Z (which is 2026-09-28 in HK) shows
-                //    the correct calendar date in the date picker.
                 valid_from: toDateInput(discount.valid_from),
                 valid_to: toDateInput(discount.valid_to),
                 is_active: discount.is_active !== undefined ? discount.is_active : true,
@@ -359,10 +304,6 @@ const Discounts = () => {
                     parseInt(formData.min_ticket_count, 10) || 0,
                 first_time_buyers_only: !!formData.first_time_buyers_only,
                 stackable: !!formData.stackable,
-                // ✅ Convert yyyy-mm-dd → ISO using LOCAL timezone,
-                //    so the calendar date the user picked is preserved
-                //    end-to-end. `valid_to` uses end-of-day so a discount
-                //    valid "until 28-Sep" still applies at 23:59 on the 28th.
                 valid_from: fromDateInput(formData.valid_from),
                 valid_to: fromDateInput(formData.valid_to, { endOfDay: true }),
                 is_active: !!formData.is_active,
@@ -420,9 +361,6 @@ const Discounts = () => {
         toast.success('Discount code copied to clipboard!');
     };
 
-    // -----------------------------------------------------------------------
-    // Status badge
-    // -----------------------------------------------------------------------
     const getStatusChip = (discount) => {
         const now = new Date();
         if (!discount.is_active) {
@@ -442,48 +380,48 @@ const Discounts = () => {
         return <StatusBadge label="ACTIVE" size="small" color="success" />;
     };
 
+    // ✅ Token-driven stat cards
     const statCards = [
         {
             title: 'Total Discounts',
             value: stats.total,
             icon: <DiscountIcon />,
-            color: 'primary.main',
-            bg: 'rgba(79, 70, 229, 0.08)',
+            color: C.primary,
+            bg: `${C.primary}14`,
         },
         {
             title: 'Active',
             value: stats.active,
             icon: <CheckCircleIcon />,
-            color: 'success.main',
-            bg: 'rgba(16, 185, 129, 0.08)',
+            color: C.success,
+            bg: `${C.success}14`,
         },
         {
             title: 'Used',
             value: stats.used,
             icon: <PeopleIcon />,
-            color: 'secondary.main',
-            bg: 'rgba(124, 58, 237, 0.08)',
+            color: C.secondary,
+            bg: `${C.secondary}14`,
         },
         {
             title: 'Expired',
             value: stats.expired,
             icon: <CancelIcon />,
-            color: 'error.main',
-            bg: 'rgba(239, 68, 68, 0.08)',
+            color: C.error,
+            bg: `${C.error}14`,
         },
     ];
 
     if (loading && discounts.length === 0) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: 'primary.main' }} />
+                <CircularProgress sx={{ color: C.primary }} />
             </LoadingWrapper>
         );
     }
 
     return (
         <PageContainer>
-            {/* ============ Header — matches Analytics ============ */}
             <PageHeader>
                 <PageHeaderLeft>
                     <PageTitle>Discounts</PageTitle>
@@ -522,9 +460,8 @@ const Discounts = () => {
                             onClick={() => handleOpenDialog()}
                             sx={{
                                 textTransform: 'none',
-                                background:
-                                    'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-                                color: 'white',
+                                background: C.primaryGradient,
+                                color: C.textInverse,
                             }}
                         >
                             {isMobile ? 'Create' : 'Create Discount'}
@@ -533,7 +470,6 @@ const Discounts = () => {
                 </PageHeaderRight>
             </PageHeader>
 
-            {/* ============ Stats — matches Analytics StatCard grid ============ */}
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 {statCards.map((stat, index) => (
                     <Grid item xs={6} sm={6} md={3} key={index}>
@@ -582,7 +518,6 @@ const Discounts = () => {
                 ))}
             </Grid>
 
-            {/* ============ MOBILE: card list ============ */}
             {isMobile ? (
                 discounts.length === 0 ? (
                     <TableCard sx={{ p: 4 }}>
@@ -597,9 +532,9 @@ const Discounts = () => {
                                 key={discount.id}
                                 sx={{
                                     borderRadius: 2,
-                                    border: '1px solid rgba(226, 232, 240, 1)',
+                                    border: `1px solid ${C.borderLight}`,
                                     overflow: 'hidden',
-                                    background: '#ffffff',
+                                    background: C.bgCard,
                                 }}
                             >
                                 <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
@@ -607,7 +542,7 @@ const Discounts = () => {
                                         <Typography
                                             variant="h6"
                                             sx={{
-                                                fontFamily: 'monospace',
+                                                fontFamily: F.familyMono,
                                                 fontWeight: 700,
                                                 color: 'text.primary',
                                                 flex: 1,
@@ -649,7 +584,7 @@ const Discounts = () => {
                                             {
                                                 label: 'Type',
                                                 value: (discount.type || 'percentage').toUpperCase(),
-                                                color: 'primary.main',
+                                                color: C.primary,
                                                 weight: 600,
                                             },
                                             {
@@ -658,7 +593,7 @@ const Discounts = () => {
                                                     discount.type === 'percentage'
                                                         ? `${discount.value}%`
                                                         : `₹${discount.value}`,
-                                                color: 'text.primary',
+                                                color: C.textPrimary,
                                                 weight: 700,
                                             },
                                             {
@@ -666,16 +601,15 @@ const Discounts = () => {
                                                 value: `${discount.used_count || 0}${
                                                     discount.max_uses ? ` / ${discount.max_uses}` : ''
                                                 }`,
-                                                color: 'text.primary',
+                                                color: C.textPrimary,
                                                 weight: 500,
                                             },
                                             {
                                                 label: 'Valid Until',
-                                                // ✅ Format with local timezone
                                                 value: discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
                                                     : 'Never',
-                                                color: 'text.primary',
+                                                color: C.textPrimary,
                                                 weight: 500,
                                             },
                                         ].map((item) => (
@@ -711,8 +645,8 @@ const Discounts = () => {
                                             startIcon={<EditIcon />}
                                             onClick={() => handleOpenDialog(discount)}
                                             sx={{
-                                                borderColor: 'rgba(51, 51, 51, 0.30)',
-                                                color: 'primary.main',
+                                                borderColor: C.primary,
+                                                color: C.primary,
                                                 textTransform: 'none',
                                             }}
                                         >
@@ -731,8 +665,8 @@ const Discounts = () => {
                                                 })
                                             }
                                             sx={{
-                                                borderColor: '#fecaca',
-                                                color: 'error.main',
+                                                borderColor: `${C.error}4D`,
+                                                color: C.error,
                                                 textTransform: 'none',
                                             }}
                                         >
@@ -745,7 +679,6 @@ const Discounts = () => {
                     </Box>
                 )
             ) : (
-                /* ============ DESKTOP: table ============ */
                 <TableCard>
                     <TableContainer>
                         <Table>
@@ -767,8 +700,8 @@ const Discounts = () => {
                                             sx={{
                                                 color: 'text.secondary',
                                                 fontWeight: 600,
-                                                borderBottom: '1px solid rgba(226, 232, 240, 1)',
-                                                background: '#f8fafc',
+                                                borderBottom: `1px solid ${C.borderLight}`,
+                                                background: C.bgPrimary,
                                             }}
                                         >
                                             {h.label}
@@ -790,7 +723,7 @@ const Discounts = () => {
                                         <TableRow
                                             key={discount.id}
                                             hover
-                                            sx={{ '&:hover': { backgroundColor: '#f8fafc' } }}
+                                            sx={{ '&:hover': { backgroundColor: C.bgPrimary } }}
                                         >
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -799,7 +732,7 @@ const Discounts = () => {
                                                         fontWeight="bold"
                                                         sx={{
                                                             color: 'text.primary',
-                                                            fontFamily: 'monospace',
+                                                            fontFamily: F.familyMono,
                                                         }}
                                                     >
                                                         {discount.code}
@@ -824,8 +757,8 @@ const Discounts = () => {
                                                     size="small"
                                                     variant="outlined"
                                                     sx={{
-                                                        borderColor: 'rgba(51, 51, 51, 0.30)',
-                                                        color: 'primary.main',
+                                                        borderColor: C.primary,
+                                                        color: C.primary,
                                                         fontSize: '11px',
                                                         fontWeight: 600,
                                                     }}
@@ -842,7 +775,6 @@ const Discounts = () => {
                                             </TableCell>
                                             <TableCell align="center">{getStatusChip(discount)}</TableCell>
                                             <TableCell align="center" sx={{ color: 'text.secondary' }}>
-                                                {/* ✅ Format with local timezone */}
                                                 {discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
                                                     : 'Never'}
@@ -851,7 +783,7 @@ const Discounts = () => {
                                                 <Tooltip title="Edit">
                                                     <IconButton
                                                         size="small"
-                                                        sx={{ color: 'primary.main' }}
+                                                        sx={{ color: C.primary }}
                                                         onClick={() => handleOpenDialog(discount)}
                                                     >
                                                         <EditIcon fontSize="small" />
@@ -860,7 +792,7 @@ const Discounts = () => {
                                                 <Tooltip title="Delete">
                                                     <IconButton
                                                         size="small"
-                                                        sx={{ color: 'error.main' }}
+                                                        sx={{ color: C.error }}
                                                         onClick={() =>
                                                             setDeleteDialog({
                                                                 open: true,
@@ -882,7 +814,6 @@ const Discounts = () => {
                 </TableCard>
             )}
 
-            {/* ============ Create / Edit Dialog ============ */}
             <Dialog
                 open={dialogOpen}
                 onClose={() => setDialogOpen(false)}
@@ -890,10 +821,10 @@ const Discounts = () => {
                 fullWidth
                 PaperProps={{
                     sx: {
-                        background: '#ffffff',
-                        border: '1px solid rgba(226, 232, 240, 1)',
+                        background: C.bgCard,
+                        border: `1px solid ${C.borderLight}`,
                         borderRadius: '16px',
-                        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
+                        boxShadow: theme.shadows.modal,
                     },
                 }}
             >
@@ -902,7 +833,6 @@ const Discounts = () => {
                 </DialogTitle>
                 <DialogContent>
                     <FormPaper component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-                        {/* Row 1 — code + type */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12} md={6}>
                                 <TextField
@@ -929,7 +859,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 2 — name */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12}>
                                 <TextField
@@ -943,7 +872,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 3 — value / min / max */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12} md={4}>
                                 <TextField
@@ -982,7 +910,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 4 — limits */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12} md={4}>
                                 <TextField
@@ -1022,7 +949,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 5 — validity */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12} md={6}>
                                 <TextField
@@ -1048,7 +974,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 6 — applicable events */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12}>
                                 <Autocomplete
@@ -1084,7 +1009,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 7 — toggles */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12} md={6}>
                                 <FormControlLabel
@@ -1112,7 +1036,6 @@ const Discounts = () => {
                             </Grid>
                         </FormRow>
 
-                        {/* Row 8 — active */}
                         <FormRow container spacing={2}>
                             <Grid item xs={12}>
                                 <FormControlLabel
@@ -1135,7 +1058,7 @@ const Discounts = () => {
                                 justifyContent: 'flex-end',
                                 mt: 3,
                                 pt: 2,
-                                borderTop: '1px solid rgba(226, 232, 240, 1)',
+                                borderTop: `1px solid ${C.borderLight}`,
                                 flexWrap: 'wrap',
                             }}
                         >
@@ -1160,14 +1083,13 @@ const Discounts = () => {
                                 disabled={saving}
                                 sx={{
                                     textTransform: 'none',
-                                    background:
-                                        'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-                                    color: 'white',
+                                    background: C.primaryGradient,
+                                    color: C.textInverse,
                                     minWidth: 100,
                                 }}
                             >
                                 {saving ? (
-                                    <CircularProgress size={20} sx={{ color: 'white' }} />
+                                    <CircularProgress size={20} sx={{ color: C.textInverse }} />
                                 ) : editingDiscount ? (
                                     'Update'
                                 ) : (
@@ -1179,16 +1101,15 @@ const Discounts = () => {
                 </DialogContent>
             </Dialog>
 
-            {/* ============ Delete confirmation ============ */}
             <Dialog
                 open={deleteDialog.open}
                 onClose={() => setDeleteDialog({ open: false, id: null, code: '' })}
                 PaperProps={{
                     sx: {
-                        background: '#ffffff',
-                        border: '1px solid rgba(226, 232, 240, 1)',
+                        background: C.bgCard,
+                        border: `1px solid ${C.borderLight}`,
                         borderRadius: '16px',
-                        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
+                        boxShadow: theme.shadows.modal,
                     },
                 }}
             >
@@ -1221,11 +1142,7 @@ const Discounts = () => {
                         size="small"
                         color="error"
                         onClick={handleDelete}
-                        sx={{
-                            textTransform: 'none',
-                            background: '#ef4444',
-                            '&:hover': { background: '#dc2626' },
-                        }}
+                        sx={{ textTransform: 'none' }}
                     >
                         Delete
                     </Button>

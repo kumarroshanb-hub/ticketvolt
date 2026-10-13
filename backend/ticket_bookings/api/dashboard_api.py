@@ -5,6 +5,24 @@ Dashboard stats.
 Every number on this page is produced by BookingManager or by Event's
 canonical helpers. If the numbers here ever disagree with the analytics
 page, the bug is in managers.py — not here.
+
+Status reconciliation
+---------------------
+`Event.status` is a denormalized field that a Celery Beat task
+(`ticket_bookings.tasks.update_completed_events`) keeps in sync with
+reality. Between the moment an event's `end_date` passes and the next
+run of that task, the DB value can be stale (`active`, `published`,
+`sold_out`, `postponed`).
+
+To make the dashboard agree with the Events page — and with what the
+user actually sees on the ground — this view computes an
+**effective status** at read time via `_effective_event_status()`.
+It never mutates the DB; it only decides what to *display*.
+
+The same rule is applied in `EventViewSet` (see
+`ticket_bookings/api/event_api.py`). If you change the rule, change it
+in BOTH places, or better: extract it to `Event.get_effective_status()`
+on the model.
 """
 import logging
 
@@ -23,6 +41,41 @@ from ..managers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Effective-status helper
+# ---------------------------------------------------------------------------
+# Rules (in order):
+#   1. `cancelled` is terminal — never overridden.
+#   2. `completed` is terminal — never overridden.
+#   3. If `end_date` is in the past and the event is not terminal,
+#      the effective status is `completed`.
+#   4. Otherwise, the stored status is returned as-is.
+#
+# This mirrors the logic in `ticket_bookings.tasks.update_completed_events`
+# so the UI never disagrees with the DB intent.
+# ---------------------------------------------------------------------------
+_TERMINAL_EVENT_STATUSES = ('cancelled', 'completed')
+
+
+def _effective_event_status(event, now=None):
+    """
+    Return the status that should be *displayed* for `event` right now.
+
+    Never mutates the event. Callers that want to persist the change
+    should invoke `event.update_ticket_counts()` or the Celery task.
+    """
+    now = now or timezone.now()
+    stored = event.status
+
+    if stored in _TERMINAL_EVENT_STATUSES:
+        return stored
+
+    if event.end_date and event.end_date < now:
+        return 'completed'
+
+    return stored
 
 
 class DashboardStatsView(APIView):
@@ -68,9 +121,25 @@ class DashboardStatsView(APIView):
             # 2. Headline numbers — every one of them from the manager.
             # ============================================================
             total_events = events_qs.count()
-            active_events = events_qs.exclude(
-                status__in=['cancelled', 'completed']
-            ).count()
+
+            # ------------------------------------------------------------
+            # ✅ "Active" must reflect the EFFECTIVE status, not the raw
+            #    DB value. An event whose end_date has passed but whose
+            #    cron job hasn't fired yet is effectively completed and
+            #    must NOT be counted as active.
+            #
+            #    We also exclude events that end in the past regardless
+            #    of stored status, so this number is stable even if the
+            #    DB is stale.
+            # ------------------------------------------------------------
+            active_events = (
+                events_qs
+                .exclude(status__in=_TERMINAL_EVENT_STATUSES)
+                .filter(
+                    Q(end_date__isnull=True) | Q(end_date__gte=now)
+                )
+                .count()
+            )
 
             total_bookings = bookings_qs.total_count()
             pending_bookings = bookings_qs.pending_count()
@@ -166,10 +235,25 @@ class DashboardStatsView(APIView):
             popular_events_data = []
             for event in popular:
                 tiers = list(event.tiers.all())
+
+                # ------------------------------------------------------------
+                # ✅ Use the EFFECTIVE status so the dashboard card badge
+                #    matches what the Events page shows. The raw
+                #    `event.status` is still included as
+                #    `stored_status` for debugging, but the frontend
+                #    should read `status`.
+                # ------------------------------------------------------------
+                effective_status = _effective_event_status(event, now=now)
+
                 popular_events_data.append({
                     'id': str(event.id),
                     'title': event.title,
-                    'status': event.status,
+
+                    # Display status — always agree with Events page.
+                    'status': effective_status,
+                    # Raw DB value — useful for debugging only.
+                    'stored_status': event.status,
+
                     'start_date': (
                         event.start_date.isoformat()
                         if event.start_date else None

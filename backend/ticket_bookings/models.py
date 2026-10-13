@@ -1,4 +1,19 @@
 # backend/ticket_bookings/models.py
+
+# ============================================================================
+# CONVENTION: Effective status
+# ----------------------------------------------------------------------------
+# `Event.status` is a denormalized field kept in sync by a Celery Beat
+# task (`ticket_bookings.tasks.update_completed_events`). Between the
+# moment an event's `end_date` passes and the next run of that task,
+# the DB value can be stale.
+#
+# EVERY read path that exposes event status to a user MUST go through
+# `Event.get_effective_status()` — not the raw `event.status` field.
+# This guarantees the Dashboard, Events list, and Event Detail always
+# agree, regardless of cron timing.
+# ============================================================================
+
 import secrets
 import string
 import uuid
@@ -263,6 +278,36 @@ class Event(models.Model):
 
     def get_tickets_by_booking_status(self, booking_status):
         return self.tickets.filter(booking__status=booking_status)
+
+    def get_effective_status(self, now=None):
+        """
+        Return the status that should be DISPLAYED for this event right now.
+
+        Rules (in order):
+          1. 'cancelled' is terminal — always returned as-is.
+          2. 'completed' is terminal — always returned as-is.
+          3. If `end_date` has passed and the event is not terminal,
+             return 'completed'. This makes the UI agree with reality
+             even if the Celery Beat task (update_completed_events)
+             hasn't fired yet.
+          4. Otherwise return the stored status.
+
+        Mirrors ticket_bookings.tasks.update_completed_events.
+        Never mutates self.
+
+        This is the single source of truth. Do NOT inline this logic
+        anywhere else — call this method.
+        """
+        from django.utils import timezone as _tz
+        now = now or _tz.now()
+
+        if self.status in ('cancelled', 'completed'):
+            return self.status
+
+        if self.end_date and self.end_date < now:
+            return 'completed'
+
+        return self.status
 
     def __str__(self):
         return self.title

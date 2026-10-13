@@ -40,6 +40,25 @@ import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
 
+// ---------------------------------------------------------------------------
+// Central status → color map. Keys must match the values the backend can
+// send in `event.status` (see Event.get_effective_status on the backend).
+// ---------------------------------------------------------------------------
+const STATUS_COLORS = {
+    draft: 'default',
+    published: 'info',
+    active: 'success',
+    cancelled: 'error',
+    completed: 'secondary',
+    sold_out: 'warning',
+    postponed: 'warning',
+};
+
+const getStatusColor = (status) => STATUS_COLORS[status] || 'default';
+
+const getStatusLabel = (status) =>
+    EVENT_STATUS_LABELS[status] || status || 'Unknown';
+
 const Events = () => {
     const navigate = useNavigate();
     const { role } = useRole();
@@ -120,19 +139,6 @@ const Events = () => {
         }
     };
 
-    const getStatusColor = (status) => {
-        const colors = {
-            draft: 'default',
-            published: 'info',
-            active: 'success',
-            cancelled: 'error',
-            completed: 'secondary',
-            sold_out: 'warning',
-            postponed: 'warning',
-        };
-        return colors[status] || 'default';
-    };
-
     if (loading) {
         return (
             <LoadingWrapper>
@@ -204,9 +210,16 @@ const Events = () => {
                     </Grid>
                 ) : (
                     events.map((event) => {
-                        const isActive = event.status === 'active' || event.status === 'published';
-                        const isDraft = event.status === 'draft';
-                        const isPast = event.end_date && new Date(event.end_date) < new Date();
+                        // -----------------------------------------------------
+                        // ✅ Status drives ALL UI decisions now.
+                        //    The backend sends the effective status, so
+                        //    `completed` really means "past / ended".
+                        //    We do NOT compute isPast from end_date here —
+                        //    doing so is exactly what caused the mismatch.
+                        // -----------------------------------------------------
+                        const status = event.status || 'draft';
+                        const isDraft = status === 'draft';
+                        const isCompleted = status === 'completed';
 
                         const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
                         const sessionCount = event.session_count ?? event.sessions?.length ?? 0;
@@ -217,7 +230,15 @@ const Events = () => {
 
                         return (
                             <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
+                                <Card
+                                    sx={{
+                                        height: '100%',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        borderRadius: 2,
+                                        border: `1px solid ${C.borderLight}`,
+                                    }}
+                                >
                                     <CardContent sx={{ flexGrow: 1 }}>
                                         <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
                                             <Typography
@@ -234,8 +255,8 @@ const Events = () => {
                                                 {event.title}
                                             </Typography>
                                             <Chip
-                                                label={EVENT_STATUS_LABELS[event.status] || event.status}
-                                                color={getStatusColor(event.status)}
+                                                label={getStatusLabel(status)}
+                                                color={getStatusColor(status)}
                                                 size="small"
                                             />
                                         </Box>
@@ -298,11 +319,21 @@ const Events = () => {
                                             )}
                                         </Box>
 
-                                        {isPast && canManageEvents && (
+                                        {/*
+                                          ✅ The PAST EVENT badge is now gated on
+                                             the STATUS, not on a fresh end_date
+                                             comparison. It therefore cannot
+                                             disagree with the status chip above.
+                                        */}
+                                        {isCompleted && canManageEvents && (
                                             <Chip
                                                 label="PAST EVENT"
                                                 size="small"
-                                                sx={{ mt: 1, bgcolor: C.bgInput, color: C.textSecondary }}
+                                                sx={{
+                                                    mt: 1,
+                                                    bgcolor: C.bgInput,
+                                                    color: C.textSecondary,
+                                                }}
                                             />
                                         )}
                                     </CardContent>

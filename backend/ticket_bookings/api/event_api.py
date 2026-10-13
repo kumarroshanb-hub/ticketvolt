@@ -38,6 +38,36 @@ def _is_manager(user):
     return user.is_staff or user.is_superuser or _is_organizer(user)
 
 
+# ---------------------------------------------------------------------------
+# Effective-status serializer post-processing
+# ---------------------------------------------------------------------------
+# Every endpoint in this viewset that returns event data goes through this
+# helper so the UI never sees a stale `status` value.
+#
+# Accepts:
+#   (list_of_serialized_dicts, list_of_event_instances)
+#   (serialized_dict, single_event_instance)
+#
+# Mutates the dict(s) in place:
+#   • 'status'        → Event.get_effective_status()
+#   • 'stored_status' → raw Event.status (kept for debugging only)
+# ---------------------------------------------------------------------------
+def _apply_effective_status(serialized, event_objs, now=None):
+    now = now or timezone.now()
+
+    def _patch_one(d, event_obj):
+        d['stored_status'] = event_obj.status
+        d['status'] = event_obj.get_effective_status(now=now)
+        return d
+
+    if isinstance(serialized, list):
+        for i, event_obj in enumerate(event_objs):
+            _patch_one(serialized[i], event_obj)
+        return serialized
+
+    return _patch_one(serialized, event_objs)
+
+
 class EventViewSet(viewsets.ModelViewSet):
     """
     ViewSet for Event management.
@@ -162,7 +192,6 @@ class EventViewSet(viewsets.ModelViewSet):
             except Venue.DoesNotExist:
                 pass
 
-        # ✅ Resolve the cancellation policy from the write-only FK id.
         cancellation_policy, err = self._resolve_cancellation_policy(
             user, data.get('cancellation_policy_id')
         )
@@ -186,7 +215,6 @@ class EventViewSet(viewsets.ModelViewSet):
             ticket_format=data.get('ticket_format', 'pdf'),
             combine_tickets=data.get('combine_tickets', False),
             tickets_per_page=data.get('tickets_per_page', 4),
-            # ✅ NEW: cancellation policy
             cancellation_policy=cancellation_policy,
             cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
         )
@@ -208,10 +236,9 @@ class EventViewSet(viewsets.ModelViewSet):
                 ticket_type=tier_data.get('ticket_type', 'ga'),
             )
 
-        return Response(
-            EventDetailSerializer(event).data,
-            status=status.HTTP_201_CREATED,
-        )
+        serialized = EventDetailSerializer(event).data
+        serialized = _apply_effective_status(serialized, event)
+        return Response(serialized, status=status.HTTP_201_CREATED)
 
     # ---------------- LIST ----------------
     def list(self, request, *args, **kwargs):
@@ -245,14 +272,21 @@ class EventViewSet(viewsets.ModelViewSet):
                 ),
             )
 
-        serializer = self.get_serializer(queryset, many=True)
-        data = serializer.data
+        # ✅ Materialize the queryset ONCE so indexes stay aligned
+        #    between `events_list[i]` and `data[i]`.
+        events_list = list(queryset)
+
+        serializer = self.get_serializer(events_list, many=True)
+        data = list(serializer.data)
 
         if manager:
-            for i, event_obj in enumerate(queryset):
+            for i, event_obj in enumerate(events_list):
                 data[i]['total_tickets_sold'] = event_obj.active_tickets_count or 0
                 data[i]['total_revenue'] = float(event_obj.active_revenue or 0)
                 data[i]['total_bookings'] = event_obj.active_bookings_count or 0
+
+        # ✅ Override status with the effective status.
+        data = _apply_effective_status(data, events_list)
 
         return Response(data)
 
@@ -306,6 +340,9 @@ class EventViewSet(viewsets.ModelViewSet):
             data['total_revenue'] = float(actual_revenue)
             data['total_bookings'] = active_bookings_count
 
+        # ✅ Override status with the effective status.
+        data = _apply_effective_status(data, instance)
+
         return Response(data)
 
     # ---------------- UPDATE ----------------
@@ -332,7 +369,6 @@ class EventViewSet(viewsets.ModelViewSet):
             except Venue.DoesNotExist:
                 pass
 
-        # Work on a mutable copy so we can rewrite date strings safely.
         data = data.copy() if hasattr(data, 'copy') else dict(data)
 
         if data.get('start_date'):
@@ -340,8 +376,6 @@ class EventViewSet(viewsets.ModelViewSet):
         if data.get('end_date'):
             data['end_date'] = self._parse_dt(data['end_date'])
 
-        # ✅ Handle the cancellation policy FK explicitly.
-        #    Frontend sends `cancellation_policy_id` (may be ''/null to clear).
         if 'cancellation_policy_id' in data:
             raw = data.get('cancellation_policy_id')
             if not raw:
@@ -352,8 +386,6 @@ class EventViewSet(viewsets.ModelViewSet):
                     return err
                 instance.cancellation_policy = policy
 
-        # NOTE: 'cancellation_policy' is deliberately NOT in this list.
-        # The FK is assigned above via the write-only id.
         fields = [
             'title', 'description', 'short_description', 'event_type', 'category',
             'start_date', 'end_date', 'timezone', 'status', 'metadata', 'is_public',
@@ -391,7 +423,10 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
 
         instance.update_ticket_counts()
-        return Response(EventDetailSerializer(instance).data)
+
+        serialized = EventDetailSerializer(instance).data
+        serialized = _apply_effective_status(serialized, instance)
+        return Response(serialized)
 
     # ---------------- DESTROY ----------------
     def destroy(self, request, *args, **kwargs):
@@ -445,9 +480,7 @@ class EventViewSet(viewsets.ModelViewSet):
         throttle_scope='public_read',
     )
     def public(self, request):
-        """
-        Public upcoming events — no auth, narrow field set.
-        """
+        """Public upcoming events — no auth, narrow field set."""
         now = timezone.now()
 
         queryset = (
@@ -472,12 +505,16 @@ class EventViewSet(viewsets.ModelViewSet):
             )
         )
 
-        serializer = PublicEventSerializer(queryset, many=True)
-        data = serializer.data
-        for i, event_obj in enumerate(queryset):
+        events_list = list(queryset)
+
+        serializer = PublicEventSerializer(events_list, many=True)
+        data = list(serializer.data)
+        for i, event_obj in enumerate(events_list):
             data[i]['total_tickets_sold'] = event_obj.active_tickets_count or 0
 
-        return Response({'count': queryset.count(), 'results': data})
+        data = _apply_effective_status(data, events_list, now=now)
+
+        return Response({'count': len(events_list), 'results': data})
 
     @action(
         detail=True,
@@ -511,4 +548,7 @@ class EventViewSet(viewsets.ModelViewSet):
         serializer = PublicEventDetailSerializer(event)
         data = serializer.data
         data['total_tickets_sold'] = active_tickets_count
+
+        data = _apply_effective_status(data, event, now=now)
+
         return Response(data)

@@ -240,6 +240,7 @@ REST_FRAMEWORK = {
         'booking_create': '30/hour',
         'public_read': '120/min',
         'booking_resend': '5/hour',
+        'cron': '20/hour',   # ✅ new — for the GitHub Actions trigger endpoint
     },
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',

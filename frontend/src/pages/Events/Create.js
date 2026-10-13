@@ -160,6 +160,60 @@ const getTimezoneLabel = (value) => {
 };
 
 // ============================================
+// Datetime <-> input helpers
+// ============================================
+
+/**
+ * Convert an ISO-8601 string (from the API, always UTC / aware) into
+ * the string format that `<input type="datetime-local">` expects, using
+ * the BROWSER's local timezone.
+ *
+ * Example:
+ *   "2026-10-06T04:30:00Z"  →  "2026-10-06T12:30"   (in HKT, UTC+8)
+ *
+ * The user then sees the wall-clock time they'd expect for their own
+ * zone, edits if needed, and the inverse helper below converts back.
+ */
+const formatDateForInput = (isoString) => {
+    if (!isoString) return '';
+    try {
+        const d = new Date(isoString);
+        if (isNaN(d.getTime())) return '';
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+    } catch {
+        return '';
+    }
+};
+
+/**
+ * Convert the value from `<input type="datetime-local">` into an
+ * ISO-8601 string WITH an explicit UTC offset.
+ *
+ * The input produces a naive string like "2026-10-06T12:30" which the
+ * browser interprets as the user's local time. `new Date(...)` on that
+ * string applies the browser's current timezone, and `.toISOString()`
+ * produces an unambiguous UTC string the backend can trust.
+ *
+ * Example (in HKT):
+ *   "2026-10-06T12:30"  →  "2026-10-06T04:30:00.000Z"
+ */
+const inputToIso = (localValue) => {
+    if (!localValue) return null;
+    try {
+        const d = new Date(localValue);
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString();
+    } catch {
+        return null;
+    }
+};
+
+// ============================================
 // Styled components
 // ============================================
 const StyledPaper = styled(Paper)`
@@ -198,7 +252,6 @@ const TierPaper = styled(Paper)`
     box-shadow: ${props => props.theme.shadows.card};
 `;
 
-// ✅ All colors from tokens — no hardcoded brand hex
 const TemplateCard = styled(Card)`
     border: ${props => (props.isDefault ? `2px solid ${C.success}` : `1px solid ${C.borderLight}`)};
     border-radius: 12px;
@@ -212,21 +265,6 @@ const TemplateCard = styled(Card)`
         transform: ${props => (props.disabled ? 'none' : 'translateY(-2px)')};
     }
 `;
-
-const formatDateForInput = (dateString) => {
-    if (!dateString) return '';
-    try {
-        const date = new Date(dateString);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        return `${year}-${month}-${day}T${hours}:${minutes}`;
-    } catch (e) {
-        return '';
-    }
-};
 
 const StyledTextField = styled(TextField)`
     & .MuiOutlinedInput-root {
@@ -358,6 +396,7 @@ const CreateEvent = () => {
                 event_type: data.event_type || EVENT_TYPE.SINGLE,
                 category: data.category || EVENT_CATEGORY.OTHER,
                 venue_id: data.venue?.id || '',
+                // ✅ Convert UTC ISO → browser-local "YYYY-MM-DDTHH:MM"
                 start_date: formatDateForInput(data.start_date),
                 end_date: formatDateForInput(data.end_date),
                 timezone: data.timezone || 'Asia/Kolkata',
@@ -418,6 +457,9 @@ const CreateEvent = () => {
                 return;
             }
 
+            // ✅ Convert browser-local input values → ISO-8601 UTC strings.
+            //    The backend stores them as aware datetimes with no
+            //    ambiguity, and no timezone shift occurs on save.
             const eventData = {
                 title: formData.title,
                 description: formData.description || '',
@@ -425,8 +467,8 @@ const CreateEvent = () => {
                 event_type: formData.event_type || EVENT_TYPE.SINGLE,
                 category: formData.category || EVENT_CATEGORY.OTHER,
                 venue_id: formData.venue_id || null,
-                start_date: formData.start_date,
-                end_date: formData.end_date,
+                start_date: inputToIso(formData.start_date),
+                end_date: inputToIso(formData.end_date),
                 timezone: formData.timezone || 'Asia/Kolkata',
                 status: formData.status || EVENT_STATUS.DRAFT,
                 is_public: formData.is_public !== undefined ? formData.is_public : true,
@@ -436,8 +478,8 @@ const CreateEvent = () => {
                 cancellation_policy_id: formData.cancellation_policy_id || null,
                 cancellation_policy_text: formData.cancellation_policy_text || '',
                 sessions: sessions.map((s) => ({
-                    start_time: s.start_time,
-                    end_time: s.end_time,
+                    start_time: inputToIso(s.start_time),
+                    end_time: inputToIso(s.end_time),
                     capacity: parseInt(s.capacity, 10) || 100,
                 })),
                 tiers: tiers.map((t) => ({
@@ -707,6 +749,7 @@ const CreateEvent = () => {
                                 onChange={handleChange}
                                 InputLabelProps={{ shrink: true }}
                                 required
+                                helperText="Times are in your browser's local timezone"
                             />
                         </Grid>
 

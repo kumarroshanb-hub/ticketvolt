@@ -297,14 +297,38 @@ class Event(models.Model):
 
         This is the single source of truth. Do NOT inline this logic
         anywhere else — call this method.
+
+        Naive-datetime safety
+        ---------------------
+        With USE_TZ=True, Django returns timezone-aware datetimes when
+        reading from the DB. BUT — inside a single request, if the view
+        just assigned `self.end_date` from a naive value (before the DB
+        round-trip), the attribute is still naive. Comparing it against
+        an aware `now` raises:
+
+            TypeError: can't compare offset-naive and offset-aware datetimes
+
+        We normalize `end_date` here as a defensive measure so the read
+        path never crashes. The write path (EventViewSet._parse_dt) is
+        the primary fix — this is the safety net.
         """
         from django.utils import timezone as _tz
+
         now = now or _tz.now()
 
         if self.status in ('cancelled', 'completed'):
             return self.status
 
-        if self.end_date and self.end_date < now:
+        end = self.end_date
+        if end is None:
+            return self.status
+
+        # Defensive: a freshly-assigned naive end_date would blow up on
+        # comparison. Attach the project's current timezone.
+        if _tz.is_naive(end):
+            end = _tz.make_aware(end, _tz.get_current_timezone())
+
+        if end < now:
             return 'completed'
 
         return self.status

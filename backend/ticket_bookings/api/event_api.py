@@ -138,12 +138,59 @@ class EventViewSet(viewsets.ModelViewSet):
     # ---------------- helpers ----------------
     @staticmethod
     def _parse_dt(value):
-        if not value:
+        """
+        Parse a datetime string from the frontend into an AWARE datetime.
+
+        The frontend uses `<input type="datetime-local">`, which submits
+        values like "2026-10-06T12:30" — no timezone suffix. This project
+        runs with USE_TZ=True, so a naive datetime:
+          • Triggers a `RuntimeWarning: received a naive datetime` when
+            written to a DateTimeField.
+          • Is silently interpreted as UTC on save (8-hour shift for HKT).
+          • Breaks aware-vs-naive comparisons in the same request.
+
+        We fix all three by:
+          1. Parsing the string.
+          2. If it has no tzinfo, attaching the project's default
+             timezone (settings.TIME_ZONE) — i.e., the user's local zone.
+          3. Returning an aware datetime.
+
+        Strings that already carry an offset ("…+08:00", "…Z") are
+        honored as-is.
+
+        Returns None for empty input. Returns the original value unchanged
+        if it can't be parsed as a datetime — the caller can then decide
+        how to reject it (a clean 400) rather than crash.
+        """
+        if value is None:
             return None
-        try:
-            return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
-        except Exception:
+
+        # Already a datetime? Ensure it's aware.
+        if isinstance(value, datetime):
+            if timezone.is_naive(value):
+                return timezone.make_aware(value, timezone.get_current_timezone())
             return value
+
+        raw = str(value).strip()
+        if not raw:
+            return None
+
+        # JS `Date.toISOString()` produces "...Z"; fromisoformat doesn't
+        # handle the bare "Z" suffix, so normalize it.
+        if raw.endswith('Z'):
+            raw = raw[:-1] + '+00:00'
+
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            # Return the raw value so the serializer/validator can
+            # produce a proper error response.
+            return value
+
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+
+        return parsed
 
     @staticmethod
     def _resolve_cancellation_policy(user, policy_id):
@@ -371,6 +418,7 @@ class EventViewSet(viewsets.ModelViewSet):
 
         data = data.copy() if hasattr(data, 'copy') else dict(data)
 
+        # ✅ Parse to AWARE datetimes. See _parse_dt docstring.
         if data.get('start_date'):
             data['start_date'] = self._parse_dt(data['start_date'])
         if data.get('end_date'):
@@ -404,6 +452,7 @@ class EventViewSet(viewsets.ModelViewSet):
         if 'sessions' in data:
             instance.sessions.all().delete()
             for session_data in data['sessions']:
+                # ✅ _parse_dt localizes to aware before saving.
                 Session.objects.create(
                     event=instance,
                     start_time=self._parse_dt(session_data.get('start_time')),
@@ -423,6 +472,10 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
 
         instance.update_ticket_counts()
+
+        # Re-fetch so nested relations (sessions) come back aware from
+        # the DB rather than from the in-memory naive assignment above.
+        instance.refresh_from_db()
 
         serialized = EventDetailSerializer(instance).data
         serialized = _apply_effective_status(serialized, instance)

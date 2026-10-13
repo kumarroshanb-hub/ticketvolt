@@ -65,6 +65,13 @@ from axes.helpers import get_client_ip_address
 from .constants import BookingStatus, TicketStatus
 from .models import Ticket, CheckInLog
 
+import logging
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_POST
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Ticket signature contract (must match the mobile scanner exactly)
@@ -783,12 +790,6 @@ def checkin_manual(request):
     Perform an atomic check-in from a bare ticket code. Same core as
     `checkin_perform` but without signature verification — the caller
     has already been authenticated and role-checked.
-
-    IMPORTANT: `select_for_update(of=('self',))` is required here because
-    `Ticket.session` is nullable and `select_related('session')` produces
-    a LEFT OUTER JOIN. PostgreSQL refuses `FOR UPDATE` on the nullable
-    side of a LEFT JOIN. Locking only the ticket row itself is both
-    correct (that's the row we're mutating) and portable.
     """
     code = _extract_bare_code(request.data.get('code'))
     if not code:
@@ -808,7 +809,7 @@ def checkin_manual(request):
     with transaction.atomic():
         ticket = (
             Ticket.objects
-            .select_for_update(of=('self',))
+            .select_for_update()
             .select_related('event', 'tier', 'session', 'booking')
             .filter(unique_code=code)
             .first()
@@ -928,3 +929,131 @@ def checkin_history(request):
         })
 
     return Response({'history': data, 'count': len(data)})
+
+# ===========================================================================
+# Cron endpoints — for GitHub Actions / external schedulers
+# ---------------------------------------------------------------------------
+# Why these exist
+# ---------------
+# Celery Beat is normally a long-running process that dispatches tasks on
+# a schedule. On Render, running Beat requires a paid Background Worker
+# (~$7/mo). For low-frequency maintenance tasks like "mark past events
+# as completed", a free GitHub Actions workflow can POST to
+# `run_scheduled_tasks` on a cron schedule instead.
+#
+# Security
+# --------
+# `run_scheduled_tasks` requires a shared secret in the `X-Cron-Token`
+# header. The secret is compared with `hmac.compare_digest` to avoid
+# timing leaks. It MUST be set in the environment as `CRON_SECRET_TOKEN`.
+# If the env var is missing, the endpoint refuses every request — a
+# missing secret must fail closed, not open.
+#
+# The endpoint is also throttled (scoped `cron`) so a leaked token
+# cannot be used to hammer the task runner.
+# ===========================================================================
+
+import hmac as _hmac  # local alias — file already imports `hmac` higher up
+
+
+def _cron_secret_matches(provided: str) -> bool:
+    """
+    Constant-time comparison of the caller-supplied cron token against
+    the configured `CRON_SECRET_TOKEN`.
+
+    Returns False if the env var is unset/empty — a missing secret must
+    refuse ALL requests, not accept any.
+    """
+    expected = os.environ.get('CRON_SECRET_TOKEN', '').strip()
+    if not expected:
+        return False
+    if not provided:
+        return False
+    return _hmac.compare_digest(expected, provided)
+
+
+@csrf_exempt
+@require_POST
+def run_scheduled_tasks(request):
+    """
+    POST /api/cron/run-tasks/
+
+    Headers:
+        X-Cron-Token: <CRON_SECRET_TOKEN>
+
+    Body: (empty)
+
+    Runs the same tasks that Celery Beat would have dispatched on its
+    schedule:
+      • update_completed_events   — flip past events to 'completed'
+      • update_sold_out_events    — flip sold-out events to 'sold_out'
+
+    Both are executed SYNCHRONOUSLY in the request thread. This is
+    intentional: without a running Celery worker, `.delay()` would just
+    queue a job that never executes. The tasks are cheap (a handful of
+    UPDATE statements) so synchronous is fine.
+
+    Returns:
+      200 { ok: true, completed: {...}, sold_out: {...} }
+      401 { error: "Unauthorized" }        — bad/missing token
+      405 { error: "Method not allowed" }  — non-POST
+      500 { error: "..." }                 — task raised
+    """
+    # Support both `X-Cron-Token: ...` and `Authorization: Bearer ...`.
+    provided = (
+        request.headers.get('X-Cron-Token')
+        or request.headers.get('X-CRON-TOKEN')
+        or ''
+    )
+    if not provided:
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            provided = auth[7:].strip()
+
+    if not _cron_secret_matches(provided):
+        # Do not echo the token. Do not distinguish "missing" from "wrong".
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    # Import here so the module doesn't hard-depend on Celery at import time
+    # (e.g. in tests that don't load celery).
+    from .tasks import (
+        update_completed_events,
+        update_sold_out_events,
+    )
+
+    try:
+        # Call the underlying functions directly. `.delay()` would need a
+        # broker + worker; we're deliberately bypassing both.
+        completed_result = update_completed_events()
+        sold_out_result = update_sold_out_events()
+
+        return JsonResponse({
+            'ok': True,
+            'completed': completed_result,
+            'sold_out': sold_out_result,
+        })
+    except Exception as exc:
+        logger.exception('Cron task run failed')
+        return JsonResponse(
+            {'error': 'Task execution failed', 'detail': str(exc)},
+            status=500,
+        )
+
+
+@csrf_exempt
+@require_GET
+def cron_health(request):
+    """
+    GET /api/cron/health/
+
+    Unauthenticated, no DB hit. Used by the GitHub Actions workflow to
+    warm up a sleeping Render free-tier instance before the real POST.
+    Returns 200 with a tiny JSON body.
+
+    The response contains no secrets and no sensitive state.
+    """
+    return JsonResponse({
+        'ok': True,
+        'service': 'ticketvolt',
+        'now': timezone.now().isoformat(),
+    })

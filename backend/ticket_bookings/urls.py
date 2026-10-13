@@ -23,6 +23,9 @@ from .views import (
     checkin_history,
     checkin_manual_verify,
     checkin_manual,
+    # ✅ Cron views
+    run_scheduled_tasks,
+    cron_health,
 )
 
 # Create router and register all view sets
@@ -41,6 +44,13 @@ router.register(
 )
 
 urlpatterns = [
+        # ============ CRON ENDPOINTS ============
+    # ✅ GitHub Actions hits these on a schedule instead of running a
+    #    paid Celery Beat worker. See ticket_bookings/views.py for the
+    #    security model.
+    path('cron/health/', cron_health, name='cron-health'),
+    path('cron/run-tasks/', run_scheduled_tasks, name='cron-run-tasks'),
+    
     # ============ SCANNER ENDPOINTS ============
     # Order matters: Django matches top-to-bottom, so the more specific
     # paths must come before the bare `checkin/` prefix.

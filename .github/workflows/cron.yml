@@ -1,0 +1,142 @@
+# .github/workflows/cron.yml
+#
+# Scheduled task runner for TicketVolt.
+#
+# Why this exists
+# ---------------
+# Running Celery Beat on Render requires a paid Background Worker
+# (~$7/mo). For low-frequency maintenance tasks (mark past events as
+# completed, flip sold-out events, etc.), a free GitHub Actions
+# workflow on a cron schedule is sufficient.
+#
+# How it works
+# ------------
+# 1. The `warmup` job pings /api/cron/health/ until the backend
+#    responds (up to 3 minutes). Render's free tier spins the web
+#    service down after ~15 min of inactivity, so we need this.
+# 2. The `trigger` job then POSTs /api/cron/run-tasks/ with the
+#    shared secret in an `X-Cron-Token` header. The Django view runs
+#    the same task functions Celery Beat would have dispatched.
+#
+# Repo setup required
+# -------------------
+# Add a repository secret named CRON_SECRET_TOKEN whose value matches
+# the CRON_SECRET_TOKEN environment variable on Render.
+#   Settings → Secrets and variables → Actions → New repository secret
+#
+# The backend URL is read from a repository *variable* named
+# BACKEND_URL (not a secret — URLs are not sensitive). Set it to your
+# deployed backend root, e.g. https://ticketvault-backend.onrender.com
+#   Settings → Secrets and variables → Actions → Variables → New variable
+
+name: Scheduled Tasks
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub uses UTC.
+    # Ref: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule
+    - cron: '*/15 * * * *'
+
+  # Allows manual triggering from the Actions tab — useful for testing.
+  workflow_dispatch:
+
+# Only one run at a time; a slow response must not overlap with the next
+# scheduled tick.
+concurrency:
+  group: cron-run-tasks
+  cancel-in-progress: false
+
+jobs:
+  # -----------------------------------------------------------------
+  # Warmup — make sure the Render web service is awake.
+  # -----------------------------------------------------------------
+  warmup:
+    name: Warm up backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.ping.outputs.ready }}
+    steps:
+      - name: Ping backend until it responds
+        id: ping
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BACKEND_URL:-}" ]; then
+            echo "::error::Repository variable BACKEND_URL is not set."
+            exit 1
+          fi
+
+          url="${BACKEND_URL%/}/api/cron/health/"
+          echo "Pinging $url until it responds..."
+
+          # Try up to 30 times with 6s gaps = ~3 minutes max.
+          # Covers a cold-start of Render's free tier.
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              --max-time 15 "$url" || echo "000")
+
+            if [ "$code" = "200" ]; then
+              echo "✅ Backend is warm (attempt $i)"
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "  attempt $i: HTTP $code — retrying in 6s…"
+            sleep 6
+          done
+
+          echo "::error::Backend did not become ready within 3 minutes."
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
+  # -----------------------------------------------------------------
+  # Trigger — call the authenticated task endpoint.
+  # -----------------------------------------------------------------
+  trigger:
+    name: Run scheduled tasks
+    needs: warmup
+    if: needs.warmup.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/cron/run-tasks/
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+          CRON_SECRET_TOKEN: ${{ secrets.CRON_SECRET_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET_TOKEN:-}" ]; then
+            echo "::error::Secret CRON_SECRET_TOKEN is not set."
+            exit 1
+          fi
+
+          url="${BACKEND_URL%/}/api/cron/run-tasks/"
+
+          # Capture status and body separately so we can print the JSON
+          # response on success and on failure.
+          http_code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+            --max-time 120 \
+            -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -H "X-Cron-Token: $CRON_SECRET_TOKEN" \
+            --data '{}') || {
+              echo "::error::curl failed"
+              cat /tmp/body.txt || true
+              exit 1
+            }
+
+          echo "HTTP $http_code"
+          echo "Response:"
+          cat /tmp/body.txt
+          echo
+
+          if [ "$http_code" != "200" ]; then
+            echo "::error::Task run failed (HTTP $http_code)"
+            exit 1
+          fi
+
+          echo "✅ Tasks ran successfully"

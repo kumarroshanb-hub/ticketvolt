@@ -8,34 +8,49 @@ import {
     EVENT_CATEGORY,
     EVENT_CATEGORY_LABELS,
 } from '../../../constants';
+import { theme } from '../../../theme/tokens';
+
+const C = theme.colors;
 
 export const EventBasicInfo = ({ formData, onChange, venues }) => (
     <>
         <Grid item xs={12}>
             <SectionTitle variant="h6">Basic Information</SectionTitle>
-            <Divider sx={{ borderColor: (p) => p.theme.colors.borderLight }} />
+            <Divider sx={{ borderColor: C.borderLight }} />
         </Grid>
 
         <Grid item xs={12}>
             <StyledTextField
-                fullWidth label="Event Title" name="title"
-                value={formData.title} onChange={onChange} required
+                fullWidth
+                label="Event Title"
+                name="title"
+                value={formData.title}
+                onChange={onChange}
+                required
             />
         </Grid>
 
         <Grid item xs={12}>
             <StyledTextField
-                fullWidth label="Short Description" name="short_description"
-                value={formData.short_description} onChange={onChange}
-                multiline rows={2}
+                fullWidth
+                label="Short Description"
+                name="short_description"
+                value={formData.short_description}
+                onChange={onChange}
+                multiline
+                rows={2}
             />
         </Grid>
 
         <Grid item xs={12}>
             <StyledTextField
-                fullWidth label="Description" name="description"
-                value={formData.description} onChange={onChange}
-                multiline rows={4}
+                fullWidth
+                label="Description"
+                name="description"
+                value={formData.description}
+                onChange={onChange}
+                multiline
+                rows={4}
             />
         </Grid>
 
@@ -43,8 +58,11 @@ export const EventBasicInfo = ({ formData, onChange, venues }) => (
             <FormControl fullWidth>
                 <InputLabel id="event-type-label">Event Type</InputLabel>
                 <Select
-                    labelId="event-type-label" name="event_type"
-                    value={formData.event_type} onChange={onChange} label="Event Type"
+                    labelId="event-type-label"
+                    name="event_type"
+                    value={formData.event_type}
+                    onChange={onChange}
+                    label="Event Type"
                 >
                     {Object.values(EVENT_TYPE).map((type) => (
                         <MenuItem key={type} value={type}>
@@ -59,8 +77,11 @@ export const EventBasicInfo = ({ formData, onChange, venues }) => (
             <FormControl fullWidth>
                 <InputLabel id="category-label">Category</InputLabel>
                 <Select
-                    labelId="category-label" name="category"
-                    value={formData.category} onChange={onChange} label="Category"
+                    labelId="category-label"
+                    name="category"
+                    value={formData.category}
+                    onChange={onChange}
+                    label="Category"
                 >
                     {Object.values(EVENT_CATEGORY).map((cat) => (
                         <MenuItem key={cat} value={cat}>
@@ -75,8 +96,11 @@ export const EventBasicInfo = ({ formData, onChange, venues }) => (
             <FormControl fullWidth>
                 <InputLabel id="venue-label">Venue</InputLabel>
                 <Select
-                    labelId="venue-label" name="venue_id"
-                    value={formData.venue_id} onChange={onChange} label="Venue"
+                    labelId="venue-label"
+                    name="venue_id"
+                    value={formData.venue_id}
+                    onChange={onChange}
+                    label="Venue"
                 >
                     <MenuItem value="">Select Venue</MenuItem>
                     {venues.map((venue) => (

@@ -1,36 +1,101 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 260" role="img" aria-label="TiKetVault">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 260" role="img" aria-label="TiKetVault">
   <title>TiKetVault</title>
 
-  <!-- Outer ticket silhouette — charcoal, with concave notches left/right -->
+  <!-- Outer ticket silhouette -->
   <path
-    d="M 60,20
-       H 580
-       A 20,20 0 0 1 600,40
-       V 90
-       A 40,40 0 0 0 600,170
-       V 220
-       A 20,20 0 0 1 580,240
-       H 60
-       A 20,20 0 0 1 40,220
-       V 170
-       A 40,40 0 0 0 40,90
-       V 40
-       A 20,20 0 0 1 60,20
-       Z"
-    fill="#333333"
-  />
+    d="M 60,20 H 560 A 20,20 0 0 1 580,40 V 90
+       A 40,40 0 0 0 580,170 V 220
+       A 20,20 0 0 1 560,240 H 60
+       A 20,20 0 0 1 40,220 V 170
+       A 40,40 0 0 0 40,90 V 40
+       A 20,20 0 0 1 60,20 Z"
+    fill="#333333"/>
 
-  <!-- Inner white panel — the ticket "face" -->
-  <rect x="70" y="30" width="500" height="200" rx="4" fill="#FFFFFF"/>
+  <!-- Inner white panel: x = 70..550, y = 30..230 -->
+  <rect x="70" y="30" width="480" height="200" rx="4" fill="#FFFFFF"/>
 
-  <!-- Wordmark: "TiKetVault" with red 'K' -->
-  <g font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
-     font-weight="700"
-     font-size="108"
-     text-anchor="start">
-    <text x="105" y="168" fill="#333333" letter-spacing="-2">Ti</text>
-    <text x="222" y="168" fill="#FF2A2A" letter-spacing="-2">K</text>
-    <text x="292" y="168" fill="#333333" letter-spacing="-2">etVault</text>
+  <!-- =========================================================
+       Wordmark — outlined, self-contained geometry.
+       Bounding box:
+         x = 130 .. 458
+         y = 96  .. 170
+       Padding inside panel: 60px left | 92px right | 66px top | 60px bottom
+       ========================================================= -->
+  <g fill="#333333">
+
+    <!-- T -->
+    <path d="M 130,96 L 130,112 L 144,112 L 144,170 L 160,170 L 160,112 L 168,112 L 168,96 Z"/>
+
+    <!-- i (dot + stem) -->
+    <rect x="176" y="96"  width="8" height="8"/>
+    <rect x="176" y="110" width="8" height="60"/>
+
+    <!-- K — red -->
+    <g fill="#FF2A2A">
+      <path d="M 192,96 L 192,170 L 206,170 L 206,144 L 215,170 L 230,170
+               L 215,134 L 229,96 L 213,96 L 206,116 L 206,96 Z"/>
+    </g>
+
+    <!-- e -->
+    <path d="M 238,140
+             Q 238,114 251,114
+             Q 264,114 264,140
+             L 264,145 L 245,145
+             Q 247,158 252,158
+             Q 256,158 259,154
+             L 263,161
+             Q 259,169 252,169
+             Q 238,169 238,140 Z
+             M 245,137 L 257,137
+             Q 257,125 251,125
+             Q 246,125 245,137 Z"/>
+
+    <!-- t -->
+    <path d="M 272,104 L 272,116 L 268,116 L 268,124 L 272,124 L 272,156
+             Q 272,170 282,170 L 288,170 L 288,162 L 284,162
+             Q 280,162 280,156 L 280,124 L 288,124 L 288,116 L 280,116
+             L 280,104 Z"/>
+
+    <!-- V -->
+    <path d="M 296,96 L 310,96 L 320,146 L 331,96 L 345,96 L 327,170 L 316,170 Z"/>
+
+    <!-- a -->
+    <path d="M 350,140
+             Q 350,114 363,114
+             Q 376,114 376,140
+             L 376,170 L 363,170 L 363,164
+             Q 359,170 353,170
+             Q 347,170 347,158
+             Q 347,150 353,148
+             L 363,145 L 363,141
+             Q 363,128 358,128
+             Q 353,128 353,135
+             L 345,135
+             Q 346,114 358,114
+             Q 350,114 350,140 Z
+             M 363,150 L 363,154
+             Q 359,156 357,157
+             Q 354,158 354,157
+             Q 354,161 357,161
+             Q 360,161 363,156 Z"/>
+
+    <!-- u -->
+    <path d="M 386,114 L 386,154
+             Q 386,170 398,170
+             Q 406,170 410,164
+             L 410,170 L 421,170 L 421,114 L 410,114 L 410,154
+             Q 410,161 405,161
+             Q 400,161 400,154
+             L 400,114 Z"/>
+
+    <!-- l -->
+    <rect x="424" y="96" width="8" height="74"/>
+
+    <!-- t (final) -->
+    <path d="M 442,104 L 442,116 L 438,116 L 438,124 L 442,124 L 442,156
+             Q 442,170 452,170 L 458,170 L 458,162 L 454,162
+             Q 450,162 450,156 L 450,124 L 458,124 L 458,116 L 450,116
+             L 450,104 Z"/>
   </g>
 </svg>

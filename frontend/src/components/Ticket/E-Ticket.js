@@ -517,7 +517,10 @@ const Ticket = ({
         <TicketContainer ref={ticketRef}>
             <TicketHeader>
                 <BrandName>
-                    <Logo variant="both" size={16} inverse />
+                    {/* Bumped from 16 → 20 so the mark + wordmark are
+                        legible inside the ticket header without
+                        competing with the event type line below. */}
+                    <Logo variant="both" height={20} inverse />
                     <span className="brand-sub">• e-Ticket</span>
                 </BrandName>
                 <TicketType>

@@ -61,7 +61,9 @@ const LogoWrap = styled.div`
     padding-bottom: 20px;
     border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
     margin-bottom: 20px;
-    min-height: 60px;
+    /* Bumped from 60 → 68 so the larger logo has breathing room
+       and the drawer close button doesn't clip it. */
+    min-height: 68px;
     position: relative;
 `;
 
@@ -424,9 +426,15 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     return (
         <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
             <LogoWrap>
+                {/*
+                  variant="both" renders the compact mark + wordmark
+                  side-by-side. At height=32 the wordmark is legible
+                  without crowding the drawer close button on the
+                  mobile drawer.
+                */}
                 <Logo
                     variant="both"
-                    size={20}
+                    height={32}
                     hidden={effectiveCollapsed && !isDrawer}
                 />
                 {isDrawer && (

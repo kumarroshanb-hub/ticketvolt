@@ -12,17 +12,16 @@
 //   • "compact"  — icon-only logomark (ticket shape with TK)
 //   • "both"     — logomark + wordmark side-by-side
 //
-// Implementation note:
-//   We use <img> tags pointing at the SVG assets in `src/assets/logo/`.
-//   This guarantees the logo appears EXACTLY as designed in the branding
-//   guide, regardless of font loading, kerning, or platform-specific
-//   font metric differences.
+// Sizing:
+//   The `height` prop is the rendered pixel height.
+//   Defaults are tuned so the logo looks right at typical call sites
+//   (sidebar header, login card, e-ticket header).
 //
-//   `inverse` swaps to a white-wordmark version for dark backgrounds.
+//   For backwards compatibility, `size` is accepted as an alias of
+//   `height`. New code should prefer `height`.
 
 import React from 'react';
 import styled from 'styled-components';
-import { theme } from '../../theme/tokens';
 
 // Asset imports — Webpack/Vite will bundle these.
 import logoFull from '../../assets/logo/ticketvolt-logo.svg';
@@ -61,12 +60,12 @@ const LogoRow = styled.span`
 /**
  * Full wordmark logo.
  *
- * @param {number}  size     - rendered height in pixels (default 28)
+ * @param {number}  height   - rendered pixel height (default 40)
  * @param {boolean} hidden   - hide entirely (used for collapsed sidebar)
- * @param {boolean} inverse  - use the white/light-on-dark variant
+ * @param {boolean} inverse  - use the light-on-dark variant
  */
 export const FullLogo = ({
-    size = 28,
+    height = 40,
     hidden = false,
     inverse = false,
     alt = 'TiKetVault',
@@ -75,7 +74,7 @@ export const FullLogo = ({
     <LogoImg
         src={inverse ? logoFullInverse : logoFull}
         alt={alt}
-        $height={size}
+        $height={height}
         $hidden={hidden}
         className={className}
         draggable={false}
@@ -85,11 +84,11 @@ export const FullLogo = ({
 /**
  * Compact logomark — icon-only ticket badge.
  *
- * @param {number}  size     - rendered height/width in pixels (default 40)
+ * @param {number}  height   - rendered pixel height/width (default 44)
  * @param {boolean} inverse  - use the light-on-dark variant
  */
 export const CompactLogo = ({
-    size = 40,
+    height = 44,
     inverse = false,
     alt = 'TiKetVault',
     className = '',
@@ -97,7 +96,7 @@ export const CompactLogo = ({
     <LogoImg
         src={inverse ? logoMarkInverse : logoMark}
         alt={alt}
-        $height={size}
+        $height={height}
         className={className}
         draggable={false}
     />
@@ -116,22 +115,27 @@ export const CompactLogo = ({
  *     - 'compact' → renders only the logomark
  *     - 'both'    → renders logomark + wordmark side-by-side
  *
- *   size: number    — pixel height (of the wordmark, or the mark for 'compact')
- *   hidden: boolean — hide the wordmark (used by collapsed sidebar)
+ *   height: number   — pixel height (of the wordmark, or the mark for 'compact')
+ *   size:   number   — legacy alias for `height`
+ *   hidden: boolean  — hide the wordmark (used by collapsed sidebar)
  *   inverse: boolean — white text + translucent bg (for dark surfaces)
  */
 const Logo = ({
     variant = 'full',
-    size = 28,
+    height,
+    size,                // legacy alias
     hidden = false,
     inverse = false,
     className = '',
     ...rest
 }) => {
+    // Resolve height, honoring either prop name.
+    const h = height ?? size;
+
     if (variant === 'compact') {
         return (
             <CompactLogo
-                size={size * 1.4}
+                height={h ?? 44}
                 inverse={inverse}
                 className={className}
                 {...rest}
@@ -140,17 +144,23 @@ const Logo = ({
     }
 
     if (variant === 'both') {
+        // Wordmark gets the requested height; mark is slightly taller so
+        // they optically balance. Gap scales with the mark.
+        const markH = (h ?? 36) * 1.25;
+        const wordH = h ?? 36;
+        const gap = Math.round(markH * 0.35);
+
         return (
-            <LogoRow $gap={Math.round(size * 0.4)} className={className} {...rest}>
-                <CompactLogo size={size * 1.4} inverse={inverse} />
-                <FullLogo size={size} hidden={hidden} inverse={inverse} />
+            <LogoRow $gap={gap} className={className} {...rest}>
+                <CompactLogo height={markH} inverse={inverse} />
+                <FullLogo height={wordH} hidden={hidden} inverse={inverse} />
             </LogoRow>
         );
     }
 
     return (
         <FullLogo
-            size={size}
+            height={h ?? 40}
             hidden={hidden}
             inverse={inverse}
             className={className}

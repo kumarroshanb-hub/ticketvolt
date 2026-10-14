@@ -211,13 +211,19 @@ const Login = () => {
                         mb: 4,
                     }}
                 >
-                    <Logo variant="full" size={36} inverse />
+                    {/*
+                      Wordmark: 56px height reads with the same visual
+                      weight as the subtitle below it without dominating
+                      the card. The native aspect ratio (620:260) renders
+                      this at roughly 133px wide inside the 440px card.
+                    */}
+                    <Logo variant="full" height={56} inverse />
                     <Typography
                         variant="body2"
                         sx={{
                             color: 'rgba(255, 255, 255, 0.65)',
-                            mt: 2,
-                            fontSize: '14px',
+                            mt: 2.5,
+                            fontSize: '15px',
                             fontFamily: F.family,
                         }}
                     >

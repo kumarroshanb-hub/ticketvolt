@@ -12,106 +12,95 @@
 //   • "compact"  — icon-only logomark (ticket shape with TK)
 //   • "both"     — logomark + wordmark side-by-side
 //
-// All colors come from theme tokens. No hardcoded hex values.
+// Implementation note:
+//   We use <img> tags pointing at the SVG assets in `src/assets/logo/`.
+//   This guarantees the logo appears EXACTLY as designed in the branding
+//   guide, regardless of font loading, kerning, or platform-specific
+//   font metric differences.
 //
-// `inverse` prop swaps charcoal → white for use on dark/gradient
-// backgrounds (Login page, E-Ticket header).
+//   `inverse` swaps to a white-wordmark version for dark backgrounds.
 
 import React from 'react';
-import styled, { css } from 'styled-components';
+import styled from 'styled-components';
 import { theme } from '../../theme/tokens';
 
-const C = theme.colors;
-const F = theme.fonts;
+// Asset imports — Webpack/Vite will bundle these.
+import logoFull from '../../assets/logo/ticketvolt-logo.svg';
+import logoFullInverse from '../../assets/logo/ticketvolt-logo-inverse.svg';
+import logoMark from '../../assets/logo/ticketvolt-logomark.svg';
+import logoMarkInverse from '../../assets/logo/ticketvolt-logomark-inverse.svg';
 
 // ============================================================
-// FULL WORDMARK — "TiKetVault" with red 'K'
+// STYLED WRAPPERS
 // ============================================================
 
-const FullLogoWrap = styled.span`
-    display: inline-flex;
-    align-items: baseline;
-    font-family: ${F.family};
-    font-weight: 800;
-    letter-spacing: -0.02em;
-    line-height: 1;
-    white-space: nowrap;
+const LogoImg = styled.img`
+    display: block;
+    height: ${props => props.$height}px;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
     user-select: none;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
 
-    /* Size is driven by font-size prop → scales everything */
-    font-size: ${props => props.$size}px;
-
-    /* Charcoal by default; white when on a dark background */
-    color: ${props => (props.$inverse ? C.textInverse : C.primary)};
-
-    /* Optional: hide when sidebar is collapsed */
-    ${props => props.$hidden && css`display: none;`}
+    ${props => props.$hidden && `display: none;`}
 `;
 
-const RedK = styled.span`
-    color: ${C.secondary};
-`;
-
-export const FullLogo = ({ size = 20, hidden = false, inverse = false, className = '' }) => (
-    <FullLogoWrap $size={size} $hidden={hidden} $inverse={inverse} className={className}>
-        Ti<RedK>K</RedK>etVault
-    </FullLogoWrap>
-);
-
-// ============================================================
-// COMPACT LOGOMARK — charcoal ticket badge with "TK"
-// ============================================================
-
-const MarkWrap = styled.span`
+const LogoRow = styled.span`
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-
-    width: ${props => props.$size}px;
-    height: ${props => props.$size}px;
-    min-width: ${props => props.$size}px;
-
-    background: ${props => (props.$inverse ? 'rgba(255, 255, 255, 0.2)' : C.primary)};
-    border-radius: ${props => Math.round(props.$size * 0.18)}px;
-
-    font-family: ${F.family};
-    font-weight: 800;
-    font-size: ${props => Math.round(props.$size * 0.5)}px;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    color: ${C.textInverse};
+    gap: ${props => props.$gap}px;
     user-select: none;
-
-    /* Two concave notches on the left & right to mimic the ticket silhouette */
-    position: relative;
-    overflow: hidden;
-    box-shadow: ${props => (props.$inverse ? 'none' : theme.shadows.card)};
-
-    &::before,
-    &::after {
-        content: '';
-        position: absolute;
-        width: ${props => Math.round(props.$size * 0.18)}px;
-        height: ${props => Math.round(props.$size * 0.18)}px;
-        border-radius: 50%;
-        top: 50%;
-        transform: translateY(-50%);
-        background: ${props => (props.$inverse ? C.primaryGradient : C.bgPrimary)};
-    }
-
-    &::before { left: -${props => Math.round(props.$size * 0.09)}px; }
-    &::after  { right: -${props => Math.round(props.$size * 0.09)}px; }
 `;
 
-const MarkRedK = styled.span`
-    color: ${C.secondary};
-    margin-left: -0.04em;
-`;
+// ============================================================
+// PUBLIC COMPONENTS
+// ============================================================
 
-export const CompactLogo = ({ size = 40, inverse = false, className = '' }) => (
-    <MarkWrap $size={size} $inverse={inverse} className={className} aria-label="TiKetVault">
-        T<MarkRedK>K</MarkRedK>
-    </MarkWrap>
+/**
+ * Full wordmark logo.
+ *
+ * @param {number}  size     - rendered height in pixels (default 28)
+ * @param {boolean} hidden   - hide entirely (used for collapsed sidebar)
+ * @param {boolean} inverse  - use the white/light-on-dark variant
+ */
+export const FullLogo = ({
+    size = 28,
+    hidden = false,
+    inverse = false,
+    alt = 'TiKetVault',
+    className = '',
+}) => (
+    <LogoImg
+        src={inverse ? logoFullInverse : logoFull}
+        alt={alt}
+        $height={size}
+        $hidden={hidden}
+        className={className}
+        draggable={false}
+    />
+);
+
+/**
+ * Compact logomark — icon-only ticket badge.
+ *
+ * @param {number}  size     - rendered height/width in pixels (default 40)
+ * @param {boolean} inverse  - use the light-on-dark variant
+ */
+export const CompactLogo = ({
+    size = 40,
+    inverse = false,
+    alt = 'TiKetVault',
+    className = '',
+}) => (
+    <LogoImg
+        src={inverse ? logoMarkInverse : logoMark}
+        alt={alt}
+        $height={size}
+        className={className}
+        draggable={false}
+    />
 );
 
 // ============================================================
@@ -127,13 +116,13 @@ export const CompactLogo = ({ size = 40, inverse = false, className = '' }) => (
  *     - 'compact' → renders only the logomark
  *     - 'both'    → renders logomark + wordmark side-by-side
  *
- *   size: number — controls overall scale (font-size baseline)
- *   hidden: boolean — hides the wordmark (used by collapsed sidebar)
+ *   size: number    — pixel height (of the wordmark, or the mark for 'compact')
+ *   hidden: boolean — hide the wordmark (used by collapsed sidebar)
  *   inverse: boolean — white text + translucent bg (for dark surfaces)
  */
 const Logo = ({
     variant = 'full',
-    size = 20,
+    size = 28,
     hidden = false,
     inverse = false,
     className = '',
@@ -142,7 +131,7 @@ const Logo = ({
     if (variant === 'compact') {
         return (
             <CompactLogo
-                size={size * 2}
+                size={size * 1.4}
                 inverse={inverse}
                 className={className}
                 {...rest}
@@ -152,18 +141,10 @@ const Logo = ({
 
     if (variant === 'both') {
         return (
-            <span
-                className={className}
-                style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: size * 0.6,
-                }}
-                {...rest}
-            >
-                <CompactLogo size={size * 2} inverse={inverse} />
-                <FullLogo size={size * 1.1} hidden={hidden} inverse={inverse} />
-            </span>
+            <LogoRow $gap={Math.round(size * 0.4)} className={className} {...rest}>
+                <CompactLogo size={size * 1.4} inverse={inverse} />
+                <FullLogo size={size} hidden={hidden} inverse={inverse} />
+            </LogoRow>
         );
     }
 

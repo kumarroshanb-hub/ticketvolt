@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="TiKetVault logomark">
+  <title>TiKetVault Logomark (Inverse)</title>
+
+  <!-- Translucent rounded-square background -->
+  <rect x="0" y="0" width="200" height="200" rx="36" fill="rgba(255, 255, 255, 0.15)"/>
+
+  <!-- Inner panel — slightly lighter translucent white -->
+  <rect x="24" y="52" width="152" height="96" rx="6" fill="rgba(255, 255, 255, 0.10)"/>
+
+  <!-- Concave notches -->
+  <circle cx="24" cy="100" r="18" fill="rgba(255, 255, 255, 0.05)"/>
+  <circle cx="176" cy="100" r="18" fill="rgba(255, 255, 255, 0.05)"/>
+
+  <!-- 'T' — white -->
+  <text x="52" y="132"
+        font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
+        font-weight="700"
+        font-size="76"
+        fill="#FFFFFF">T</text>
+
+  <!-- 'K' — vibrant red -->
+  <text x="112" y="132"
+        font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
+        font-weight="700"
+        font-size="76"
+        fill="#FF2A2A">K</text>
+</svg>

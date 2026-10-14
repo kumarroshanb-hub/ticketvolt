@@ -25,7 +25,7 @@ const NavbarContainer = styled.nav`
     align-items: center;
     padding: ${props => (props.$fixed ? '12px 16px' : '12px 0')};
     margin-bottom: ${props => (props.$fixed ? '0' : '24px')};
-    background: ${props => (props.$fixed ? 'rgba(255, 255, 255, 0.95)' : 'transparent')};
+    background: ${props => (props.$fixed ? C.surfaceGlass : 'transparent')};
     backdrop-filter: ${props => (props.$fixed ? 'blur(8px)' : 'none')};
     -webkit-backdrop-filter: ${props => (props.$fixed ? 'blur(8px)' : 'none')};
     border-bottom: ${props => (props.$fixed ? `1px solid ${C.borderLight}` : 'none')};
@@ -66,7 +66,7 @@ const MenuButton = styled.button`
     flex-shrink: 0;
 
     &:hover {
-        background: rgba(0, 0, 0, 0.04);
+        background: ${C.hoverSubtle};
     }
 
     @media (max-width: 900px) {
@@ -112,7 +112,7 @@ const UserInfo = styled.button`
 
     &:hover {
         border-color: ${C.primary};
-        box-shadow: 0 0 0 4px rgba(51, 51, 51, 0.08);
+        box-shadow: 0 0 0 4px ${C.hoverMedium};
     }
 
     &:focus-visible {
@@ -215,7 +215,7 @@ const Dropdown = styled.div`
     background: ${C.bgCard};
     border: 1px solid ${C.borderLight};
     border-radius: 12px;
-    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
+    box-shadow: ${theme.shadows.dropdown};
     padding: 6px;
     z-index: 1200;
     animation: fadeIn 0.15s ease;

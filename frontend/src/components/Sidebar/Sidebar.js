@@ -114,8 +114,11 @@ const NavItems = styled.nav`
 
     &::-webkit-scrollbar { width: 4px; }
     &::-webkit-scrollbar-thumb {
-        background: rgba(0, 0, 0, 0.1);
+        background: ${C.scrollbarThumb};
         border-radius: 4px;
+    }
+    &::-webkit-scrollbar-thumb:hover {
+        background: ${C.scrollbarThumbHover};
     }
 `;
 
@@ -189,7 +192,7 @@ const NavItem = styled(NavLink)`
 
     &.active {
         color: ${C.primary};
-        background: rgba(51, 51, 51, 0.08);
+        background: ${C.hoverMedium};
 
         .icon {
             color: ${C.primary};
@@ -267,12 +270,12 @@ const ToggleButton = styled.button`
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: ${theme.shadows.toggle};
 
     &:hover {
         border-color: ${C.primary};
         color: ${C.primary};
-        box-shadow: 0 0 0 4px rgba(51, 51, 51, 0.1);
+        box-shadow: 0 0 0 4px ${C.hoverStrong};
     }
 `;
 
@@ -294,7 +297,7 @@ const DrawerCloseButton = styled.button`
     touch-action: manipulation;
 
     &:hover {
-        background: rgba(0, 0, 0, 0.05);
+        background: ${C.hoverSubtle};
         color: ${C.textPrimary};
     }
 `;

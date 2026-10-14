@@ -16,6 +16,8 @@
 export const BRAND = {
     charcoal: '#333333',   // Primary brand — MEX #333333
     red:      '#FF2A2A',   // Accent brand — Vibrant Red
+    redLight: '#FF6B6B',   // Secondary-light / accent-light
+    redDark:  '#CC0000',   // Secondary-dark / accent-dark
     darkGray: '#555555',   // Secondary brand — Dark Gray
     // Additional accent hues used sparingly for data viz / avatars
     pink:     '#ec4899',
@@ -36,6 +38,8 @@ export const NEUTRAL = {
     gray700: '#333333',
     gray800: '#1a1a1a',
     black:   '#0a0a0a',
+    // Dark-mode app shell surface (Login, Scanner, App root)
+    darkBg:  '#0A0B1A',
 };
 
 // -------- STATUS COLORS --------
@@ -52,7 +56,8 @@ export const STATUS = {
     info:         '#3b82f6',
     infoLight:    '#60a5fa',
     infoDark:     '#2563eb',
-    // Focus ring — single source for all input focus states
+    // Focus ring — single source for all input focus states.
+    // Note: also re-exported on theme.colors.focusRing below.
     focusRing:    'rgba(51, 51, 51, 0.10)',
 };
 
@@ -83,17 +88,17 @@ export const theme = {
 
         // --- Secondary (red) ---
         secondary:         BRAND.red,
-        secondaryLight:    '#FF6B6B',
-        secondaryDark:     '#CC0000',
-        secondaryGradient: `linear-gradient(135deg, ${BRAND.red} 0%, #CC0000 100%)`,
+        secondaryLight:    BRAND.redLight,
+        secondaryDark:     BRAND.redDark,
+        secondaryGradient: `linear-gradient(135deg, ${BRAND.red} 0%, ${BRAND.redDark} 100%)`,
 
         // --- Accent (alias of secondary for CTA-style buttons) ---
-        accent:      BRAND.red,
-        accentLight: '#FF6B6B',
-        accentDark:  '#CC0000',
-        accentGradient: `linear-gradient(135deg, ${BRAND.red} 0%, #CC0000 100%)`,
+        accent:         BRAND.red,
+        accentLight:    BRAND.redLight,
+        accentDark:     BRAND.redDark,
+        accentGradient: `linear-gradient(135deg, ${BRAND.red} 0%, ${BRAND.redDark} 100%)`,
 
-        // --- Status ---
+        // --- Status (spread also brings `focusRing` into scope) ---
         ...STATUS,
 
         // --- Surfaces (light mode) ---
@@ -106,7 +111,7 @@ export const theme = {
         bgHover:     NEUTRAL.gray50,
 
         // --- Surfaces (dark mode — used on Login / Scanner / App shell) ---
-        bgDark:       '#0A0B1A',
+        bgDark:       NEUTRAL.darkBg,
         bgDarkCard:   'rgba(255, 255, 255, 0.03)',
         bgDarkBorder: 'rgba(255, 255, 255, 0.06)',
 
@@ -122,20 +127,36 @@ export const theme = {
         borderHover:  NEUTRAL.gray300,
         borderActive: BRAND.charcoal,
 
+        // --- Interaction states ---
+        // Alpha-suffixed brand colors for hover / focus / active states.
+        // Use these instead of one-off rgba(51,51,51,…) literals.
+        hoverSubtle: 'rgba(51, 51, 51, 0.04)',   // 4%  — subtle button/nav hover
+        hoverMedium: 'rgba(51, 51, 51, 0.08)',   // 8%  — active nav bg
+        hoverStrong: 'rgba(51, 51, 51, 0.10)',   // 10% — pressed / focus ring
+        activeBar:   'rgba(51, 51, 51, 0.08)',   // 8%  — nav ::before accent bar
+
+        // Frosted-glass nav surface (used by fixed mobile Navbar)
+        surfaceGlass: 'rgba(255, 255, 255, 0.95)',
+
+        // Scrollbar thumbs on light surfaces
+        scrollbarThumb:      'rgba(0, 0, 0, 0.10)',
+        scrollbarThumbHover: 'rgba(0, 0, 0, 0.20)',
+
+        // Info banner (BulkActionsBar and similar toolbars)
+        infoBanner:       'rgba(238, 242, 255, 1)',   // = #eef2ff
+        infoBannerBorder: 'rgba(199, 210, 254, 1)',   // = #c7d2fe
+
         // --- Gradients (convenience) ---
         gradientPrimary: `linear-gradient(135deg, ${BRAND.charcoal} 0%, ${BRAND.darkGray} 100%)`,
         gradientSuccess: `linear-gradient(135deg, ${STATUS.success} 0%, ${STATUS.successLight} 100%)`,
         gradientWarning: `linear-gradient(135deg, ${STATUS.warning} 0%, ${STATUS.warningLight} 100%)`,
         gradientError:   `linear-gradient(135deg, ${STATUS.error} 0%, ${STATUS.errorLight} 100%)`,
-        gradientCard:    'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+        gradientCard:    `linear-gradient(135deg, ${NEUTRAL.gray50} 0%, ${NEUTRAL.gray100} 100%)`,
 
-        // --- Extra accent hues ---
+        // --- Extra accent hues (data viz / avatars) ---
         pink: BRAND.pink,
         cyan: BRAND.cyan,
         lime: BRAND.lime,
-
-        // --- Focus ring (used by all form inputs) ---
-        focusRing: STATUS.focusRing,
     },
 
     fonts: FONT,
@@ -154,6 +175,8 @@ export const theme = {
         modal:       '0 24px 64px rgba(0,0,0,0.12)',
         button:      '0 2px 8px rgba(51,51,51,0.20)',
         buttonHover: '0 4px 16px rgba(51,51,51,0.30)',
+        // Small toggle button (Sidebar collapse handle, similar)
+        toggle:      '0 1px 3px rgba(0,0,0,0.10)',
     },
 
     borderRadius: {

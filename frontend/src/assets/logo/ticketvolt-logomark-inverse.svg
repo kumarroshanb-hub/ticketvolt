@@ -5,24 +5,24 @@
   <!-- Translucent rounded-square background -->
   <rect x="0" y="0" width="200" height="200" rx="36" fill="rgba(255, 255, 255, 0.15)"/>
 
-  <!-- Inner panel — slightly lighter translucent white -->
-  <rect x="24" y="52" width="152" height="96" rx="6" fill="rgba(255, 255, 255, 0.10)"/>
+  <!-- Inner panel -->
+  <rect x="26" y="54" width="148" height="92" rx="6" fill="rgba(255, 255, 255, 0.08)"/>
 
   <!-- Concave notches -->
-  <circle cx="24" cy="100" r="18" fill="rgba(255, 255, 255, 0.05)"/>
-  <circle cx="176" cy="100" r="18" fill="rgba(255, 255, 255, 0.05)"/>
+  <circle cx="26" cy="100" r="16" fill="rgba(255, 255, 255, 0.05)"/>
+  <circle cx="174" cy="100" r="16" fill="rgba(255, 255, 255, 0.05)"/>
 
   <!-- 'T' — white -->
-  <text x="52" y="132"
+  <text x="52" y="130"
         font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
         font-weight="700"
-        font-size="76"
+        font-size="80"
         fill="#FFFFFF">T</text>
 
   <!-- 'K' — vibrant red -->
-  <text x="112" y="132"
+  <text x="112" y="130"
         font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
         font-weight="700"
-        font-size="76"
+        font-size="80"
         fill="#FF2A2A">K</text>
 </svg>

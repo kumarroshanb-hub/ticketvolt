@@ -63,7 +63,7 @@ const LogoWrap = styled.div`
     margin-bottom: 20px;
     /* Bumped from 60 → 68 so the larger logo has breathing room
        and the drawer close button doesn't clip it. */
-    min-height: 68px;
+    min-height: 76px;
     position: relative;
 `;
 
@@ -434,7 +434,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 */}
                 <Logo
                     variant="both"
-                    height={32}
+                    height={44}
                     hidden={effectiveCollapsed && !isDrawer}
                 />
                 {isDrawer && (

@@ -217,12 +217,12 @@ const Login = () => {
                       the card. The native aspect ratio (620:260) renders
                       this at roughly 133px wide inside the 440px card.
                     */}
-                    <Logo variant="full" height={56} inverse />
+                    <Logo variant="full" height={80} inverse />
                     <Typography
                         variant="body2"
                         sx={{
                             color: 'rgba(255, 255, 255, 0.65)',
-                            mt: 2.5,
+                            mt: 3,
                             fontSize: '15px',
                             fontFamily: F.family,
                         }}

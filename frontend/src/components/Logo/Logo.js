@@ -65,7 +65,7 @@ const LogoRow = styled.span`
  * @param {boolean} inverse  - use the light-on-dark variant
  */
 export const FullLogo = ({
-    height = 40,
+    height = 56,
     hidden = false,
     inverse = false,
     alt = 'TiKetVault',
@@ -88,7 +88,7 @@ export const FullLogo = ({
  * @param {boolean} inverse  - use the light-on-dark variant
  */
 export const CompactLogo = ({
-    height = 44,
+    height = 60,
     inverse = false,
     alt = 'TiKetVault',
     className = '',
@@ -135,7 +135,7 @@ const Logo = ({
     if (variant === 'compact') {
         return (
             <CompactLogo
-                height={h ?? 44}
+                height={h ?? 60}
                 inverse={inverse}
                 className={className}
                 {...rest}
@@ -146,8 +146,8 @@ const Logo = ({
     if (variant === 'both') {
         // Wordmark gets the requested height; mark is slightly taller so
         // they optically balance. Gap scales with the mark.
-        const markH = (h ?? 36) * 1.25;
-        const wordH = h ?? 36;
+        const markH = (h ?? 48) * 1.25;
+        const wordH = h ?? 48;
         const gap = Math.round(markH * 0.35);
 
         return (
@@ -160,7 +160,7 @@ const Logo = ({
 
     return (
         <FullLogo
-            height={h ?? 40}
+            height={h ?? 56}
             hidden={hidden}
             inverse={inverse}
             className={className}

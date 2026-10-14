@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 260" role="img" aria-label="TiKetVault">
-  <title>TiKetVault</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 260" role="img" aria-label="TiKetVault">
+  <title>TiKetVault (Inverse)</title>
 
-  <!-- Ticket silhouette — translucent white on dark backgrounds -->
+  <!-- Outer ticket silhouette — translucent white for dark backgrounds -->
   <path
     d="M 60,20
-       H 560
-       A 20,20 0 0 1 580,40
+       H 580
+       A 20,20 0 0 1 600,40
        V 90
-       A 40,40 0 0 0 580,170
+       A 40,40 0 0 0 600,170
        V 220
-       A 20,20 0 0 1 560,240
+       A 20,20 0 0 1 580,240
        H 60
        A 20,20 0 0 1 40,220
        V 170
@@ -18,19 +18,19 @@
        V 40
        A 20,20 0 0 1 60,20
        Z"
-    fill="rgba(255, 255, 255, 0.15)"
+    fill="rgba(255, 255, 255, 0.12)"
   />
 
-  <!-- Inner panel — subtle translucent white -->
-  <rect x="70" y="30" width="480" height="200" rx="4" fill="rgba(255, 255, 255, 0.08)"/>
+  <!-- Inner panel — slightly brighter translucent white -->
+  <rect x="70" y="30" width="500" height="200" rx="4" fill="rgba(255, 255, 255, 0.06)"/>
 
-  <!-- Wordmark: white text with red 'K' -->
+  <!-- Wordmark: white text, red 'K' -->
   <g font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
      font-weight="700"
-     font-size="96"
+     font-size="108"
      text-anchor="start">
-    <text x="110" y="162" fill="#FFFFFF" letter-spacing="-2">Ti</text>
-    <text x="218" y="162" fill="#FF2A2A" letter-spacing="-2">K</text>
-    <text x="282" y="162" fill="#FFFFFF" letter-spacing="-2">etVault</text>
+    <text x="105" y="168" fill="#FFFFFF" letter-spacing="-2">Ti</text>
+    <text x="222" y="168" fill="#FF2A2A" letter-spacing="-2">K</text>
+    <text x="292" y="168" fill="#FFFFFF" letter-spacing="-2">etVault</text>
   </g>
 </svg>

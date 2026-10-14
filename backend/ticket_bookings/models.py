@@ -350,7 +350,52 @@ class Session(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def remaining_capacity(self):
-        return self.capacity - self.booked
+        """
+        Seats still available in this session.
+
+        Clamped at 0 so a bad data state (booked > capacity, however it
+        got there) never returns a negative number. A negative here
+        would propagate silently into UI arithmetic and produce
+        confusing results like "-2 seats remaining".
+
+        The invariant we want is: 0 <= booked <= capacity. Booking
+        creation now reserves seats inside a row lock, so this should
+        hold for all data written after the fix. Clamping is a
+        defensive belt-and-braces for legacy rows.
+        """
+        return max(0, self.capacity - self.booked)
+
+    def check_capacity(self, requested):
+        """
+        Return (ok: bool, reason: str | None) for a request to reserve
+        `requested` seats.
+
+        This is the single source of truth for the capacity rule.
+        Called from:
+          • BookingSerializer.validate()  — fail-fast UX
+          • BookingViewSet.create()       — transactional correctness
+
+        Both callers get the same rule and the same error wording, so
+        the UI never has to reconcile two different messages.
+
+        `requested` <= 0 is treated as "nothing to reserve" and always
+        passes. Callers that don't know the ticket count pass 0 and
+        skip the check.
+        """
+        if requested <= 0:
+            return True, None
+
+        available = self.remaining_capacity()
+        if available >= requested:
+            return True, None
+
+        if available == 0:
+            reason = 'This slot is fully booked.'
+        elif available == 1:
+            reason = 'Only 1 seat left in this slot.'
+        else:
+            reason = f'Only {available} seats left in this slot.'
+        return False, reason
 
     def __str__(self):
         return f"{self.event.title} - {self.start_time.strftime('%I:%M %p')}"

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import styled from 'styled-components';
-import { useMediaQuery, useTheme } from '@mui/material';
+import { useMediaQuery, useTheme, Drawer } from '@mui/material';
 import Sidebar from '../Sidebar';
 import Navbar from '../Navbar';
 import { theme } from '../../theme/tokens';
@@ -17,7 +17,7 @@ const LayoutContainer = styled.div`
 
 const MainContent = styled.main`
     flex: 1;
-    margin-left: ${props => props.collapsed ? '80px' : '260px'};
+    margin-left: ${props => (props.collapsed ? '80px' : '260px')};
     padding: 24px 32px;
     transition: margin-left 0.3s ease;
     min-height: 100vh;

@@ -13,12 +13,16 @@
 // ============================================================================
 
 // -------- BRAND PRIMITIVES --------
+// These three are the exact hex codes from the TiKetVault branding guide.
 export const BRAND = {
-    charcoal: '#333333',   // Primary brand — MEX #333333
-    red:      '#FF2A2A',   // Accent brand — Vibrant Red
+    charcoal: '#333333',   // Primary brand — Charcoal Gray (MEX #333333)
+    red:      '#FF2A2A',   // Accent brand — Vibrant Red (MEX #FF2A2A)
+    darkGray: '#555555',   // Secondary brand — Dark Gray (MEX #555555)
+
+    // Derived tints / shades (kept for hover / focus states)
     redLight: '#FF6B6B',   // Secondary-light / accent-light
     redDark:  '#CC0000',   // Secondary-dark / accent-dark
-    darkGray: '#555555',   // Secondary brand — Dark Gray
+
     // Additional accent hues used sparingly for data viz / avatars
     pink:     '#ec4899',
     cyan:     '#06b6d4',
@@ -34,12 +38,16 @@ export const NEUTRAL = {
     gray300: '#cbd5e1',
     gray400: '#94a3b8',
     gray500: '#777777',
-    gray600: '#555555',
-    gray700: '#333333',
+    gray600: '#555555',  // = BRAND.darkGray
+    gray700: '#333333',  // = BRAND.charcoal
     gray800: '#1a1a1a',
-    black:   '#0a0a0a',
-    // Dark-mode app shell surface (Login, Scanner, App root)
-    darkBg:  '#0A0B1A',
+    gray900: '#111111',
+    gray950: '#0a0a0a',
+    black:   '#000000',
+
+    // Dark-mode app shell surface (Login, Scanner, App root).
+    // Slightly lighter than pure black so card borders remain visible.
+    darkBg:  '#0f0f0f',
 };
 
 // -------- STATUS COLORS --------
@@ -47,17 +55,20 @@ export const STATUS = {
     success:      '#10b981',
     successLight: '#34d399',
     successDark:  '#059669',
+
     warning:      '#f59e0b',
     warningLight: '#fbbf24',
     warningDark:  '#d97706',
+
     error:        '#ef4444',
     errorLight:   '#f87171',
     errorDark:    '#dc2626',
+
     info:         '#3b82f6',
     infoLight:    '#60a5fa',
     infoDark:     '#2563eb',
+
     // Focus ring — single source for all input focus states.
-    // Note: also re-exported on theme.colors.focusRing below.
     focusRing:    'rgba(51, 51, 51, 0.10)',
 };
 
@@ -112,8 +123,8 @@ export const theme = {
 
         // --- Surfaces (dark mode — used on Login / Scanner / App shell) ---
         bgDark:       NEUTRAL.darkBg,
-        bgDarkCard:   'rgba(255, 255, 255, 0.03)',
-        bgDarkBorder: 'rgba(255, 255, 255, 0.06)',
+        bgDarkCard:   'rgba(255, 255, 255, 0.04)',
+        bgDarkBorder: 'rgba(255, 255, 255, 0.10)',
 
         // --- Text ---
         textPrimary:   NEUTRAL.gray700,
@@ -129,7 +140,6 @@ export const theme = {
 
         // --- Interaction states ---
         // Alpha-suffixed brand colors for hover / focus / active states.
-        // Use these instead of one-off rgba(51,51,51,…) literals.
         hoverSubtle: 'rgba(51, 51, 51, 0.04)',   // 4%  — subtle button/nav hover
         hoverMedium: 'rgba(51, 51, 51, 0.08)',   // 8%  — active nav bg
         hoverStrong: 'rgba(51, 51, 51, 0.10)',   // 10% — pressed / focus ring
@@ -175,7 +185,6 @@ export const theme = {
         modal:       '0 24px 64px rgba(0,0,0,0.12)',
         button:      '0 2px 8px rgba(51,51,51,0.20)',
         buttonHover: '0 4px 16px rgba(51,51,51,0.30)',
-        // Small toggle button (Sidebar collapse handle, similar)
         toggle:      '0 1px 3px rgba(0,0,0,0.10)',
     },
 

@@ -1,28 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="TicketVolt logomark">
-  <title>TicketVolt Logomark</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="TiKetVault logomark">
+  <title>TiKetVault Logomark</title>
 
   <!-- Rounded-square charcoal background -->
   <rect x="0" y="0" width="200" height="200" rx="36" fill="#333333"/>
 
-  <!-- Inner ticket shape (implied via two vertical notches on sides) -->
-  <rect x="24" y="52" width="152" height="96" rx="6" fill="#333333"/>
+  <!-- Inner panel to mimic the ticket face -->
+  <rect x="24" y="52" width="152" height="96" rx="6" fill="#3a3a3a"/>
 
-  <!-- Concave notches — simulated by white shapes on left/right -->
+  <!-- Concave notches on left/right of the inner ticket -->
   <circle cx="24" cy="100" r="18" fill="#333333"/>
   <circle cx="176" cy="100" r="18" fill="#333333"/>
 
-  <!-- "T" — white -->
-  <text x="56" y="128"
+  <!-- 'T' — white -->
+  <text x="52" y="132"
         font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
         font-weight="700"
-        font-size="72"
+        font-size="76"
         fill="#FFFFFF">T</text>
 
-  <!-- "K" — vibrant red -->
-  <text x="110" y="128"
+  <!-- 'K' — vibrant red -->
+  <text x="112" y="132"
         font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
         font-weight="700"
-        font-size="72"
+        font-size="76"
         fill="#FF2A2A">K</text>
 </svg>

@@ -600,11 +600,6 @@ class BookingSerializer(serializers.ModelSerializer):
 
         # ------------------------------------------------------------
         # ✅ Resolve the tickets list from WHEREVER the client put it.
-        #    Before this fix, the code only looked at `data['tickets']`,
-        #    which is read-only on this serializer and therefore always
-        #    empty. That made `computed_total == 0`, which in turn caused
-        #    every discount with `min_order_amount > 0` to be wrongly
-        #    rejected with "Minimum order ₹X required."
         # ------------------------------------------------------------
         tickets_payload = self._resolve_tickets_payload(data)
 
@@ -633,15 +628,7 @@ class BookingSerializer(serializers.ModelSerializer):
                     computed_total += Decimal(str(tier.price))
 
         # ------------------------------------------------------------
-        # ✅ Safety net: if we STILL couldn't compute a total (e.g. the
-        #    client sent only `total_amount` with no per-ticket detail),
-        #    fall back to the client-supplied total_amount so discount
-        #    validation doesn't falsely fail on `min_order_amount`.
-        #
-        #    This is safe because the discount AMOUNT is recomputed from
-        #    `computed_total` — a malicious client inflating total_amount
-        #    only affects the minimum-order threshold, not the money
-        #    actually charged (the booking total is overwritten below).
+        # ✅ Safety net for total_amount when per-ticket detail is absent.
         # ------------------------------------------------------------
         if computed_total == Decimal('0.00'):
             fallback = (
@@ -654,10 +641,65 @@ class BookingSerializer(serializers.ModelSerializer):
                 except (ValueError, TypeError, ArithmeticError):
                     pass
 
-        # total_amount is ALWAYS the gross subtotal (before discount).
-        # The discount is stored separately in `discount_applied`.
         if computed_total > 0:
             data['total_amount'] = computed_total
+
+        # ============================================================
+        # ✅ SLOT CAPACITY CHECK (fail-fast UX)
+        # ------------------------------------------------------------
+        # This is a courtesy check — it gives the user an immediate,
+        # actionable error at cart time before any DB write happens.
+        #
+        # It is NOT race-safe on its own. Two concurrent requests could
+        # both pass this check. The real guarantee comes from the
+        # SELECT ... FOR UPDATE in BookingViewSet.create(), which runs
+        # inside a transaction and locks the session row. This method
+        # exists so that:
+        #   • the common case (stale UI showing seats that are gone)
+        #     fails fast with a clear message instead of a mysterious
+        #     error from the ViewSet layer
+        #   • the error is attached to the `session` field, so the
+        #     frontend can highlight the slot picker
+        # ============================================================
+        session_id = (
+            data.get('session')
+            or self.initial_data.get('session')
+            or data.get('session_id')
+            or self.initial_data.get('session_id')
+            or (data.get('metadata') or {}).get('slot_id')
+            or (self.initial_data.get('metadata') or {}).get('slot_id')
+        )
+
+        requested_count = len(tickets_payload)
+
+        if session_id and requested_count > 0:
+            # Local import: the serializers module is imported by models
+            # indirectly, and importing Session at module scope would
+            # create a circular dependency in some load orders.
+            from ..models import Session as _Session
+
+            try:
+                session = _Session.objects.get(id=session_id)
+            except _Session.DoesNotExist:
+                raise serializers.ValidationError(
+                    {'session': 'The selected slot was not found.'}
+                )
+
+            # The session must belong to the event being booked.
+            if (
+                hasattr(self, '_event_obj')
+                and session.event_id != self._event_obj.id
+            ):
+                raise serializers.ValidationError(
+                    {'session': 'The selected slot does not belong to this event.'}
+                )
+
+            ok, reason = session.check_capacity(requested_count)
+            if not ok:
+                # Attach to `session` so the frontend can highlight the
+                # slot selector. Wording comes from the model so it stays
+                # consistent with the ViewSet's error message.
+                raise serializers.ValidationError({'session': reason})
 
         # ---- Resolve the discount server-side (never trust client) ----
         raw_code = (
@@ -678,7 +720,6 @@ class BookingSerializer(serializers.ModelSerializer):
                     {'discount_code': 'Invalid or inactive discount code.'}
                 )
 
-            # Organizer ownership check (only relevant if not staff).
             request = self.context.get('request')
             requester = getattr(request, 'user', None)
             if requester and not (requester.is_staff or requester.is_superuser):
@@ -687,7 +728,6 @@ class BookingSerializer(serializers.ModelSerializer):
                         {'discount_code': 'This code is not valid for this event.'}
                     )
 
-            # Time window
             now = timezone.now()
             if discount_obj.valid_from and discount_obj.valid_from > now:
                 raise serializers.ValidationError(
@@ -698,13 +738,11 @@ class BookingSerializer(serializers.ModelSerializer):
                     {'discount_code': 'This code has expired.'}
                 )
 
-            # Global usage limit
             if discount_obj.max_uses and discount_obj.used_count >= discount_obj.max_uses:
                 raise serializers.ValidationError(
                     {'discount_code': 'This code has reached its usage limit.'}
                 )
 
-            # Event scoping (empty M2M = organizer-wide)
             scoped_ids = list(
                 discount_obj.applicable_events.values_list('id', flat=True)
             )
@@ -713,7 +751,6 @@ class BookingSerializer(serializers.ModelSerializer):
                     {'discount_code': 'This code is not valid for this event.'}
                 )
 
-            # Order constraints
             if (
                 discount_obj.min_order_amount
                 and computed_total < Decimal(str(discount_obj.min_order_amount))
@@ -732,7 +769,6 @@ class BookingSerializer(serializers.ModelSerializer):
                      f'Minimum {discount_obj.min_ticket_count} tickets required.'}
                 )
 
-            # Compute discount amount
             if discount_obj.type == 'percentage':
                 discount_amount = (
                     computed_total * Decimal(str(discount_obj.value)) / Decimal('100')
@@ -749,10 +785,8 @@ class BookingSerializer(serializers.ModelSerializer):
 
             data['discount_code'] = discount_obj.code
             data['discount_applied'] = discount_amount
-            # Stash the model instance so create() can persist usage audit.
             self._discount_obj = discount_obj
         else:
-            # No code provided — make sure nothing sneaky was passed.
             data.pop('discount_applied', None)
             data['discount_applied'] = Decimal('0.00')
             data['discount_code'] = ''

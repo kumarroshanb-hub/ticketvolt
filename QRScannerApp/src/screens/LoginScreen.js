@@ -1,4 +1,5 @@
 // QRScannerApp/src/screens/LoginScreen.js
+import { Image } from 'react-native';
 import React, { useState, useContext, useEffect } from 'react';
 import {
   View,
@@ -149,8 +150,11 @@ export default function LoginScreen() {
 
             {/* Logo / Header */}
             <View style={styles.header}>
-              <Text style={styles.logoIcon}>⚡</Text>
-              <Text style={styles.title}>TICKETVOLT</Text>
+              <Image
+                source={require('../../assets/logo-wordmark.png')}
+                style={styles.brandLogo}
+                resizeMode="contain"
+              />
               <Text style={styles.subtitle}>SECURE AUTHENTICATION</Text>
               <View style={styles.divider} />
             </View>
@@ -304,6 +308,12 @@ const styles = StyleSheet.create({
     color: '#8899aa',
     fontSize: 10,
     fontFamily: 'monospace',
+  },
+  brandLogo: {
+  width: 220,
+  height: 92,
+  marginBottom: 12,
+  tintColor: '#FFFFFF',   // remove this if the PNG is already white/light
   },
   settingsIcon: {
     padding: 10,

@@ -12,12 +12,21 @@
   <circle cx="26" cy="100" r="16" fill="#333333"/>
   <circle cx="174" cy="100" r="16" fill="#333333"/>
 
-  <!-- T — white -->
-  <path fill="#FFFFFF"
-    d="M 72,84 L 72,93 L 79,93 L 79,116 L 89,116 L 89,93 L 96,93 L 96,84 Z"/>
+  <!-- "TK" — Montserrat Bold, sized to fit inner panel -->
+  <g font-family="'Montserrat', 'Segoe UI', Arial, sans-serif"
+     font-weight="700"
+     font-size="56"
+     text-anchor="start">
 
-  <!-- K — vibrant red -->
-  <path fill="#FF2A2A"
-    d="M 104,84 L 104,116 L 113,116 L 113,105 L 118,116 L 130,116
-             L 120,100 L 129,84 L 119,84 L 113,94 L 113,84 Z"/>
+    <text x="62" y="120"
+          textLength="28"
+          lengthAdjust="spacingAndGlyphs"
+          fill="#FFFFFF">T</text>
+
+    <text x="98" y="120"
+          textLength="34"
+          lengthAdjust="spacingAndGlyphs"
+          fill="#FF2A2A">K</text>
+
+  </g>
 </svg>

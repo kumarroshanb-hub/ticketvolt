@@ -2,32 +2,35 @@
 //
 // Single source of truth for rendering the TiKetVault logo.
 //
-// Replaces inline logo rendering that was duplicated across:
-//   • components/Sidebar/Sidebar.js
-//   • pages/Login/Login.js
-//   • components/Ticket/E-Ticket.js
+// Uses the official brand PNG assets:
+//   • ticketvolt-logo.png      — full wordmark "TiKetVault" on ticket
+//   • ticketvolt-logomark.png  — compact "TK" ticket badge
 //
 // Variants:
-//   • "full"     — full wordmark "TiKetVault" with red 'K'
-//   • "compact"  — icon-only logomark (ticket shape with TK)
+//   • "full"     — full wordmark
+//   • "compact"  — icon-only logomark
 //   • "both"     — logomark + wordmark side-by-side
 //
 // Sizing:
 //   The `height` prop is the rendered pixel height.
-//   Defaults are tuned so the logo looks right at typical call sites
+//   Defaults are tuned for typical call sites
 //   (sidebar header, login card, e-ticket header).
 //
 //   For backwards compatibility, `size` is accepted as an alias of
 //   `height`. New code should prefer `height`.
+//
+// Note on `inverse`:
+//   The PNG assets have transparent padding around the ticket frame
+//   and render correctly on both light and dark backgrounds, so the
+//   `inverse` prop is accepted for API compatibility but does not
+//   swap to a different file.
 
 import React from 'react';
 import styled from 'styled-components';
 
 // Asset imports — Webpack/Vite will bundle these.
-import logoFull from '../../assets/logo/ticketvolt-logo.svg';
-import logoFullInverse from '../../assets/logo/ticketvolt-logo-inverse.svg';
-import logoMark from '../../assets/logo/ticketvolt-logomark.svg';
-import logoMarkInverse from '../../assets/logo/ticketvolt-logomark-inverse.svg';
+import logoFull from '../../assets/logo/ticketvolt-logo.png';
+import logoMark from '../../assets/logo/ticketvolt-logomark.png';
 
 // ============================================================
 // STYLED WRAPPERS
@@ -60,19 +63,19 @@ const LogoRow = styled.span`
 /**
  * Full wordmark logo.
  *
- * @param {number}  height   - rendered pixel height (default 40)
+ * @param {number}  height   - rendered pixel height (default 56)
  * @param {boolean} hidden   - hide entirely (used for collapsed sidebar)
- * @param {boolean} inverse  - use the light-on-dark variant
+ * @param {boolean} inverse  - accepted for API compatibility (no-op)
  */
 export const FullLogo = ({
     height = 56,
     hidden = false,
-    inverse = false,
+    inverse = false, // eslint-disable-line no-unused-vars
     alt = 'TiKetVault',
     className = '',
 }) => (
     <LogoImg
-        src={inverse ? logoFullInverse : logoFull}
+        src={logoFull}
         alt={alt}
         $height={height}
         $hidden={hidden}
@@ -84,17 +87,17 @@ export const FullLogo = ({
 /**
  * Compact logomark — icon-only ticket badge.
  *
- * @param {number}  height   - rendered pixel height/width (default 44)
- * @param {boolean} inverse  - use the light-on-dark variant
+ * @param {number}  height   - rendered pixel height/width (default 60)
+ * @param {boolean} inverse  - accepted for API compatibility (no-op)
  */
 export const CompactLogo = ({
     height = 60,
-    inverse = false,
+    inverse = false, // eslint-disable-line no-unused-vars
     alt = 'TiKetVault',
     className = '',
 }) => (
     <LogoImg
-        src={inverse ? logoMarkInverse : logoMark}
+        src={logoMark}
         alt={alt}
         $height={height}
         className={className}
@@ -118,7 +121,7 @@ export const CompactLogo = ({
  *   height: number   — pixel height (of the wordmark, or the mark for 'compact')
  *   size:   number   — legacy alias for `height`
  *   hidden: boolean  — hide the wordmark (used by collapsed sidebar)
- *   inverse: boolean — white text + translucent bg (for dark surfaces)
+ *   inverse: boolean — accepted for API compatibility (no-op)
  */
 const Logo = ({
     variant = 'full',

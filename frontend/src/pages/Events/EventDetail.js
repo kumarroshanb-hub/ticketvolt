@@ -73,7 +73,7 @@ const EventDetail = () => {
         } catch (error) {
             console.error('Event detail error:', error);
             toast.error('Failed to load event details');
-            navigate('/events');
+            navigate('/app/events');
         } finally {
             setLoading(false);
         }
@@ -95,7 +95,7 @@ const EventDetail = () => {
         }
     };
 
-    const handleEdit = () => navigate(`/events/${id}/edit`);
+    const handleEdit = () => navigate(`/app/events/${id}/edit`);
 
     if (loading) {
         return (
@@ -109,7 +109,7 @@ const EventDetail = () => {
         return (
             <Box sx={{ p: 3, textAlign: 'center' }}>
                 <Typography sx={{ color: C.textLight }}>Event not found</Typography>
-                <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/events')}>
+                <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/app/events')}>
                     Back to Events
                 </Button>
             </Box>
@@ -125,7 +125,7 @@ const EventDetail = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <IconButton onClick={() => navigate('/events')} sx={{ color: C.textSecondary }}>
+                    <IconButton onClick={() => navigate('/app/events')} sx={{ color: C.textSecondary }}>
                         <ArrowBackIcon />
                     </IconButton>
                     <Box sx={{ minWidth: 0 }}>

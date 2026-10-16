@@ -113,7 +113,7 @@ const CreateEvent = () => {
                         <EventFormActions
                             isEdit={!!id}
                             submitting={submitting}
-                            onCancel={() => navigate('/events')}
+                            onCancel={() => navigate('/app/events')}
                         />
                     </Grid>
                 </form>

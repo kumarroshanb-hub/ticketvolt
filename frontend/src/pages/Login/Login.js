@@ -91,7 +91,7 @@ const Login = () => {
 
             if (result.success === true) {
                 toast.success('Login successful!');
-                navigate('/dashboard', { replace: true });
+                navigate('/app/dashboard', { replace: true });
             } else {
                 const errorMsg = result.error || 'Login failed. Please try again.';
                 setError(errorMsg);

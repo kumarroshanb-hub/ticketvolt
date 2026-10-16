@@ -148,7 +148,7 @@ const Venues = () => {
                     <PrimaryButton
                         variant="contained"
                         startIcon={<AddIcon />}
-                        onClick={() => navigate('/venues/create')}
+                        onClick={() => navigate('/app/venues/create')}
                         sx={isMobile ? { flex: 1, minWidth: 140 } : undefined}
                     >
                         Add Venue
@@ -175,7 +175,7 @@ const Venues = () => {
                     <Button
                         variant="contained"
                         startIcon={<AddIcon />}
-                        onClick={() => navigate('/venues/create')}
+                        onClick={() => navigate('/app/venues/create')}
                         sx={{ mt: 2 }}
                     >
                         Add Venue
@@ -283,7 +283,7 @@ const Venues = () => {
                                                         minWidth: { xs: 44, md: 40 },
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
-                                                    onClick={() => navigate(`/venues/${venue.id}`)}
+                                                    onClick={() => navigate(`/app/venues/${venue.id}`)}
                                                     aria-label={`View ${venue.name}`}
                                                 >
                                                     <VisibilityIcon fontSize="small" />
@@ -297,7 +297,7 @@ const Venues = () => {
                                                         minWidth: { xs: 44, md: 40 },
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
-                                                    onClick={() => navigate(`/venues/edit/${venue.id}`)}
+                                                    onClick={() => navigate(`/app/venues/edit/${venue.id}`)}
                                                     aria-label={`Edit ${venue.name}`}
                                                 >
                                                     <EditIcon fontSize="small" />

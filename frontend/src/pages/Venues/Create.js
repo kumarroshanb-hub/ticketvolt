@@ -141,7 +141,7 @@ const CreateVenue = () => {
         } catch (error) {
             console.error('Failed to load venue:', error);
             toast.error('Failed to load venue details');
-            navigate('/venues');
+            navigate('/app/venues');
         }
         setLoading(false);
     };
@@ -178,7 +178,7 @@ const CreateVenue = () => {
                 await api.post('/venues/', venueData);
                 toast.success('Venue created successfully!');
             }
-            navigate('/venues');
+            navigate('/app/venues');
         } catch (error) {
             console.error('Submit error:', error);
 
@@ -459,7 +459,7 @@ const CreateVenue = () => {
                                 </PrimaryButton>
                                 <OutlineButton
                                     variant="outlined"
-                                    onClick={() => navigate('/venues')}
+                                    onClick={() => navigate('/app/venues')}
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
                                     Cancel

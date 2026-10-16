@@ -575,7 +575,7 @@ const Dashboard = () => {
                                 <MobileBookingCard
                                     key={booking.id}
                                     booking={booking}
-                                    onClick={() => navigate(`/bookings/${booking.id}`)}
+                                    onClick={() => navigate(`/app/bookings/${booking.id}`)}
                                 />
                             ))}
                         </Box>
@@ -605,7 +605,7 @@ const Dashboard = () => {
                                             <TableRow
                                                 key={booking.id}
                                                 hover
-                                                onClick={() => navigate(`/bookings/${booking.id}`)}
+                                                onClick={() => navigate(`/app/bookings/${booking.id}`)}
                                                 sx={{
                                                     cursor: 'pointer',
                                                     opacity: isCompleted ? 0.7 : 1,
@@ -665,7 +665,7 @@ const Dashboard = () => {
                             <Grid item xs={12} sm={6} md={4} key={event.id}>
                                 <PopularEventCard
                                     event={event}
-                                    onClick={() => navigate(`/events/${event.id}`)}
+                                    onClick={() => navigate(`/app/events/${event.id}`)}
                                     isMobile={isMobile}
                                 />
                             </Grid>

@@ -40,7 +40,7 @@ export const EventCancellationPolicy = ({ formData, onChange, policies }) => (
                     Customers will be able to cancel under these rules.{' '}
                     <Link
                         component={RouterLink}
-                        to="/cancellation-policies"
+                        to="/app/cancellation-policies"
                         target="_blank"
                         rel="noopener noreferrer"
                         sx={{ color: C.primary, fontWeight: 600 }}

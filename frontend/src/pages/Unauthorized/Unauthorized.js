@@ -44,7 +44,7 @@ const Unauthorized = () => {
                 </Typography>
                 <Button
                     variant="contained"
-                    onClick={() => navigate('/dashboard')}
+                    onClick={() => navigate('/app/dashboard')}
                     sx={{
                         background: C.primaryGradient,
                         color: C.textInverse,

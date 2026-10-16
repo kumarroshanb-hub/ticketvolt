@@ -61,10 +61,16 @@ const LogoWrap = styled.div`
     padding-bottom: 20px;
     border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
     margin-bottom: 20px;
-    /* Bumped from 60 → 68 so the larger logo has breathing room
-       and the drawer close button doesn't clip it. */
     min-height: 76px;
     position: relative;
+`;
+
+// ✅ Clicking the logo returns to the app dashboard
+const LogoLink = styled(NavLink)`
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+    color: inherit;
 `;
 
 const RoleBadge = styled.div`
@@ -307,17 +313,18 @@ const DrawerCloseButton = styled.button`
 // ============================================
 // MENU DEFINITIONS
 // ============================================
+// All paths now live under the /app prefix.
 
 const MENU_ITEMS = {
     dashboard: {
-        path: '/dashboard',
+        path: '/app/dashboard',
         icon: <DashboardIcon />,
         label: 'Dashboard',
         roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'main',
     },
     bookings: {
-        path: '/bookings',
+        path: '/app/bookings',
         icon: <TicketIcon />,
         label: 'Bookings',
         roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
@@ -325,56 +332,56 @@ const MENU_ITEMS = {
         badge: true,
     },
     events: {
-        path: '/events',
+        path: '/app/events',
         icon: <EventIcon />,
         label: 'Events',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     venues: {
-        path: '/venues',
+        path: '/app/venues',
         icon: <VenueIcon />,
         label: 'Venues',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     discounts: {
-        path: '/discounts',
+        path: '/app/discounts',
         icon: <DiscountIcon />,
         label: 'Discounts',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     cancellationPolicies: {
-        path: '/cancellation-policies',
+        path: '/app/cancellation-policies',
         icon: <PolicyIcon />,
         label: 'Cancellation Policies',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     analytics: {
-        path: '/analytics',
+        path: '/app/analytics',
         icon: <AnalyticsIcon />,
         label: 'Analytics',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     scanner: {
-        path: '/checkin',
+        path: '/app/checkin',
         icon: <ScannerIcon />,
         label: 'QR Scanner',
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
     users: {
-        path: '/users',
+        path: '/app/users',
         icon: <PeopleIcon />,
         label: 'Users',
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
     settings: {
-        path: '/settings',
+        path: '/app/settings',
         icon: <SettingsIcon />,
         label: 'Settings',
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
@@ -426,17 +433,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     return (
         <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
             <LogoWrap>
-                {/*
-                  variant="both" renders the compact mark + wordmark
-                  side-by-side. At height=32 the wordmark is legible
-                  without crowding the drawer close button on the
-                  mobile drawer.
-                */}
-                <Logo
-                    variant="both"
-                    height={44}
-                    hidden={effectiveCollapsed && !isDrawer}
-                />
+                <LogoLink to="/app/dashboard" onClick={() => onNavigate && onNavigate()}>
+                    <Logo
+                        variant="both"
+                        height={44}
+                        hidden={effectiveCollapsed && !isDrawer}
+                    />
+                </LogoLink>
                 {isDrawer && (
                     <DrawerCloseButton onClick={onNavigate} aria-label="Close menu">
                         <CloseIcon fontSize="small" />

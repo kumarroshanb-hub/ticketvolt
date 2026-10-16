@@ -19,12 +19,12 @@ export const buildEventPayload = (formData, sessions, tiers) => ({
     tickets_per_page: formData.tickets_per_page || 4,
     cancellation_policy_id: formData.cancellation_policy_id || null,
     cancellation_policy_text: formData.cancellation_policy_text || '',
-    sessions: sessions.map((s) => ({
+    sessions: (sessions || []).map((s) => ({
         start_time: inputToIso(s.start_time),
         end_time: inputToIso(s.end_time),
         capacity: parseInt(s.capacity, 10) || 100,
     })),
-    tiers: tiers.map((t) => ({
+    tiers: (tiers || []).map((t) => ({
         name: t.name || 'General',
         price: parseFloat(t.price) || 0,
         quantity_total: parseInt(t.quantity_total, 10) || 100,

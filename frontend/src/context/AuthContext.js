@@ -145,7 +145,7 @@ export const AuthProvider = ({ children }) => {
         setIsAuthenticated(false);
         
         // ✅ Redirect to login
-        window.location.href = '/login';
+        window.location.href = '/';
         
         console.log('✅ Logout complete');
     }, []);

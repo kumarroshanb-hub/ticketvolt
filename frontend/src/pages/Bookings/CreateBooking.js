@@ -461,7 +461,7 @@ const CreateBooking = () => {
             const result = response.data;
 
             toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
-            navigate('/bookings');
+            navigate('/app/bookings');
         } catch (error) {
             let errorMsg = 'Failed to create booking';
             const data = error.response?.data;
@@ -1432,7 +1432,7 @@ const CreateBooking = () => {
         <PageContainer>
             <PageHeader>
                 <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-                    <IconButton onClick={() => navigate('/bookings')}>
+                    <IconButton onClick={() => navigate('/app/bookings')}>
                         <ArrowBackIcon />
                     </IconButton>
                     <PageTitle variant="h4">
@@ -1440,7 +1440,7 @@ const CreateBooking = () => {
                     </PageTitle>
                 </Box>
                 <Box display="flex" gap={1}>
-                    <OutlineButton onClick={() => navigate('/bookings')}>Cancel</OutlineButton>
+                    <OutlineButton onClick={() => navigate('/app/bookings')}>Cancel</OutlineButton>
                 </Box>
             </PageHeader>
 

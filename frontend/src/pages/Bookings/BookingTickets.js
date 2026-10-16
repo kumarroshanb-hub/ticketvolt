@@ -352,7 +352,7 @@ const BookingTickets = () => {
         return <StatusChip label={label} size="small" color={color} />;
     };
 
-    const handleBack = () => navigate('/bookings');
+    const handleBack = () => navigate('/app/bookings');
     const handlePrint = () => window.print();
 
     const handleExport = () => {

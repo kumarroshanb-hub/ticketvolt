@@ -137,7 +137,7 @@ const PublicEvents = () => {
     };
 
     const handleBookNow = (eventId) => {
-        navigate(`/bookings/create?event=${eventId}`);
+        navigate(`/app/bookings/create?event=${eventId}`);
     };
 
     const formatDate = (dateString) => {

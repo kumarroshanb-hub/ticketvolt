@@ -118,7 +118,7 @@ const TicketView = () => {
                 <Button
                     variant="contained"
                     startIcon={<ArrowBackIcon />}
-                    onClick={() => navigate('/bookings')}
+                    onClick={() => navigate('/app/bookings')}
                     sx={isMobile ? { width: '100%' } : undefined}
                 >
                     Back to Bookings
@@ -137,7 +137,7 @@ const TicketView = () => {
                     <OutlineButton
                         variant="outlined"
                         startIcon={<ArrowBackIcon />}
-                        onClick={() => navigate('/bookings')}
+                        onClick={() => navigate('/app/bookings')}
                         sx={isMobile ? { width: '100%' } : undefined}
                     >
                         Back

@@ -280,21 +280,21 @@ const DropdownItem = styled.button`
 `;
 
 // ============================================
-// PAGE TITLE MAP
+// PAGE TITLE MAP  — paths now under /app/*
 // ============================================
 
 const PAGE_TITLES = {
-    '/dashboard': 'Dashboard',
-    '/events':    'Events',
-    '/venues':    'Venues',
-    '/bookings':  'Bookings',
-    '/checkin':   'QR Scanner',
-    '/scanner':   'QR Scanner',
-    '/analytics': 'Analytics',
-    '/discounts': 'Discounts',
-    '/users':     'Users',
-    '/settings':  'Settings',
-    '/profile':   'Profile',
+    '/app/dashboard':              'Dashboard',
+    '/app/events':                 'Events',
+    '/app/venues':                 'Venues',
+    '/app/bookings':               'Bookings',
+    '/app/checkin':                'QR Scanner',
+    '/app/analytics':              'Analytics',
+    '/app/discounts':              'Discounts',
+    '/app/users':                  'Users',
+    '/app/settings':               'Settings',
+    '/app/profile':                'Profile',
+    '/app/cancellation-policies':  'Cancellation Policies',
 };
 
 const getPageTitleFromPath = (pathname) => {
@@ -308,8 +308,11 @@ const getPageTitleFromPath = (pathname) => {
     }
     if (bestMatch) return PAGE_TITLES[bestMatch];
 
-    if (pathname.startsWith('/bookings/')) return 'Bookings';
-    if (pathname.startsWith('/tickets/'))  return 'Ticket';
+    // Deep-link fallbacks for detail pages
+    if (pathname.startsWith('/app/bookings/'))  return 'Bookings';
+    if (pathname.startsWith('/app/tickets/'))   return 'Ticket';
+    if (pathname.startsWith('/app/events/'))    return 'Events';
+    if (pathname.startsWith('/app/venues/'))    return 'Venues';
 
     return 'Dashboard';
 };
@@ -369,12 +372,13 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         if (typeof logout === 'function') {
             logout();
         }
-        navigate('/login');
+        // After logout, go to the public landing page
+        navigate('/');
     };
 
     const handleGoToProfile = () => {
         setMenuOpen(false);
-        navigate('/profile');
+        navigate('/app/profile');
     };
 
     const pageTitle = getPageTitleFromPath(location.pathname);

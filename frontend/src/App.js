@@ -14,6 +14,11 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { RoleProvider, useRole } from './context/RoleContext';
 
 import Layout from './components/Layout';
+
+// Public pages
+import Landing from './pages/Landing/Landing';
+
+// Authenticated app pages
 import Dashboard from './pages/Dashboard/Dashboard';
 import Events from './pages/Events/index';
 import Venues from './pages/Venues/index';
@@ -76,7 +81,7 @@ const RoleBasedRoute = ({ children, allowedRoles }) => {
     const { role } = useRole();
     if (!user) return <Navigate to="/login" replace />;
     if (!allowedRoles || allowedRoles.includes(role)) return children;
-    return <Navigate to="/unauthorized" replace />;
+    return <Navigate to="/app/unauthorized" replace />;
 };
 
 const AppRoutes = () => {
@@ -85,18 +90,26 @@ const AppRoutes = () => {
 
     return (
         <Routes>
-            {/* Public */}
+            {/* ============================================
+                PUBLIC ROUTES
+               ============================================ */}
+
+            {/* Landing page — visible to everyone (logged in or not) */}
+            <Route path="/" element={<Landing />} />
+
             <Route path="/login" element={
-                isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />
+                isAuthenticated ? <Navigate to="/app/dashboard" replace /> : <Login />
             } />
             <Route path="/register" element={
-                isAuthenticated ? <Navigate to="/dashboard" replace /> : <Register />
+                isAuthenticated ? <Navigate to="/app/dashboard" replace /> : <Register />
             } />
             <Route path="/unauthorized" element={<Unauthorized />} />
 
-            {/* Protected with Layout */}
-            <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-                <Route index element={<Navigate to="/dashboard" replace />} />
+            {/* ============================================
+                PROTECTED APP (under /app/*)
+               ============================================ */}
+            <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+                <Route index element={<Navigate to="/app/dashboard" replace />} />
                 <Route path="dashboard" element={<Dashboard />} />
                 <Route path="events/*" element={<Events />} />
 
@@ -152,7 +165,17 @@ const AppRoutes = () => {
                 } />
             </Route>
 
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            {/* ============================================
+                FALLBACK — redirect based on auth state
+               ============================================ */}
+            <Route
+                path="*"
+                element={
+                    isAuthenticated
+                        ? <Navigate to="/app/dashboard" replace />
+                        : <Navigate to="/" replace />
+                }
+            />
         </Routes>
     );
 };

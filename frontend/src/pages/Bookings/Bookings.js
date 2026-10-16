@@ -72,11 +72,11 @@ const Bookings = () => {
     const closeDetails = useCallback(() => setDetailsOpen(false), []);
 
     const handleViewTickets = useCallback(
-        (bookingId) => navigate(`/bookings/${bookingId}/tickets`),
+        (bookingId) => navigate(`/app/bookings/${bookingId}/tickets`),
         [navigate]
     );
 
-    const handleBookTickets = useCallback(() => navigate('/bookings/create'), [navigate]);
+    const handleBookTickets = useCallback(() => navigate('/app/bookings/create'), [navigate]);
 
     const handleBulkApply = useCallback(() => {
         actions.promptBulkAction(selection.bulkAction, selection.selectedIds);

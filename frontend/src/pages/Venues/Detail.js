@@ -62,7 +62,7 @@ const VenueDetail = () => {
         } catch (error) {
             console.error('Venue detail error:', error);
             toast.error('Failed to load venue details');
-            navigate('/venues');
+            navigate('/app/venues');
         }
         setLoading(false);
     };
@@ -72,7 +72,7 @@ const VenueDetail = () => {
     }, [id]);
 
     const handleEdit = () => {
-        navigate(`/venues/edit/${id}`);
+        navigate(`/app/venues/edit/${id}`);
     };
 
     const handleDelete = async () => {
@@ -80,7 +80,7 @@ const VenueDetail = () => {
         try {
             await api.delete(`/venues/${id}/`);
             toast.success('Venue deleted successfully');
-            navigate('/venues');
+            navigate('/app/venues');
         } catch (error) {
             console.error('Delete error:', error);
             toast.error('Failed to delete venue');
@@ -99,7 +99,7 @@ const VenueDetail = () => {
         return (
             <Box sx={{ p: 3, textAlign: 'center' }}>
                 <Typography sx={{ color: 'text.disabled' }}>Venue not found</Typography>
-                <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/venues')}>
+                <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/app/venues')}>
                     Back to Venues
                 </Button>
             </Box>
@@ -110,7 +110,7 @@ const VenueDetail = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <IconButton onClick={() => navigate('/venues')} sx={{ color: 'text.secondary' }}>
+                    <IconButton onClick={() => navigate('/app/venues')} sx={{ color: 'text.secondary' }}>
                         <ArrowBackIcon />
                     </IconButton>
                     <Box sx={{ minWidth: 0 }}>

@@ -104,9 +104,9 @@ const Events = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleCreateEvent = () => navigate('/events/create');
-    const handleEditEvent = (eventId) => navigate(`/events/${eventId}/edit`);
-    const handleViewEvent = (eventId) => navigate(`/events/${eventId}/`);
+    const handleCreateEvent = () => navigate('/app/events/create');
+    const handleEditEvent = (eventId) => navigate(`/app/events/${eventId}/edit`);
+    const handleViewEvent = (eventId) => navigate(`/app/events/${eventId}/`);
 
     const handleDeleteEvent = async () => {
         if (!deleteConfirm.eventId) return;
@@ -406,7 +406,7 @@ const Events = () => {
                                                 <Button
                                                     size="small"
                                                     endIcon={<ArrowForwardIcon />}
-                                                    onClick={() => navigate(`/bookings/create?event=${event.id}`)}
+                                                    onClick={() => navigate(`/app/bookings/create?event=${event.id}`)}
                                                     sx={{ color: C.primary, textTransform: 'none', ml: 'auto' }}
                                                 >
                                                     Book Now

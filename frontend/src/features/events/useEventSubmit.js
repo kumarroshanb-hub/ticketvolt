@@ -40,7 +40,7 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                 if (id) {
                     await api.put(`/events/${id}/`, payload);
                     toast.success('Event updated successfully!');
-                    navigate('/events');
+                    navigate('/app/events');
                 } else {
                     const response = await api.post('/events/', payload);
 
@@ -59,7 +59,7 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                     }
 
                     toast.success('Event created successfully!');
-                    navigate(`/events/${response.data.id}/edit`);
+                    navigate(`/app/events/${response.data.id}/edit`);
                 }
             } catch (err) {
                 // eslint-disable-next-line no-console

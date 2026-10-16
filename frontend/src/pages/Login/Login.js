@@ -1,6 +1,6 @@
 // frontend/src/pages/Login/Login.js
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'react-toastify';
 import {
@@ -58,8 +58,13 @@ const DEMO_CREDS = SHOW_DEMO_CREDS
       ].filter((c) => c.email && c.password)
     : [];
 
+// Default landing spot after a successful login when no
+// explicit `from` intent was recorded.
+const DEFAULT_POST_LOGIN_PATH = '/app/dashboard';
+
 const Login = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const { login, isAuthenticated, loading } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -68,6 +73,23 @@ const Login = () => {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // ------------------------------------------------------------
+    // Where to send the user after a successful login.
+    //
+    //   • If they were redirected here from a protected page (e.g. the
+    //     "Book Tickets" button on the landing page), `location.state.from`
+    //     will contain the destination path and we honor it.
+    //   • Otherwise we fall back to the app dashboard.
+    //
+    // We also guard against an accidental redirect back to /login
+    // (which would loop).
+    // ------------------------------------------------------------
+    const rawFrom = location.state?.from;
+    const redirectTo =
+        rawFrom && typeof rawFrom === 'string' && !rawFrom.startsWith('/login')
+            ? rawFrom
+            : DEFAULT_POST_LOGIN_PATH;
 
     useEffect(() => {
         if (isAuthenticated && !loading) {
@@ -91,7 +113,8 @@ const Login = () => {
 
             if (result.success === true) {
                 toast.success('Login successful!');
-                navigate('/app/dashboard', { replace: true });
+                // ✅ Honor the redirect intent captured at the top.
+                navigate(redirectTo, { replace: true });
             } else {
                 const errorMsg = result.error || 'Login failed. Please try again.';
                 setError(errorMsg);
@@ -212,10 +235,10 @@ const Login = () => {
                     }}
                 >
                     {/*
-                      Wordmark: 56px height reads with the same visual
+                      Wordmark: 80px height reads with the same visual
                       weight as the subtitle below it without dominating
-                      the card. The native aspect ratio (620:260) renders
-                      this at roughly 133px wide inside the 440px card.
+                      the card. The native aspect ratio renders this at
+                      roughly 190px wide inside the 440px card.
                     */}
                     <Logo variant="full" height={80} inverse />
                     <Typography
@@ -411,7 +434,11 @@ const Login = () => {
                 )}
 
                 {/* ==================================================
-                    FOOTER — register link
+                    FOOTER — register link.
+                    The `state` prop carries the same `from` intent
+                    forward, so a new user who came here to book a
+                    ticket lands back on that booking flow after
+                    registering.
                    ================================================== */}
                 <Box textAlign="center" mt={3}>
                     <Typography
@@ -426,6 +453,7 @@ const Login = () => {
                         <Link
                             component={RouterLink}
                             to="/register"
+                            state={{ from: redirectTo }}
                             sx={{
                                 color: C.secondary,
                                 fontWeight: 600,

@@ -261,6 +261,29 @@ class CancellationPolicySerializer(serializers.ModelSerializer):
         return attrs
 
 
+# ============================================================================
+# EVENT SERIALIZERS — FIXED
+# ----------------------------------------------------------------------------
+# ROOT CAUSE OF THE "SPINNER HANGS ON SAVE" BUG:
+#
+# Both EventSerializer and EventDetailSerializer previously used
+# `fields = '__all__'` while ALSO declaring `sessions` and `tiers` as
+# SerializerMethodField. DRF's ModelSerializer, when it sees '__all__',
+# tries to build fields for every model field AND every declared field.
+# The result is that `sessions` and `tiers` end up bound TWICE — once as
+# a SerializerMethodField, once as the model's reverse relation — and
+# DRF raises an internal error during serialization, returning a 500.
+#
+# Because the 500 response still had a JSON body, axios did NOT throw
+# in the frontend's catch block; it went into the success path with a
+# malformed `response.data`, so `response.data.id` was undefined and
+# the subsequent `navigate()` call failed silently.
+#
+# The fix is to explicitly list every field instead of using '__all__'.
+# This ensures each field is bound exactly once, and the serialized
+# payload is complete and well-formed.
+# ============================================================================
+
 class EventSerializer(serializers.ModelSerializer):
     venue = serializers.SerializerMethodField()
     tier_count = serializers.SerializerMethodField()
@@ -278,7 +301,24 @@ class EventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        fields = '__all__'
+        # ✅ EXPLICIT field list, NOT '__all__'.
+        fields = [
+            'id', 'organizer', 'title', 'description', 'short_description',
+            'event_type', 'category',
+            'start_date', 'end_date', 'timezone',
+            'venue', 'metadata', 'venue_metadata',
+            'cover_image', 'gallery_images',
+            'status', 'is_public', 'is_featured',
+            'booking_start_date', 'booking_end_date',
+            'min_tickets_per_order', 'max_tickets_per_order',
+            'cancellation_policy', 'cancellation_policy_id',
+            'cancellation_policy_text', 'refundable_until',
+            'total_tickets_sold', 'total_revenue',
+            'ticket_format', 'combine_tickets', 'tickets_per_page',
+            'created_at', 'updated_at',
+            # Custom SerializerMethodFields:
+            'tier_count', 'session_count', 'total_capacity',
+        ]
         read_only_fields = [
             'id', 'organizer', 'created_at', 'updated_at',
             'total_tickets_sold', 'total_revenue',
@@ -344,7 +384,25 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        fields = '__all__'
+        # ✅ EXPLICIT field list, NOT '__all__'.
+        fields = [
+            'id', 'organizer', 'title', 'description', 'short_description',
+            'event_type', 'category',
+            'start_date', 'end_date', 'timezone',
+            'venue', 'metadata', 'venue_metadata',
+            'cover_image', 'gallery_images',
+            'status', 'is_public', 'is_featured',
+            'booking_start_date', 'booking_end_date',
+            'min_tickets_per_order', 'max_tickets_per_order',
+            'cancellation_policy', 'cancellation_policy_id',
+            'cancellation_policy_text', 'refundable_until',
+            'total_tickets_sold', 'total_revenue',
+            'ticket_format', 'combine_tickets', 'tickets_per_page',
+            'created_at', 'updated_at',
+            # Custom SerializerMethodFields:
+            'sessions', 'tiers', 'tier_count', 'session_count',
+            'total_capacity',
+        ]
         read_only_fields = [
             'id', 'organizer', 'created_at', 'updated_at',
             'total_tickets_sold', 'total_revenue',
@@ -650,9 +708,8 @@ class BookingSerializer(serializers.ModelSerializer):
         # This is a courtesy check — it gives the user an immediate,
         # actionable error at cart time before any DB write happens.
         #
-        # It is NOT race-safe on its own. Two concurrent requests could
-        # both pass this check. The real guarantee comes from the
-        # SELECT ... FOR UPDATE in BookingViewSet.create(), which runs
+        # It is NOT race-safe on its own. The real guarantee comes from
+        # the SELECT ... FOR UPDATE in BookingViewSet.create(), which runs
         # inside a transaction and locks the session row. This method
         # exists so that:
         #   • the common case (stale UI showing seats that are gone)

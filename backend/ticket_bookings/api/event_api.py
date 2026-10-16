@@ -1,4 +1,7 @@
 # backend/ticket_bookings/api/event_api.py
+import logging
+logger = logging.getLogger(__name__)
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -40,17 +43,6 @@ def _is_manager(user):
 
 # ---------------------------------------------------------------------------
 # Effective-status serializer post-processing
-# ---------------------------------------------------------------------------
-# Every endpoint in this viewset that returns event data goes through this
-# helper so the UI never sees a stale `status` value.
-#
-# Accepts:
-#   (list_of_serialized_dicts, list_of_event_instances)
-#   (serialized_dict, single_event_instance)
-#
-# Mutates the dict(s) in place:
-#   • 'status'        → Event.get_effective_status()
-#   • 'stored_status' → raw Event.status (kept for debugging only)
 # ---------------------------------------------------------------------------
 def _apply_effective_status(serialized, event_objs, now=None):
     now = now or timezone.now()
@@ -99,11 +91,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
     # ---------------- queryset scoping ----------------
     def get_queryset(self):
-        """
-        - Admin/SuperAdmin: all events
-        - Organizer: their own events + upcoming public events
-        - Regular / anonymous: upcoming public events only
-        """
         user = self.request.user
         now = timezone.now()
 
@@ -232,60 +219,122 @@ class EventViewSet(viewsets.ModelViewSet):
 
         data = request.data
 
+        # ---- Resolve venue ----
         venue = None
-        if data.get('venue_id'):
+        venue_id = data.get('venue_id')
+        if venue_id:
             try:
-                venue = Venue.objects.get(id=data['venue_id'])
-            except Venue.DoesNotExist:
-                pass
+                venue = Venue.objects.get(id=venue_id)
+            except (Venue.DoesNotExist, ValueError):
+                return Response(
+                    {'venue_id': 'Venue not found.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
+        # ---- Resolve cancellation policy ----
         cancellation_policy, err = self._resolve_cancellation_policy(
             user, data.get('cancellation_policy_id')
         )
         if err is not None:
             return err
 
-        event = Event.objects.create(
-            organizer=request.user,
-            title=data.get('title', 'Untitled'),
-            description=data.get('description', ''),
-            short_description=data.get('short_description', ''),
-            event_type=data.get('event_type', 'single'),
-            category=data.get('category', 'other'),
-            start_date=self._parse_dt(data.get('start_date')),
-            end_date=self._parse_dt(data.get('end_date')),
-            timezone=data.get('timezone', 'Asia/Kolkata'),
-            venue=venue,
-            metadata=data.get('metadata', {}),
-            status=data.get('status', 'draft'),
-            is_public=data.get('is_public', True),
-            ticket_format=data.get('ticket_format', 'pdf'),
-            combine_tickets=data.get('combine_tickets', False),
-            tickets_per_page=data.get('tickets_per_page', 4),
-            cancellation_policy=cancellation_policy,
-            cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
-        )
+        # ---- Parse dates (fail fast on invalid) ----
+        start_date = self._parse_dt(data.get('start_date'))
+        end_date = self._parse_dt(data.get('end_date'))
 
-        for session_data in data.get('sessions', []):
+        if not start_date or not end_date:
+            return Response(
+                {'error': 'start_date and end_date are required and must be valid ISO dates.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ---- Create the Event ----
+        try:
+            event = Event.objects.create(
+                organizer=user,
+                title=data.get('title', 'Untitled'),
+                description=data.get('description', ''),
+                short_description=data.get('short_description', ''),
+                event_type=data.get('event_type', 'single'),
+                category=data.get('category', 'other'),
+                start_date=start_date,
+                end_date=end_date,
+                timezone=data.get('timezone', 'Asia/Kolkata'),
+                venue=venue,
+                metadata=data.get('metadata', {}) or {},
+                status=data.get('status', 'draft'),
+                is_public=data.get('is_public', True),
+                ticket_format=data.get('ticket_format', 'pdf'),
+                combine_tickets=data.get('combine_tickets', False),
+                tickets_per_page=data.get('tickets_per_page', 4),
+                cancellation_policy=cancellation_policy,
+                cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
+            )
+        except Exception as exc:
+            # Surface the real error instead of an opaque 500.
+            return Response(
+                {'error': f'Could not create event: {exc}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ---- Create Sessions ----
+        sessions_created = 0
+        for session_data in data.get('sessions', []) or []:
+            s_start = self._parse_dt(session_data.get('start_time'))
+            s_end = self._parse_dt(session_data.get('end_time'))
+            if not s_start or not s_end:
+                continue  # skip invalid session entries
             Session.objects.create(
                 event=event,
-                start_time=self._parse_dt(session_data.get('start_time')),
-                end_time=self._parse_dt(session_data.get('end_time')),
-                capacity=session_data.get('capacity', 100),
+                start_time=s_start,
+                end_time=s_end,
+                capacity=int(session_data.get('capacity', 100) or 100),
             )
+            sessions_created += 1
 
-        for tier_data in data.get('tiers', []):
-            TicketTier.objects.create(
-                event=event,
-                name=tier_data.get('name', 'General'),
-                price=tier_data.get('price', 0),
-                quantity_total=tier_data.get('quantity_total', 100),
-                ticket_type=tier_data.get('ticket_type', 'ga'),
+        # ---- Create Tiers ----
+        tiers_created = 0
+        for tier_data in data.get('tiers', []) or []:
+            try:
+                TicketTier.objects.create(
+                    event=event,
+                    name=tier_data.get('name', 'General'),
+                    price=tier_data.get('price', 0) or 0,
+                    quantity_total=int(tier_data.get('quantity_total', 100) or 100),
+                    ticket_type=tier_data.get('ticket_type', 'ga'),
+                )
+                tiers_created += 1
+            except Exception as exc:
+                # Don't fail the whole create — log and continue.
+                logger.warning(
+                    "Failed to create tier for event %s: %s", event.id, exc,
+                )
+
+        logger.info(
+            "✅ Event %s created (sessions=%d, tiers=%d)",
+            event.id, sessions_created, tiers_created,
+        )
+
+        # ---- Serialize and respond ----
+        # Wrap this in a try/except so a serialization error returns a
+        # clean 500 with a useful message, instead of the opaque "spinner
+        # hangs forever" symptom.
+        try:
+            serialized = EventDetailSerializer(event).data
+            serialized = _apply_effective_status(serialized, event)
+            return Response(serialized, status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            logger.exception("Serialization failed after event create")
+            return Response(
+                {
+                    'error': (
+                        'Event was created but the response could not be '
+                        f'serialized: {exc}'
+                    ),
+                    'event_id': str(event.id),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-        serialized = EventDetailSerializer(event).data
-        serialized = _apply_effective_status(serialized, event)
-        return Response(serialized, status=status.HTTP_201_CREATED)
 
     # ---------------- LIST ----------------
     def list(self, request, *args, **kwargs):
@@ -319,8 +368,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 ),
             )
 
-        # ✅ Materialize the queryset ONCE so indexes stay aligned
-        #    between `events_list[i]` and `data[i]`.
         events_list = list(queryset)
 
         serializer = self.get_serializer(events_list, many=True)
@@ -332,7 +379,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 data[i]['total_revenue'] = float(event_obj.active_revenue or 0)
                 data[i]['total_bookings'] = event_obj.active_bookings_count or 0
 
-        # ✅ Override status with the effective status.
         data = _apply_effective_status(data, events_list)
 
         return Response(data)
@@ -387,7 +433,6 @@ class EventViewSet(viewsets.ModelViewSet):
             data['total_revenue'] = float(actual_revenue)
             data['total_bookings'] = active_bookings_count
 
-        # ✅ Override status with the effective status.
         data = _apply_effective_status(data, instance)
 
         return Response(data)
@@ -413,12 +458,11 @@ class EventViewSet(viewsets.ModelViewSet):
         if data.get('venue_id'):
             try:
                 instance.venue = Venue.objects.get(id=data['venue_id'])
-            except Venue.DoesNotExist:
+            except (Venue.DoesNotExist, ValueError):
                 pass
 
         data = data.copy() if hasattr(data, 'copy') else dict(data)
 
-        # ✅ Parse to AWARE datetimes. See _parse_dt docstring.
         if data.get('start_date'):
             data['start_date'] = self._parse_dt(data['start_date'])
         if data.get('end_date'):
@@ -452,7 +496,6 @@ class EventViewSet(viewsets.ModelViewSet):
         if 'sessions' in data:
             instance.sessions.all().delete()
             for session_data in data['sessions']:
-                # ✅ _parse_dt localizes to aware before saving.
                 Session.objects.create(
                     event=instance,
                     start_time=self._parse_dt(session_data.get('start_time')),
@@ -472,9 +515,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
 
         instance.update_ticket_counts()
-
-        # Re-fetch so nested relations (sessions) come back aware from
-        # the DB rather than from the in-memory naive assignment above.
         instance.refresh_from_db()
 
         serialized = EventDetailSerializer(instance).data

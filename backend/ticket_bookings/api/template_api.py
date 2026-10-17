@@ -40,15 +40,14 @@ logger = logging.getLogger(__name__)
 IMAGE_SPECS = {
     'announcement': {
         'aspect_ratio': 16 / 9,                # 1920/1080
-        'ratio_tolerance': 0.02,               # ±2% (strict, per spec)
-        'min_width': 1920,
-        'min_height': 1080,
-        'max_width': 1920,                     # exactly 1920×1080 required
-        'max_height': 1080,
-        'formats': ['image/png'],              # PNG only, per spec
-        'max_bytes': 5 * 1024 * 1024,          # < 5 MB
+        'ratio_tolerance': 0.15,               # ✅ Changed from 0.02 to 0.15 (allow wider variance)
+        'min_width': 1280,                     # ✅ Changed from 1920 to 1280
+        'min_height': 720,                     # ✅ Changed from 1080 to 720
+        # Removed max_width/max_height restrictions
+        'formats': ['image/png'],              
+        'max_bytes': 5 * 1024 * 1024,          
         'hint': (
-            'PNG format, exactly 1920×1080 px (16:9 landscape), under 5 MB. '
+            'PNG format, 16:9 landscape (min 1280×720), under 5 MB. '
             'Keep text and logos within the centre 70% so they survive '
             'any banner crop.'
         ),

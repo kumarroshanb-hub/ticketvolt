@@ -39,15 +39,19 @@ const StyledCard = styled(Card)`
     }
 `;
 
-// ✅ NEW: Announcement image banner
+// ✅ UPDATED: Uses <img> instead of background-image for better error handling
 const CardImageBanner = styled.div`
     width: 100%;
     height: 160px;
-    background-image: url(${(props) => props.$url});
-    background-size: cover;
-    background-position: center;
-    background-color: ${C.bgInput};
     position: relative;
+    background-color: ${C.bgInput}; /* shows if image fails */
+
+    img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
 
     &::after {
         content: '';
@@ -61,7 +65,6 @@ const CardImageBanner = styled.div`
     }
 `;
 
-// Fallback accent bar
 const TopAccent = styled.div`
     height: 4px;
     background: ${(p) =>
@@ -308,6 +311,9 @@ const EventCard = ({ event: initialEvent }) => {
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
     const [loadingDetails, setLoadingDetails] = useState(!initialEvent.tiers);
+    
+    // ✅ State to track image load failures
+    const [imageFailed, setImageFailed] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -351,7 +357,6 @@ const EventCard = ({ event: initialEvent }) => {
     const visibleSessions = displaySessions.slice(0, 2);
     const remainingSessionsCount = displaySessions.length - visibleSessions.length;
 
-    // ✅ Announcement image (falls back to cover_image)
     const announcementImage =
         event.template_images?.announcement ||
         event.cover_image ||
@@ -367,13 +372,27 @@ const EventCard = ({ event: initialEvent }) => {
         }
     };
 
+    // ✅ Only show image if URL exists AND it hasn't failed to load yet
+    const showImage = announcementImage && !imageFailed;
+
     return (
         <StyledCard elevation={0}>
-            {announcementImage ? (
-                <CardImageBanner $url={announcementImage} />
+            {showImage ? (
+                <CardImageBanner>
+                    <img
+                        src={announcementImage}
+                        alt={event.title}
+                        onError={(e) => {
+                            // Logs the exact URL that failed
+                            console.error('❌ Image failed to load:', announcementImage);
+                            setImageFailed(true);
+                        }}
+                    />
+                </CardImageBanner>
             ) : (
                 <TopAccent $isSoldOut={isActuallySoldOut} />
             )}
+            
             <CardBody>
                 <TitleRow>
                     <EventTitle>{event.title}</EventTitle>
@@ -492,7 +511,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </BookButton>
+                </Button>
             </StyledActions>
         </StyledCard>
     );

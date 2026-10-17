@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import {
     Card, CardContent, CardActions, Button, Chip, Box, Typography,
-    Collapse, CircularProgress, Divider,
+    Collapse, CircularProgress,
 } from '@mui/material';
 import {
     LocationOn, CalendarMonth, ShoppingCart, AccessTime,
@@ -397,7 +397,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </Button>
+                </BookButton>
             </StyledActions>
         </StyledCard>
     );

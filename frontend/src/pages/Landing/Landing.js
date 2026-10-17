@@ -56,13 +56,11 @@ const HeroWrapper = styled.section`
     overflow: hidden;
     padding: 100px 0 120px 0;
 
-    /* Dark gradient backdrop — image-friendly, brand-consistent */
     background:
         radial-gradient(circle at 20% 20%, rgba(255, 42, 42, 0.15) 0%, transparent 45%),
         radial-gradient(circle at 80% 80%, rgba(51, 51, 51, 0.4) 0%, transparent 55%),
         linear-gradient(135deg, #1a1a1a 0%, #2b2b2b 55%, #0f0f0f 100%);
 
-    /* Subtle grain texture for depth (no external image needed) */
     &::before {
         content: '';
         position: absolute;
@@ -88,6 +86,37 @@ const HeroContent = styled(Container)`
     position: relative;
     z-index: 1;
     text-align: center;
+`;
+
+/* 
+ * ✅ NEW: Responsive Logo Wrapper
+ * Ensures the logo scales appropriately for mobile vs laptop.
+ */
+const ResponsiveLogoWrapper = styled.div`
+    display: flex;
+    justify-content: center;
+    margin-bottom: 24px;
+
+    /* Mobile: Perfect 60px size */
+    img {
+        height: 60px !important;
+        width: auto !important;
+    }
+
+    /* Tablet */
+    @media (min-width: 601px) {
+        img {
+            height: 85px !important;
+        }
+    }
+
+    /* Laptop & Desktop: Substantial 110px size */
+    @media (min-width: 1025px) {
+        img {
+            height: 110px !important;
+        }
+        margin-bottom: 32px;
+    }
 `;
 
 const HeroBadge = styled.div`
@@ -573,7 +602,6 @@ const Landing = () => {
         loadEvents();
     }, []);
 
-    // ---- Derived: filtered events ----
     const filteredEvents = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
         return events.filter((event) => {
@@ -591,7 +619,6 @@ const Landing = () => {
         });
     }, [events, searchTerm, activeCategory]);
 
-    // ---- Count by category (for chip badges) ----
     const categoryCounts = useMemo(() => {
         const counts = { all: events.length };
         events.forEach((e) => {
@@ -601,7 +628,6 @@ const Landing = () => {
         return counts;
     }, [events]);
 
-    // ---- Hero stats ----
     const heroStats = useMemo(() => {
         const cities = new Set();
         events.forEach((e) => {
@@ -618,15 +644,12 @@ const Landing = () => {
 
     return (
         <PageWrapper>
-            {/* =====================================================
-                HERO
-               ===================================================== */}
             <HeroWrapper>
-                {/* ✅ Changed to maxWidth="xl" to spread out on laptops */}
                 <HeroContent maxWidth="xl">
-                    <Box sx={{ mb: 5, display: 'flex', justifyContent: 'center' }}>
-                        <Logo variant="full" height={80} inverse />
-                    </Box>
+                    {/* ✅ Responsive logo wrapper replaces static height */}
+                    <ResponsiveLogoWrapper>
+                        <Logo variant="full" inverse />
+                    </ResponsiveLogoWrapper>
 
                     <HeroBadge>
                         <span className="dot" />
@@ -679,10 +702,6 @@ const Landing = () => {
                 </HeroContent>
             </HeroWrapper>
 
-            {/* =====================================================
-                FLOATING SEARCH
-               ===================================================== */}
-            {/* ✅ Changed to maxWidth="xl" to align with hero */}
             <SearchOverlayWrapper maxWidth="xl">
                 <SearchCard>
                     <SearchField
@@ -703,10 +722,6 @@ const Landing = () => {
                 </SearchCard>
             </SearchOverlayWrapper>
 
-            {/* =====================================================
-                EVENTS SECTION
-               ===================================================== */}
-            {/* ✅ Changed to maxWidth="xl" for the wider grid */}
             <SectionWrapper maxWidth="xl" id="events-section">
                 <SectionHeader>
                     <div>
@@ -719,7 +734,6 @@ const Landing = () => {
                     </div>
                 </SectionHeader>
 
-                {/* Category filter chips */}
                 <Box sx={{ mb: 5 }}>
                     <CategoryChips>
                         {CATEGORIES.map((cat) => {
@@ -751,7 +765,6 @@ const Landing = () => {
                     </CategoryChips>
                 </Box>
 
-                {/* Content */}
                 {loading ? (
                     <EventGrid container spacing={isMobile ? 2 : 4}>
                         {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -817,9 +830,6 @@ const Landing = () => {
                 )}
             </SectionWrapper>
 
-            {/* =====================================================
-                FOOTER
-               ===================================================== */}
             <Footer>
                 <Container maxWidth="xl">
                     <Box sx={{ mb: 4, display: 'flex', justifyContent: 'center' }}>

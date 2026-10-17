@@ -1,23 +1,24 @@
 // frontend/src/components/Common/EventCard.js
-import React from 'react';
+import React, { useState } from 'react';
 import {
     Card, CardContent, CardActions, Button, Chip, Box, Typography,
+    Collapse, CircularProgress, Divider,
 } from '@mui/material';
 import {
     LocationOn, CalendarMonth, ShoppingCart, AccessTime,
-    LocalActivity,
+    KeyboardArrowDown as ArrowDownIcon, KeyboardArrowUp as ArrowUpIcon,
 } from '@mui/icons-material';
 import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
+import eventService from '../../services/eventService';
 import { theme as appTheme } from '../../theme/tokens';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
 
 // ---------- Styled wrappers ----------
-
 const StyledCard = styled(Card)`
     && {
         background: ${C.bgCard};
@@ -33,9 +34,7 @@ const StyledCard = styled(Card)`
         &:hover {
             transform: translateY(-6px);
             border-color: ${C.primary};
-            box-shadow:
-                0 16px 40px rgba(0, 0, 0, 0.1),
-                0 4px 12px rgba(0, 0, 0, 0.06);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.06);
         }
     }
 `;
@@ -43,7 +42,7 @@ const StyledCard = styled(Card)`
 const TopAccent = styled.div`
     height: 4px;
     background: ${(p) =>
-        p.$status === 'sold_out'
+        p.$isSoldOut
             ? `linear-gradient(90deg, ${C.warning} 0%, ${C.warningLight} 100%)`
             : `linear-gradient(90deg, ${C.primary} 0%, ${C.secondary} 100%)`};
 `;
@@ -67,7 +66,7 @@ const EventTitle = styled(Typography)`
     && {
         color: ${C.textPrimary};
         font-weight: 700;
-        font-size: 17px;
+        font-size: 18px;
         line-height: 1.3;
         font-family: ${F.family};
         min-width: 0;
@@ -137,13 +136,13 @@ const PriceRow = styled.div`
     }
 
     .price {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 800;
         color: ${C.textPrimary};
         font-family: ${F.family};
 
         .currency {
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 600;
             color: ${C.textSecondary};
             margin-right: 2px;
@@ -156,6 +155,41 @@ const PriceRow = styled.div`
         font-weight: 600;
         font-family: ${F.family};
     }
+`;
+
+const TiersToggle = styled.button`
+    background: none;
+    border: none;
+    color: ${C.primary};
+    font-size: 12px;
+    font-weight: 600;
+    font-family: ${F.family};
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    padding: 0;
+    margin-top: 10px;
+    
+    &:hover {
+        text-decoration: underline;
+    }
+`;
+
+const TierItem = styled.div`
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid ${C.bgInput};
+    font-size: 13px;
+    font-family: ${F.family};
+
+    &:last-child { border-bottom: none; }
+    
+    .name { color: ${C.textPrimary}; font-weight: 500; }
+    .price { color: ${C.textSecondary}; font-weight: 600; }
+    .sold-out { color: ${C.error}; font-size: 11px; text-transform: uppercase; }
 `;
 
 const StyledActions = styled(CardActions)`
@@ -180,11 +214,7 @@ const BookButton = styled(Button)`
         transition: all 0.25s ease;
 
         &:hover {
-            background: linear-gradient(
-                135deg,
-                ${C.primaryDark} 0%,
-                ${C.primaryLight} 100%
-            );
+            background: linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%);
             transform: translateY(-1px);
             box-shadow: 0 8px 20px rgba(51, 51, 51, 0.25);
         }
@@ -198,43 +228,14 @@ const BookButton = styled(Button)`
 `;
 
 // ---------- Helpers ----------
-
 const formatDateTime = (dateString) => {
     if (!dateString) return { date: 'TBD', time: 'TBD' };
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return { date: 'TBD', time: 'TBD' };
     return {
-        date: date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-        }),
-        time: date.toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-        }),
+        date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
     };
-};
-
-const getPriceRange = (event) => {
-    if (!event.tiers || event.tiers.length === 0) return null;
-    const prices = event.tiers
-        .map((t) => parseFloat(t.price))
-        .filter((p) => !isNaN(p));
-    if (prices.length === 0) return null;
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    if (min === max) return { min, max: null };
-    return { min, max };
-};
-
-const getAvailableSlots = (event) => {
-    if (!event.tiers || !Array.isArray(event.tiers)) return 0;
-    return event.tiers.reduce((sum, tier) => {
-        const total = tier.quantity_total || 0;
-        const sold = tier.quantity_sold || 0;
-        return sum + Math.max(0, total - sold);
-    }, 0);
 };
 
 const getCategoryIcon = (category) => {
@@ -248,17 +249,26 @@ const getCategoryIcon = (category) => {
 };
 
 // ---------- Component ----------
-
-const EventCard = ({ event }) => {
+const EventCard = ({ event: initialEvent }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
 
+    const [event, setEvent] = useState(initialEvent);
+    const [tiersExpanded, setTiersExpanded] = useState(false);
+    const [loadingTiers, setLoadingTiers] = useState(false);
+
     const startDateTime = formatDateTime(event.start_date);
-    const availableSlots = getAvailableSlots(event);
-    const priceRange = getPriceRange(event);
-    const isBookable = event.status === 'active' && availableSlots > 0;
-    const isSoldOut = event.status === 'sold_out' || availableSlots === 0;
+    const isSoldOut = event.status === 'sold_out';
+
+    // Determine price & slots from available data
+    const tiers = event.tiers || [];
+    const availableSlots = tiers.reduce((sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)), 0);
+    const prices = tiers.map(t => parseFloat(t.price)).filter(p => !isNaN(p));
+    const minPrice = prices.length ? Math.min(...prices) : null;
     const lowStock = availableSlots > 0 && availableSlots <= 10;
+    
+    // If no tiers loaded yet, we don't know true availability until clicked
+    const isActuallySoldOut = isSoldOut || (tiers.length > 0 && availableSlots === 0);
 
     const handleBookNow = () => {
         const target = `/app/bookings/create?event=${event.id}`;
@@ -270,9 +280,33 @@ const EventCard = ({ event }) => {
         }
     };
 
+    const toggleTiers = async (e) => {
+        e.stopPropagation();
+        // If we already have tiers, just toggle
+        if (tiers.length > 0) {
+            setTiersExpanded(!tiersExpanded);
+            return;
+        }
+
+        // Otherwise fetch full details from public endpoint
+        setTiersExpanded(true);
+        if (!event._tiersFetched) {
+            setLoadingTiers(true);
+            try {
+                const fullDetails = await eventService.getPublicEventDetails(event.id);
+                setEvent(prev => ({ ...prev, ...fullDetails, _tiersFetched: true }));
+            } catch (err) {
+                toast.error('Could not load tiers.');
+                setTiersExpanded(false);
+            } finally {
+                setLoadingTiers(false);
+            }
+        }
+    };
+
     return (
         <StyledCard elevation={0}>
-            <TopAccent $status={isSoldOut ? 'sold_out' : 'active'} />
+            <TopAccent $isSoldOut={isActuallySoldOut} />
             <CardBody>
                 <TitleRow>
                     <EventTitle>{event.title}</EventTitle>
@@ -304,35 +338,66 @@ const EventCard = ({ event }) => {
                         <div className="from-label">From</div>
                         <div className="price">
                             <span className="currency">₹</span>
-                            {priceRange ? priceRange.min.toLocaleString() : '—'}
+                            {minPrice !== null ? minPrice.toLocaleString() : '—'}
                         </div>
                     </div>
-                    {isSoldOut ? (
-                        <span
-                            className="slots"
-                            style={{ color: appTheme.colors.error }}
-                        >
-                            Sold out
+                    {isActuallySoldOut ? (
+                        <span className="slots" style={{ color: C.error }}>Sold out</span>
+                    ) : tiers.length > 0 ? (
+                        <span className="slots">
+                            {lowStock ? `Only ${availableSlots} left` : `${availableSlots} seats`}
                         </span>
                     ) : (
-                        <span className="slots">
-                            {lowStock
-                                ? `Only ${availableSlots} left`
-                                : `${availableSlots} seats`}
-                        </span>
+                        <span className="slots" style={{ color: C.textMuted }}>Check availability</span>
                     )}
                 </PriceRow>
+
+                {/* Tiers Toggle & List */}
+                <Box sx={{ mt: 1 }}>
+                    <TiersToggle onClick={toggleTiers}>
+                        {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
+                        {tiersExpanded ? 'Hide Ticket Tiers' : 'View Ticket Tiers'}
+                    </TiersToggle>
+                    
+                    <Collapse in={tiersExpanded}>
+                        <Box sx={{ mt: 1, p: 1.5, bgcolor: C.bgPrimary, borderRadius: 2 }}>
+                            {loadingTiers ? (
+                                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                                    <CircularProgress size={20} sx={{ color: C.primary }} />
+                                </Box>
+                            ) : tiers.length > 0 ? (
+                                tiers.map((tier, idx) => {
+                                    const available = (tier.quantity_total || 0) - (tier.quantity_sold || 0);
+                                    const isTierSoldOut = available <= 0;
+                                    return (
+                                        <TierItem key={tier.id || idx}>
+                                            <span className="name">{tier.name}</span>
+                                            <Box textAlign="right">
+                                                <div className="price">₹{parseFloat(tier.price).toFixed(2)}</div>
+                                                {isTierSoldOut && <div className="sold-out">Sold out</div>}
+                                            </Box>
+                                        </TierItem>
+                                    );
+                                })
+                            ) : (
+                                <Typography variant="body2" sx={{ color: C.textSecondary, textAlign: 'center', fontSize: '12px' }}>
+                                    No tiers configured for this event yet.
+                                </Typography>
+                            )}
+                        </Box>
+                    </Collapse>
+                </Box>
             </CardBody>
 
             <StyledActions>
                 <BookButton
                     variant="contained"
                     onClick={handleBookNow}
-                    disabled={!isBookable}
+                    disabled={isActuallySoldOut}
                     startIcon={<ShoppingCart />}
                 >
-                    {isSoldOut ? 'Sold Out' : 'Book Tickets'}
-                </BookButton>
+                    {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
+                </Button>
             </StyledActions>
         </StyledCard>
     );

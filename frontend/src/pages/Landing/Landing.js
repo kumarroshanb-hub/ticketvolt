@@ -2,18 +2,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Container, Typography, Grid, CircularProgress,
-    Alert, TextField, InputAdornment, Button, Chip, Stack,
-    useMediaQuery, useTheme, Skeleton,
+    Alert, TextField, InputAdornment, Button,
+    useMediaQuery, useTheme,
 } from '@mui/material';
 import {
     Search as SearchIcon,
     Refresh as RefreshIcon,
-    LocationOn as LocationIcon,
-    CalendarMonth as CalendarIcon,
     ArrowForward as ArrowForwardIcon,
     LocalActivity as TicketIcon,
-    TrendingUp as TrendingIcon,
-    ConfirmationNumber as ConfirmationIcon,
 } from '@mui/icons-material';
 import styled, { keyframes } from 'styled-components';
 import { useNavigate } from 'react-router-dom';
@@ -58,12 +54,12 @@ const HeroWrapper = styled.section`
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    padding: 120px 0 140px 0;
+    padding: 100px 0 120px 0;
 
     /* Dark gradient backdrop — image-friendly, brand-consistent */
     background:
-        radial-gradient(circle at 20% 20%, rgba(255, 42, 42, 0.18) 0%, transparent 45%),
-        radial-gradient(circle at 80% 80%, rgba(51, 51, 51, 0.55) 0%, transparent 55%),
+        radial-gradient(circle at 20% 20%, rgba(255, 42, 42, 0.15) 0%, transparent 45%),
+        radial-gradient(circle at 80% 80%, rgba(51, 51, 51, 0.4) 0%, transparent 55%),
         linear-gradient(135deg, #1a1a1a 0%, #2b2b2b 55%, #0f0f0f 100%);
 
     /* Subtle grain texture for depth (no external image needed) */
@@ -84,7 +80,7 @@ const HeroWrapper = styled.section`
     }
 
     @media (max-width: 900px) {
-        padding: 80px 0 100px 0;
+        padding: 70px 0 100px 0;
     }
 `;
 
@@ -121,7 +117,7 @@ const HeroBadge = styled.div`
 
 const HeroTitle = styled.h1`
     font-family: ${F.family};
-    font-size: clamp(2.2rem, 5.5vw, 4rem);
+    font-size: clamp(2.4rem, 5vw, 4.5rem);
     font-weight: 800;
     letter-spacing: -0.03em;
     line-height: 1.05;
@@ -139,9 +135,9 @@ const HeroTitle = styled.h1`
 
 const HeroSubtitle = styled.p`
     font-family: ${F.family};
-    font-size: clamp(1rem, 1.6vw, 1.15rem);
+    font-size: clamp(1rem, 1.5vw, 1.25rem);
     color: rgba(255, 255, 255, 0.72);
-    max-width: 620px;
+    max-width: 700px;
     margin: 0 auto 32px auto;
     line-height: 1.6;
     animation: ${fadeUp} 0.7s 0.15s ease both;
@@ -150,8 +146,8 @@ const HeroSubtitle = styled.p`
 const HeroStats = styled.div`
     display: inline-flex;
     align-items: center;
-    gap: 32px;
-    padding: 16px 28px;
+    gap: 40px;
+    padding: 16px 32px;
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -172,7 +168,7 @@ const HeroStat = styled.div`
     text-align: center;
 
     .value {
-        font-size: 22px;
+        font-size: 24px;
         font-weight: 800;
         color: ${C.textInverse};
         line-height: 1;
@@ -180,7 +176,7 @@ const HeroStat = styled.div`
     }
 
     .label {
-        font-size: 11px;
+        font-size: 12px;
         color: rgba(255, 255, 255, 0.55);
         text-transform: uppercase;
         letter-spacing: 0.6px;
@@ -196,13 +192,13 @@ const HeroStat = styled.div`
 
 const HeroStatDivider = styled.div`
     width: 1px;
-    height: 32px;
+    height: 36px;
     background: rgba(255, 255, 255, 0.12);
 `;
 
 const HeroButtons = styled.div`
     display: inline-flex;
-    gap: 12px;
+    gap: 16px;
     flex-wrap: wrap;
     justify-content: center;
     animation: ${fadeUp} 0.7s 0.35s ease both;
@@ -220,9 +216,9 @@ const PrimaryHeroButton = styled(Button)`
         color: ${C.textInverse};
         text-transform: none;
         font-weight: 700;
-        padding: 14px 32px;
+        padding: 16px 40px;
         border-radius: 12px;
-        font-size: 15px;
+        font-size: 16px;
         letter-spacing: 0.3px;
         box-shadow: 0 8px 24px rgba(255, 42, 42, 0.35);
         transition: all 0.25s ease;
@@ -242,9 +238,9 @@ const GhostHeroButton = styled(Button)`
         border: 1px solid rgba(255, 255, 255, 0.18);
         text-transform: none;
         font-weight: 600;
-        padding: 14px 28px;
+        padding: 16px 32px;
         border-radius: 12px;
-        font-size: 15px;
+        font-size: 16px;
         transition: all 0.25s ease;
 
         &:hover {
@@ -259,20 +255,20 @@ const GhostHeroButton = styled(Button)`
 const SearchOverlayWrapper = styled(Container)`
     position: relative;
     z-index: 2;
-    margin-top: -52px;
+    margin-top: -56px;
 `;
 
 const SearchCard = styled.div`
     background: ${C.bgCard};
     border-radius: 20px;
-    padding: 10px;
+    padding: 12px;
     box-shadow:
         0 20px 60px rgba(0, 0, 0, 0.12),
         0 4px 12px rgba(0, 0, 0, 0.06);
     border: 1px solid ${C.borderLight};
     display: flex;
     align-items: stretch;
-    gap: 8px;
+    gap: 12px;
 
     @media (max-width: 700px) {
         flex-direction: column;
@@ -305,7 +301,7 @@ const SearchField = styled(TextField)`
 
     & .MuiInputBase-input {
         padding: 16px 12px;
-        font-size: 15px;
+        font-size: 16px;
         color: ${C.textPrimary};
         font-family: ${F.family};
 
@@ -321,10 +317,11 @@ const RefreshBtn = styled(Button)`
         background: ${C.primary};
         color: ${C.textInverse};
         text-transform: none;
-        font-weight: 600;
+        font-weight: 700;
         border-radius: 14px;
-        padding: 0 24px;
-        min-height: 54px;
+        padding: 0 32px;
+        min-height: 56px;
+        font-size: 15px;
         flex-shrink: 0;
 
         &:hover {
@@ -338,7 +335,7 @@ const RefreshBtn = styled(Button)`
     }
 `;
 
-/* ---------- CATEGORY FILTERS ---------- */
+/* ---------- SECTION & FILTERS ---------- */
 
 const SectionWrapper = styled(Container)`
     padding-top: 60px;
@@ -356,7 +353,7 @@ const SectionHeader = styled.div`
 
 const SectionTitle = styled.h2`
     font-family: ${F.family};
-    font-size: clamp(1.5rem, 2.5vw, 2rem);
+    font-size: clamp(1.75rem, 3vw, 2.5rem);
     font-weight: 800;
     letter-spacing: -0.02em;
     color: ${C.textPrimary};
@@ -365,19 +362,18 @@ const SectionTitle = styled.h2`
 
 const SectionSubtitle = styled.p`
     font-family: ${F.family};
-    font-size: 14px;
+    font-size: 15px;
     color: ${C.textSecondary};
-    margin: 6px 0 0 0;
+    margin: 8px 0 0 0;
 `;
 
 const CategoryChips = styled.div`
     display: flex;
-    gap: 8px;
+    gap: 12px;
     flex-wrap: wrap;
     padding-bottom: 4px;
     overflow-x: auto;
 
-    /* Hide scrollbar on horizontal scroll on mobile */
     scrollbar-width: none;
     &::-webkit-scrollbar { display: none; }
 
@@ -391,19 +387,19 @@ const CategoryChips = styled.div`
 const CategoryChip = styled.button`
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 9px 16px;
+    gap: 8px;
+    padding: 10px 20px;
     border-radius: 999px;
     border: 1px solid ${props => props.$active ? C.primary : C.borderLight};
     background: ${props => props.$active ? C.primary : C.bgCard};
     color: ${props => props.$active ? C.textInverse : C.textSecondary};
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     font-family: ${F.family};
     cursor: pointer;
     transition: all 0.2s ease;
     white-space: nowrap;
-    min-height: 40px;
+    min-height: 44px;
 
     &:hover {
         border-color: ${C.primary};
@@ -412,13 +408,11 @@ const CategoryChip = styled.button`
     }
 `;
 
-/* ---------- EVENT GRID ---------- */
-
 const EventGrid = styled(Grid)`
     animation: ${fadeUp} 0.5s ease both;
 `;
 
-/* ---------- EMPTY STATE ---------- */
+/* ---------- EMPTY & SKELETON STATES ---------- */
 
 const EmptyState = styled.div`
     display: flex;
@@ -432,8 +426,8 @@ const EmptyState = styled.div`
     border-radius: 20px;
 
     .icon-wrap {
-        width: 72px;
-        height: 72px;
+        width: 80px;
+        height: 80px;
         border-radius: 20px;
         background: ${C.bgInput};
         display: flex;
@@ -444,7 +438,7 @@ const EmptyState = styled.div`
     }
 
     .title {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 700;
         color: ${C.textPrimary};
         margin: 0 0 8px 0;
@@ -452,67 +446,24 @@ const EmptyState = styled.div`
     }
 
     .subtitle {
-        font-size: 14px;
+        font-size: 15px;
         color: ${C.textSecondary};
         margin: 0 0 24px 0;
-        max-width: 380px;
+        max-width: 400px;
         line-height: 1.6;
         font-family: ${F.family};
     }
 `;
 
-/* ---------- FOOTER ---------- */
-
-const Footer = styled.footer`
-    background: #1a1a1a;
-    color: rgba(255, 255, 255, 0.65);
-    padding: 40px 0 32px 0;
-    margin-top: 40px;
-    font-family: ${F.family};
-
-    .inner {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 20px;
-        padding-top: 20px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    .copy {
-        font-size: 13px;
-        color: rgba(255, 255, 255, 0.45);
-    }
-
-    .links {
-        display: flex;
-        gap: 20px;
-
-        a {
-            color: rgba(255, 255, 255, 0.55);
-            text-decoration: none;
-            font-size: 13px;
-            transition: color 0.2s ease;
-
-            &:hover {
-                color: ${C.secondary};
-            }
-        }
-    }
-`;
-
-/* ---------- SKELETON LOADER ---------- */
-
 const SkeletonCard = styled.div`
     background: ${C.bgCard};
     border: 1px solid ${C.borderLight};
-    border-radius: 16px;
+    border-radius: 20px;
     padding: 24px;
-    height: 260px;
+    height: 320px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
 `;
 
 const SkeletonBar = styled.div`
@@ -527,6 +478,47 @@ const SkeletonBar = styled.div`
     );
     background-size: 800px 100%;
     animation: ${shimmer} 1.6s infinite linear;
+`;
+
+/* ---------- FOOTER ---------- */
+
+const Footer = styled.footer`
+    background: #1a1a1a;
+    color: rgba(255, 255, 255, 0.65);
+    padding: 48px 0 32px 0;
+    margin-top: 40px;
+    font-family: ${F.family};
+
+    .inner {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 24px;
+        padding-top: 24px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .copy {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.45);
+    }
+
+    .links {
+        display: flex;
+        gap: 24px;
+
+        a {
+            color: rgba(255, 255, 255, 0.55);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.2s ease;
+
+            &:hover {
+                color: ${C.secondary};
+            }
+        }
+    }
 `;
 
 // ============================================
@@ -585,12 +577,10 @@ const Landing = () => {
     const filteredEvents = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
         return events.filter((event) => {
-            // Category filter
             if (activeCategory !== 'all') {
                 const cat = (event.category || 'other').toLowerCase();
                 if (cat !== activeCategory) return false;
             }
-            // Search filter
             if (q) {
                 const inTitle = (event.title || '').toLowerCase().includes(q);
                 const inVenue = (event.venue?.name || '').toLowerCase().includes(q);
@@ -632,9 +622,10 @@ const Landing = () => {
                 HERO
                ===================================================== */}
             <HeroWrapper>
-                <HeroContent maxWidth="lg">
-                    <Box sx={{ mb: 4, display: 'flex', justifyContent: 'center' }}>
-                        <Logo variant="full" height={70} inverse />
+                {/* ✅ Changed to maxWidth="xl" to spread out on laptops */}
+                <HeroContent maxWidth="xl">
+                    <Box sx={{ mb: 5, display: 'flex', justifyContent: 'center' }}>
+                        <Logo variant="full" height={80} inverse />
                     </Box>
 
                     <HeroBadge>
@@ -691,7 +682,8 @@ const Landing = () => {
             {/* =====================================================
                 FLOATING SEARCH
                ===================================================== */}
-            <SearchOverlayWrapper maxWidth="lg">
+            {/* ✅ Changed to maxWidth="xl" to align with hero */}
+            <SearchOverlayWrapper maxWidth="xl">
                 <SearchCard>
                     <SearchField
                         placeholder="Search by event name, venue, or city..."
@@ -700,7 +692,7 @@ const Landing = () => {
                         InputProps={{
                             startAdornment: (
                                 <InputAdornment position="start">
-                                    <SearchIcon sx={{ color: C.textMuted, ml: 1 }} />
+                                    <SearchIcon sx={{ color: C.textMuted, ml: 1, fontSize: 28 }} />
                                 </InputAdornment>
                             ),
                         }}
@@ -714,7 +706,8 @@ const Landing = () => {
             {/* =====================================================
                 EVENTS SECTION
                ===================================================== */}
-            <SectionWrapper maxWidth="lg" id="events-section">
+            {/* ✅ Changed to maxWidth="xl" for the wider grid */}
+            <SectionWrapper maxWidth="xl" id="events-section">
                 <SectionHeader>
                     <div>
                         <SectionTitle>Upcoming Events</SectionTitle>
@@ -727,11 +720,10 @@ const Landing = () => {
                 </SectionHeader>
 
                 {/* Category filter chips */}
-                <Box sx={{ mb: 4 }}>
+                <Box sx={{ mb: 5 }}>
                     <CategoryChips>
                         {CATEGORIES.map((cat) => {
                             const count = categoryCounts[cat.value] || 0;
-                            // Skip empty categories (except "All")
                             if (cat.value !== 'all' && count === 0) return null;
 
                             return (
@@ -761,16 +753,16 @@ const Landing = () => {
 
                 {/* Content */}
                 {loading ? (
-                    <EventGrid container spacing={isMobile ? 2 : 3}>
+                    <EventGrid container spacing={isMobile ? 2 : 4}>
                         {[1, 2, 3, 4, 5, 6].map((i) => (
-                            <Grid item xs={12} sm={6} md={4} key={i}>
+                            <Grid item xs={12} sm={6} md={4} lg={3} key={i}>
                                 <SkeletonCard>
-                                    <SkeletonBar $w="60%" $h={20} />
-                                    <SkeletonBar $w="40%" $h={12} />
+                                    <SkeletonBar $w="70%" $h={24} />
+                                    <SkeletonBar $w="40%" $h={16} />
                                     <Box sx={{ flex: 1 }} />
-                                    <SkeletonBar $w="80%" $h={12} />
-                                    <SkeletonBar $w="70%" $h={12} />
-                                    <SkeletonBar $w="100%" $h={40} />
+                                    <SkeletonBar $w="80%" $h={16} />
+                                    <SkeletonBar $w="60%" $h={16} />
+                                    <SkeletonBar $w="100%" $h={48} />
                                 </SkeletonCard>
                             </Grid>
                         ))}
@@ -787,9 +779,9 @@ const Landing = () => {
                         {error}
                     </Alert>
                 ) : filteredEvents.length > 0 ? (
-                    <EventGrid container spacing={isMobile ? 2 : 3}>
+                    <EventGrid container spacing={isMobile ? 2 : 4}>
                         {filteredEvents.map((event) => (
-                            <Grid item xs={12} sm={6} md={4} key={event.id}>
+                            <Grid item xs={12} sm={6} md={4} lg={3} key={event.id}>
                                 <EventCard event={event} />
                             </Grid>
                         ))}
@@ -797,7 +789,7 @@ const Landing = () => {
                 ) : (
                     <EmptyState>
                         <div className="icon-wrap">
-                            <TicketIcon sx={{ fontSize: 36 }} />
+                            <TicketIcon sx={{ fontSize: 40 }} />
                         </div>
                         <h3 className="title">
                             {searchTerm || activeCategory !== 'all'
@@ -829,9 +821,9 @@ const Landing = () => {
                 FOOTER
                ===================================================== */}
             <Footer>
-                <Container maxWidth="lg">
-                    <Box sx={{ mb: 3, display: 'flex', justifyContent: 'center' }}>
-                        <Logo variant="full" height={48} inverse />
+                <Container maxWidth="xl">
+                    <Box sx={{ mb: 4, display: 'flex', justifyContent: 'center' }}>
+                        <Logo variant="full" height={60} inverse />
                     </Box>
                     <div className="inner">
                         <span className="copy">

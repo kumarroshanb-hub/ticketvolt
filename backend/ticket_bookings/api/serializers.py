@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 MAX_TICKETS_PER_BOOKING = 50
 
 # ---------------------------------------------------------------------------
-# Canonical ticket QR payload schema. Must match the mobile extractor and
-# the server-side helper in views.py.
+# Canonical ticket QR payload schema.
 # ---------------------------------------------------------------------------
 TICKET_SCHEMA_VERSION = 1
 TICKET_TYPE = 'ticket'
@@ -80,17 +79,6 @@ def get_or_create_whatsapp_bot_user():
 # TICKET QR PAYLOAD (strict)
 # ============================================================
 class TicketPayloadSerializer(serializers.Serializer):
-    """
-    Strict, fail-closed schema for the signed QR payload.
-
-    Accepted shape (exactly these four keys, nothing else):
-        {
-          "v": 1,
-          "type": "ticket",
-          "code": "TIX<8-32 uppercase alnum>",
-          "sig": "<hex HMAC-SHA256 over canonical {v,type,code}>"
-        }
-    """
     v = serializers.IntegerField(required=True)
     type = serializers.CharField(required=True, max_length=16)
     code = serializers.CharField(required=True, max_length=64)
@@ -108,9 +96,7 @@ class TicketPayloadSerializer(serializers.Serializer):
 
         code = attrs.get('code') or ''
         if not TICKET_CODE_RE.match(code):
-            raise serializers.ValidationError(
-                {'code': 'Invalid ticket code format.'}
-            )
+            raise serializers.ValidationError({'code': 'Invalid ticket code format.'})
 
         sig = attrs.get('sig') or ''
         if not sig:
@@ -136,6 +122,8 @@ class PublicEventSerializer(serializers.ModelSerializer):
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
+    # ✅ NEW: Expose uploaded announcement/ticket/flyer images
+    template_images = serializers.SerializerMethodField()
 
     class Meta:
         model = Event
@@ -149,6 +137,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'venue',
             'tier_count', 'session_count', 'total_capacity',
+            'template_images',  # ✅ NEW
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -175,6 +164,18 @@ class PublicEventSerializer(serializers.ModelSerializer):
         from django.db.models import Sum
         result = obj.tiers.aggregate(total=Sum('quantity_total'))
         return result.get('total') or 0
+
+    def get_template_images(self, obj):
+        """Return a dict of template_type_slug -> image URL."""
+        images = {}
+        templates = obj.templates.filter(is_active=True).select_related('template_type')
+        for template in templates:
+            if template.image:
+                try:
+                    images[template.template_type.slug] = template.image.url
+                except ValueError:
+                    pass
+        return images
 
 
 class PublicEventDetailSerializer(PublicEventSerializer):
@@ -262,26 +263,7 @@ class CancellationPolicySerializer(serializers.ModelSerializer):
 
 
 # ============================================================================
-# EVENT SERIALIZERS — FIXED
-# ----------------------------------------------------------------------------
-# ROOT CAUSE OF THE "SPINNER HANGS ON SAVE" BUG:
-#
-# Both EventSerializer and EventDetailSerializer previously used
-# `fields = '__all__'` while ALSO declaring `sessions` and `tiers` as
-# SerializerMethodField. DRF's ModelSerializer, when it sees '__all__',
-# tries to build fields for every model field AND every declared field.
-# The result is that `sessions` and `tiers` end up bound TWICE — once as
-# a SerializerMethodField, once as the model's reverse relation — and
-# DRF raises an internal error during serialization, returning a 500.
-#
-# Because the 500 response still had a JSON body, axios did NOT throw
-# in the frontend's catch block; it went into the success path with a
-# malformed `response.data`, so `response.data.id` was undefined and
-# the subsequent `navigate()` call failed silently.
-#
-# The fix is to explicitly list every field instead of using '__all__'.
-# This ensures each field is bound exactly once, and the serialized
-# payload is complete and well-formed.
+# EVENT SERIALIZERS (Admin)
 # ============================================================================
 
 class EventSerializer(serializers.ModelSerializer):
@@ -301,7 +283,6 @@ class EventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        # ✅ EXPLICIT field list, NOT '__all__'.
         fields = [
             'id', 'organizer', 'title', 'description', 'short_description',
             'event_type', 'category',
@@ -316,7 +297,6 @@ class EventSerializer(serializers.ModelSerializer):
             'total_tickets_sold', 'total_revenue',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'created_at', 'updated_at',
-            # Custom SerializerMethodFields:
             'tier_count', 'session_count', 'total_capacity',
         ]
         read_only_fields = [
@@ -384,7 +364,6 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        # ✅ EXPLICIT field list, NOT '__all__'.
         fields = [
             'id', 'organizer', 'title', 'description', 'short_description',
             'event_type', 'category',
@@ -399,7 +378,6 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'total_tickets_sold', 'total_revenue',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'created_at', 'updated_at',
-            # Custom SerializerMethodFields:
             'sessions', 'tiers', 'tier_count', 'session_count',
             'total_capacity',
         ]
@@ -554,7 +532,6 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'booking_reference', 'created_at', 'updated_at',
-            # discount_applied is computed server-side, never trusted from the client.
             'discount_applied',
         ]
 
@@ -590,28 +567,11 @@ class BookingSerializer(serializers.ModelSerializer):
             )
         return value
 
-    # -----------------------------------------------------------------
-    # HELPER — resolve the tickets payload from wherever it lives
-    # -----------------------------------------------------------------
     def _resolve_tickets_payload(self, data):
-        """
-        The frontend sends tickets inside `metadata.ticket_types`
-        (and `metadata.tickets`) because the top-level `tickets` field
-        is `read_only=True` and therefore never lands in `validated_data`.
-
-        This helper returns the first non-empty list it finds among:
-          1. data['tickets']                    (top-level, if ever sent)
-          2. data['metadata']['ticket_types']   (what CreateBooking actually sends)
-          3. data['metadata']['tickets']        (alternate shape)
-          4. self.initial_data['tickets']       (raw request fallback)
-          5. self.initial_data['metadata']...   (raw request fallback)
-        """
-        # 1. Top-level `tickets` (rarely populated, but harmless to check).
         tickets = data.get('tickets')
         if isinstance(tickets, list) and tickets:
             return tickets
 
-        # 2./3. From `metadata` inside validated data.
         md = data.get('metadata')
         if isinstance(md, dict):
             for key in ('ticket_types', 'tickets'):
@@ -619,8 +579,6 @@ class BookingSerializer(serializers.ModelSerializer):
                 if isinstance(candidate, list) and candidate:
                     return candidate
 
-        # 4./5. From the raw request data (in case metadata was stripped
-        #       by an earlier serializer pass — belt and braces).
         raw = self.initial_data if isinstance(self.initial_data, dict) else {}
         raw_tickets = raw.get('tickets')
         if isinstance(raw_tickets, list) and raw_tickets:
@@ -635,9 +593,6 @@ class BookingSerializer(serializers.ModelSerializer):
 
         return []
 
-    # -----------------------------------------------------------------
-    # VALIDATE — resolves the discount server-side
-    # -----------------------------------------------------------------
     def validate(self, data):
         event_uuid = data.get('event')
         if event_uuid:
@@ -656,9 +611,6 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
             self._event_obj = event
 
-        # ------------------------------------------------------------
-        # ✅ Resolve the tickets list from WHEREVER the client put it.
-        # ------------------------------------------------------------
         tickets_payload = self._resolve_tickets_payload(data)
 
         computed_total = Decimal('0.00')
@@ -685,9 +637,6 @@ class BookingSerializer(serializers.ModelSerializer):
                 if tier:
                     computed_total += Decimal(str(tier.price))
 
-        # ------------------------------------------------------------
-        # ✅ Safety net for total_amount when per-ticket detail is absent.
-        # ------------------------------------------------------------
         if computed_total == Decimal('0.00'):
             fallback = (
                 data.get('total_amount')
@@ -702,22 +651,6 @@ class BookingSerializer(serializers.ModelSerializer):
         if computed_total > 0:
             data['total_amount'] = computed_total
 
-        # ============================================================
-        # ✅ SLOT CAPACITY CHECK (fail-fast UX)
-        # ------------------------------------------------------------
-        # This is a courtesy check — it gives the user an immediate,
-        # actionable error at cart time before any DB write happens.
-        #
-        # It is NOT race-safe on its own. The real guarantee comes from
-        # the SELECT ... FOR UPDATE in BookingViewSet.create(), which runs
-        # inside a transaction and locks the session row. This method
-        # exists so that:
-        #   • the common case (stale UI showing seats that are gone)
-        #     fails fast with a clear message instead of a mysterious
-        #     error from the ViewSet layer
-        #   • the error is attached to the `session` field, so the
-        #     frontend can highlight the slot picker
-        # ============================================================
         session_id = (
             data.get('session')
             or self.initial_data.get('session')
@@ -730,9 +663,6 @@ class BookingSerializer(serializers.ModelSerializer):
         requested_count = len(tickets_payload)
 
         if session_id and requested_count > 0:
-            # Local import: the serializers module is imported by models
-            # indirectly, and importing Session at module scope would
-            # create a circular dependency in some load orders.
             from ..models import Session as _Session
 
             try:
@@ -742,7 +672,6 @@ class BookingSerializer(serializers.ModelSerializer):
                     {'session': 'The selected slot was not found.'}
                 )
 
-            # The session must belong to the event being booked.
             if (
                 hasattr(self, '_event_obj')
                 and session.event_id != self._event_obj.id
@@ -753,12 +682,8 @@ class BookingSerializer(serializers.ModelSerializer):
 
             ok, reason = session.check_capacity(requested_count)
             if not ok:
-                # Attach to `session` so the frontend can highlight the
-                # slot selector. Wording comes from the model so it stays
-                # consistent with the ViewSet's error message.
                 raise serializers.ValidationError({'session': reason})
 
-        # ---- Resolve the discount server-side (never trust client) ----
         raw_code = (
             data.get('discount_code')
             or self.initial_data.get('discount_code')
@@ -850,9 +775,6 @@ class BookingSerializer(serializers.ModelSerializer):
 
         return data
 
-    # -----------------------------------------------------------------
-    # CREATE — persists the resolved discount and audits its usage
-    # -----------------------------------------------------------------
     def create(self, validated_data):
         event = getattr(self, '_event_obj', None)
         if event is None:
@@ -862,7 +784,6 @@ class BookingSerializer(serializers.ModelSerializer):
         tickets_data = validated_data.pop('tickets', [])
         logger.info(f"📊 Tickets received in serializer: {len(tickets_data)}")
 
-        # Pull out the discount fields so we control when they hit the DB.
         discount_code = validated_data.pop('discount_code', '')
         discount_applied = validated_data.pop('discount_applied', Decimal('0.00'))
 
@@ -927,13 +848,11 @@ class BookingSerializer(serializers.ModelSerializer):
                         pass
             validated_data['total_amount'] = total
 
-        # Persist the discount fields on the model.
         validated_data['discount_code'] = discount_code
         validated_data['discount_applied'] = discount_applied
 
         booking = super().create(validated_data)
 
-        # ---- Audit: DiscountUsage + used_count increment ----
         if discount_code and discount_applied and discount_applied > 0:
             try:
                 discount_obj = getattr(self, '_discount_obj', None) or Discount.objects.get(
@@ -945,7 +864,6 @@ class BookingSerializer(serializers.ModelSerializer):
                     user=booking.user,
                     amount_applied=discount_applied,
                 )
-                # Atomic increment to avoid lost updates.
                 from django.db.models import F
                 Discount.objects.filter(pk=discount_obj.pk).update(
                     used_count=F('used_count') + 1
@@ -960,7 +878,6 @@ class BookingSerializer(serializers.ModelSerializer):
                     booking.booking_reference, exc,
                 )
 
-        # ✅ Snapshot the event's cancellation policy at booking time.
         try:
             from ..services.cancellation_policy import snapshot_policy
 
@@ -1154,7 +1071,6 @@ class DiscountSerializer(serializers.ModelSerializer):
 # ============================================================
 # USER
 # ============================================================
-
 class UserProfileSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile

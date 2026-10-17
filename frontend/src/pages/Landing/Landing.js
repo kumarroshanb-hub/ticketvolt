@@ -88,29 +88,22 @@ const HeroContent = styled(Container)`
     text-align: center;
 `;
 
-/* 
- * ✅ NEW: Responsive Logo Wrapper
- * Ensures the logo scales appropriately for mobile vs laptop.
- */
 const ResponsiveLogoWrapper = styled.div`
     display: flex;
     justify-content: center;
     margin-bottom: 24px;
 
-    /* Mobile: Perfect 60px size */
     img {
         height: 60px !important;
         width: auto !important;
     }
 
-    /* Tablet */
     @media (min-width: 601px) {
         img {
             height: 85px !important;
         }
     }
 
-    /* Laptop & Desktop: Substantial 110px size */
     @media (min-width: 1025px) {
         img {
             height: 110px !important;
@@ -172,21 +165,30 @@ const HeroSubtitle = styled.p`
     animation: ${fadeUp} 0.7s 0.15s ease both;
 `;
 
+/* ✅ NEW: Grouping wrapper to force proper vertical alignment */
+const HeroActionArea = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px; /* Space between stats box and buttons */
+    animation: ${fadeUp} 0.7s 0.25s ease both;
+`;
+
 const HeroStats = styled.div`
     display: inline-flex;
     align-items: center;
     gap: 40px;
-    padding: 16px 32px;
+    padding: 16px 40px;
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     backdrop-filter: blur(8px);
-    margin-bottom: 32px;
-    animation: ${fadeUp} 0.7s 0.25s ease both;
 
     @media (max-width: 600px) {
         gap: 20px;
-        padding: 12px 18px;
+        padding: 12px 24px;
+        width: 100%;
+        justify-content: center;
     }
 `;
 
@@ -214,7 +216,7 @@ const HeroStat = styled.div`
     }
 
     @media (max-width: 600px) {
-        .value { font-size: 18px; }
+        .value { font-size: 20px; }
         .label { font-size: 10px; }
     }
 `;
@@ -223,14 +225,17 @@ const HeroStatDivider = styled.div`
     width: 1px;
     height: 36px;
     background: rgba(255, 255, 255, 0.12);
+
+    @media (max-width: 600px) {
+        height: 28px;
+    }
 `;
 
 const HeroButtons = styled.div`
-    display: inline-flex;
+    display: flex;
     gap: 16px;
     flex-wrap: wrap;
     justify-content: center;
-    animation: ${fadeUp} 0.7s 0.35s ease both;
 
     @media (max-width: 600px) {
         width: 100%;
@@ -314,18 +319,9 @@ const SearchField = styled(TextField)`
         border-radius: 14px;
         padding-left: 8px;
 
-        fieldset {
-            border-color: transparent;
-        }
-
-        &:hover fieldset {
-            border-color: ${C.borderLight};
-        }
-
-        &.Mui-focused fieldset {
-            border-color: ${C.secondary};
-            border-width: 2px;
-        }
+        fieldset { border-color: transparent; }
+        &:hover fieldset { border-color: ${C.borderLight}; }
+        &.Mui-focused fieldset { border-color: ${C.secondary}; border-width: 2px; }
     }
 
     & .MuiInputBase-input {
@@ -646,7 +642,6 @@ const Landing = () => {
         <PageWrapper>
             <HeroWrapper>
                 <HeroContent maxWidth="xl">
-                    {/* ✅ Responsive logo wrapper replaces static height */}
                     <ResponsiveLogoWrapper>
                         <Logo variant="full" inverse />
                     </ResponsiveLogoWrapper>
@@ -665,40 +660,43 @@ const Landing = () => {
                         in seconds with instant confirmation and e-ticket delivery.
                     </HeroSubtitle>
 
-                    <HeroStats>
-                        <HeroStat>
-                            <span className="value">{heroStats.eventCount}</span>
-                            <span className="label">Events</span>
-                        </HeroStat>
-                        <HeroStatDivider />
-                        <HeroStat>
-                            <span className="value">{heroStats.cityCount || '—'}</span>
-                            <span className="label">Cities</span>
-                        </HeroStat>
-                        <HeroStatDivider />
-                        <HeroStat>
-                            <span className="value">24/7</span>
-                            <span className="label">Booking</span>
-                        </HeroStat>
-                    </HeroStats>
+                    {/* ✅ HeroActionArea ensures vertical stacking of stats and buttons */}
+                    <HeroActionArea>
+                        <HeroStats>
+                            <HeroStat>
+                                <span className="value">{heroStats.eventCount}</span>
+                                <span className="label">Events</span>
+                            </HeroStat>
+                            <HeroStatDivider />
+                            <HeroStat>
+                                <span className="value">{heroStats.cityCount || '—'}</span>
+                                <span className="label">Cities</span>
+                            </HeroStat>
+                            <HeroStatDivider />
+                            <HeroStat>
+                                <span className="value">24/7</span>
+                                <span className="label">Booking</span>
+                            </HeroStat>
+                        </HeroStats>
 
-                    <HeroButtons>
-                        <PrimaryHeroButton
-                            onClick={isAuthenticated ? handleDashboardClick : handleLoginClick}
-                            endIcon={<ArrowForwardIcon />}
-                        >
-                            {isAuthenticated ? 'Go to Dashboard' : 'Book Tickets'}
-                        </PrimaryHeroButton>
-                        <GhostHeroButton
-                            onClick={() => {
-                                document
-                                    .getElementById('events-section')
-                                    ?.scrollIntoView({ behavior: 'smooth' });
-                            }}
-                        >
-                            Browse Events
-                        </GhostHeroButton>
-                    </HeroButtons>
+                        <HeroButtons>
+                            <PrimaryHeroButton
+                                onClick={isAuthenticated ? handleDashboardClick : handleLoginClick}
+                                endIcon={<ArrowForwardIcon />}
+                            >
+                                {isAuthenticated ? 'Go to Dashboard' : 'Book Tickets'}
+                            </PrimaryHeroButton>
+                            <GhostHeroButton
+                                onClick={() => {
+                                    document
+                                        .getElementById('events-section')
+                                        ?.scrollIntoView({ behavior: 'smooth' });
+                                }}
+                            >
+                                Browse Events
+                            </GhostHeroButton>
+                        </HeroButtons>
+                    </HeroActionArea>
                 </HeroContent>
             </HeroWrapper>
 

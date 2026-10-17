@@ -1,8 +1,7 @@
 // frontend/src/pages/Landing/Landing.js
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-    Box, Container, Typography, Grid, CircularProgress,
-    Alert, TextField, InputAdornment, Button,
+    Box, Container, Grid, Alert, TextField, InputAdornment, Button,
     useMediaQuery, useTheme,
 } from '@mui/material';
 import {
@@ -99,15 +98,11 @@ const ResponsiveLogoWrapper = styled.div`
     }
 
     @media (min-width: 601px) {
-        img {
-            height: 85px !important;
-        }
+        img { height: 85px !important; }
     }
 
     @media (min-width: 1025px) {
-        img {
-            height: 110px !important;
-        }
+        img { height: 110px !important; }
         margin-bottom: 32px;
     }
 `;
@@ -165,12 +160,12 @@ const HeroSubtitle = styled.p`
     animation: ${fadeUp} 0.7s 0.15s ease both;
 `;
 
-/* ✅ NEW: Grouping wrapper to force proper vertical alignment */
+// ---------- Hero Action area (stats + buttons) ----------
 const HeroActionArea = styled.div`
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 32px; /* Space between stats box and buttons */
+    gap: 24px;
     animation: ${fadeUp} 0.7s 0.25s ease both;
 `;
 
@@ -226,9 +221,7 @@ const HeroStatDivider = styled.div`
     height: 36px;
     background: rgba(255, 255, 255, 0.12);
 
-    @media (max-width: 600px) {
-        height: 28px;
-    }
+    @media (max-width: 600px) { height: 28px; }
 `;
 
 const HeroButtons = styled.div`
@@ -349,9 +342,7 @@ const RefreshBtn = styled(Button)`
         font-size: 15px;
         flex-shrink: 0;
 
-        &:hover {
-            background: ${C.primaryDark};
-        }
+        &:hover { background: ${C.primaryDark}; }
 
         @media (max-width: 700px) {
             width: 100%;
@@ -365,9 +356,6 @@ const RefreshBtn = styled(Button)`
 const SectionWrapper = styled(Container)`
     padding-top: 60px;
     padding-bottom: 80px;
-    /* ✅ FIX: Stop scrolling slightly before the section to keep the 
-       floating search bar fully in view and prevent the title from 
-       feeling cramped at the top of the screen. */
     scroll-margin-top: 80px;
 `;
 
@@ -419,9 +407,9 @@ const CategoryChip = styled.button`
     gap: 8px;
     padding: 10px 20px;
     border-radius: 999px;
-    border: 1px solid ${props => props.$active ? C.primary : C.borderLight};
-    background: ${props => props.$active ? C.primary : C.bgCard};
-    color: ${props => props.$active ? C.textInverse : C.textSecondary};
+    border: 1px solid ${(p) => (p.$active ? C.primary : C.borderLight)};
+    background: ${(p) => (p.$active ? C.primary : C.bgCard)};
+    color: ${(p) => (p.$active ? C.textInverse : C.textSecondary)};
     font-size: 14px;
     font-weight: 600;
     font-family: ${F.family};
@@ -432,7 +420,7 @@ const CategoryChip = styled.button`
 
     &:hover {
         border-color: ${C.primary};
-        color: ${props => props.$active ? C.textInverse : C.primary};
+        color: ${(p) => (p.$active ? C.textInverse : C.primary)};
         transform: translateY(-1px);
     }
 `;
@@ -496,8 +484,8 @@ const SkeletonCard = styled.div`
 `;
 
 const SkeletonBar = styled.div`
-    height: ${props => props.$h || 14}px;
-    width: ${props => props.$w || '100%'};
+    height: ${(p) => p.$h || 14}px;
+    width: ${(p) => p.$w || '100%'};
     border-radius: 8px;
     background: linear-gradient(
         90deg,
@@ -543,9 +531,7 @@ const Footer = styled.footer`
             font-size: 14px;
             transition: color 0.2s ease;
 
-            &:hover {
-                color: ${C.secondary};
-            }
+            &:hover { color: ${C.secondary}; }
         }
     }
 `;
@@ -664,7 +650,6 @@ const Landing = () => {
                         in seconds with instant confirmation and e-ticket delivery.
                     </HeroSubtitle>
 
-                    {/* ✅ HeroActionArea ensures vertical stacking of stats and buttons */}
                     <HeroActionArea>
                         <HeroStats>
                             <HeroStat>

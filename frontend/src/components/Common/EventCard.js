@@ -39,6 +39,29 @@ const StyledCard = styled(Card)`
     }
 `;
 
+// ✅ NEW: Announcement image banner
+const CardImageBanner = styled.div`
+    width: 100%;
+    height: 160px;
+    background-image: url(${(props) => props.$url});
+    background-size: cover;
+    background-position: center;
+    background-color: ${C.bgInput};
+    position: relative;
+
+    &::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 40px;
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.1), transparent);
+        pointer-events: none;
+    }
+`;
+
+// Fallback accent bar
 const TopAccent = styled.div`
     height: 4px;
     background: ${(p) =>
@@ -131,7 +154,7 @@ const SessionList = styled.div`
         font-weight: 500;
         color: ${C.textPrimary};
     }
-    
+
     .session-more {
         font-size: 11px;
         color: ${C.primary};
@@ -195,7 +218,7 @@ const TiersToggle = styled.button`
     cursor: pointer;
     padding: 0;
     margin-top: 10px;
-    
+
     &:hover {
         text-decoration: underline;
     }
@@ -211,7 +234,7 @@ const TierItem = styled.div`
     font-family: ${F.family};
 
     &:last-child { border-bottom: none; }
-    
+
     .name { color: ${C.textPrimary}; font-weight: 500; }
     .price { color: ${C.textSecondary}; font-weight: 600; }
     .sold-out { color: ${C.error}; font-size: 11px; text-transform: uppercase; }
@@ -284,49 +307,55 @@ const EventCard = ({ event: initialEvent }) => {
 
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
-    
-    const [detailsLoading, setDetailsLoading] = useState(!initialEvent.tiers);
-    const [detailsLoaded, setDetailsLoaded] = useState(!!initialEvent.tiers);
+    const [loadingDetails, setLoadingDetails] = useState(!initialEvent.tiers);
 
     useEffect(() => {
         let isMounted = true;
-        const fetchFullDetails = async () => {
-            if (detailsLoaded) return;
+        const fetchDetails = async () => {
+            if (initialEvent.tiers && initialEvent.tiers.length > 0) {
+                setLoadingDetails(false);
+                return;
+            }
             try {
                 const fullDetails = await eventService.getPublicEventDetails(initialEvent.id);
                 if (isMounted) {
                     setEvent((prev) => ({ ...prev, ...fullDetails }));
-                    setDetailsLoaded(true);
                 }
             } catch (err) {
-                console.error('Failed to load event details', err);
+                console.error('Failed to load event details:', err);
             } finally {
-                if (isMounted) {
-                    setDetailsLoading(false);
-                }
+                if (isMounted) setLoadingDetails(false);
             }
         };
-
-        fetchFullDetails();
+        fetchDetails();
         return () => { isMounted = false; };
-    }, [initialEvent.id, detailsLoaded]);
+    }, [initialEvent.id, initialEvent.tiers]);
 
     const isSoldOut = event.status === 'sold_out';
 
     const tiers = event.tiers || [];
-    const availableSlots = tiers.reduce((sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)), 0);
-    const prices = tiers.map(t => parseFloat(t.price)).filter(p => !isNaN(p));
+    const availableSlots = tiers.reduce(
+        (sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)),
+        0
+    );
+    const prices = tiers.map((t) => parseFloat(t.price)).filter((p) => !isNaN(p));
     const minPrice = prices.length ? Math.min(...prices) : null;
     const lowStock = availableSlots > 0 && availableSlots <= 10;
-    const isActuallySoldOut = isSoldOut || (detailsLoaded && tiers.length > 0 && availableSlots === 0);
+    const isActuallySoldOut = isSoldOut || (tiers.length > 0 && availableSlots === 0);
 
     const sessions = event.sessions || [];
-    const displaySessions = sessions.length > 0 
-        ? sessions 
-        : [{ start_time: event.start_date, end_time: event.end_date, capacity: event.total_capacity }];
-    
+    const displaySessions = sessions.length > 0
+        ? sessions
+        : [{ start_time: event.start_date, end_time: event.end_date }];
+
     const visibleSessions = displaySessions.slice(0, 2);
     const remainingSessionsCount = displaySessions.length - visibleSessions.length;
+
+    // ✅ Announcement image (falls back to cover_image)
+    const announcementImage =
+        event.template_images?.announcement ||
+        event.cover_image ||
+        null;
 
     const handleBookNow = () => {
         const target = `/app/bookings/create?event=${event.id}`;
@@ -340,7 +369,11 @@ const EventCard = ({ event: initialEvent }) => {
 
     return (
         <StyledCard elevation={0}>
-            <TopAccent $isSoldOut={isActuallySoldOut} />
+            {announcementImage ? (
+                <CardImageBanner $url={announcementImage} />
+            ) : (
+                <TopAccent $isSoldOut={isActuallySoldOut} />
+            )}
             <CardBody>
                 <TitleRow>
                     <EventTitle>{event.title}</EventTitle>
@@ -354,7 +387,7 @@ const EventCard = ({ event: initialEvent }) => {
                     <div className="text">
                         {displaySessions.length === 1 ? (
                             <div style={{ fontWeight: 500, color: C.textPrimary }}>
-                                {formatDate(displaySessions[0].start_time || event.start_date)}
+                                {formatDate(displaySessions[0].start_time)} · {formatTime(displaySessions[0].start_time)}
                             </div>
                         ) : (
                             <SessionList>
@@ -388,7 +421,7 @@ const EventCard = ({ event: initialEvent }) => {
                     <div>
                         <div className="from-label">From</div>
                         <div className="price">
-                            {detailsLoading ? (
+                            {loadingDetails ? (
                                 <CircularProgress size={16} sx={{ color: C.textMuted }} />
                             ) : (
                                 <>
@@ -399,13 +432,19 @@ const EventCard = ({ event: initialEvent }) => {
                         </div>
                     </div>
                     {isActuallySoldOut ? (
-                        <span className="slots" style={{ color: C.error }}>Sold out</span>
+                        <span className="slots" style={{ color: C.error }}>
+                            Sold out
+                        </span>
                     ) : availableSlots > 0 ? (
                         <span className="slots">
                             {lowStock ? `Only ${availableSlots} left` : `${availableSlots} seats`}
                         </span>
                     ) : (
-                        !detailsLoading && <span className="slots" style={{ color: C.textMuted }}>Check availability</span>
+                        !loadingDetails && (
+                            <span className="slots" style={{ color: C.textMuted }}>
+                                Check availability
+                            </span>
+                        )
                     )}
                 </PriceRow>
 
@@ -414,10 +453,10 @@ const EventCard = ({ event: initialEvent }) => {
                         {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
                         {tiersExpanded ? 'Hide Ticket Tiers' : 'View Ticket Tiers'}
                     </TiersToggle>
-                    
+
                     <Collapse in={tiersExpanded}>
                         <Box sx={{ mt: 1, p: 1.5, bgcolor: C.bgPrimary, borderRadius: 2 }}>
-                            {detailsLoading ? (
+                            {loadingDetails ? (
                                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                                     <CircularProgress size={20} sx={{ color: C.primary }} />
                                 </Box>

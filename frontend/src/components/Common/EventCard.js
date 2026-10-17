@@ -1,13 +1,12 @@
 // frontend/src/components/Common/EventCard.js
 import React, { useState, useEffect } from 'react';
 import {
-    Card, CardContent, CardActions, Button, Chip, Box, Typography,
-    Collapse, CircularProgress, Tooltip,
+    Card, CardContent, CardActions, Button, Box, Typography,
+    Collapse, CircularProgress,
 } from '@mui/material';
 import {
-    LocationOn, CalendarMonth, ShoppingCart, AccessTime,
+    LocationOn, CalendarMonth, ShoppingCart,
     KeyboardArrowDown as ArrowDownIcon, KeyboardArrowUp as ArrowUpIcon,
-    EventSeat as SeatIcon,
 } from '@mui/icons-material';
 import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
@@ -99,7 +98,7 @@ const CategoryTag = styled.span`
 
 const InfoRow = styled.div`
     display: flex;
-    align-items: flex-start; /* Align top for multi-line dates */
+    align-items: flex-start;
     gap: 10px;
     color: ${C.textSecondary};
     font-size: 13px;
@@ -110,7 +109,7 @@ const InfoRow = styled.div`
         font-size: 16px;
         color: ${C.textMuted};
         flex-shrink: 0;
-        margin-top: 2px; /* Optically align icon with text */
+        margin-top: 2px;
     }
 
     .text {
@@ -146,7 +145,7 @@ const PriceRow = styled.div`
     justify-content: space-between;
     gap: 8px;
     padding-top: 14px;
-    margin-top: auto; /* Push to bottom of card body */
+    margin-top: auto;
     border-top: 1px dashed ${C.borderLight};
 
     .from-label {
@@ -286,11 +285,9 @@ const EventCard = ({ event: initialEvent }) => {
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
     
-    // State to manage the auto-fetching of full event details
     const [detailsLoading, setDetailsLoading] = useState(!initialEvent.tiers);
     const [detailsLoaded, setDetailsLoaded] = useState(!!initialEvent.tiers);
 
-    // Automatically fetch full details on mount so Price, Slots, and Tiers are ready
     useEffect(() => {
         let isMounted = true;
         const fetchFullDetails = async () => {
@@ -316,7 +313,6 @@ const EventCard = ({ event: initialEvent }) => {
 
     const isSoldOut = event.status === 'sold_out';
 
-    // Determine price & slots
     const tiers = event.tiers || [];
     const availableSlots = tiers.reduce((sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)), 0);
     const prices = tiers.map(t => parseFloat(t.price)).filter(p => !isNaN(p));
@@ -324,14 +320,11 @@ const EventCard = ({ event: initialEvent }) => {
     const lowStock = availableSlots > 0 && availableSlots <= 10;
     const isActuallySoldOut = isSoldOut || (detailsLoaded && tiers.length > 0 && availableSlots === 0);
 
-    // Determine sessions
     const sessions = event.sessions || [];
-    // Fallback to the main event date if no specific sessions exist
     const displaySessions = sessions.length > 0 
         ? sessions 
         : [{ start_time: event.start_date, end_time: event.end_date, capacity: event.total_capacity }];
     
-    // Take up to 2 sessions to show on the card to keep it neat
     const visibleSessions = displaySessions.slice(0, 2);
     const remainingSessionsCount = displaySessions.length - visibleSessions.length;
 
@@ -356,7 +349,6 @@ const EventCard = ({ event: initialEvent }) => {
                     </CategoryTag>
                 </TitleRow>
 
-                {/* Date & Slots Section */}
                 <InfoRow>
                     <CalendarMonth />
                     <div className="text">
@@ -417,7 +409,6 @@ const EventCard = ({ event: initialEvent }) => {
                     )}
                 </PriceRow>
 
-                {/* Tiers Section */}
                 <Box sx={{ mt: 1 }}>
                     <TiersToggle onClick={() => setTiersExpanded(!tiersExpanded)}>
                         {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
@@ -462,7 +453,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </Button>
+                </BookButton>
             </StyledActions>
         </StyledCard>
     );

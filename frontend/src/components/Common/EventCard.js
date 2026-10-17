@@ -300,6 +300,34 @@ const getCategoryIcon = (category) => {
     return icons[(category || 'other').toLowerCase()] || '📌';
 };
 
+// ============================================================
+// ✅ FIX: pick the best template image
+// ------------------------------------------------------------
+// The backend now always returns a 'default' key (the event's
+// default template, or the first image found). We try that first,
+// then any specific template type, then the legacy `cover_image`.
+// This means an organizer who uploaded a `ticket` or `flyer`
+// template still gets a card banner — previously only an
+// `announcement` template would render, so most uploads were
+// silently dropped.
+// ============================================================
+const pickAnnouncementImage = (event) => {
+    const images = event.template_images || {};
+
+    return (
+        images.default ||
+        images.announcement ||
+        images.flyer ||
+        images.ticket ||
+        images.social ||
+        images.invite ||
+        images.certificate ||
+        Object.values(images)[0] ||
+        event.cover_image ||
+        null
+    );
+};
+
 const EventCard = ({ event: initialEvent }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
@@ -351,10 +379,8 @@ const EventCard = ({ event: initialEvent }) => {
     const visibleSessions = displaySessions.slice(0, 2);
     const remainingSessionsCount = displaySessions.length - visibleSessions.length;
 
-    const announcementImage =
-        event.template_images?.announcement ||
-        event.cover_image ||
-        null;
+    // ✅ FIX: use the resilient picker instead of only `announcement`.
+    const announcementImage = pickAnnouncementImage(event);
 
     const handleBookNow = () => {
         const target = `/app/bookings/create?event=${event.id}`;
@@ -502,7 +528,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </BookButton>
+                </Button>
             </StyledActions>
         </StyledCard>
     );

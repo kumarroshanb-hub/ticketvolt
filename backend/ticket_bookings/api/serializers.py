@@ -165,16 +165,61 @@ class PublicEventSerializer(serializers.ModelSerializer):
         result = obj.tiers.aggregate(total=Sum('quantity_total'))
         return result.get('total') or 0
 
+    # ============================================================
+    # ✅ FIX: Return ABSOLUTE URLs, and always include a 'default' key
+    # ------------------------------------------------------------
+    # Why:
+    #   • `template.image.url` returns a relative path like
+    #     "/media/event_templates/x.png". The frontend runs on a
+    #     different origin (localhost:3000, Render static site, …),
+    #     so <img src="/media/..."> hits the FRONTEND origin → 404.
+    #   • `request.build_absolute_uri()` turns it into
+    #     "http://backend:8000/media/..." which the browser can load.
+    #   • When MEDIA_URL is already absolute (Tigris / S3), we skip
+    #     the rewrite — those URLs are already correct.
+    #   • We always add a 'default' key: the first `is_default=True`
+    #     template if any, otherwise the first image found. The
+    #     frontend's EventCard can then use a single stable key
+    #     regardless of which template type was uploaded.
+    # ============================================================
     def get_template_images(self, obj):
-        """Return a dict of template_type_slug -> image URL."""
         images = {}
+        default_url = None
+        request = self.context.get('request')
+
         templates = obj.templates.filter(is_active=True).select_related('template_type')
+
         for template in templates:
-            if template.image:
+            if not template.image:
+                continue
+
+            try:
+                url = template.image.url
+            except ValueError:
+                # File is set on the model but missing from storage.
+                continue
+
+            # Rewrite relative URLs to absolute so cross-origin
+            # frontends can load them.
+            if request is not None and url.startswith('/'):
                 try:
-                    images[template.template_type.slug] = template.image.url
-                except ValueError:
+                    url = request.build_absolute_uri(url)
+                except Exception:
+                    # Never let a URL-build failure break the whole
+                    # response; fall back to the relative URL.
                     pass
+
+            images[template.template_type.slug] = url
+
+            if template.is_default and default_url is None:
+                default_url = url
+
+        # Always provide a stable 'default' key for consumers.
+        if default_url is not None:
+            images['default'] = default_url
+        elif images:
+            images['default'] = next(iter(images.values()))
+
         return images
 
 
@@ -1356,5 +1401,18 @@ class EventTemplateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    # ✅ FIX: return absolute URL here too (used by the admin templates UI).
     def get_image_url(self, obj):
-        return obj.image.url if obj.image else None
+        if not obj.image:
+            return None
+        try:
+            url = obj.image.url
+        except ValueError:
+            return None
+        request = self.context.get('request')
+        if request is not None and url.startswith('/'):
+            try:
+                return request.build_absolute_uri(url)
+            except Exception:
+                return url
+        return url

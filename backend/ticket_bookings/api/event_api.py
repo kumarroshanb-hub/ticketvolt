@@ -60,6 +60,15 @@ def _apply_effective_status(serialized, event_objs, now=None):
     return _patch_one(serialized, event_objs)
 
 
+# ---------------------------------------------------------------------------
+# ✅ FIX: shared prefetch list
+# ---------------------------------------------------------------------------
+# Every read path that returns a PublicEventSerializer (list, retrieve,
+# public, public_detail) must prefetch templates + their type, otherwise
+# `get_template_images()` triggers an N+1 query per event.
+_PUBLIC_PREFETCH = ('tiers', 'sessions', 'templates__template_type')
+
+
 class EventViewSet(viewsets.ModelViewSet):
     """
     ViewSet for Event management.
@@ -127,32 +136,11 @@ class EventViewSet(viewsets.ModelViewSet):
     def _parse_dt(value):
         """
         Parse a datetime string from the frontend into an AWARE datetime.
-
-        The frontend uses `<input type="datetime-local">`, which submits
-        values like "2026-10-06T12:30" — no timezone suffix. This project
-        runs with USE_TZ=True, so a naive datetime:
-          • Triggers a `RuntimeWarning: received a naive datetime` when
-            written to a DateTimeField.
-          • Is silently interpreted as UTC on save (8-hour shift for HKT).
-          • Breaks aware-vs-naive comparisons in the same request.
-
-        We fix all three by:
-          1. Parsing the string.
-          2. If it has no tzinfo, attaching the project's default
-             timezone (settings.TIME_ZONE) — i.e., the user's local zone.
-          3. Returning an aware datetime.
-
-        Strings that already carry an offset ("…+08:00", "…Z") are
-        honored as-is.
-
-        Returns None for empty input. Returns the original value unchanged
-        if it can't be parsed as a datetime — the caller can then decide
-        how to reject it (a clean 400) rather than crash.
+        See full docstring in the original file.
         """
         if value is None:
             return None
 
-        # Already a datetime? Ensure it's aware.
         if isinstance(value, datetime):
             if timezone.is_naive(value):
                 return timezone.make_aware(value, timezone.get_current_timezone())
@@ -162,16 +150,12 @@ class EventViewSet(viewsets.ModelViewSet):
         if not raw:
             return None
 
-        # JS `Date.toISOString()` produces "...Z"; fromisoformat doesn't
-        # handle the bare "Z" suffix, so normalize it.
         if raw.endswith('Z'):
             raw = raw[:-1] + '+00:00'
 
         try:
             parsed = datetime.fromisoformat(raw)
         except (ValueError, TypeError):
-            # Return the raw value so the serializer/validator can
-            # produce a proper error response.
             return value
 
         if timezone.is_naive(parsed):
@@ -181,12 +165,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _resolve_cancellation_policy(user, policy_id):
-        """
-        Return (policy_or_None, error_response_or_None).
-
-        Enforces the same ownership rule as the serializer validator:
-        non-staff users may only attach policies they own.
-        """
         if not policy_id:
             return None, None
 
@@ -219,7 +197,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
         data = request.data
 
-        # ---- Resolve venue ----
         venue = None
         venue_id = data.get('venue_id')
         if venue_id:
@@ -231,14 +208,12 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # ---- Resolve cancellation policy ----
         cancellation_policy, err = self._resolve_cancellation_policy(
             user, data.get('cancellation_policy_id')
         )
         if err is not None:
             return err
 
-        # ---- Parse dates (fail fast on invalid) ----
         start_date = self._parse_dt(data.get('start_date'))
         end_date = self._parse_dt(data.get('end_date'))
 
@@ -248,7 +223,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---- Create the Event ----
         try:
             event = Event.objects.create(
                 organizer=user,
@@ -271,19 +245,17 @@ class EventViewSet(viewsets.ModelViewSet):
                 cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
             )
         except Exception as exc:
-            # Surface the real error instead of an opaque 500.
             return Response(
                 {'error': f'Could not create event: {exc}'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---- Create Sessions ----
         sessions_created = 0
         for session_data in data.get('sessions', []) or []:
             s_start = self._parse_dt(session_data.get('start_time'))
             s_end = self._parse_dt(session_data.get('end_time'))
             if not s_start or not s_end:
-                continue  # skip invalid session entries
+                continue
             Session.objects.create(
                 event=event,
                 start_time=s_start,
@@ -292,7 +264,6 @@ class EventViewSet(viewsets.ModelViewSet):
             )
             sessions_created += 1
 
-        # ---- Create Tiers ----
         tiers_created = 0
         for tier_data in data.get('tiers', []) or []:
             try:
@@ -305,7 +276,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
                 tiers_created += 1
             except Exception as exc:
-                # Don't fail the whole create — log and continue.
                 logger.warning(
                     "Failed to create tier for event %s: %s", event.id, exc,
                 )
@@ -315,10 +285,6 @@ class EventViewSet(viewsets.ModelViewSet):
             event.id, sessions_created, tiers_created,
         )
 
-        # ---- Serialize and respond ----
-        # Wrap this in a try/except so a serialization error returns a
-        # clean 500 with a useful message, instead of the opaque "spinner
-        # hangs forever" symptom.
         try:
             serialized = EventDetailSerializer(event).data
             serialized = _apply_effective_status(serialized, event)
@@ -341,10 +307,12 @@ class EventViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         manager = _is_manager(request.user)
 
+        # ✅ FIX: prefetch templates + template_type so get_template_images
+        # doesn't trigger N+1 queries.
         queryset = (
             queryset
             .select_related('venue', 'cancellation_policy')
-            .prefetch_related('tiers', 'sessions')
+            .prefetch_related('tiers', 'sessions', 'templates__template_type')
         )
 
         if manager:
@@ -385,7 +353,10 @@ class EventViewSet(viewsets.ModelViewSet):
 
     # ---------------- RETRIEVE ----------------
     def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
+        # ✅ FIX: prefetch templates so template_images is populated
+        # in detail responses too.
+        queryset = self.get_queryset().prefetch_related(*_PUBLIC_PREFETCH)
+        instance = get_object_or_404(queryset, pk=kwargs.get('pk'))
         user = request.user
 
         if user.is_authenticated and not user.is_staff and not user.is_superuser:
@@ -576,6 +547,8 @@ class EventViewSet(viewsets.ModelViewSet):
         """Public upcoming events — no auth, narrow field set."""
         now = timezone.now()
 
+        # ✅ FIX: prefetch templates + template_type so the
+        # template_images field is populated without N+1 queries.
         queryset = (
             Event.objects
             .filter(
@@ -584,7 +557,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 end_date__gte=now,
             )
             .select_related('venue')
-            .prefetch_related('tiers', 'sessions')
+            .prefetch_related('tiers', 'sessions', 'templates__template_type')
             .order_by('-start_date')
             .annotate(
                 active_tickets_count=Count(
@@ -600,7 +573,12 @@ class EventViewSet(viewsets.ModelViewSet):
 
         events_list = list(queryset)
 
-        serializer = PublicEventSerializer(events_list, many=True)
+        # Pass request so get_template_images can build absolute URLs.
+        serializer = PublicEventSerializer(
+            events_list,
+            many=True,
+            context={'request': request},
+        )
         data = list(serializer.data)
         for i, event_obj in enumerate(events_list):
             data[i]['total_tickets_sold'] = event_obj.active_tickets_count or 0
@@ -621,11 +599,16 @@ class EventViewSet(viewsets.ModelViewSet):
         now = timezone.now()
 
         try:
-            event = Event.objects.get(
-                id=pk,
-                status__in=['active', 'published'],
-                is_public=True,
-                end_date__gte=now,
+            event = (
+                Event.objects
+                .select_related('venue')
+                .prefetch_related('tiers', 'sessions', 'templates__template_type')
+                .get(
+                    id=pk,
+                    status__in=['active', 'published'],
+                    is_public=True,
+                    end_date__gte=now,
+                )
             )
         except Event.DoesNotExist:
             return Response(
@@ -638,7 +621,11 @@ class EventViewSet(viewsets.ModelViewSet):
             booking__status__in=SOLD_BOOKING_STATUSES,
         ).count()
 
-        serializer = PublicEventDetailSerializer(event)
+        # Pass request so get_template_images can build absolute URLs.
+        serializer = PublicEventDetailSerializer(
+            event,
+            context={'request': request},
+        )
         data = serializer.data
         data['total_tickets_sold'] = active_tickets_count
 

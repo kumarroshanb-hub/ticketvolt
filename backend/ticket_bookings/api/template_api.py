@@ -1,24 +1,21 @@
 # backend/ticket_bookings/api/template_api.py
 #
 # ============================================================================
-# AUTHORIZATION MODEL (do not weaken without review)
-# ----------------------------------------------------------------------------
+# AUTHORIZATION MODEL
+# ============================================================================
 # EventTemplateViewSet is scoped on event ownership:
-#
 #     • Admin / superuser → every template
 #     • Organizer         → only templates for events they organize
-#     • Anyone else       → nothing (their scoped queryset is empty)
+#     • Anyone else       → nothing
 #
-# The scoping lives in `get_queryset()`. Everything that calls
-# `self.get_object()` — retrieve, update, partial_update, destroy,
-# set_default — is therefore automatically protected.
+# ============================================================================
+# IMAGE SPECIFICATION (v3)
+# ----------------------------------------------------------------------------
+# Every template type has a mandatory image specification. The `upload`
+# action enforces it server-side via Pillow BEFORE any file is written.
 #
-# `upload` and `by_type` fetch the Event directly (not via get_object), so
-# they apply `_user_can_manage_event()` explicitly.
-#
-# TemplateTypeViewSet is intentionally NOT scoped: it serves a fixed list
-# of type slugs from `ticket_bookings.constants`, identical for every user.
-# Scoping it would break the upload dialog without adding security.
+# The SPEC table is the single source of truth. Edit ONLY this table if
+# you need to relax or tighten a constraint — no logic changes required.
 # ============================================================================
 
 from rest_framework import viewsets, status, permissions
@@ -26,6 +23,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from PIL import Image as PILImage, UnidentifiedImageError
 from ..models import EventTemplate, EventTemplateType, Event
 from ..constants import TemplateTypes, TEMPLATE_TYPE_MAP
 from .serializers import EventTemplateSerializer, EventTemplateTypeSerializer
@@ -35,51 +33,235 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# IMAGE SPECIFICATION TABLE
+# ----------------------------------------------------------------------------
+# Keys match TemplateTypes.slugs from ticket_bookings.constants.
+# ============================================================================
+IMAGE_SPECS = {
+    'announcement': {
+        'aspect_ratio': 16 / 9,                # 1920/1080
+        'ratio_tolerance': 0.02,               # ±2% (strict, per spec)
+        'min_width': 1920,
+        'min_height': 1080,
+        'max_width': 1920,                     # exactly 1920×1080 required
+        'max_height': 1080,
+        'formats': ['image/png'],              # PNG only, per spec
+        'max_bytes': 5 * 1024 * 1024,          # < 5 MB
+        'hint': (
+            'PNG format, exactly 1920×1080 px (16:9 landscape), under 5 MB. '
+            'Keep text and logos within the centre 70% so they survive '
+            'any banner crop.'
+        ),
+    },
+    'ticket': {
+        'aspect_ratio': 4 / 1,                 # 550/138 ≈ 3.985 — 4:1 target
+        'ratio_tolerance': 0.05,               # ±5% covers the 550×138 ratio
+        'min_width': 550,
+        'min_height': 138,
+        'max_width': 1100,                     # 2× the base size for high-DPI
+        'max_height': 276,
+        'formats': ['image/png'],              # PNG only, per spec
+        'max_bytes': 5 * 1024 * 1024,          # < 5 MB
+        'hint': (
+            'PNG format, 550×138 px base (4:1 landscape), under 5 MB. '
+            'This is the wide-stub ticket layout — it must preserve the '
+            'Ticket 1 arrangement, title, logo, QR code area, and '
+            'admission details for the PDF renderer.'
+        ),
+    },
+    'flyer': {
+        'aspect_ratio': 3 / 4,
+        'ratio_tolerance': 0.10,
+        'min_width': 1200,
+        'min_height': 1600,
+        'formats': ['image/jpeg', 'image/jpg', 'image/png'],
+        'max_bytes': 5 * 1024 * 1024,
+        'hint': 'Portrait poster. Recommended: 1800×2400 px (3:4).',
+    },
+    'social': {
+        'aspect_ratio': 1 / 1,
+        'ratio_tolerance': 0.05,
+        'min_width': 1080,
+        'min_height': 1080,
+        'formats': ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+        'max_bytes': 5 * 1024 * 1024,
+        'hint': (
+            'Square post. Recommended: 1080×1080 px (1:1). '
+            'Keep the subject centred — Instagram/WhatsApp crop edges.'
+        ),
+    },
+    'invite': {
+        'aspect_ratio': 4 / 3,
+        'ratio_tolerance': 0.10,
+        'min_width': 1200,
+        'min_height': 900,
+        'formats': ['image/jpeg', 'image/jpg', 'image/png'],
+        'max_bytes': 5 * 1024 * 1024,
+        'hint': 'Landscape invitation. Recommended: 1600×1200 px (4:3).',
+    },
+    'certificate': {
+        'aspect_ratio': 297 / 210,
+        'ratio_tolerance': 0.05,
+        'min_width': 2970,
+        'min_height': 2100,
+        'formats': ['image/png', 'image/jpeg'],
+        'max_bytes': 5 * 1024 * 1024,
+        'hint': 'A4 landscape certificate. Recommended: 2970×2100 px.',
+    },
+}
+
+# Absolute hard cap — enforced for every type as a defence in depth.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
+
+
+# ============================================================================
 # Helpers
 # ============================================================================
 def _user_can_manage_event(user, event) -> bool:
-    """
-    Central ownership rule for anything scoped to an event.
-
-      • Staff / superuser → always allowed
-      • Organizer         → only their own events
-      • Anyone else       → denied
-
-    This mirrors the rule enforced by EventViewSet and BookingViewSet, so
-    the "who can touch this event" answer is identical across the API.
-    """
     if not user or not user.is_authenticated:
         return False
     if user.is_staff or user.is_superuser:
         return True
     if event is None:
         return False
-
-    # Prefer direct FK comparison — no extra query.
     organizer_id = getattr(event, 'organizer_id', None)
     if organizer_id is not None:
         return organizer_id == user.id
-
-    # Fallback: object may not have organizer_id cached.
     return getattr(event, 'organizer', None) == user
+
+
+def _validate_image_spec(image_file, template_type_slug):
+    """
+    Validate an uploaded image against the spec for `template_type_slug`.
+
+    Returns (ok: bool, error_message: str | None, details: dict | None).
+
+    Enforces:
+      1. MIME type is in the spec's allowed format list.
+      2. File is a decodable image (Pillow).
+      3. Dimensions are >= min_width/min_height.
+      4. Dimensions are <= max_width/max_height (when set).
+      5. Aspect ratio within tolerance.
+      6. File size <= spec's max_bytes (if defined; else global cap).
+
+    Resets the file cursor to 0 on return so the storage layer can still
+    consume the stream after successful validation.
+    """
+    spec = IMAGE_SPECS.get(template_type_slug)
+    if not spec:
+        return True, None, None
+
+    # ---- 1. MIME type ----
+    if image_file.content_type not in spec['formats']:
+        return (
+            False,
+            (
+                f'Invalid image format for {template_type_slug}. '
+                f'Allowed: {", ".join(spec["formats"])}.'
+            ),
+            None,
+        )
+
+    # ---- 6. File size (per-type cap first, then global) ----
+    per_type_max = spec.get('max_bytes') or MAX_UPLOAD_BYTES
+    if image_file.size > per_type_max:
+        return (
+            False,
+            (
+                f'File is too large for {template_type_slug}. '
+                f'Max allowed: {per_type_max // (1024 * 1024)} MB. '
+                f'Got {round(image_file.size / (1024 * 1024), 2)} MB.'
+            ),
+            {'size_bytes': image_file.size, 'max_bytes': per_type_max},
+        )
+
+    # ---- 2. Decodable image ----
+    try:
+        image_file.seek(0)
+        probe = PILImage.open(image_file)
+        probe.verify()
+        image_file.seek(0)
+        img = PILImage.open(image_file)
+        width, height = img.size
+    except (UnidentifiedImageError, OSError, Exception) as exc:
+        logger.warning(
+            "Image validation failed for %s (%s): %s",
+            template_type_slug, image_file.name, exc,
+        )
+        return (
+            False,
+            (
+                'Could not read the uploaded file as an image. '
+                'It may be corrupted or in an unsupported format.'
+            ),
+            None,
+        )
+    finally:
+        try:
+            image_file.seek(0)
+        except Exception:
+            pass
+
+    # ---- 3. Minimum dimensions ----
+    if width < spec['min_width'] or height < spec['min_height']:
+        return (
+            False,
+            (
+                f'Image is too small for {template_type_slug}. '
+                f'Got {width}×{height}; minimum is '
+                f'{spec["min_width"]}×{spec["min_height"]}. '
+                f'{spec["hint"]}'
+            ),
+            {'width': width, 'height': height},
+        )
+
+    # ---- 4. Maximum dimensions (only if set) ----
+    max_w = spec.get('max_width')
+    max_h = spec.get('max_height')
+    if (max_w and width > max_w) or (max_h and height > max_h):
+        return (
+            False,
+            (
+                f'Image is too large for {template_type_slug}. '
+                f'Got {width}×{height}; max is '
+                f'{max_w}×{max_h}. {spec["hint"]}'
+            ),
+            {'width': width, 'height': height},
+        )
+
+    # ---- 5. Aspect ratio ----
+    actual_ratio = width / height
+    target_ratio = spec['aspect_ratio']
+    deviation = abs(actual_ratio - target_ratio) / target_ratio
+
+    if deviation > spec['ratio_tolerance']:
+        return (
+            False,
+            (
+                f'Incorrect aspect ratio for {template_type_slug}. '
+                f'Got {width}×{height} (≈{actual_ratio:.2f}:1), '
+                f'expected ≈{target_ratio:.2f}:1 '
+                f'(±{int(spec["ratio_tolerance"] * 100)}%). '
+                f'{spec["hint"]}'
+            ),
+            {
+                'width': width,
+                'height': height,
+                'actual_ratio': round(actual_ratio, 3),
+                'target_ratio': round(target_ratio, 3),
+            },
+        )
+
+    return True, None, {'width': width, 'height': height}
 
 
 # ============================================================================
 # TemplateTypeViewSet
-# ----------------------------------------------------------------------------
-# NOTE: This viewset intentionally does NOT scope by user.
-# It serves a fixed, non-sensitive list of template-type slugs from
-# `ticket_bookings.constants.TemplateTypes`. Every authenticated user gets
-# the same list — there is nothing per-user to scope.
-#
-# Scoping this would break the "New Template" dropdown for organizers who
-# haven't created any events yet, without adding any security value.
 # ============================================================================
 class TemplateTypeViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def list(self, request):
-        """List all template types from constants."""
         types = TemplateTypes.get_all()
         data = [
             {
@@ -88,6 +270,7 @@ class TemplateTypeViewSet(viewsets.ViewSet):
                 'name': t['name'],
                 'icon': t['icon'],
                 'is_active': True,
+                'spec': IMAGE_SPECS.get(t['slug']),
             }
             for t in types
         ]
@@ -95,7 +278,6 @@ class TemplateTypeViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
     def choices(self, request):
-        """Template type choices for dropdowns."""
         types = TemplateTypes.get_all()
         data = [
             {'value': t['slug'], 'label': t['name'], 'icon': t['icon']}
@@ -108,54 +290,17 @@ class TemplateTypeViewSet(viewsets.ViewSet):
 # EventTemplateViewSet
 # ============================================================================
 class EventTemplateViewSet(viewsets.ModelViewSet):
-    """
-    CRUD for event templates.
-
-    Authorization model
-    -------------------
-    All actions are gated on event ownership:
-
-      • Admin / superuser → full access to every event's templates
-      • Organizer         → only templates for events they organize
-      • Regular user      → only templates for public/upcoming events they
-                            could theoretically view (read-only in practice,
-                            since they can't own an event)
-
-    The scoping lives in `get_queryset()`, which is called by:
-      - `list`, `retrieve`
-      - `get_object()` → `update`, `partial_update`, `destroy`
-      - every `@action(detail=True)` that calls `self.get_object()`
-
-    `upload` doesn't call `get_object()` — it looks up the Event directly —
-    so it applies the same rule explicitly.
-    """
     queryset = EventTemplate.objects.all()
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = EventTemplateSerializer
 
-    # ------------------------------------------------------------------
-    # Scoping — the SINGLE place ownership is enforced for all
-    # list/retrieve/update/destroy/set_default paths.
-    # ------------------------------------------------------------------
     def get_queryset(self):
-        """
-        Return only the templates the requesting user is allowed to see.
-
-        Filters from query params are layered on TOP of the scoped base
-        queryset, so a user can never widen their own visibility by
-        passing `?event_id=<someone-elses-event>`.
-        """
         user = self.request.user
         base = EventTemplate.objects.all()
 
-        # --- Ownership scoping ---
         if not (user.is_staff or user.is_superuser):
-            # Organizers (and anyone else) only see templates for events
-            # they organize. The `event__organizer=user` join handles both
-            # organizer users and the general case in one query.
             base = base.filter(event__organizer=user)
 
-        # --- Query-param filters (applied AFTER scoping) ---
         event_id = self.request.query_params.get('event_id')
         template_type = self.request.query_params.get('type')
 
@@ -166,17 +311,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
 
         return base.select_related('event', 'template_type')
 
-    # ------------------------------------------------------------------
-    # Boolean parser
-    # ------------------------------------------------------------------
     def _parse_boolean(self, value, default=False):
-        """
-        Parse a boolean from various wire formats. Multipart form-data and
-        JSON both deliver booleans as strings sometimes; this handles all
-        the common shapes without silently defaulting.
-
-        Kept identical to the original so no caller regresses.
-        """
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -187,16 +322,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             return bool(value)
         return default
 
-    # ------------------------------------------------------------------
-    # Template type getter / creator
-    # ------------------------------------------------------------------
     def _get_or_create_template_type(self, slug):
-        """
-        Resolve a template-type slug to a DB row, creating it from constants
-        if it doesn't exist yet.
-
-        Returns None if the slug isn't a valid type.
-        """
         if not TemplateTypes.is_valid(slug):
             return None
 
@@ -223,20 +349,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
     # ==================================================================
     @action(detail=False, methods=['post'])
     def upload(self, request):
-        """
-        POST /api/templates/upload/
-
-        Multipart form-data:
-          image            (file, required)
-          event_id         (uuid, required)
-          template_type_id (slug, required)
-          name             (str, optional)
-          description      (str, optional)
-          config           (json-ish, optional)
-          is_default       (bool-ish, optional)
-
-        Enforces event ownership before persisting anything.
-        """
         try:
             image_file = request.FILES.get('image')
             event_id = request.data.get('event_id')
@@ -315,9 +427,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # --- Enforce event ownership ---
-            # Staff/superusers can manage any event. Organizers can manage
-            # only their own events. Everyone else is denied outright.
             if not _user_can_manage_event(request.user, event):
                 logger.warning(
                     "🚫 Template upload denied: user=%s attempted to add a "
@@ -335,26 +444,39 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            # --- END ownership check ---
 
-            # ---------- Image validation ----------
-            valid_mimes = ['image/png', 'image/jpeg', 'image/jpg']
-            if image_file.content_type not in valid_mimes:
+            # ---------- Absolute hard size cap ----------
+            if image_file.size > MAX_UPLOAD_BYTES:
                 return Response(
                     {
                         'error': (
-                            f'Invalid image type. Supported: '
-                            f'{", ".join(valid_mimes)}'
+                            f'File size exceeds the maximum of '
+                            f'{MAX_UPLOAD_BYTES // (1024 * 1024)} MB.'
                         )
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if image_file.size > 5 * 1024 * 1024:
+            # ---------- Per-type image spec validation ----------
+            ok, spec_error, spec_details = _validate_image_spec(
+                image_file, template_type_slug,
+            )
+            if not ok:
                 return Response(
-                    {'error': 'Image size must be less than 5MB'},
+                    {
+                        'error': spec_error,
+                        'template_type': template_type_slug,
+                        'spec': IMAGE_SPECS.get(template_type_slug),
+                        'received': spec_details,
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+            # Guarantee the stream is at position 0 before storage writes.
+            try:
+                image_file.seek(0)
+            except Exception:
+                pass
 
             # ---------- Persist ----------
             with transaction.atomic():
@@ -370,7 +492,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 )
 
                 if is_default:
-                    # Only one default per (event, template_type).
                     EventTemplate.objects.filter(
                         event=event,
                         template_type=template_type,
@@ -389,9 +510,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             )
 
         except Exception:
-            # Log the full traceback server-side; never echo it to the
-            # client. An internal exception message can leak schema details,
-            # file paths, or third-party library versions.
             logger.exception("❌ Template upload error")
             return Response(
                 {'error': 'An unexpected error occurred while uploading.'},
@@ -403,15 +521,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
     # ==================================================================
     @action(detail=True, methods=['post'])
     def set_default(self, request, pk=None):
-        """
-        POST /api/templates/<pk>/set_default/
-
-        Marks this template as the default for its (event, template_type).
-
-        Ownership is enforced by `get_object()`, which uses the scoped
-        queryset — so a user cannot flip another organizer's template to
-        default by guessing its UUID.
-        """
         template = self.get_object()
 
         with transaction.atomic():
@@ -434,19 +543,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
     # ==================================================================
     @action(detail=False, methods=['get'])
     def by_type(self, request):
-        """
-        GET /api/templates/by_type/?event_id=<uuid>
-
-        Returns templates for an event, grouped by template-type name.
-
-        Ownership is enforced in TWO layers:
-          1. `self.get_queryset()` — the base queryset is already scoped to
-             the user's own events (or all events, for staff).
-          2. An explicit event-ownership check below — so that a regular
-             user passing someone else's `event_id` gets a 403 rather than
-             a silently-empty result. An empty result would be misleading
-             ("no templates") when the real answer is "not allowed".
-        """
         event_id = request.query_params.get('event_id')
 
         if not event_id:
@@ -455,7 +551,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---- Event lookup + ownership check ----
         try:
             event = Event.objects.select_related('organizer').get(id=event_id)
         except Event.DoesNotExist:
@@ -474,7 +569,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-        # ---- End ownership check ----
 
         queryset = (
             EventTemplate.objects
@@ -483,7 +577,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
         )
         serializer = EventTemplateSerializer(queryset, many=True)
 
-        # Group by template-type name
         grouped = {}
         for template in serializer.data:
             type_name = template.get(

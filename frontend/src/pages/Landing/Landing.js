@@ -365,6 +365,10 @@ const RefreshBtn = styled(Button)`
 const SectionWrapper = styled(Container)`
     padding-top: 60px;
     padding-bottom: 80px;
+    /* ✅ FIX: Stop scrolling slightly before the section to keep the 
+       floating search bar fully in view and prevent the title from 
+       feeling cramped at the top of the screen. */
+    scroll-margin-top: 80px;
 `;
 
 const SectionHeader = styled.div`

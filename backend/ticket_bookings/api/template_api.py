@@ -34,18 +34,15 @@ logger = logging.getLogger(__name__)
 
 # ============================================================================
 # IMAGE SPECIFICATION TABLE
-# ----------------------------------------------------------------------------
-# Keys match TemplateTypes.slugs from ticket_bookings.constants.
 # ============================================================================
 IMAGE_SPECS = {
     'announcement': {
-        'aspect_ratio': 16 / 9,                # 1920/1080
-        'ratio_tolerance': 0.15,               # ✅ Changed from 0.02 to 0.15 (allow wider variance)
-        'min_width': 1280,                     # ✅ Changed from 1920 to 1280
-        'min_height': 720,                     # ✅ Changed from 1080 to 720
-        # Removed max_width/max_height restrictions
-        'formats': ['image/png'],              
-        'max_bytes': 5 * 1024 * 1024,          
+        'aspect_ratio': 16 / 9,
+        'ratio_tolerance': 0.15,
+        'min_width': 1280,
+        'min_height': 720,
+        'formats': ['image/png'],
+        'max_bytes': 5 * 1024 * 1024,
         'hint': (
             'PNG format, 16:9 landscape (min 1280×720), under 5 MB. '
             'Keep text and logos within the centre 70% so they survive '
@@ -53,14 +50,14 @@ IMAGE_SPECS = {
         ),
     },
     'ticket': {
-        'aspect_ratio': 4 / 1,                 # 550/138 ≈ 3.985 — 4:1 target
-        'ratio_tolerance': 0.05,               # ±5% covers the 550×138 ratio
+        'aspect_ratio': 4 / 1,
+        'ratio_tolerance': 0.05,
         'min_width': 550,
         'min_height': 138,
-        'max_width': 1100,                     # 2× the base size for high-DPI
+        'max_width': 1100,
         'max_height': 276,
-        'formats': ['image/png'],              # PNG only, per spec
-        'max_bytes': 5 * 1024 * 1024,          # < 5 MB
+        'formats': ['image/png'],
+        'max_bytes': 5 * 1024 * 1024,
         'hint': (
             'PNG format, 550×138 px base (4:1 landscape), under 5 MB. '
             'This is the wide-stub ticket layout — it must preserve the '
@@ -109,8 +106,7 @@ IMAGE_SPECS = {
     },
 }
 
-# Absolute hard cap — enforced for every type as a defence in depth.
-MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 
 # ============================================================================
@@ -132,25 +128,12 @@ def _user_can_manage_event(user, event) -> bool:
 def _validate_image_spec(image_file, template_type_slug):
     """
     Validate an uploaded image against the spec for `template_type_slug`.
-
-    Returns (ok: bool, error_message: str | None, details: dict | None).
-
-    Enforces:
-      1. MIME type is in the spec's allowed format list.
-      2. File is a decodable image (Pillow).
-      3. Dimensions are >= min_width/min_height.
-      4. Dimensions are <= max_width/max_height (when set).
-      5. Aspect ratio within tolerance.
-      6. File size <= spec's max_bytes (if defined; else global cap).
-
-    Resets the file cursor to 0 on return so the storage layer can still
-    consume the stream after successful validation.
+    See original docstring for full behavior.
     """
     spec = IMAGE_SPECS.get(template_type_slug)
     if not spec:
         return True, None, None
 
-    # ---- 1. MIME type ----
     if image_file.content_type not in spec['formats']:
         return (
             False,
@@ -161,7 +144,6 @@ def _validate_image_spec(image_file, template_type_slug):
             None,
         )
 
-    # ---- 6. File size (per-type cap first, then global) ----
     per_type_max = spec.get('max_bytes') or MAX_UPLOAD_BYTES
     if image_file.size > per_type_max:
         return (
@@ -174,7 +156,6 @@ def _validate_image_spec(image_file, template_type_slug):
             {'size_bytes': image_file.size, 'max_bytes': per_type_max},
         )
 
-    # ---- 2. Decodable image ----
     try:
         image_file.seek(0)
         probe = PILImage.open(image_file)
@@ -201,7 +182,6 @@ def _validate_image_spec(image_file, template_type_slug):
         except Exception:
             pass
 
-    # ---- 3. Minimum dimensions ----
     if width < spec['min_width'] or height < spec['min_height']:
         return (
             False,
@@ -214,7 +194,6 @@ def _validate_image_spec(image_file, template_type_slug):
             {'width': width, 'height': height},
         )
 
-    # ---- 4. Maximum dimensions (only if set) ----
     max_w = spec.get('max_width')
     max_h = spec.get('max_height')
     if (max_w and width > max_w) or (max_h and height > max_h):
@@ -228,7 +207,6 @@ def _validate_image_spec(image_file, template_type_slug):
             {'width': width, 'height': height},
         )
 
-    # ---- 5. Aspect ratio ----
     actual_ratio = width / height
     target_ratio = spec['aspect_ratio']
     deviation = abs(actual_ratio - target_ratio) / target_ratio
@@ -367,7 +345,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 getattr(request.user, 'username', '?'),
             )
 
-            # ---------- Required-field checks ----------
             if not image_file:
                 return Response(
                     {'error': 'Image file is required'},
@@ -386,7 +363,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Template type validation ----------
             if not TemplateTypes.is_valid(template_type_slug):
                 valid_types = ', '.join(
                     t['slug'] for t in TemplateTypes.get_all()
@@ -415,7 +391,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Event lookup + ownership check ----------
             try:
                 event = Event.objects.select_related('organizer').get(
                     id=event_id,
@@ -444,7 +419,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            # ---------- Absolute hard size cap ----------
             if image_file.size > MAX_UPLOAD_BYTES:
                 return Response(
                     {
@@ -456,7 +430,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Per-type image spec validation ----------
             ok, spec_error, spec_details = _validate_image_spec(
                 image_file, template_type_slug,
             )
@@ -471,13 +444,11 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Guarantee the stream is at position 0 before storage writes.
             try:
                 image_file.seek(0)
             except Exception:
                 pass
 
-            # ---------- Persist ----------
             with transaction.atomic():
                 template = EventTemplate.objects.create(
                     event=event,
@@ -497,7 +468,11 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                         is_default=True,
                     ).exclude(id=template.id).update(is_default=False)
 
-            serializer = EventTemplateSerializer(template)
+            # ✅ FIX: pass the request so `image_url` is absolute.
+            serializer = EventTemplateSerializer(
+                template,
+                context={'request': request},
+            )
 
             return Response(
                 {
@@ -574,7 +549,12 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             .filter(event=event, is_active=True)
             .select_related('template_type')
         )
-        serializer = EventTemplateSerializer(queryset, many=True)
+        # ✅ FIX: pass request so image_url is absolute here too.
+        serializer = EventTemplateSerializer(
+            queryset,
+            many=True,
+            context={'request': request},
+        )
 
         grouped = {}
         for template in serializer.data:

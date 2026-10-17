@@ -1,12 +1,13 @@
 // frontend/src/components/Common/EventCard.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Card, CardContent, CardActions, Button, Chip, Box, Typography,
-    Collapse, CircularProgress,
+    Collapse, CircularProgress, Tooltip,
 } from '@mui/material';
 import {
     LocationOn, CalendarMonth, ShoppingCart, AccessTime,
     KeyboardArrowDown as ArrowDownIcon, KeyboardArrowUp as ArrowUpIcon,
+    EventSeat as SeatIcon,
 } from '@mui/icons-material';
 import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
@@ -51,6 +52,8 @@ const CardBody = styled(CardContent)`
     && {
         flex: 1;
         padding: 22px 22px 16px 22px;
+        display: flex;
+        flex-direction: column;
     }
 `;
 
@@ -96,24 +99,44 @@ const CategoryTag = styled.span`
 
 const InfoRow = styled.div`
     display: flex;
-    align-items: center;
+    align-items: flex-start; /* Align top for multi-line dates */
     gap: 10px;
     color: ${C.textSecondary};
     font-size: 13px;
     font-family: ${F.family};
-    margin-bottom: 8px;
+    margin-bottom: 10px;
 
     svg {
         font-size: 16px;
         color: ${C.textMuted};
         flex-shrink: 0;
+        margin-top: 2px; /* Optically align icon with text */
     }
 
     .text {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
         min-width: 0;
+        line-height: 1.4;
+    }
+`;
+
+const SessionList = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+
+    .session-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 500;
+        color: ${C.textPrimary};
+    }
+    
+    .session-more {
+        font-size: 11px;
+        color: ${C.primary};
+        font-weight: 600;
     }
 `;
 
@@ -123,7 +146,7 @@ const PriceRow = styled.div`
     justify-content: space-between;
     gap: 8px;
     padding-top: 14px;
-    margin-top: 14px;
+    margin-top: auto; /* Push to bottom of card body */
     border-top: 1px dashed ${C.borderLight};
 
     .from-label {
@@ -140,6 +163,9 @@ const PriceRow = styled.div`
         font-weight: 800;
         color: ${C.textPrimary};
         font-family: ${F.family};
+        display: flex;
+        align-items: center;
+        gap: 8px;
 
         .currency {
             font-size: 14px;
@@ -228,14 +254,18 @@ const BookButton = styled(Button)`
 `;
 
 // ---------- Helpers ----------
-const formatDateTime = (dateString) => {
-    if (!dateString) return { date: 'TBD', time: 'TBD' };
+const formatDate = (dateString) => {
+    if (!dateString) return 'TBD';
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) return { date: 'TBD', time: 'TBD' };
-    return {
-        date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-    };
+    if (isNaN(date.getTime())) return 'TBD';
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatTime = (dateString) => {
+    if (!dateString) return 'TBD';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'TBD';
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 };
 
 const getCategoryIcon = (category) => {
@@ -255,20 +285,55 @@ const EventCard = ({ event: initialEvent }) => {
 
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
-    const [loadingTiers, setLoadingTiers] = useState(false);
+    
+    // State to manage the auto-fetching of full event details
+    const [detailsLoading, setDetailsLoading] = useState(!initialEvent.tiers);
+    const [detailsLoaded, setDetailsLoaded] = useState(!!initialEvent.tiers);
 
-    const startDateTime = formatDateTime(event.start_date);
+    // Automatically fetch full details on mount so Price, Slots, and Tiers are ready
+    useEffect(() => {
+        let isMounted = true;
+        const fetchFullDetails = async () => {
+            if (detailsLoaded) return;
+            try {
+                const fullDetails = await eventService.getPublicEventDetails(initialEvent.id);
+                if (isMounted) {
+                    setEvent((prev) => ({ ...prev, ...fullDetails }));
+                    setDetailsLoaded(true);
+                }
+            } catch (err) {
+                console.error('Failed to load event details', err);
+            } finally {
+                if (isMounted) {
+                    setDetailsLoading(false);
+                }
+            }
+        };
+
+        fetchFullDetails();
+        return () => { isMounted = false; };
+    }, [initialEvent.id, detailsLoaded]);
+
     const isSoldOut = event.status === 'sold_out';
 
-    // Determine price & slots from available data
+    // Determine price & slots
     const tiers = event.tiers || [];
     const availableSlots = tiers.reduce((sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)), 0);
     const prices = tiers.map(t => parseFloat(t.price)).filter(p => !isNaN(p));
     const minPrice = prices.length ? Math.min(...prices) : null;
     const lowStock = availableSlots > 0 && availableSlots <= 10;
+    const isActuallySoldOut = isSoldOut || (detailsLoaded && tiers.length > 0 && availableSlots === 0);
+
+    // Determine sessions
+    const sessions = event.sessions || [];
+    // Fallback to the main event date if no specific sessions exist
+    const displaySessions = sessions.length > 0 
+        ? sessions 
+        : [{ start_time: event.start_date, end_time: event.end_date, capacity: event.total_capacity }];
     
-    // If no tiers loaded yet, we don't know true availability until clicked
-    const isActuallySoldOut = isSoldOut || (tiers.length > 0 && availableSlots === 0);
+    // Take up to 2 sessions to show on the card to keep it neat
+    const visibleSessions = displaySessions.slice(0, 2);
+    const remainingSessionsCount = displaySessions.length - visibleSessions.length;
 
     const handleBookNow = () => {
         const target = `/app/bookings/create?event=${event.id}`;
@@ -277,30 +342,6 @@ const EventCard = ({ event: initialEvent }) => {
             navigate('/login', { state: { from: target } });
         } else {
             navigate(target);
-        }
-    };
-
-    const toggleTiers = async (e) => {
-        e.stopPropagation();
-        // If we already have tiers, just toggle
-        if (tiers.length > 0) {
-            setTiersExpanded(!tiersExpanded);
-            return;
-        }
-
-        // Otherwise fetch full details from public endpoint
-        setTiersExpanded(true);
-        if (!event._tiersFetched) {
-            setLoadingTiers(true);
-            try {
-                const fullDetails = await eventService.getPublicEventDetails(event.id);
-                setEvent(prev => ({ ...prev, ...fullDetails, _tiersFetched: true }));
-            } catch (err) {
-                toast.error('Could not load tiers.');
-                setTiersExpanded(false);
-            } finally {
-                setLoadingTiers(false);
-            }
         }
     };
 
@@ -315,14 +356,32 @@ const EventCard = ({ event: initialEvent }) => {
                     </CategoryTag>
                 </TitleRow>
 
+                {/* Date & Slots Section */}
                 <InfoRow>
                     <CalendarMonth />
-                    <span className="text">{startDateTime.date}</span>
-                </InfoRow>
-
-                <InfoRow>
-                    <AccessTime />
-                    <span className="text">{startDateTime.time}</span>
+                    <div className="text">
+                        {displaySessions.length === 1 ? (
+                            <div style={{ fontWeight: 500, color: C.textPrimary }}>
+                                {formatDate(displaySessions[0].start_time || event.start_date)}
+                            </div>
+                        ) : (
+                            <SessionList>
+                                {visibleSessions.map((sess, idx) => (
+                                    <div key={idx} className="session-item">
+                                        <span>{formatDate(sess.start_time)}</span>
+                                        <span style={{ color: C.textMuted, fontSize: '11px', fontWeight: 400 }}>
+                                            at {formatTime(sess.start_time)}
+                                        </span>
+                                    </div>
+                                ))}
+                                {remainingSessionsCount > 0 && (
+                                    <div className="session-more">
+                                        +{remainingSessionsCount} more date{remainingSessionsCount > 1 ? 's' : ''}
+                                    </div>
+                                )}
+                            </SessionList>
+                        )}
+                    </div>
                 </InfoRow>
 
                 <InfoRow>
@@ -337,31 +396,37 @@ const EventCard = ({ event: initialEvent }) => {
                     <div>
                         <div className="from-label">From</div>
                         <div className="price">
-                            <span className="currency">₹</span>
-                            {minPrice !== null ? minPrice.toLocaleString() : '—'}
+                            {detailsLoading ? (
+                                <CircularProgress size={16} sx={{ color: C.textMuted }} />
+                            ) : (
+                                <>
+                                    <span className="currency">₹</span>
+                                    {minPrice !== null ? minPrice.toLocaleString() : '—'}
+                                </>
+                            )}
                         </div>
                     </div>
                     {isActuallySoldOut ? (
                         <span className="slots" style={{ color: C.error }}>Sold out</span>
-                    ) : tiers.length > 0 ? (
+                    ) : availableSlots > 0 ? (
                         <span className="slots">
                             {lowStock ? `Only ${availableSlots} left` : `${availableSlots} seats`}
                         </span>
                     ) : (
-                        <span className="slots" style={{ color: C.textMuted }}>Check availability</span>
+                        !detailsLoading && <span className="slots" style={{ color: C.textMuted }}>Check availability</span>
                     )}
                 </PriceRow>
 
-                {/* Tiers Toggle & List */}
+                {/* Tiers Section */}
                 <Box sx={{ mt: 1 }}>
-                    <TiersToggle onClick={toggleTiers}>
+                    <TiersToggle onClick={() => setTiersExpanded(!tiersExpanded)}>
                         {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
                         {tiersExpanded ? 'Hide Ticket Tiers' : 'View Ticket Tiers'}
                     </TiersToggle>
                     
                     <Collapse in={tiersExpanded}>
                         <Box sx={{ mt: 1, p: 1.5, bgcolor: C.bgPrimary, borderRadius: 2 }}>
-                            {loadingTiers ? (
+                            {detailsLoading ? (
                                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                                     <CircularProgress size={20} sx={{ color: C.primary }} />
                                 </Box>
@@ -381,7 +446,7 @@ const EventCard = ({ event: initialEvent }) => {
                                 })
                             ) : (
                                 <Typography variant="body2" sx={{ color: C.textSecondary, textAlign: 'center', fontSize: '12px' }}>
-                                    No tiers configured for this event yet.
+                                    No tiers configured.
                                 </Typography>
                             )}
                         </Box>
@@ -397,7 +462,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </BookButton>
+                </Button>
             </StyledActions>
         </StyledCard>
     );

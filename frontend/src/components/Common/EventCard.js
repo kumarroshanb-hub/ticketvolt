@@ -18,7 +18,6 @@ import { theme as appTheme } from '../../theme/tokens';
 const C = appTheme.colors;
 const F = appTheme.fonts;
 
-// ---------- Styled wrappers ----------
 const StyledCard = styled(Card)`
     && {
         background: ${C.bgCard};
@@ -39,12 +38,11 @@ const StyledCard = styled(Card)`
     }
 `;
 
-// ✅ UPDATED: Uses <img> instead of background-image for better error handling
 const CardImageBanner = styled.div`
     width: 100%;
     height: 160px;
     position: relative;
-    background-color: ${C.bgInput}; /* shows if image fails */
+    background-color: ${C.bgInput};
 
     img {
         width: 100%;
@@ -278,7 +276,6 @@ const BookButton = styled(Button)`
     }
 `;
 
-// ---------- Helpers ----------
 const formatDate = (dateString) => {
     if (!dateString) return 'TBD';
     const date = new Date(dateString);
@@ -303,7 +300,6 @@ const getCategoryIcon = (category) => {
     return icons[(category || 'other').toLowerCase()] || '📌';
 };
 
-// ---------- Component ----------
 const EventCard = ({ event: initialEvent }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
@@ -311,8 +307,6 @@ const EventCard = ({ event: initialEvent }) => {
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
     const [loadingDetails, setLoadingDetails] = useState(!initialEvent.tiers);
-    
-    // ✅ State to track image load failures
     const [imageFailed, setImageFailed] = useState(false);
 
     useEffect(() => {
@@ -372,7 +366,6 @@ const EventCard = ({ event: initialEvent }) => {
         }
     };
 
-    // ✅ Only show image if URL exists AND it hasn't failed to load yet
     const showImage = announcementImage && !imageFailed;
 
     return (
@@ -383,7 +376,6 @@ const EventCard = ({ event: initialEvent }) => {
                         src={announcementImage}
                         alt={event.title}
                         onError={(e) => {
-                            // Logs the exact URL that failed
                             console.error('❌ Image failed to load:', announcementImage);
                             setImageFailed(true);
                         }}
@@ -392,7 +384,6 @@ const EventCard = ({ event: initialEvent }) => {
             ) : (
                 <TopAccent $isSoldOut={isActuallySoldOut} />
             )}
-            
             <CardBody>
                 <TitleRow>
                     <EventTitle>{event.title}</EventTitle>
@@ -511,7 +502,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </Button>
+                </BookButton>
             </StyledActions>
         </StyledCard>
     );

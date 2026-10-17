@@ -9,13 +9,18 @@
 #     • Anyone else       → nothing
 #
 # ============================================================================
-# IMAGE SPECIFICATION (v3)
+# IMAGE SPECIFICATION (v4 — relaxed)
 # ----------------------------------------------------------------------------
-# Every template type has a mandatory image specification. The `upload`
-# action enforces it server-side via Pillow BEFORE any file is written.
+# Uploads are now PERMISSIVE by default. Only two hard gates remain:
+#   1. The file must be a decodable image (Pillow can open it).
+#   2. The file must be <= MAX_UPLOAD_BYTES (8 MB absolute cap).
 #
-# The SPEC table is the single source of truth. Edit ONLY this table if
-# you need to relax or tighten a constraint — no logic changes required.
+# Everything else — MIME type, minimum dimensions, maximum dimensions,
+# aspect ratio — is a SOFT WARNING. The image is still saved. Warnings
+# are returned in the response so the UI can show them if it wants.
+#
+# To re-enable a hard gate for a specific template type, set the
+# corresponding `*_hard` flag to True in IMAGE_SPECS below.
 # ============================================================================
 
 from rest_framework import viewsets, status, permissions
@@ -33,80 +38,138 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# IMAGE SPECIFICATION TABLE
+# IMAGE SPECIFICATION TABLE (v4)
+# ----------------------------------------------------------------------------
+# Each entry:
+#   • formats               — allowed MIME types (soft by default)
+#   • formats_hard          — if True, wrong MIME is a hard rejection
+#   • min_width/min_height  — soft warnings unless *_hard is True
+#   • max_width/max_height  — soft warnings unless *_hard is True
+#   • aspect_ratio          — soft warnings unless *_hard is True
+#   • ratio_tolerance       — ±% allowed around aspect_ratio
+#   • max_bytes             — absolute per-type cap (always hard)
+#   • hint                  — UI copy for the admin upload form
+#
+# Defaults are deliberately permissive: NO format is hard-rejected,
+# and dimensions/ratio only produce warnings. This is intentional —
+# organizers were being blocked from uploading perfectly usable
+# artwork because it wasn't exactly 16:9 PNG, etc.
 # ============================================================================
 IMAGE_SPECS = {
     'announcement': {
         'aspect_ratio': 16 / 9,
-        'ratio_tolerance': 0.15,
-        'min_width': 1280,
-        'min_height': 720,
-        'formats': ['image/png'],
+        'ratio_tolerance': 0.35,                 # ±35% — much more lenient
+        'min_width': 600,                        # was 1280
+        'min_height': 340,                       # was 720
+        'formats': [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+            'image/webp',
+        ],
         'max_bytes': 5 * 1024 * 1024,
         'hint': (
-            'PNG format, 16:9 landscape (min 1280×720), under 5 MB. '
-            'Keep text and logos within the centre 70% so they survive '
-            'any banner crop.'
+            'Landscape banner recommended: ~1920×1080 (16:9), PNG or JPG, '
+            'under 5 MB. Other sizes still upload — they may be cropped.'
         ),
+        # All soft by default. Flip to True to enforce.
+        'formats_hard': False,
+        'dimensions_hard': False,
+        'ratio_hard': False,
     },
     'ticket': {
         'aspect_ratio': 4 / 1,
-        'ratio_tolerance': 0.05,
-        'min_width': 550,
-        'min_height': 138,
-        'max_width': 1100,
-        'max_height': 276,
-        'formats': ['image/png'],
+        'ratio_tolerance': 0.25,                 # was 0.05
+        'min_width': 400,                        # was 550
+        'min_height': 100,                       # was 138
+        'max_width': 2200,                       # was 1100 — 2× base
+        'max_height': 552,
+        'formats': [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+        ],
         'max_bytes': 5 * 1024 * 1024,
         'hint': (
-            'PNG format, 550×138 px base (4:1 landscape), under 5 MB. '
-            'This is the wide-stub ticket layout — it must preserve the '
-            'Ticket 1 arrangement, title, logo, QR code area, and '
-            'admission details for the PDF renderer.'
+            'Wide-stub ticket layout recommended: 550×138 (4:1), PNG, '
+            'under 5 MB. Other sizes still upload — text positions may shift.'
         ),
+        'formats_hard': False,
+        'dimensions_hard': False,
+        'ratio_hard': False,
     },
     'flyer': {
         'aspect_ratio': 3 / 4,
-        'ratio_tolerance': 0.10,
-        'min_width': 1200,
-        'min_height': 1600,
-        'formats': ['image/jpeg', 'image/jpg', 'image/png'],
+        'ratio_tolerance': 0.25,
+        'min_width': 600,
+        'min_height': 800,
+        'formats': [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+            'image/webp',
+        ],
         'max_bytes': 5 * 1024 * 1024,
-        'hint': 'Portrait poster. Recommended: 1800×2400 px (3:4).',
+        'hint': 'Portrait poster recommended: 1800×2400 (3:4).',
+        'formats_hard': False,
+        'dimensions_hard': False,
+        'ratio_hard': False,
     },
     'social': {
         'aspect_ratio': 1 / 1,
-        'ratio_tolerance': 0.05,
-        'min_width': 1080,
-        'min_height': 1080,
-        'formats': ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+        'ratio_tolerance': 0.25,
+        'min_width': 400,
+        'min_height': 400,
+        'formats': [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+            'image/webp',
+            'image/gif',
+        ],
         'max_bytes': 5 * 1024 * 1024,
-        'hint': (
-            'Square post. Recommended: 1080×1080 px (1:1). '
-            'Keep the subject centred — Instagram/WhatsApp crop edges.'
-        ),
+        'hint': 'Square post recommended: 1080×1080 (1:1).',
+        'formats_hard': False,
+        'dimensions_hard': False,
+        'ratio_hard': False,
     },
     'invite': {
         'aspect_ratio': 4 / 3,
-        'ratio_tolerance': 0.10,
-        'min_width': 1200,
-        'min_height': 900,
-        'formats': ['image/jpeg', 'image/jpg', 'image/png'],
+        'ratio_tolerance': 0.25,
+        'min_width': 600,
+        'min_height': 450,
+        'formats': [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+            'image/webp',
+        ],
         'max_bytes': 5 * 1024 * 1024,
-        'hint': 'Landscape invitation. Recommended: 1600×1200 px (4:3).',
+        'hint': 'Landscape invitation recommended: 1600×1200 (4:3).',
+        'formats_hard': False,
+        'dimensions_hard': False,
+        'ratio_hard': False,
     },
     'certificate': {
         'aspect_ratio': 297 / 210,
-        'ratio_tolerance': 0.05,
-        'min_width': 2970,
-        'min_height': 2100,
-        'formats': ['image/png', 'image/jpeg'],
+        'ratio_tolerance': 0.15,
+        'min_width': 1000,
+        'min_height': 700,
+        'formats': [
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+        ],
         'max_bytes': 5 * 1024 * 1024,
-        'hint': 'A4 landscape certificate. Recommended: 2970×2100 px.',
+        'hint': 'A4 landscape certificate recommended: 2970×2100.',
+        'formats_hard': False,
+        'dimensions_hard': False,
+        'ratio_hard': False,
     },
 }
 
-MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+# Absolute hard cap — enforced for every type as a defence in depth.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
 # ============================================================================
@@ -128,34 +191,71 @@ def _user_can_manage_event(user, event) -> bool:
 def _validate_image_spec(image_file, template_type_slug):
     """
     Validate an uploaded image against the spec for `template_type_slug`.
-    See original docstring for full behavior.
+
+    Returns (ok: bool, error_message: str | None, warnings: list[str]).
+
+    Hard gates (ALWAYS enforced — no spec can disable these):
+      1. File is decodable by Pillow.
+      2. File size <= MAX_UPLOAD_BYTES (8 MB).
+
+    Per-type hard gates (enabled via `*_hard` flags in IMAGE_SPECS):
+      • `formats_hard`    — wrong MIME → reject
+      • `dimensions_hard` — below min / above max → reject
+      • `ratio_hard`      — aspect ratio outside tolerance → reject
+
+    Everything else produces a **warning string** that the caller
+    returns to the frontend. Warnings never block the upload.
+
+    The file cursor is rewound to 0 on return so storage can read it.
     """
     spec = IMAGE_SPECS.get(template_type_slug)
+    warnings: list[str] = []
+
+    # No spec → accept unconditionally (forward compatibility for
+    # new template types added later without a spec entry).
     if not spec:
-        return True, None, None
+        try:
+            image_file.seek(0)
+        except Exception:
+            pass
+        return True, None, warnings
 
-    if image_file.content_type not in spec['formats']:
+    # ------------------------------------------------------------
+    # HARD GATE 1 — absolute file size cap (8 MB, non-negotiable)
+    # ------------------------------------------------------------
+    if image_file.size > MAX_UPLOAD_BYTES:
         return (
             False,
             (
-                f'Invalid image format for {template_type_slug}. '
-                f'Allowed: {", ".join(spec["formats"])}.'
+                f'File is too large. Maximum allowed is '
+                f'{MAX_UPLOAD_BYTES // (1024 * 1024)} MB; '
+                f'got {round(image_file.size / (1024 * 1024), 2)} MB.'
             ),
-            None,
+            warnings,
         )
 
-    per_type_max = spec.get('max_bytes') or MAX_UPLOAD_BYTES
-    if image_file.size > per_type_max:
-        return (
-            False,
-            (
-                f'File is too large for {template_type_slug}. '
-                f'Max allowed: {per_type_max // (1024 * 1024)} MB. '
-                f'Got {round(image_file.size / (1024 * 1024), 2)} MB.'
-            ),
-            {'size_bytes': image_file.size, 'max_bytes': per_type_max},
-        )
+    # ------------------------------------------------------------
+    # MIME check — hard only if `formats_hard` is True
+    # ------------------------------------------------------------
+    allowed_formats = spec.get('formats') or []
+    content_type = (image_file.content_type or '').lower()
+    format_ok = (
+        not allowed_formats
+        or content_type in allowed_formats
+    )
 
+    if not format_ok:
+        msg = (
+            f'Unexpected file type "{content_type}". '
+            f'Allowed: {", ".join(allowed_formats)}.'
+        )
+        if spec.get('formats_hard'):
+            return False, msg, warnings
+        warnings.append(msg)
+
+    # ------------------------------------------------------------
+    # HARD GATE 2 — must decode as an image
+    # ------------------------------------------------------------
     try:
         image_file.seek(0)
         probe = PILImage.open(image_file)
@@ -174,7 +274,7 @@ def _validate_image_spec(image_file, template_type_slug):
                 'Could not read the uploaded file as an image. '
                 'It may be corrupted or in an unsupported format.'
             ),
-            None,
+            warnings,
         )
     finally:
         try:
@@ -182,54 +282,72 @@ def _validate_image_spec(image_file, template_type_slug):
         except Exception:
             pass
 
-    if width < spec['min_width'] or height < spec['min_height']:
-        return (
-            False,
-            (
-                f'Image is too small for {template_type_slug}. '
-                f'Got {width}×{height}; minimum is '
-                f'{spec["min_width"]}×{spec["min_height"]}. '
-                f'{spec["hint"]}'
-            ),
-            {'width': width, 'height': height},
+    # ------------------------------------------------------------
+    # Per-type file size cap — soft warning (global cap already passed)
+    # ------------------------------------------------------------
+    per_type_max = spec.get('max_bytes') or MAX_UPLOAD_BYTES
+    if image_file.size > per_type_max:
+        warnings.append(
+            f'File is larger than the recommended '
+            f'{per_type_max // (1024 * 1024)} MB for '
+            f'"{template_type_slug}" '
+            f'({round(image_file.size / (1024 * 1024), 2)} MB). '
+            f'It will still be uploaded.'
         )
 
+    # ------------------------------------------------------------
+    # Minimum dimensions — hard only if `dimensions_hard` is True
+    # ------------------------------------------------------------
+    min_w = spec.get('min_width') or 0
+    min_h = spec.get('min_height') or 0
+    if width < min_w or height < min_h:
+        msg = (
+            f'Image is smaller than recommended for '
+            f'"{template_type_slug}" ({width}×{height}; '
+            f'recommended ≥ {min_w}×{min_h}). '
+            f'{spec.get("hint", "")}'
+        ).strip()
+        if spec.get('dimensions_hard'):
+            return False, msg, warnings
+        warnings.append(msg)
+
+    # ------------------------------------------------------------
+    # Maximum dimensions — hard only if `dimensions_hard` is True
+    # ------------------------------------------------------------
     max_w = spec.get('max_width')
     max_h = spec.get('max_height')
     if (max_w and width > max_w) or (max_h and height > max_h):
-        return (
-            False,
-            (
-                f'Image is too large for {template_type_slug}. '
-                f'Got {width}×{height}; max is '
-                f'{max_w}×{max_h}. {spec["hint"]}'
-            ),
-            {'width': width, 'height': height},
-        )
+        msg = (
+            f'Image is larger than recommended for '
+            f'"{template_type_slug}" ({width}×{height}; '
+            f'recommended ≤ {max_w}×{max_h}). '
+            f'{spec.get("hint", "")}'
+        ).strip()
+        if spec.get('dimensions_hard'):
+            return False, msg, warnings
+        warnings.append(msg)
 
-    actual_ratio = width / height
-    target_ratio = spec['aspect_ratio']
-    deviation = abs(actual_ratio - target_ratio) / target_ratio
+    # ------------------------------------------------------------
+    # Aspect ratio — hard only if `ratio_hard` is True
+    # ------------------------------------------------------------
+    target_ratio = spec.get('aspect_ratio')
+    tolerance = spec.get('ratio_tolerance', 0.15)
+    if target_ratio and height > 0:
+        actual_ratio = width / height
+        deviation = abs(actual_ratio - target_ratio) / target_ratio
+        if deviation > tolerance:
+            msg = (
+                f'Aspect ratio for "{template_type_slug}" is '
+                f'{actual_ratio:.2f}:1 '
+                f'(target ≈{target_ratio:.2f}:1, '
+                f'±{int(tolerance * 100)}%). '
+                f'{spec.get("hint", "")}'
+            ).strip()
+            if spec.get('ratio_hard'):
+                return False, msg, warnings
+            warnings.append(msg)
 
-    if deviation > spec['ratio_tolerance']:
-        return (
-            False,
-            (
-                f'Incorrect aspect ratio for {template_type_slug}. '
-                f'Got {width}×{height} (≈{actual_ratio:.2f}:1), '
-                f'expected ≈{target_ratio:.2f}:1 '
-                f'(±{int(spec["ratio_tolerance"] * 100)}%). '
-                f'{spec["hint"]}'
-            ),
-            {
-                'width': width,
-                'height': height,
-                'actual_ratio': round(actual_ratio, 3),
-                'target_ratio': round(target_ratio, 3),
-            },
-        )
-
-    return True, None, {'width': width, 'height': height}
+    return True, None, warnings
 
 
 # ============================================================================
@@ -345,6 +463,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 getattr(request.user, 'username', '?'),
             )
 
+            # ---------- Required-field checks ----------
             if not image_file:
                 return Response(
                     {'error': 'Image file is required'},
@@ -363,6 +482,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            # ---------- Template type validation ----------
             if not TemplateTypes.is_valid(template_type_slug):
                 valid_types = ', '.join(
                     t['slug'] for t in TemplateTypes.get_all()
@@ -391,6 +511,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            # ---------- Event lookup + ownership check ----------
             try:
                 event = Event.objects.select_related('organizer').get(
                     id=event_id,
@@ -419,6 +540,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+            # ---------- Absolute hard size cap ----------
             if image_file.size > MAX_UPLOAD_BYTES:
                 return Response(
                     {
@@ -430,7 +552,8 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            ok, spec_error, spec_details = _validate_image_spec(
+            # ---------- Per-type validation (v4: warnings, not errors) ----------
+            ok, spec_error, spec_warnings = _validate_image_spec(
                 image_file, template_type_slug,
             )
             if not ok:
@@ -439,16 +562,24 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                         'error': spec_error,
                         'template_type': template_type_slug,
                         'spec': IMAGE_SPECS.get(template_type_slug),
-                        'received': spec_details,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            if spec_warnings:
+                logger.info(
+                    "⚠️ Template upload warnings for %s: %s",
+                    template_type_slug,
+                    ' | '.join(spec_warnings),
+                )
+
+            # Guarantee the stream is at position 0 before storage writes.
             try:
                 image_file.seek(0)
             except Exception:
                 pass
 
+            # ---------- Persist ----------
             with transaction.atomic():
                 template = EventTemplate.objects.create(
                     event=event,
@@ -468,7 +599,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                         is_default=True,
                     ).exclude(id=template.id).update(is_default=False)
 
-            # ✅ FIX: pass the request so `image_url` is absolute.
+            # Pass the request so `image_url` is absolute.
             serializer = EventTemplateSerializer(
                 template,
                 context={'request': request},
@@ -479,6 +610,8 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     'success': True,
                     'message': 'Template uploaded successfully',
                     'template': serializer.data,
+                    # ✅ NEW: non-blocking warnings the UI can display.
+                    'warnings': spec_warnings,
                 },
                 status=status.HTTP_201_CREATED,
             )
@@ -549,7 +682,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             .filter(event=event, is_active=True)
             .select_related('template_type')
         )
-        # ✅ FIX: pass request so image_url is absolute here too.
         serializer = EventTemplateSerializer(
             queryset,
             many=True,

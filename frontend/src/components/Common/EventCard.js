@@ -300,17 +300,7 @@ const getCategoryIcon = (category) => {
     return icons[(category || 'other').toLowerCase()] || '📌';
 };
 
-// ============================================================
-// ✅ FIX: pick the best template image
-// ------------------------------------------------------------
-// The backend now always returns a 'default' key (the event's
-// default template, or the first image found). We try that first,
-// then any specific template type, then the legacy `cover_image`.
-// This means an organizer who uploaded a `ticket` or `flyer`
-// template still gets a card banner — previously only an
-// `announcement` template would render, so most uploads were
-// silently dropped.
-// ============================================================
+// ✅ Picks the best template image regardless of which type was uploaded.
 const pickAnnouncementImage = (event) => {
     const images = event.template_images || {};
 
@@ -379,7 +369,6 @@ const EventCard = ({ event: initialEvent }) => {
     const visibleSessions = displaySessions.slice(0, 2);
     const remainingSessionsCount = displaySessions.length - visibleSessions.length;
 
-    // ✅ FIX: use the resilient picker instead of only `announcement`.
     const announcementImage = pickAnnouncementImage(event);
 
     const handleBookNow = () => {
@@ -401,7 +390,7 @@ const EventCard = ({ event: initialEvent }) => {
                     <img
                         src={announcementImage}
                         alt={event.title}
-                        onError={(e) => {
+                        onError={() => {
                             console.error('❌ Image failed to load:', announcementImage);
                             setImageFailed(true);
                         }}
@@ -528,7 +517,7 @@ const EventCard = ({ event: initialEvent }) => {
                     startIcon={<ShoppingCart />}
                 >
                     {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
-                </Button>
+                </BookButton>
             </StyledActions>
         </StyledCard>
     );

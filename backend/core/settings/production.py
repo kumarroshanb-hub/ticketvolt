@@ -171,6 +171,8 @@ _TIGRIS_STORAGE_OPTIONS = {
     'default_acl': 'public-read',
     'querystring_auth': False,
     'file_overwrite': False,
+    # ✅ NEW: override the URL that `image.url` generates
+    'custom_domain': f'{TIGRIS_BUCKET_NAME}.t3.tigrisfiles.io',
 }
 
 MEDIA_URL = f'https://{TIGRIS_BUCKET_NAME}.t3.storage.dev/'

@@ -5,24 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Your E-Ticket - TicketVault</title>
 </head>
-<body style="margin: 0; padding: 20px; background-color: #f4f4f4; font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+<body style="margin: 0; padding: 20px; background-color: #f4f4f4; font-family: 'Montserrat', Arial, sans-serif;">
 
-    <!-- Main Wrapper -->
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4;">
         <tr>
             <td align="center" style="padding: 20px 0;">
                 
-                <!-- Ticket Container -->
                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 520px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 0 auto; border: 1px solid #e5e5e5;">
                     
-                    <!-- 1. HEADER (TicketVault Branding) -->
+                    <!-- HEADER -->
                     <tr>
                         <td style="background-color: #333333; padding: 24px 30px;">
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td valign="middle">
                                         <div style="background-color: #ffffff; display: inline-block; padding: 8px 16px; border-radius: 8px;">
-                                            <span style="color: #333333; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; font-family: Arial, sans-serif;">
+                                            <span style="color: #333333; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">
                                                 Ti<span style="color: #FF2A2A;">K</span>etVault
                                             </span>
                                         </div>
@@ -30,11 +28,7 @@
                                     </td>
                                     <td align="right" valign="bottom">
                                         <div style="color: #ffffff; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
-                                            {% if tickets %}
-                                                {{ tickets.0.tier.name|default:"GENERAL ADMISSION"|upper }}
-                                            {% else %}
-                                                GENERAL ADMISSION
-                                            {% endif %}
+                                            {% if tickets %}{{ tickets.0.tier.name|default:"GENERAL ADMISSION"|upper }}{% else %}GENERAL ADMISSION{% endif %}
                                         </div>
                                     </td>
                                 </tr>
@@ -42,29 +36,26 @@
                         </td>
                     </tr>
 
-                    <!-- 2. QR SECTION (Light Gray) -->
+                    <!-- QR SECTION -->
                     <tr>
                         <td style="background-color: #f9f9f9; padding: 24px 28px; border-bottom: 2px dashed #e5e5e5;">
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
-                                    <!-- QR Image Box -->
-                                    <td width="120" valign="top" style="vertical-align: top;">
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e5e5; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                    <td width="120" valign="top">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e5e5;">
                                             <tr>
                                                 <td align="center" style="padding: 12px;">
                                                     {% if first_qr_base64 %}
                                                         <img src="{{ first_qr_base64 }}" alt="QR Code" width="110" height="110" style="display: block; border: 0;" />
                                                     {% else %}
-                                                        <div style="width: 110px; height: 110px; background-color: #f4f4f4; line-height: 110px; color: #999999; font-size: 10px; text-align: center; border-radius: 6px;">No QR</div>
+                                                        <div style="width: 110px; height: 110px; background-color: #f4f4f4; color: #999; font-size: 10px; line-height: 110px; text-align: center;">No QR</div>
                                                     {% endif %}
                                                 </td>
                                             </tr>
                                         </table>
                                     </td>
-                                    
-                                    <!-- QR Details -->
                                     <td valign="top" style="padding-left: 20px;">
-                                        <div style="font-size: 11px; color: #555555; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Online ticketing is completed</div>
+                                        <div style="font-size: 11px; color: #555555; font-weight: 700; text-transform: uppercase; margin-bottom: 4px;">Online ticketing is completed</div>
                                         <div style="font-size: 13px; color: #888888; margin-bottom: 16px;">Please show this QR code for admission</div>
                                         
                                         <table width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -79,7 +70,7 @@
                                             <tr>
                                                 <td>
                                                     <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Ticket Code</div>
-                                                    <div style="font-size: 14px; font-family: 'Courier New', Courier, monospace; font-weight: 700; color: #333333; margin-top: 2px; letter-spacing: 0.5px;">
+                                                    <div style="font-size: 14px; font-family: monospace; font-weight: 700; color: #333333; margin-top: 2px;">
                                                         {% if tickets %}{{ tickets.0.unique_code }}{% else %}{{ booking.booking_reference }}{% endif %}
                                                     </div>
                                                 </td>
@@ -91,7 +82,7 @@
                         </td>
                     </tr>
 
-                    <!-- 3. DETAILS SECTION (White) -->
+                    <!-- DETAILS SECTION -->
                     <tr>
                         <td style="padding: 24px 28px;">
                             <h2 style="font-size: 20px; font-weight: 700; color: #333333; margin: 0 0 6px 0;">{{ booking.event.title }}</h2>
@@ -106,12 +97,10 @@
 
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
-                                    <!-- ✅ Changed Label to Event Date -->
                                     <td width="50%" valign="top" style="padding-bottom: 20px;">
                                         <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">📅 Event Date</div>
                                         <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ display_date|date:"d M Y" }}</div>
                                     </td>
-                                    <!-- ✅ Changed Label to Allotted Slot -->
                                     <td width="50%" valign="top" style="padding-bottom: 20px;">
                                         <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">⏰ Allotted Slot</div>
                                         <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ display_date|time:"g:i A" }}</div>
@@ -124,14 +113,14 @@
                                     </td>
                                     <td width="50%" valign="top">
                                         <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">🎫 Booking Ref</div>
-                                        <div style="font-size: 15px; font-weight: 600; font-family: 'Courier New', Courier, monospace; color: #333333;">{{ booking.booking_reference }}</div>
+                                        <div style="font-size: 15px; font-weight: 600; font-family: monospace; color: #333333;">{{ booking.booking_reference }}</div>
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
 
-                    <!-- 4. INSTRUCTIONS (Amber) -->
+                    <!-- INSTRUCTIONS -->
                     <tr>
                         <td style="padding: 0 28px 24px 28px;">
                             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #fdf8e8; border-left: 4px solid #333333; border-radius: 8px;">
@@ -142,7 +131,6 @@
                                             <li>Show your tickets on your mobile device or print them</li>
                                             <li>Scan the QR code at the entrance for entry</li>
                                             <li>Each ticket is valid for one person only</li>
-                                            <li>Please arrive at least 15 minutes before the start time</li>
                                         </ul>
                                     </td>
                                 </tr>
@@ -150,21 +138,17 @@
                         </td>
                     </tr>
 
-                    <!-- 5. FOOTER TEXT -->
+                    <!-- FOOTER -->
                     <tr>
                         <td style="padding: 20px 28px; background-color: #f9f9f9; border-top: 1px solid #e5e5e5; text-align: center;">
-                            <p style="margin: 0; font-size: 12px; color: #888888;">This is an automated message. Please do not reply to this email.</p>
+                            <p style="margin: 0; font-size: 12px; color: #888888;">This is an automated message. Please do not reply.</p>
                             <p style="margin: 4px 0 0 0; font-size: 12px; color: #888888;">&copy; {% now "Y" %} TicketVault. All rights reserved.</p>
                         </td>
                     </tr>
 
                 </table>
-                <!-- End Ticket Container -->
-
             </td>
         </tr>
     </table>
-    <!-- End Main Wrapper -->
-
 </body>
 </html>

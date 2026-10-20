@@ -2544,18 +2544,42 @@ class BookingViewSet(viewsets.ModelViewSet):
         self, booking, ticket_buffers,
         format_names, is_combined, attachments, first_qr_base64,
     ):
-        """
-        Build the HTML body of the ticket email.
-        """
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
+        import base64
+        from io import BytesIO
+        import qrcode
+        from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
 
-        # ✅ FIX: Fetch tickets directly from the database.
-        # This ensures attendee names and ticket codes are populated
-        # even if PDF generation (ticket_buffers) failed.
+        # Fetch active tickets
         active_tickets = list(booking.tickets.filter(status='active'))
         
-        # ✅ Determine the correct date/time (Slot vs Event)
+        # ✅ FIX: Generate a SMALL QR code specifically for the email
+        valid_qr = ''
+        if active_tickets:
+            try:
+                # Use the first ticket for the inline QR
+                first_ticket = active_tickets[0]
+                payload = serialise_ticket_qr_payload(first_ticket)
+                
+                # box_size=3 keeps the base64 string small enough for Gmail
+                qr = qrcode.QRCode(
+                    version=None,
+                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=3,
+                    border=1,
+                )
+                qr.add_data(payload)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                
+                buffered = BytesIO()
+                img.save(buffered, format="PNG", optimize=True)
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                valid_qr = f"data:image/png;base64,{img_str}"
+            except Exception as exc:
+                logger.error(f"Failed to generate inline QR: {exc}")
+
         display_date = booking.session.start_time if booking.session else booking.event.start_date
 
         context = {
@@ -2565,11 +2589,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             'display_date': display_date, 
             'customer_name': booking.customer_name,
             'tickets': active_tickets,
-            'format_names': format_names or '',
-            'is_combined': bool(is_combined),
-            'attachments_count': len(attachments or []),
-            'first_qr_base64': first_qr_base64,
-            'frontend_url': settings.FRONTEND_URL,
+            'first_qr_base64': valid_qr,
         }
 
         html_content = render_to_string('emails/ticket_email.html', context)
@@ -2617,39 +2637,10 @@ class BookingViewSet(viewsets.ModelViewSet):
     def _send_tickets_email(self, booking, allocation_message=None):
         """
         Generate ticket files and email them to the customer.
-
-        Honours `event.ticket_format` ('pdf' | 'png' | 'both') and
-        `event.combine_tickets` (single combined file vs. one per
-        ticket) and `event.tickets_per_page` (for the combined file).
-
-        Returns {
-            success: bool,
-            message: str,
-            formats: str,          # e.g. 'PDF' or 'PDF+PNG'
-            combined: bool,
-            attachments: int,
-        }
-
-        Never raises.
-
-        ✅ FIX [P41]: the previous implementation passed buffers to the
-        combiner without rewinding them, then read the same buffers for
-        attachments. A failed combine aborted the whole email (the
-        exception was caught, but the return value was `success: False`
-        with no individual attachments). Now:
-
-          - Every buffer is seek(0)'d immediately before each consumer
-            call.
-          - Combined-file failures fall back to sending the individual
-            attachments for that format. One broken combine must NOT
-            cost the customer their tickets.
-          - The combined-file outcome is logged explicitly.
         """
         from django.core.mail import EmailMultiAlternatives
         import base64 as _base64
 
-        # Track every buffer we open so we can close them in `finally`,
-        # even if an exception is raised mid-flight.
         opened_buffers = []
         ticket_buffers = []
 
@@ -2695,49 +2686,22 @@ class BookingViewSet(viewsets.ModelViewSet):
             # ---- 1. Per-ticket files ----
             for ticket in tickets:
                 if want_pdf:
-                    pdf_buf = generator.generate_ticket_pdf(
-                        ticket, booking, event,
-                    )
+                    pdf_buf = generator.generate_ticket_pdf(ticket, booking, event)
                     if pdf_buf:
                         opened_buffers.append(pdf_buf)
-                        ticket_buffers.append({
-                            'ticket': ticket,
-                            'buffer': pdf_buf,
-                            'format': 'pdf',
-                        })
+                        ticket_buffers.append({'ticket': ticket, 'buffer': pdf_buf, 'format': 'pdf'})
 
                 if want_png:
-                    png_buf = generator.generate_ticket_png(
-                        ticket, booking, event,
-                    )
+                    png_buf = generator.generate_ticket_png(ticket, booking, event)
                     if png_buf:
                         opened_buffers.append(png_buf)
-                        ticket_buffers.append({
-                            'ticket': ticket,
-                            'buffer': png_buf,
-                            'format': 'png',
-                        })
+                        ticket_buffers.append({'ticket': ticket, 'buffer': png_buf, 'format': 'png'})
 
-            # ✅ FIX [P27-bug4]: `first_qr_base64` is a real QR image
-            # (not the whole ticket). Mail clients can render it inline.
-            # ✅ FIX: Ensure the string is a full Data URI for email rendering
-            # ✅ FIX: Get the saved QR code directly from the database ticket.
-            # Do not use QRCodeService here; the ticket already has a saved QR code.
+            # ✅ FIX: We no longer generate the QR code here.
+            # _build_email_html will handle the QR generation internally to guarantee it works.
             first_qr_base64 = ''
-            if tickets and tickets[0].qr_code:
-                raw_qr = tickets[0].qr_code
-                # Gmail requires the Data URI prefix to render inline images
-                if not raw_qr.startswith('data:image'):
-                    first_qr_base64 = f"data:image/png;base64,{raw_qr}"
-                else:
-                    first_qr_base64 = raw_qr
 
             # ---- 2. Combined file (only when combine=True) ----
-            #
-            # ✅ FIX [P41]: the combined file is a "nice to have". If it
-            # fails, we still want the individual attachments to be sent.
-            # Build the combined files first, and only skip the
-            # individual ones if EVERY combined file we tried succeeded.
             combined_attachments = []
             combined_failed = False
 
@@ -2750,26 +2714,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                         combine_input = []
                         for e in pdf_entries:
                             if not self._seek_buffer(e['buffer']):
-                                raise ValueError(
-                                    f"PDF buffer for ticket "
-                                    f"{e['ticket'].unique_code} is not readable"
-                                )
-                            combine_input.append({
-                                'buffer': e['buffer'],
-                                'ticket': e['ticket'],
-                            })
+                                raise ValueError(f"PDF buffer not readable")
+                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
 
-                        combined_pdf = combiner.combine_to_pdf(
-                            combine_input,
-                            booking,
-                            tickets_per_page=per_page,
-                        )
+                        combined_pdf = combiner.combine_to_pdf(combine_input, booking, tickets_per_page=per_page)
                     except Exception as exc:
-                        logger.error(
-                            "❌ combine_to_pdf failed for booking %s: %s "
-                            "— falling back to individual PDF attachments.",
-                            booking.booking_reference, exc,
-                        )
+                        logger.error(f"❌ combine_to_pdf failed: {exc}")
                         combined_pdf = None
                         combined_failed = True
 
@@ -2777,21 +2727,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                         opened_buffers.append(combined_pdf)
                         raw = self._read_buffer_bytes(combined_pdf)
                         if raw is not None:
-                            combined_attachments.append((
-                                f'tickets_{booking.booking_reference}.pdf',
-                                raw,
-                                'application/pdf',
-                            ))
-                            logger.info(
-                                "✅ Combined PDF built for booking %s (%d bytes)",
-                                booking.booking_reference, len(raw),
-                            )
+                            combined_attachments.append((f'tickets_{booking.booking_reference}.pdf', raw, 'application/pdf'))
                         else:
-                            logger.warning(
-                                "⚠️ Combined PDF for booking %s was "
-                                "generated but could not be read back.",
-                                booking.booking_reference,
-                            )
                             combined_failed = True
 
                 if png_entries:
@@ -2799,28 +2736,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                         combine_input = []
                         for e in png_entries:
                             if not self._seek_buffer(e['buffer']):
-                                raise ValueError(
-                                    f"PNG buffer for ticket "
-                                    f"{e['ticket'].unique_code} is not readable"
-                                )
-                            combine_input.append({
-                                'buffer': e['buffer'],
-                                'ticket': e['ticket'],
-                            })
+                                raise ValueError(f"PNG buffer not readable")
+                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
 
-                        combined_png = combiner.combine_to_paginated_image(
-                            combine_input,
-                            booking,
-                            tickets_per_page=per_page,
-                            output_format='PNG',
-                        )
+                        combined_png = combiner.combine_to_paginated_image(combine_input, booking, tickets_per_page=per_page, output_format='PNG')
                     except Exception as exc:
-                        logger.error(
-                            "❌ combine_to_paginated_image failed for "
-                            "booking %s: %s — falling back to individual "
-                            "PNG attachments.",
-                            booking.booking_reference, exc,
-                        )
+                        logger.error(f"❌ combine_to_paginated_image failed: {exc}")
                         combined_png = None
                         combined_failed = True
 
@@ -2828,82 +2749,29 @@ class BookingViewSet(viewsets.ModelViewSet):
                         opened_buffers.append(combined_png)
                         raw = self._read_buffer_bytes(combined_png)
                         if raw is not None:
-                            combined_attachments.append((
-                                f'tickets_{booking.booking_reference}.png',
-                                raw,
-                                'image/png',
-                            ))
-                            logger.info(
-                                "✅ Combined PNG built for booking %s (%d bytes)",
-                                booking.booking_reference, len(raw),
-                            )
+                            combined_attachments.append((f'tickets_{booking.booking_reference}.png', raw, 'image/png'))
                         else:
-                            logger.warning(
-                                "⚠️ Combined PNG for booking %s was "
-                                "generated but could not be read back.",
-                                booking.booking_reference,
-                            )
                             combined_failed = True
 
             # ---- 3. Decide which attachments to actually send ----
-            #
-            # If `combine` is requested AND we got at least one combined
-            # file AND none of the combine attempts failed, send ONLY
-            # the combined file(s). Otherwise send the individual files
-            # (so the customer still receives their tickets when the
-            # combiner is broken).
-            use_combined = (
-                combine
-                and bool(combined_attachments)
-                and not combined_failed
-            )
+            use_combined = combine and bool(combined_attachments) and not combined_failed
 
             if use_combined:
                 attachments.extend(combined_attachments)
-                logger.info(
-                    "📎 Sending combined file(s) only for booking %s",
-                    booking.booking_reference,
-                )
             else:
                 for entry in ticket_buffers:
                     ticket = entry['ticket']
                     raw = self._read_buffer_bytes(entry['buffer'])
                     if raw is None:
-                        logger.warning(
-                            "⚠️ Could not read buffer for ticket %s",
-                            ticket.unique_code,
-                        )
                         continue
 
                     if entry['format'] == 'pdf':
-                        attachments.append((
-                            f'ticket_{ticket.unique_code}.pdf',
-                            raw,
-                            'application/pdf',
-                        ))
+                        attachments.append((f'ticket_{ticket.unique_code}.pdf', raw, 'application/pdf'))
                     else:
-                        attachments.append((
-                            f'ticket_{ticket.unique_code}.png',
-                            raw,
-                            'image/png',
-                        ))
-
-                if combine and not use_combined:
-                    logger.warning(
-                        "⚠️ Combined file(s) requested but not sent for "
-                        "booking %s — sending individual attachments "
-                        "instead (%d files).",
-                        booking.booking_reference, len(attachments),
-                    )
+                        attachments.append((f'ticket_{ticket.unique_code}.png', raw, 'image/png'))
 
             if not attachments:
-                return {
-                    'success': False,
-                    'message': 'No ticket files could be generated.',
-                    'formats': '+'.join(format_names),
-                    'combined': use_combined,
-                    'attachments': 0,
-                }
+                logger.warning(f"No attachments generated for booking {booking.booking_reference}, sending email without them.")
 
             # ---- 4. Build the email body ----
             html_content, text_content = self._build_email_html(
@@ -2915,10 +2783,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 first_qr_base64,
             )
 
-            subject = (
-                f'🎫 Your Tickets for '
-                f'{booking.event.title if booking.event else "Event"}'
-            )
+            subject = f'🎫 Your Tickets for {booking.event.title if booking.event else "Event"}'
 
             email = EmailMultiAlternatives(
                 subject=subject,
@@ -2933,36 +2798,16 @@ class BookingViewSet(viewsets.ModelViewSet):
 
             sent_ok = _safe_send_email(email, context_label='tickets')
 
-            # ✅ FIX [P27-h4]: one line summary so operators can see the
-            # actual output without grepping individual logs.
-            logger.info(
-                "📧 tickets_email: booking=%s, pdf=%d, png=%d, "
-                "combined=%s, attachments=%d, sent=%s",
-                booking.booking_reference,
-                sum(1 for e in ticket_buffers if e['format'] == 'pdf'),
-                sum(1 for e in ticket_buffers if e['format'] == 'png'),
-                use_combined,
-                len(attachments),
-                sent_ok,
-            )
-
             return {
                 'success': sent_ok,
-                'message': (
-                    f'Tickets sent to {booking.customer_email}.'
-                    if sent_ok else
-                    'Ticket email failed (see logs).'
-                ),
+                'message': f'Tickets sent to {booking.customer_email}.' if sent_ok else 'Ticket email failed (see logs).',
                 'formats': '+'.join(format_names),
                 'combined': use_combined,
                 'attachments': len(attachments),
             }
 
         except Exception as exc:
-            logger.exception(
-                '❌ _send_tickets_email failed for %s: %s',
-                booking.booking_reference, exc,
-            )
+            logger.exception(f'❌ _send_tickets_email failed for {booking.booking_reference}: {exc}')
             return {
                 'success': False,
                 'message': f'Email error: {exc}',
@@ -2972,11 +2817,6 @@ class BookingViewSet(viewsets.ModelViewSet):
             }
 
         finally:
-            # ✅ FIX [P27-mem]: close every buffer we opened, regardless
-            # of whether the send succeeded. On CPython this is mostly
-            # belt-and-braces (BytesIO has no OS resource), but it
-            # ensures we never hold a reference to a buffer that a
-            # later code path might try to write to.
             for buf in opened_buffers:
                 try:
                     buf.close()

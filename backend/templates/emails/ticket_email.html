@@ -15,7 +15,7 @@
                 <!-- Ticket Container -->
                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 520px; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.08); margin: 0 auto;">
                     
-                    <!-- ===== 1. HEADER (Purple) ===== -->
+                    <!-- 1. HEADER (Purple) -->
                     <tr>
                         <td style="background-color: #6c3df4; background-image: linear-gradient(135deg, #7c3aed, #4f46e5); padding: 28px 30px;">
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -41,7 +41,7 @@
                         </td>
                     </tr>
 
-                    <!-- ===== 2. QR SECTION (Light Gray) ===== -->
+                    <!-- 2. QR SECTION (Light Gray) -->
                     <tr>
                         <td style="background-color: #f8fafc; padding: 24px 28px; border-bottom: 2px dashed #e2e8f0;">
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -52,7 +52,7 @@
                                             <tr>
                                                 <td align="center" style="padding: 12px;">
                                                     {% if first_qr_base64 %}
-                                                        <!-- The backend must provide a full data URI here (e.g. data:image/png;base64,...) -->
+                                                        <!-- The backend must provide a full data URI here -->
                                                         <img src="{{ first_qr_base64 }}" alt="QR Code" width="90" height="90" style="display: block; border: 0;" />
                                                     {% else %}
                                                         <!-- Fallback if QR missing -->
@@ -92,7 +92,7 @@
                         </td>
                     </tr>
 
-                    <!-- ===== 3. DETAILS SECTION (White) ===== -->
+                    <!-- 3. DETAILS SECTION (White) -->
                     <tr>
                         <td style="padding: 24px 28px;">
                             <h2 style="font-size: 20px; font-weight: 700; color: #0f172a; margin: 0 0 6px 0;">{{ booking.event.title }}</h2>
@@ -130,7 +130,7 @@
                         </td>
                     </tr>
 
-                    <!-- ===== 4. INSTRUCTIONS (Amber) ===== -->
+                    <!-- 4. INSTRUCTIONS (Amber) -->
                     <tr>
                         <td style="padding: 0 28px 24px 28px;">
                             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 8px;">
@@ -149,7 +149,7 @@
                         </td>
                     </tr>
 
-                    <!-- ===== 5. FOOTER TEXT ===== -->
+                    <!-- 5. FOOTER TEXT -->
                     <tr>
                         <td style="padding: 20px 28px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
                             <p style="margin: 0; font-size: 12px; color: #94a3b8;">This is an automated message. Please do not reply to this email.</p>

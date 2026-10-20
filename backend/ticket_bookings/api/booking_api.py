@@ -2746,9 +2746,14 @@ class BookingViewSet(viewsets.ModelViewSet):
             if tickets:
                 try:
                     from ..services.qr_service import QRCodeService
-                    first_qr_base64 = (
-                        QRCodeService.generate_ticket_qr(tickets[0]) or ''
-                    )
+                    raw_qr = QRCodeService.generate_ticket_qr(tickets[0]) or ''
+                    
+                    # Ensure the string starts with the proper data URI prefix for email rendering
+                    if raw_qr and not raw_qr.startswith('data:image'):
+                        first_qr_base64 = f"data:image/png;base64,{raw_qr}"
+                    else:
+                        first_qr_base64 = raw_qr
+                        
                 except Exception as exc:
                     logger.warning(
                         "⚠️ Could not generate inline QR for booking %s: %s",

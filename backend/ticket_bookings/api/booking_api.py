@@ -2585,7 +2585,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             'booking': booking,
             'event': booking.event,
             'customer_name': booking.customer_name,
-            'tickets': unique_tickets,
+            'tickets': list(booking.tickets.filter(status='active')),
             'format_names': format_names or '',
             'is_combined': bool(is_combined),
             'attachments_count': len(attachments or []),
@@ -2742,18 +2742,17 @@ class BookingViewSet(viewsets.ModelViewSet):
 
             # ✅ FIX [P27-bug4]: `first_qr_base64` is a real QR image
             # (not the whole ticket). Mail clients can render it inline.
+            # ✅ FIX: Ensure the string is a full Data URI for email rendering
             first_qr_base64 = ''
             if tickets:
                 try:
                     from ..services.qr_service import QRCodeService
                     raw_qr = QRCodeService.generate_ticket_qr(tickets[0]) or ''
                     
-                    # Ensure the string starts with the proper data URI prefix for email rendering
                     if raw_qr and not raw_qr.startswith('data:image'):
                         first_qr_base64 = f"data:image/png;base64,{raw_qr}"
                     else:
                         first_qr_base64 = raw_qr
-                        
                 except Exception as exc:
                     logger.warning(
                         "⚠️ Could not generate inline QR for booking %s: %s",

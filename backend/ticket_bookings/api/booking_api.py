@@ -2546,52 +2546,33 @@ class BookingViewSet(viewsets.ModelViewSet):
     ):
         """
         Build the HTML body of the ticket email.
-
-        `ticket_buffers` is the list of per-ticket entries (may contain
-        both a PDF and a PNG entry for the same ticket when
-        `ticket_format='both'`). The `tickets` context value is
-        de-duplicated so the template renders each ticket once.
-
-        `first_qr_base64` is a data-URL of the first ticket's QR
-        (a real image, not a PDF/PNG of the whole ticket) so mail
-        clients that strip attachments still show something scannable.
-
-        Returns (html_string, text_string).
         """
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
 
-        # ✅ FIX [P27-bug3]: de-duplicate by ticket id so 'both'
-        # doesn't render every ticket twice in the email body.
-        seen_ticket_ids = set()
-        unique_tickets = []
-        for tb in ticket_buffers:
-            ticket = tb.get('ticket')
-            if not ticket:
-                continue
-            if ticket.id in seen_ticket_ids:
-                continue
-            seen_ticket_ids.add(ticket.id)
-            unique_tickets.append(ticket)
+        # ✅ FIX 1: Ensure the QR code has the correct Data URI prefix
+        # Gmail will not render the image if it just starts with "iVBORw..."
+        valid_qr = ''
+        if first_qr_base64:
+            if not first_qr_base64.startswith('data:image'):
+                valid_qr = f"data:image/png;base64,{first_qr_base64}"
+            else:
+                valid_qr = first_qr_base64
 
-        first_ticket = unique_tickets[0] if unique_tickets else None
-        ticket_url = (
-            f"{settings.FRONTEND_URL}/tickets/{first_ticket.id}"
-            if first_ticket else
-            settings.FRONTEND_URL
-        )
+        # ✅ FIX 2: Pass the actual active tickets directly from the DB.
+        # This guarantees attendee names and codes are populated.
+        active_tickets = list(booking.tickets.filter(status='active'))
 
         context = {
             'booking': booking,
             'event': booking.event,
             'customer_name': booking.customer_name,
-            'tickets': list(booking.tickets.filter(status='active')),
+            'tickets': active_tickets,
             'format_names': format_names or '',
             'is_combined': bool(is_combined),
             'attachments_count': len(attachments or []),
-            'first_qr_base64': first_qr_base64 or '',
+            'first_qr_base64': valid_qr,
             'frontend_url': settings.FRONTEND_URL,
-            #'ticket_url': ticket_url,# ❌ REMOVE OR COMMENT OUT THIS LINE
         }
 
         html_content = render_to_string('emails/ticket_email.html', context)

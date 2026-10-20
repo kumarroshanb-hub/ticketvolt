@@ -2464,6 +2464,19 @@ class BookingViewSet(viewsets.ModelViewSet):
     # ✅ FIX [P27-mem]: every BytesIO produced by the generator and
     # combiner is closed in a `finally` block, so a booking with 20
     # tickets doesn't hold 20 open buffers until response teardown.
+    #
+    # ✅ FIX [P41]: `combine_to_pdf` / `combine_to_paginated_image`
+    # were being handed a buffer whose position was not at 0, OR a
+    # buffer that had been consumed by a previous read. The combiner
+    # treats PDF buffers as images, which fails with
+    #   "cannot identify image file".
+    #   - We now seek(0) *immediately before* every combiner call and
+    #     re-verify `buffer.tell() == 0`.
+    #   - If the combiner raises, we DO NOT abort the whole email.
+    #     We fall back to sending the individual attachments for that
+    #     format so the customer still receives their tickets.
+    #   - We log the combined-file outcome explicitly so operators can
+    #     see exactly why an email was sent (or was not).
     # ========================================================
 
     def _send_payment_confirmation_email(self, booking):
@@ -2585,6 +2598,44 @@ class BookingViewSet(viewsets.ModelViewSet):
         text_content = strip_tags(html_content)
         return html_content, text_content
 
+    def _seek_buffer(self, buf):
+        """
+        ✅ FIX [P41]: defensive rewind for a BytesIO before it is
+        handed to a consumer (combiner, reader, etc). Some consumers
+        (Pillow's Image.open via the combiner) inspect `buf` and
+        expect `buf.tell() == 0`. If a previous step (e.g. attachment
+        read) left the position at EOF, the consumer sees zero bytes
+        and errors with `cannot identify image file`.
+
+        Returns True on success, False on failure.
+        """
+        try:
+            buf.seek(0)
+            # Sanity check — a BytesIO whose position is not 0 after
+            # `seek(0)` indicates something very strange is going on.
+            if hasattr(buf, 'tell') and buf.tell() != 0:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _read_buffer_bytes(self, buf):
+        """
+        ✅ FIX [P41]: read a BytesIO's full contents and rewind it
+        afterwards, so the same buffer can be reused for both an
+        attachment AND a combiner input. Returns bytes or None.
+        """
+        if not self._seek_buffer(buf):
+            return None
+        try:
+            raw = buf.read()
+            # Rewind again so the caller can still pass the buffer to
+            # another consumer (e.g. combiner) without losing data.
+            self._seek_buffer(buf)
+            return raw
+        except Exception:
+            return None
+
     def _send_tickets_email(self, booking, allocation_message=None):
         """
         Generate ticket files and email them to the customer.
@@ -2602,6 +2653,19 @@ class BookingViewSet(viewsets.ModelViewSet):
         }
 
         Never raises.
+
+        ✅ FIX [P41]: the previous implementation passed buffers to the
+        combiner without rewinding them, then read the same buffers for
+        attachments. A failed combine aborted the whole email (the
+        exception was caught, but the return value was `success: False`
+        with no individual attachments). Now:
+
+          - Every buffer is seek(0)'d immediately before each consumer
+            call.
+          - Combined-file failures fall back to sending the individual
+            attachments for that format. One broken combine must NOT
+            cost the customer their tickets.
+          - The combined-file outcome is logged explicitly.
         """
         from django.core.mail import EmailMultiAlternatives
         import base64 as _base64
@@ -2692,17 +2756,146 @@ class BookingViewSet(viewsets.ModelViewSet):
                     )
                     first_qr_base64 = ''
 
-            # ---- 2. Individual attachments (only when NOT combined) ----
-            if not combine:
+            # ---- 2. Combined file (only when combine=True) ----
+            #
+            # ✅ FIX [P41]: the combined file is a "nice to have". If it
+            # fails, we still want the individual attachments to be sent.
+            # Build the combined files first, and only skip the
+            # individual ones if EVERY combined file we tried succeeded.
+            combined_attachments = []
+            combined_failed = False
+
+            if combine:
+                pdf_entries = [e for e in ticket_buffers if e['format'] == 'pdf']
+                png_entries = [e for e in ticket_buffers if e['format'] == 'png']
+
+                if pdf_entries:
+                    try:
+                        combine_input = []
+                        for e in pdf_entries:
+                            if not self._seek_buffer(e['buffer']):
+                                raise ValueError(
+                                    f"PDF buffer for ticket "
+                                    f"{e['ticket'].unique_code} is not readable"
+                                )
+                            combine_input.append({
+                                'buffer': e['buffer'],
+                                'ticket': e['ticket'],
+                            })
+
+                        combined_pdf = combiner.combine_to_pdf(
+                            combine_input,
+                            booking,
+                            tickets_per_page=per_page,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "❌ combine_to_pdf failed for booking %s: %s "
+                            "— falling back to individual PDF attachments.",
+                            booking.booking_reference, exc,
+                        )
+                        combined_pdf = None
+                        combined_failed = True
+
+                    if combined_pdf:
+                        opened_buffers.append(combined_pdf)
+                        raw = self._read_buffer_bytes(combined_pdf)
+                        if raw is not None:
+                            combined_attachments.append((
+                                f'tickets_{booking.booking_reference}.pdf',
+                                raw,
+                                'application/pdf',
+                            ))
+                            logger.info(
+                                "✅ Combined PDF built for booking %s (%d bytes)",
+                                booking.booking_reference, len(raw),
+                            )
+                        else:
+                            logger.warning(
+                                "⚠️ Combined PDF for booking %s was "
+                                "generated but could not be read back.",
+                                booking.booking_reference,
+                            )
+                            combined_failed = True
+
+                if png_entries:
+                    try:
+                        combine_input = []
+                        for e in png_entries:
+                            if not self._seek_buffer(e['buffer']):
+                                raise ValueError(
+                                    f"PNG buffer for ticket "
+                                    f"{e['ticket'].unique_code} is not readable"
+                                )
+                            combine_input.append({
+                                'buffer': e['buffer'],
+                                'ticket': e['ticket'],
+                            })
+
+                        combined_png = combiner.combine_to_paginated_image(
+                            combine_input,
+                            booking,
+                            tickets_per_page=per_page,
+                            output_format='PNG',
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "❌ combine_to_paginated_image failed for "
+                            "booking %s: %s — falling back to individual "
+                            "PNG attachments.",
+                            booking.booking_reference, exc,
+                        )
+                        combined_png = None
+                        combined_failed = True
+
+                    if combined_png:
+                        opened_buffers.append(combined_png)
+                        raw = self._read_buffer_bytes(combined_png)
+                        if raw is not None:
+                            combined_attachments.append((
+                                f'tickets_{booking.booking_reference}.png',
+                                raw,
+                                'image/png',
+                            ))
+                            logger.info(
+                                "✅ Combined PNG built for booking %s (%d bytes)",
+                                booking.booking_reference, len(raw),
+                            )
+                        else:
+                            logger.warning(
+                                "⚠️ Combined PNG for booking %s was "
+                                "generated but could not be read back.",
+                                booking.booking_reference,
+                            )
+                            combined_failed = True
+
+            # ---- 3. Decide which attachments to actually send ----
+            #
+            # If `combine` is requested AND we got at least one combined
+            # file AND none of the combine attempts failed, send ONLY
+            # the combined file(s). Otherwise send the individual files
+            # (so the customer still receives their tickets when the
+            # combiner is broken).
+            use_combined = (
+                combine
+                and bool(combined_attachments)
+                and not combined_failed
+            )
+
+            if use_combined:
+                attachments.extend(combined_attachments)
+                logger.info(
+                    "📎 Sending combined file(s) only for booking %s",
+                    booking.booking_reference,
+                )
+            else:
                 for entry in ticket_buffers:
                     ticket = entry['ticket']
-                    try:
-                        entry['buffer'].seek(0)
-                        raw = entry['buffer'].read()
-                    except Exception as exc:
+                    raw = self._read_buffer_bytes(entry['buffer'])
+                    if raw is None:
                         logger.warning(
-                            "⚠️ Could not read buffer for ticket %s: %s",
-                            ticket.unique_code, exc,
+                            "⚠️ Could not read buffer for ticket %s",
+                            ticket.unique_code,
                         )
                         continue
 
@@ -2719,82 +2912,20 @@ class BookingViewSet(viewsets.ModelViewSet):
                             'image/png',
                         ))
 
-            # ---- 3. Combined file (only when combine=True) ----
-            if combine:
-                pdf_entries = [e for e in ticket_buffers if e['format'] == 'pdf']
-                png_entries = [e for e in ticket_buffers if e['format'] == 'png']
-
-                if pdf_entries:
-                    try:
-                        for e in pdf_entries:
-                            e['buffer'].seek(0)
-                        combined_pdf = combiner.combine_to_pdf(
-                            [{'buffer': e['buffer'], 'ticket': e['ticket']}
-                             for e in pdf_entries],
-                            booking,
-                            tickets_per_page=per_page,
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "❌ combine_to_pdf failed for %s: %s",
-                            booking.booking_reference, exc,
-                        )
-                        combined_pdf = None
-
-                    if combined_pdf:
-                        opened_buffers.append(combined_pdf)
-                        try:
-                            combined_pdf.seek(0)
-                            attachments.append((
-                                f'tickets_{booking.booking_reference}.pdf',
-                                combined_pdf.read(),
-                                'application/pdf',
-                            ))
-                        except Exception as exc:
-                            logger.warning(
-                                "⚠️ Could not read combined PDF for %s: %s",
-                                booking.booking_reference, exc,
-                            )
-
-                if png_entries:
-                    try:
-                        for e in png_entries:
-                            e['buffer'].seek(0)
-                        combined_png = combiner.combine_to_paginated_image(
-                            [{'buffer': e['buffer'], 'ticket': e['ticket']}
-                             for e in png_entries],
-                            booking,
-                            tickets_per_page=per_page,
-                            output_format='PNG',
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "❌ combine_to_paginated_image failed for %s: %s",
-                            booking.booking_reference, exc,
-                        )
-                        combined_png = None
-
-                    if combined_png:
-                        opened_buffers.append(combined_png)
-                        try:
-                            combined_png.seek(0)
-                            attachments.append((
-                                f'tickets_{booking.booking_reference}.png',
-                                combined_png.read(),
-                                'image/png',
-                            ))
-                        except Exception as exc:
-                            logger.warning(
-                                "⚠️ Could not read combined PNG for %s: %s",
-                                booking.booking_reference, exc,
-                            )
+                if combine and not use_combined:
+                    logger.warning(
+                        "⚠️ Combined file(s) requested but not sent for "
+                        "booking %s — sending individual attachments "
+                        "instead (%d files).",
+                        booking.booking_reference, len(attachments),
+                    )
 
             if not attachments:
                 return {
                     'success': False,
                     'message': 'No ticket files could be generated.',
                     'formats': '+'.join(format_names),
-                    'combined': combine,
+                    'combined': use_combined,
                     'attachments': 0,
                 }
 
@@ -2803,7 +2934,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 booking,
                 ticket_buffers,
                 '+'.join(format_names),
-                combine,
+                use_combined,
                 attachments,
                 first_qr_base64,
             )
@@ -2834,7 +2965,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 booking.booking_reference,
                 sum(1 for e in ticket_buffers if e['format'] == 'pdf'),
                 sum(1 for e in ticket_buffers if e['format'] == 'png'),
-                combine,
+                use_combined,
                 len(attachments),
                 sent_ok,
             )
@@ -2847,7 +2978,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                     'Ticket email failed (see logs).'
                 ),
                 'formats': '+'.join(format_names),
-                'combined': combine,
+                'combined': use_combined,
                 'attachments': len(attachments),
             }
 

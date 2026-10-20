@@ -44,10 +44,13 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                 } else {
                     const response = await api.post('/events/', payload);
 
-                    // ✅ Guard against a malformed 2xx response.
-                    // Previously, a 500 with a JSON body was treated as
-                    // a success by axios, and the subsequent navigate()
-                    // crashed because response.data.id was undefined.
+                    // ✅ FIX [P29]: a 2xx response with no `id` almost
+                    // always means the server-side serialisation failed
+                    // AFTER the row was committed (see EventViewSet.create
+                    // returning 500 with `event_id`). Previously we
+                    // navigated to a non-existent edit URL and the page
+                    // 500'd. Now we surface the error and route the user
+                    // to the list instead of a broken detail page.
                     if (!response.data || !response.data.id) {
                         const detail =
                             response.data?.error ||
@@ -55,6 +58,20 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                             'The server returned an unexpected response.';
                         setError(detail);
                         toast.error(detail);
+
+                        // If the server DID persist the event, it will
+                        // have returned `event_id`. Send the user there
+                        // so they can retry the save instead of losing
+                        // the record.
+                        const persistedId =
+                            response.data?.event_id ||
+                            response.data?.eventId ||
+                            null;
+                        if (persistedId) {
+                            navigate(`/app/events/${persistedId}/edit`);
+                        } else {
+                            navigate('/app/events');
+                        }
                         return;
                     }
 
@@ -68,7 +85,14 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                 const data = err.response?.data;
                 let msg = 'Failed to save event';
 
-                if (typeof data === 'string') {
+                // ✅ FIX [P18]: surface the new 409 from the tier/
+                // session reconciliation as a readable message. The
+                // backend refuses to delete a sold tier/session; without
+                // this branch the operator got a generic "Failed to
+                // save event" and had no idea why.
+                if (err.response?.status === 409 && data?.error) {
+                    msg = data.error;
+                } else if (typeof data === 'string') {
                     msg = data;
                 } else if (data && typeof data === 'object') {
                     if (data.error) msg = data.error;

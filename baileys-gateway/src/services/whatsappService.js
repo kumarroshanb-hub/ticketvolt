@@ -7,6 +7,10 @@ const path = require('path');
 const axios = require('axios');
 const logger = require('../utils/logger');
 
+// ✅ FIX [P20]: session-store dependency. ioredis is already in
+// package.json (via the messageQueue module), so no new dep.
+const Redis = require('ioredis');
+
 // Optional richer QR output (falls back to terminal QR if missing)
 let QRCodeLib;
 try {
@@ -20,6 +24,10 @@ try {
 // ============================================================
 const E164_MIN_DIGITS = 8;
 const E164_MAX_DIGITS = 15;
+
+// ✅ FIX [P20]: session persistence tuning.
+const SESSION_KEY_PREFIX = 'whatsapp:session:';
+const SESSION_TTL_SECONDS = 60 * 60;   // 1 hour — a booking flow rarely takes longer
 
 const FLOW = Object.freeze({
     IDLE: 'idle',
@@ -88,7 +96,6 @@ function formatPhoneForDisplay(phone) {
         const candidate = digits.slice(0, len);
         if (COUNTRY_CODE_MAP[candidate]) {
             const national = digits.slice(len);
-            // Light cosmetic grouping: 4-digit blocks from the right.
             const grouped = national.replace(/\B(?=(\d{4})+(?!\d))/g, ' ');
             return `+${candidate} ${grouped}`.trim();
         }
@@ -243,6 +250,19 @@ class WhatsAppService {
         this.whatsappEnabled = process.env.WHATSAPP_ENABLED === 'True';
         this.whatsappTicketDeliveryEnabled = process.env.WHATSAPP_TICKET_DELIVERY_ENABLED === 'True';
 
+        // ✅ FIX [P20]: persistent session store.
+        //
+        // Fly auto-stops idle machines (`min_machines_running = 0` in
+        // fly.toml). Without this, every mid-flow booking conversation
+        // died when the machine cold-started. We now persist each
+        // session to Redis after every state mutation, and rehydrate
+        // on the next inbound message.
+        this._redis = null;
+        this._sessionCache = new Map();   // fast in-process cache
+        this._sessionWriteQueue = Promise.resolve();
+
+        this._initRedis();
+
         this._logConfig();
 
         // Conversation handlers keyed by FLOW step.
@@ -258,12 +278,101 @@ class WhatsAppService {
         };
     }
 
+    // ✅ FIX [P20]: create the Redis client once, at construction.
+    // Failure is non-fatal — we degrade to memory with a warning.
+    _initRedis() {
+        const url = process.env.REDIS_URL;
+        if (!url) {
+            console.warn(
+                '⚠️ REDIS_URL not set — WhatsApp sessions will NOT survive restarts. ' +
+                'Set REDIS_URL to fix this.'
+            );
+            return;
+        }
+        try {
+            this._redis = new Redis(url, {
+                maxRetriesPerRequest: 3,
+                retryStrategy: (times) => Math.min(times * 50, 2000),
+            });
+            this._redis.on('connect', () => {
+                console.log('✅ Redis connected — WhatsApp sessions are now persistent');
+            });
+            this._redis.on('error', (err) => {
+                console.error('❌ Redis session-store error:', err.message);
+            });
+        } catch (err) {
+            console.error('❌ Failed to create Redis client:', err.message);
+            this._redis = null;
+        }
+    }
+
+    // ✅ FIX [P20]: session lifecycle helpers.
+    async _loadSession(sender) {
+        if (this._sessionCache.has(sender)) {
+            return this._sessionCache.get(sender);
+        }
+
+        if (this._redis) {
+            try {
+                const raw = await this._redis.get(SESSION_KEY_PREFIX + sender);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    this._sessionCache.set(sender, parsed);
+                    this.userSessions[sender] = parsed;
+                    return parsed;
+                }
+            } catch (err) {
+                console.error('⚠️ Failed to load session from Redis:', err.message);
+            }
+        }
+        return null;
+    }
+
+    async _saveSession(sender, session) {
+        this._sessionCache.set(sender, session);
+        this.userSessions[sender] = session;
+
+        if (!this._redis) return;
+
+        const payload = JSON.stringify(session);
+        // Serialise writes per-key so overlapping mutations on the same
+        // chat don't interleave JSON.
+        this._sessionWriteQueue = this._sessionWriteQueue.then(async () => {
+            try {
+                await this._redis.set(
+                    SESSION_KEY_PREFIX + sender,
+                    payload,
+                    'EX',
+                    SESSION_TTL_SECONDS,
+                );
+            } catch (err) {
+                console.error('⚠️ Failed to persist session to Redis:', err.message);
+            }
+        });
+        await this._sessionWriteQueue;
+    }
+
+    async _deleteSession(sender) {
+        this._sessionCache.delete(sender);
+        delete this.userSessions[sender];
+        if (this._redis) {
+            try {
+                await this._redis.del(SESSION_KEY_PREFIX + sender);
+            } catch (err) {
+                console.error('⚠️ Failed to delete session from Redis:', err.message);
+            }
+        }
+    }
+
     _logConfig() {
         console.log('📋 WhatsAppService initialized with:');
         console.log(`   DJANGO_API_URL: ${this.djangoApiUrl}`);
         console.log(`   ADMIN_TOKEN: ${this.adminToken ? '✅ Present' : '❌ MISSING'}`);
         console.log(`   WHATSAPP_ENABLED (Bot): ${this.whatsappEnabled ? '✅ YES' : '❌ NO'}`);
         console.log(`   WHATSAPP_TICKET_DELIVERY_ENABLED: ${this.whatsappTicketDeliveryEnabled ? '✅ YES' : '❌ NO'}`);
+        // ✅ FIX [P20]: surface persistence mode so ops can see whether
+        // sessions survive a restart.
+        console.log(`   SESSION STORE: ${this._redis ? '✅ Redis' : '⚠️ Memory (non-persistent)'}`);
     }
 
     // ============ Public utility methods ============
@@ -577,13 +686,22 @@ class WhatsAppService {
 
             console.log(`📩 From ${displayId} (${phoneNumber}): ${text}`);
 
-            if (!this.userSessions[sender]) {
-                this.userSessions[sender] = createEmptySession(phoneNumber);
+            // ✅ FIX [P20]: hydrate from Redis, not in-memory.
+            let session = await this._loadSession(sender);
+            if (!session) {
+                session = createEmptySession(phoneNumber);
             } else {
-                this.userSessions[sender].phone_number = phoneNumber;
+                session.phone_number = phoneNumber;
             }
+            this.userSessions[sender] = session;
 
             await this.processCommand(sender, text);
+
+            // ✅ FIX [P20]: persist the post-command state.
+            const updated = this.userSessions[sender];
+            if (updated) {
+                await this._saveSession(sender, updated);
+            }
         } catch (error) {
             console.error('❌ Error:', error.message);
             await this.sendMessage(sender, '❌ Sorry, something went wrong. Please try again.');
@@ -600,6 +718,10 @@ class WhatsAppService {
         if (lower === 'cancel' || lower === 'exit') {
             session.step = FLOW.IDLE;
             session.waiting_for_confirm = false;
+            // ✅ FIX [P20]: persist the reset immediately. Otherwise a
+            // restart between "cancel" and the next message would bring
+            // back the cancelled flow.
+            await this._saveSession(sender, session);
             return this.sendMessage(sender, '❌ Booking cancelled. Type *book* to start again.');
         }
         if (lower === 'book' || lower === 'booking') return this.startBooking(sender);
@@ -754,7 +876,6 @@ Thank you for choosing TicketVolt! 🎫`;
 
         const selectedEvent = session.events[choice - 1];
 
-        // Reset per-event state.
         Object.assign(session, {
             event_id: selectedEvent.id,
             event_title: selectedEvent.title,
@@ -1190,11 +1311,7 @@ Thank you for choosing TicketVolt! 🎫`;
         }
 
         const currentTicket = session.ticket_list[session.attendees.length];
-        const isFirstPrompt = session.attendees.length === 0;
 
-        // If this is the very first message in the step and it's a valid name,
-        // accept it as the first attendee's name. Otherwise, if it's the first
-        // prompt, we assume the user typed something unexpected — re-prompt.
         let attendeeName = text.trim();
         if (attendeeName.toLowerCase() === 'skip') {
             attendeeName = session.customer_name || 'Guest';
@@ -1394,7 +1511,9 @@ Thank you for choosing TicketVolt! 🎫`;
             session.waiting_for_confirm = false;
 
             await this.sendMessage(sender, this._buildBookingConfirmationMessage(session, booking, tz));
-            delete this.userSessions[sender];
+
+            // ✅ FIX [P20]: clear from Redis too, not just memory.
+            await this._deleteSession(sender);
         } catch (error) {
             console.error('❌ Error creating booking:', error.message);
             if (error.response) {
@@ -1540,6 +1659,10 @@ Thank you for choosing TicketVolt! 🎫`;
             botNumber: this.botNumber,
             whatsappEnabled: this.whatsappEnabled,
             whatsappTicketDeliveryEnabled: this.whatsappTicketDeliveryEnabled,
+            // ✅ FIX [P20]: surface persistence so /api/status shows
+            // whether a restart will lose in-flight conversations.
+            sessionStore: this._redis ? 'redis' : 'memory',
+            activeSessions: this._sessionCache.size,
         };
     }
 }

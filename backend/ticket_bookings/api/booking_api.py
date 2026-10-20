@@ -20,6 +20,8 @@ from io import BytesIO
 import base64
 import json
 import re
+# ✅ FIX [P5]: import copy so we can take a shallow copy of request.data.
+import copy
 
 from ticket_bookings.models import (
     Booking, Ticket, Event, TicketTier,
@@ -44,6 +46,8 @@ from ..services.qr_payload import serialise_ticket_qr_payload
 
 from ..managers import SOLD_BOOKING_STATUSES
 from ..services.ticket_cancellation import cancel_tickets, CancellationError
+# ✅ FIX [P9]: single canonical reconciler.
+from ..services.booking_status import reconcile_completed_booking
 from ..constants import BookingStatus, TicketStatus
 
 logger = logging.getLogger(__name__)
@@ -182,23 +186,13 @@ class BookingViewSet(viewsets.ModelViewSet):
         """
         Return how many tickets the incoming request is asking for.
 
-        The count lives in one of several shapes depending on which
-        client sent the request:
+        ✅ FIX [P11]: the "tier_ids + tier_quantities" branch used to
+        default missing quantities to 1 (silently reserving one seat per
+        unknown tier). It now defaults to 0 and — if the request shape is
+        ambiguous — returns 0 (skip capacity reservation) so the
+        serializer's own count is the single authority.
 
-          • data['tickets']                    — direct top-level list
-          • data['metadata']['tickets']        — nested list
-          • data['metadata']['ticket_types']   — nested list
-          • data['metadata']['tier_ids'] +     — reconstructed from
-            data['metadata']['tier_quantities']  per-tier quantities
-
-        Never raises. Returns 0 if no count can be determined. A 0
-        return means "skip capacity reservation", which is safe: the
-        serializer's own ticket-count validation and the issuance-time
-        check still apply.
-
-        This mirrors BookingSerializer._resolve_tickets_payload() so
-        the ViewSet and serializer agree on what "requested count"
-        means.
+        Never raises. Returns 0 if no count can be determined.
         """
         def _len(x):
             return len(x) if isinstance(x, list) else 0
@@ -226,10 +220,16 @@ class BookingViewSet(viewsets.ModelViewSet):
             if isinstance(tier_ids, list) and isinstance(tier_quantities, dict):
                 total = 0
                 for tid in tier_ids:
+                    # ✅ FIX [P11]: default 0, not 1. A missing quantity
+                    # is NOT a request for 1 seat — it's a malformed
+                    # request. Let the serializer reject it, don't reserve.
+                    raw = tier_quantities.get(str(tid), 0)
                     try:
-                        total += int(tier_quantities.get(str(tid), 0) or 0)
+                        qty = int(raw)
                     except (ValueError, TypeError):
-                        pass
+                        qty = 0
+                    if qty > 0:
+                        total += qty
                 if total > 0:
                     return total
 
@@ -352,40 +352,32 @@ class BookingViewSet(viewsets.ModelViewSet):
         """
         POST /api/bookings/
 
-        Wraps the DRF create in a transaction that locks the selected
-        session row, re-checks capacity under the lock, and reserves
-        seats BEFORE the booking row is inserted.
+        ✅ FIX [P5]: never mutate `request.data` in place. DRF's parsed
+        data may be reused (retries, tests, middleware) and the previous
+        code mutated the caller's dict directly. We take a shallow copy
+        up front and operate on that.
 
-        Concurrency model
-        -----------------
-        Two simultaneous requests for the last seat in a session will
-        serialize at the SELECT ... FOR UPDATE on the session row. The
-        second request sees `booked` already incremented by the first
-        and correctly rejects with "This slot is fully booked."
-
-        Without this lock, both could pass the serializer-level check
-        (which is fail-fast but not race-safe) and both create bookings,
-        overbooking the session.
-
-        Reservation vs. issuance
-        ------------------------
-        Seats are reserved here, at creation. `_issue_tickets_for_booking`
-        no longer touches `session.booked`. Abandoned pending bookings
-        hold their seats until an admin cancels them, which triggers
-        `_release_session_seats`. This is the standard "cart hold" model.
+        All other behaviour (session lock, capacity reservation, undo on
+        downstream failure) is preserved verbatim.
         """
+        # ✅ FIX [P5]: shallow copy of request.data so downstream code
+        # cannot observe our normalisations.
+        data = copy.copy(request.data) if hasattr(request.data, 'copy') else dict(request.data)
+
         # ---------- Sanitize incoming metadata ----------
-        if isinstance(request.data.get('metadata'), dict):
-            md = request.data['metadata']
+        if isinstance(data.get('metadata'), dict):
+            # Also copy the metadata dict, since we mutate it below.
+            data['metadata'] = copy.copy(data['metadata'])
+            md = data['metadata']
             for forbidden in ('is_organizer', 'role', 'is_staff', 'is_superuser'):
                 md.pop(forbidden, None)
 
         # ---------- Normalize event field name ----------
-        if 'event_id' in request.data and 'event' not in request.data:
-            request.data['event'] = request.data['event_id']
+        if 'event_id' in data and 'event' not in data:
+            data['event'] = data['event_id']
 
         # ---------- Event lookup + bookability checks ----------
-        event_id = request.data.get('event') or request.data.get('event_id')
+        event_id = data.get('event') or data.get('event_id')
         event_obj = None
         if event_id:
             try:
@@ -414,8 +406,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 )
 
         # ---------- Fallback total_amount if client sent nothing ----------
-        if 'total_amount' not in request.data or request.data['total_amount'] is None:
-            tickets = request.data.get('tickets', [])
+        if 'total_amount' not in data or data['total_amount'] is None:
+            tickets = data.get('tickets', [])
             total = 0
             for ticket in tickets:
                 tier_id = ticket.get('tier_id')
@@ -425,15 +417,15 @@ class BookingViewSet(viewsets.ModelViewSet):
                         total += float(tier.price)
                     except TicketTier.DoesNotExist:
                         pass
-            request.data['total_amount'] = str(total)
+            data['total_amount'] = str(total)
 
         # ---------- Resolve session id + requested ticket count ----------
         session_id = (
-            request.data.get('session')
-            or request.data.get('session_id')
-            or (request.data.get('metadata') or {}).get('slot_id')
+            data.get('session')
+            or data.get('session_id')
+            or (data.get('metadata') or {}).get('slot_id')
         )
-        requested_count = self._count_requested_tickets(request.data)
+        requested_count = self._count_requested_tickets(data)
 
         # ---------- Atomic create with row lock on the session ----------
         try:
@@ -441,9 +433,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 locked_session = None
 
                 if session_id and requested_count > 0:
-                    # Lock the session row. Any concurrent transaction
-                    # touching the same session will block here until
-                    # we commit or roll back.
                     locked_session = (
                         Session.objects
                         .select_for_update()
@@ -463,9 +452,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST,
                         )
 
-                    # Re-check capacity INSIDE the lock. This is the
-                    # authoritative check — the serializer's check was
-                    # advisory only.
                     ok, reason = locked_session.check_capacity(requested_count)
                     if not ok:
                         return Response(
@@ -473,20 +459,15 @@ class BookingViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST,
                         )
 
-                    # Reserve the seats now. If anything downstream fails,
-                    # the whole transaction rolls back and the reservation
-                    # is undone.
                     locked_session.booked += requested_count
                     locked_session.save(update_fields=['booked'])
 
                 # ---------- Delegate actual creation to DRF ----------
+                # ✅ FIX [P5]: replace request.data with our copy so the
+                # serializer sees the normalised data.
+                request.data = data
                 response = super().create(request, *args, **kwargs)
 
-                # ---------- Undo reservation on downstream failure ----------
-                # `super().create()` returns a Response (rather than
-                # raising) on serializer validation errors. Django's
-                # transaction.atomic() only rolls back on exceptions,
-                # so we explicitly release seats for 4xx responses.
                 if locked_session is not None and response.status_code >= 400:
                     locked_session.booked = max(
                         0, locked_session.booked - requested_count
@@ -501,8 +482,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 return response
 
         except Exception:
-            # Any unexpected exception rolls the entire transaction back,
-            # undoing both the booking insert and the seat reservation.
             logger.exception("Booking creation failed; transaction rolled back")
             raise
 
@@ -1686,7 +1665,109 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         return True, allocated_slot, allocation_message
 
-    # ==================== ISSUE TICKETS ====================
+    # ============================================================
+    # ✅ FIX [P21]: `_issue_tickets_for_booking` was a 500-line method.
+    # The pure data-transformation steps are extracted below so they are
+    # unit-testable in isolation and the orchestrator stays readable.
+    # ============================================================
+
+    def _collect_tickets_data_from_metadata(self, booking):
+        """
+        Extract the list of per-attendee ticket dicts from a booking's
+        metadata, trying every shape the codebase has historically
+        written: `metadata.tickets`, `metadata.ticket_types`,
+        `metadata.tier_ids` + `tier_quantities`, and finally a flat
+        `metadata.tier_id` + `metadata.quantity` pair.
+
+        Returns a list of dicts (never None).
+        """
+        tickets_data = []
+        if not (hasattr(booking, 'metadata') and booking.metadata):
+            return tickets_data
+
+        tickets_data = booking.metadata.get('tickets', [])
+        logger.info(
+            f"📊 Found {len(tickets_data)} tickets in "
+            f"metadata.tickets for booking {booking.booking_reference}"
+        )
+
+        if not tickets_data:
+            tickets_data = booking.metadata.get('ticket_types', [])
+            logger.info(f"📊 Found {len(tickets_data)} tickets in metadata.ticket_types")
+
+        if not tickets_data:
+            tier_ids = booking.metadata.get('tier_ids', [])
+            tier_quantities = booking.metadata.get('tier_quantities', {})
+            attendee_names = booking.metadata.get('attendee_names', {})
+
+            if tier_ids:
+                for tier_id in tier_ids:
+                    # ✅ FIX [P11]: 0 is the only safe default here.
+                    quantity = tier_quantities.get(str(tier_id), 0)
+                    try:
+                        quantity = int(quantity)
+                    except (ValueError, TypeError):
+                        quantity = 0
+                    if quantity <= 0:
+                        continue
+                    names = attendee_names.get(str(tier_id), [booking.customer_name] * quantity)
+                    for i in range(quantity):
+                        attendee_name = names[i] if i < len(names) else booking.customer_name
+                        tickets_data.append({
+                            'tier_id': tier_id,
+                            'attendee_name': attendee_name,
+                        })
+                logger.info(f"📊 Reconstructed {len(tickets_data)} tickets from tier_ids")
+
+        if not tickets_data:
+            tier_id = booking.metadata.get('tier_id')
+            quantity = booking.metadata.get('quantity', 0)
+            try:
+                quantity = int(quantity)
+            except (ValueError, TypeError):
+                quantity = 0
+            if tier_id and quantity > 0:
+                for i in range(quantity):
+                    tickets_data.append({
+                        'tier_id': tier_id,
+                        'attendee_name': booking.customer_name,
+                    })
+
+        return tickets_data
+
+    def _distribute_net_paid_across_tickets(self, booking):
+        """
+        Prorate the booking-level discount across each ticket and persist
+        `net_paid_amount` on each row. This is the base for refund calc.
+        """
+        if not booking.tickets.exists():
+            return
+
+        from decimal import Decimal, ROUND_HALF_UP
+
+        all_tickets = list(booking.tickets.all())
+        gross_sum = sum(
+            Decimal(str(t.tier.price)) for t in all_tickets if t.tier
+        )
+        discount = Decimal(str(booking.discount_applied or 0))
+        net_total = Decimal(str(booking.total_amount)) - discount
+        if net_total < 0:
+            net_total = Decimal('0.00')
+
+        for t in all_tickets:
+            if gross_sum > 0 and t.tier:
+                share = Decimal(str(t.tier.price)) / gross_sum
+                t.net_paid_amount = (net_total * share).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP
+                )
+            else:
+                t.net_paid_amount = Decimal('0.00')
+            t.save(update_fields=['net_paid_amount'])
+
+        logger.info(
+            "Distributed ₹%s net across %d tickets on booking %s",
+            net_total, len(all_tickets), booking.booking_reference,
+        )
 
     def _issue_tickets_for_booking(self, booking):
         """
@@ -1695,12 +1776,8 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         NOTE ON SESSION CAPACITY
         ------------------------
-        The final block used to increment `session.booked` here, at
-        ticket issuance time. That is now a double-count because seats
-        are reserved at booking creation (see `create()`). The block has
-        been replaced with a read-only sanity check. Do NOT re-add an
-        increment — if you need to inspect the reserved count, read it,
-        don't mutate it.
+        Seats are reserved at booking creation (see `create()`). Do NOT
+        increment `session.booked` here — that would double-count.
         """
         logger.info(f"🔍 Starting _issue_tickets_for_booking for {booking.booking_reference}")
 
@@ -1718,7 +1795,6 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         # ---- 2. Validate + allocate a slot ----
         is_valid, allocated_slot, allocation_message = self._validate_and_allocate_slot(booking)
-
         if not is_valid:
             return {
                 'error': 'No slot available for this booking',
@@ -1726,7 +1802,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'tickets_created': 0,
             }
 
-        # ---- 3. Persist the allocation message on the booking ----
+        # ---- 3. Persist allocation message ----
         if hasattr(booking, 'metadata'):
             if not booking.metadata:
                 booking.metadata = {}
@@ -1752,7 +1828,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         if booking.status == 'completed':
             return {'error': 'Booking is already completed. All tickets have been used.'}
 
-        # ---- 5. Resolve the session to use ----
+        # ---- 5. Resolve session ----
         session_to_use = booking.session
         if not session_to_use:
             if hasattr(booking, 'metadata') and booking.metadata:
@@ -1765,49 +1841,11 @@ class BookingViewSet(viewsets.ModelViewSet):
                     except Session.DoesNotExist:
                         logger.error(f"❌ Session {slot_id} not found")
 
-        # ---- 6. Gather ticket data from metadata ----
-        tickets_data = []
-        if hasattr(booking, 'metadata') and booking.metadata:
-            tickets_data = booking.metadata.get('tickets', [])
-            logger.info(
-                f"📊 Found {len(tickets_data)} tickets in "
-                f"metadata.tickets for booking {booking.booking_reference}"
-            )
-
-            if not tickets_data:
-                tickets_data = booking.metadata.get('ticket_types', [])
-                logger.info(f"📊 Found {len(tickets_data)} tickets in metadata.ticket_types")
-
-            if not tickets_data:
-                tier_ids = booking.metadata.get('tier_ids', [])
-                tier_quantities = booking.metadata.get('tier_quantities', {})
-                attendee_names = booking.metadata.get('attendee_names', {})
-
-                if tier_ids:
-                    for tier_id in tier_ids:
-                        quantity = tier_quantities.get(str(tier_id), 1)
-                        names = attendee_names.get(str(tier_id), [booking.customer_name] * quantity)
-                        for i in range(quantity):
-                            attendee_name = names[i] if i < len(names) else booking.customer_name
-                            tickets_data.append({
-                                'tier_id': tier_id,
-                                'attendee_name': attendee_name,
-                            })
-                    logger.info(f"📊 Reconstructed {len(tickets_data)} tickets from tier_ids")
-
-            if not tickets_data:
-                tier_id = booking.metadata.get('tier_id')
-                quantity = booking.metadata.get('quantity', 1)
-                if tier_id:
-                    for i in range(quantity):
-                        tickets_data.append({
-                            'tier_id': tier_id,
-                            'attendee_name': booking.customer_name,
-                        })
-
+        # ---- 6. Gather ticket data ----
+        tickets_data = self._collect_tickets_data_from_metadata(booking)
         expected_count = len(tickets_data) if tickets_data else 0
 
-        # ---- 7. Create tickets (one per attendee) ----
+        # ---- 7. Create tickets ----
         tickets_created = 0
         created_ticket_ids = []
         fallback_log = []
@@ -2004,45 +2042,11 @@ class BookingViewSet(viewsets.ModelViewSet):
                     },
                 }
 
-        # ---- 9. Persist per-ticket net_paid_amount ----
+        # ---- 9. Prorate net_paid_amount ----
         if tickets_created > 0:
-            from decimal import Decimal, ROUND_HALF_UP
+            self._distribute_net_paid_across_tickets(booking)
 
-            all_tickets = list(booking.tickets.all())
-            gross_sum = sum(
-                Decimal(str(t.tier.price)) for t in all_tickets if t.tier
-            )
-            discount = Decimal(str(booking.discount_applied or 0))
-            net_total = Decimal(str(booking.total_amount)) - discount
-            if net_total < 0:
-                net_total = Decimal('0.00')
-
-            for t in all_tickets:
-                if gross_sum > 0 and t.tier:
-                    share = Decimal(str(t.tier.price)) / gross_sum
-                    t.net_paid_amount = (net_total * share).quantize(
-                        Decimal('0.01'), rounding=ROUND_HALF_UP
-                    )
-                else:
-                    t.net_paid_amount = Decimal('0.00')
-                t.save(update_fields=['net_paid_amount'])
-
-            logger.info(
-                "Distributed ₹%s net across %d tickets on booking %s",
-                net_total, len(all_tickets), booking.booking_reference,
-            )
-
-        # ---- 10. Session capacity: NO-OP ----
-        # Seats were already reserved at booking creation (see `create()`
-        # above). Incrementing here would double-count.
-        #
-        # The block that used to live here — `_check_and_update_session_capacity`
-        # — has been removed. If you ever change the reservation model back
-        # to "reserve at issuance", you must:
-        #   1. Remove the reservation from `create()`.
-        #   2. Re-enable the increment here.
-        #   3. Add a matching decrement in the cancel paths.
-        # Doing only (2) without (1) will silently overbook.
+        # ---- 10. Session capacity: NO-OP (see docstring) ----
 
         # ---- 11. Promote status from paid → confirmed ----
         if booking.status == 'paid':
@@ -2312,67 +2316,12 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def _check_and_complete_booking(self, booking):
         """
-        Recompute the booking's terminal status from its current tickets.
-
-        A booking is promoted to `completed` iff:
-          • at least one ticket on the booking is `used`, AND
-          • no ticket is still `active` (i.e. every remaining ticket is
-            in a terminal state: used / cancelled / refunded / expired).
-
-        Cancelled and refunded tickets are excluded from the denominator
-        — they cannot be checked in, so they shouldn't block completion.
-
-        Does NOT touch a booking that is already `cancelled` or
-        `refunded` — those are terminal and should not be re-promoted.
-
-        Returns True if the status was changed.
+        ✅ FIX [P9]: delegate to the canonical reconciler in
+        `services.booking_status`. Behaviour is identical to the old
+        inline implementation; the only difference is that all three
+        callers (this viewset, checkin_api, views) now share one source.
         """
-        if not booking:
-            return False
-
-        if booking.status in (
-            BookingStatus.COMPLETED,
-            BookingStatus.CANCELLED,
-            BookingStatus.REFUNDED,
-        ):
-            return False
-
-        TERMINAL_TICKET_STATES = (
-            TicketStatus.USED,
-            TicketStatus.CANCELLED,
-            TicketStatus.REFUNDED,
-            TicketStatus.EXPIRED,
-        )
-
-        total_tickets = booking.tickets.count()
-        if total_tickets == 0:
-            return False
-
-        used_tickets = booking.tickets.filter(
-            status=TicketStatus.USED,
-        ).count()
-
-        actionable_tickets = booking.tickets.exclude(
-            status__in=TERMINAL_TICKET_STATES,
-        ).count()
-
-        if used_tickets == 0:
-            return False
-
-        if actionable_tickets > 0:
-            return False
-
-        booking.status = BookingStatus.COMPLETED
-        booking.save(update_fields=['status', 'updated_at'])
-        logger.info(
-            "✅ Booking %s auto-completed "
-            "(used=%d, total=%d, actionable=%d)",
-            booking.booking_reference,
-            used_tickets,
-            total_tickets,
-            actionable_tickets,
-        )
-        return True
+        return reconcile_completed_booking(booking)
 
     def _regenerate_ticket_qr_for_booking(self, booking):
         tickets = booking.tickets.filter(status='active')
@@ -2461,46 +2410,573 @@ class BookingViewSet(viewsets.ModelViewSet):
         }
 
     # ==================== EMAIL METHODS ====================
-    # (Unchanged from the original file — see your local copy.)
+    #
+    # ✅ FIX [P27]: real bodies are back.
+    #
+    # Design notes:
+    #   • All five methods are safe to call from inside a `try/except`
+    #     wrapper (the callers do that already). They return a dict with
+    #     at least `success` and `message` so the caller can propagate
+    #     the outcome into the API response.
+    #   • None of them raise on delivery failure — SMTP / Resend errors
+    #     are logged and folded into `success: False`. The caller
+    #     already handles that. This is deliberate: a booking is not
+    #     invalid just because email is having a bad day, and the
+    #     `resend_tickets` action exists for the operator to retry.
+    #   • Ticket PDFs/PNGs are generated per-ticket using the canonical
+    #     signed QR payload via `TicketGenerator` — no local QR
+    #     generation here. This matches the rest of the codebase.
+    #   • `combine_tickets` and `ticket_format` on the event are
+    #     honoured exactly as the Event admin UI exposes them:
+    #       - 'pdf'  → one PDF per ticket
+    #       - 'png'  → one PNG per ticket
+    #       - 'both' → one PDF + one PNG per ticket
+    #       - combine_tickets=True → a single combined PDF/PNG of all
+    #         tickets on the booking, in addition to (or instead of)
+    #         the individual ones, depending on the format.
+    #
+    # ✅ FIX [P27-bug3]: `_build_email_html` no longer receives the
+    # duplicated `ticket_buffers` list when `ticket_format='both'`.
+    # It receives a de-duplicated `tickets` list, so the template
+    # renders each ticket exactly once.
+    #
+    # ✅ FIX [P27-bug4]: `first_qr_base64` is now an actual QR-only
+    # data-URL produced by `QRCodeService.generate_ticket_qr`, not a
+    # data-URL of the whole ticket PDF/PNG. Mail clients can render
+    # it inline.
+    #
+    # ✅ FIX [P27-mem]: every BytesIO produced by the generator and
+    # combiner is closed in a `finally` block, so a booking with 20
+    # tickets doesn't hold 20 open buffers until response teardown.
+    # ========================================================
 
     def _send_payment_confirmation_email(self, booking):
-        # ... UNCHANGED ...
-        # The email body and structure are identical to the version you
-        # already have. Nothing in this method touches session.booked.
-        #
-        # In a full re-dump this body would be reproduced verbatim. To
-        # keep this answer focused on the capacity fix, it is omitted
-        # here — copy it verbatim from your current file.
-        raise NotImplementedError(
-            "Copy _send_payment_confirmation_email verbatim from your "
-            "current file. It is unchanged by this fix."
+        """
+        Notify the customer that their payment has been received and
+        their tickets are being prepared.
+
+        Returns {success, message} — never raises.
+        """
+        from django.core.mail import EmailMultiAlternatives
+        from django.template.loader import render_to_string
+        from django.utils.html import strip_tags
+
+        try:
+            if not booking.customer_email:
+                return {
+                    'success': False,
+                    'message': 'No customer email on booking.',
+                }
+
+            context = {
+                'booking': booking,
+                'event': booking.event,
+                'customer_name': booking.customer_name,
+            }
+
+            html_content = render_to_string(
+                'emails/booking_confirmation.html', context,
+            )
+            text_content = strip_tags(html_content)
+
+            subject = f'✅ Payment Received - {booking.booking_reference}'
+
+            email = EmailMultiAlternatives(
+                subject=subject,
+                body=text_content,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[booking.customer_email],
+            )
+            email.attach_alternative(html_content, 'text/html')
+
+            sent_ok = _safe_send_email(
+                email, context_label='payment_confirmation',
+            )
+            return {
+                'success': sent_ok,
+                'message': (
+                    'Payment confirmation email sent.'
+                    if sent_ok else
+                    'Payment confirmation email failed (see logs).'
+                ),
+            }
+
+        except Exception as exc:
+            logger.exception(
+                '❌ _send_payment_confirmation_email failed for %s: %s',
+                booking.booking_reference, exc,
+            )
+            return {
+                'success': False,
+                'message': f'Email error: {exc}',
+            }
+
+    def _build_email_html(
+        self, booking, ticket_buffers,
+        format_names, is_combined, attachments, first_qr_base64,
+    ):
+        """
+        Build the HTML body of the ticket email.
+
+        `ticket_buffers` is the list of per-ticket entries (may contain
+        both a PDF and a PNG entry for the same ticket when
+        `ticket_format='both'`). The `tickets` context value is
+        de-duplicated so the template renders each ticket once.
+
+        `first_qr_base64` is a data-URL of the first ticket's QR
+        (a real image, not a PDF/PNG of the whole ticket) so mail
+        clients that strip attachments still show something scannable.
+
+        Returns (html_string, text_string).
+        """
+        from django.template.loader import render_to_string
+        from django.utils.html import strip_tags
+
+        # ✅ FIX [P27-bug3]: de-duplicate by ticket id so 'both'
+        # doesn't render every ticket twice in the email body.
+        seen_ticket_ids = set()
+        unique_tickets = []
+        for tb in ticket_buffers:
+            ticket = tb.get('ticket')
+            if not ticket:
+                continue
+            if ticket.id in seen_ticket_ids:
+                continue
+            seen_ticket_ids.add(ticket.id)
+            unique_tickets.append(ticket)
+
+        first_ticket = unique_tickets[0] if unique_tickets else None
+        ticket_url = (
+            f"{settings.FRONTEND_URL}/tickets/{first_ticket.id}"
+            if first_ticket else
+            settings.FRONTEND_URL
         )
+
+        context = {
+            'booking': booking,
+            'event': booking.event,
+            'customer_name': booking.customer_name,
+            'tickets': unique_tickets,
+            'format_names': format_names or '',
+            'is_combined': bool(is_combined),
+            'attachments_count': len(attachments or []),
+            'first_qr_base64': first_qr_base64 or '',
+            'frontend_url': settings.FRONTEND_URL,
+            'ticket_url': ticket_url,
+        }
+
+        html_content = render_to_string('emails/ticket_email.html', context)
+        text_content = strip_tags(html_content)
+        return html_content, text_content
 
     def _send_tickets_email(self, booking, allocation_message=None):
-        # ... UNCHANGED ...
-        raise NotImplementedError(
-            "Copy _send_tickets_email verbatim from your current file. "
-            "It is unchanged by this fix."
-        )
+        """
+        Generate ticket files and email them to the customer.
 
-    def _build_email_html(self, booking, ticket_buffers, format_names, is_combined, attachments, first_base64):
-        # ... UNCHANGED ...
-        raise NotImplementedError(
-            "Copy _build_email_html verbatim from your current file. "
-            "It is unchanged by this fix."
-        )
+        Honours `event.ticket_format` ('pdf' | 'png' | 'both') and
+        `event.combine_tickets` (single combined file vs. one per
+        ticket) and `event.tickets_per_page` (for the combined file).
+
+        Returns {
+            success: bool,
+            message: str,
+            formats: str,          # e.g. 'PDF' or 'PDF+PNG'
+            combined: bool,
+            attachments: int,
+        }
+
+        Never raises.
+        """
+        from django.core.mail import EmailMultiAlternatives
+        import base64 as _base64
+
+        # Track every buffer we open so we can close them in `finally`,
+        # even if an exception is raised mid-flight.
+        opened_buffers = []
+        ticket_buffers = []
+
+        try:
+            tickets = list(booking.tickets.filter(status='active'))
+            if not tickets:
+                return {
+                    'success': False,
+                    'message': 'No active tickets to send.',
+                    'formats': '',
+                    'combined': False,
+                    'attachments': 0,
+                }
+
+            if not booking.customer_email:
+                return {
+                    'success': False,
+                    'message': 'No customer email on booking.',
+                    'formats': '',
+                    'combined': False,
+                    'attachments': 0,
+                }
+
+            event = booking.event
+            ticket_format = (getattr(event, 'ticket_format', None) or 'pdf').lower()
+            combine = bool(getattr(event, 'combine_tickets', False))
+            per_page = int(getattr(event, 'tickets_per_page', 4) or 4)
+
+            generator = TicketGenerator()
+            combiner = TicketCombiner()
+
+            attachments = []   # list of (filename, bytes, mimetype)
+            format_names = []
+
+            want_pdf = ticket_format in ('pdf', 'both')
+            want_png = ticket_format in ('png', 'both')
+
+            if want_pdf:
+                format_names.append('PDF')
+            if want_png:
+                format_names.append('PNG')
+
+            # ---- 1. Per-ticket files ----
+            for ticket in tickets:
+                if want_pdf:
+                    pdf_buf = generator.generate_ticket_pdf(
+                        ticket, booking, event,
+                    )
+                    if pdf_buf:
+                        opened_buffers.append(pdf_buf)
+                        ticket_buffers.append({
+                            'ticket': ticket,
+                            'buffer': pdf_buf,
+                            'format': 'pdf',
+                        })
+
+                if want_png:
+                    png_buf = generator.generate_ticket_png(
+                        ticket, booking, event,
+                    )
+                    if png_buf:
+                        opened_buffers.append(png_buf)
+                        ticket_buffers.append({
+                            'ticket': ticket,
+                            'buffer': png_buf,
+                            'format': 'png',
+                        })
+
+            # ✅ FIX [P27-bug4]: `first_qr_base64` is a real QR image
+            # (not the whole ticket). Mail clients can render it inline.
+            first_qr_base64 = ''
+            if tickets:
+                try:
+                    from ..services.qr_service import QRCodeService
+                    first_qr_base64 = (
+                        QRCodeService.generate_ticket_qr(tickets[0]) or ''
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "⚠️ Could not generate inline QR for booking %s: %s",
+                        booking.booking_reference, exc,
+                    )
+                    first_qr_base64 = ''
+
+            # ---- 2. Individual attachments (only when NOT combined) ----
+            if not combine:
+                for entry in ticket_buffers:
+                    ticket = entry['ticket']
+                    try:
+                        entry['buffer'].seek(0)
+                        raw = entry['buffer'].read()
+                    except Exception as exc:
+                        logger.warning(
+                            "⚠️ Could not read buffer for ticket %s: %s",
+                            ticket.unique_code, exc,
+                        )
+                        continue
+
+                    if entry['format'] == 'pdf':
+                        attachments.append((
+                            f'ticket_{ticket.unique_code}.pdf',
+                            raw,
+                            'application/pdf',
+                        ))
+                    else:
+                        attachments.append((
+                            f'ticket_{ticket.unique_code}.png',
+                            raw,
+                            'image/png',
+                        ))
+
+            # ---- 3. Combined file (only when combine=True) ----
+            if combine:
+                pdf_entries = [e for e in ticket_buffers if e['format'] == 'pdf']
+                png_entries = [e for e in ticket_buffers if e['format'] == 'png']
+
+                if pdf_entries:
+                    try:
+                        for e in pdf_entries:
+                            e['buffer'].seek(0)
+                        combined_pdf = combiner.combine_to_pdf(
+                            [{'buffer': e['buffer'], 'ticket': e['ticket']}
+                             for e in pdf_entries],
+                            booking,
+                            tickets_per_page=per_page,
+                        )
+                    except Exception as exc:
+                        logger.exception(
+                            "❌ combine_to_pdf failed for %s: %s",
+                            booking.booking_reference, exc,
+                        )
+                        combined_pdf = None
+
+                    if combined_pdf:
+                        opened_buffers.append(combined_pdf)
+                        try:
+                            combined_pdf.seek(0)
+                            attachments.append((
+                                f'tickets_{booking.booking_reference}.pdf',
+                                combined_pdf.read(),
+                                'application/pdf',
+                            ))
+                        except Exception as exc:
+                            logger.warning(
+                                "⚠️ Could not read combined PDF for %s: %s",
+                                booking.booking_reference, exc,
+                            )
+
+                if png_entries:
+                    try:
+                        for e in png_entries:
+                            e['buffer'].seek(0)
+                        combined_png = combiner.combine_to_paginated_image(
+                            [{'buffer': e['buffer'], 'ticket': e['ticket']}
+                             for e in png_entries],
+                            booking,
+                            tickets_per_page=per_page,
+                            output_format='PNG',
+                        )
+                    except Exception as exc:
+                        logger.exception(
+                            "❌ combine_to_paginated_image failed for %s: %s",
+                            booking.booking_reference, exc,
+                        )
+                        combined_png = None
+
+                    if combined_png:
+                        opened_buffers.append(combined_png)
+                        try:
+                            combined_png.seek(0)
+                            attachments.append((
+                                f'tickets_{booking.booking_reference}.png',
+                                combined_png.read(),
+                                'image/png',
+                            ))
+                        except Exception as exc:
+                            logger.warning(
+                                "⚠️ Could not read combined PNG for %s: %s",
+                                booking.booking_reference, exc,
+                            )
+
+            if not attachments:
+                return {
+                    'success': False,
+                    'message': 'No ticket files could be generated.',
+                    'formats': '+'.join(format_names),
+                    'combined': combine,
+                    'attachments': 0,
+                }
+
+            # ---- 4. Build the email body ----
+            html_content, text_content = self._build_email_html(
+                booking,
+                ticket_buffers,
+                '+'.join(format_names),
+                combine,
+                attachments,
+                first_qr_base64,
+            )
+
+            subject = (
+                f'🎫 Your Tickets for '
+                f'{booking.event.title if booking.event else "Event"}'
+            )
+
+            email = EmailMultiAlternatives(
+                subject=subject,
+                body=text_content,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[booking.customer_email],
+            )
+            email.attach_alternative(html_content, 'text/html')
+
+            for filename, raw, mimetype in attachments:
+                email.attach(filename, raw, mimetype)
+
+            sent_ok = _safe_send_email(email, context_label='tickets')
+
+            # ✅ FIX [P27-h4]: one line summary so operators can see the
+            # actual output without grepping individual logs.
+            logger.info(
+                "📧 tickets_email: booking=%s, pdf=%d, png=%d, "
+                "combined=%s, attachments=%d, sent=%s",
+                booking.booking_reference,
+                sum(1 for e in ticket_buffers if e['format'] == 'pdf'),
+                sum(1 for e in ticket_buffers if e['format'] == 'png'),
+                combine,
+                len(attachments),
+                sent_ok,
+            )
+
+            return {
+                'success': sent_ok,
+                'message': (
+                    f'Tickets sent to {booking.customer_email}.'
+                    if sent_ok else
+                    'Ticket email failed (see logs).'
+                ),
+                'formats': '+'.join(format_names),
+                'combined': combine,
+                'attachments': len(attachments),
+            }
+
+        except Exception as exc:
+            logger.exception(
+                '❌ _send_tickets_email failed for %s: %s',
+                booking.booking_reference, exc,
+            )
+            return {
+                'success': False,
+                'message': f'Email error: {exc}',
+                'formats': '',
+                'combined': False,
+                'attachments': 0,
+            }
+
+        finally:
+            # ✅ FIX [P27-mem]: close every buffer we opened, regardless
+            # of whether the send succeeded. On CPython this is mostly
+            # belt-and-braces (BytesIO has no OS resource), but it
+            # ensures we never hold a reference to a buffer that a
+            # later code path might try to write to.
+            for buf in opened_buffers:
+                try:
+                    buf.close()
+                except Exception:
+                    pass
 
     def _send_cancellation_email(self, booking):
-        # ... UNCHANGED ...
-        raise NotImplementedError(
-            "Copy _send_cancellation_email verbatim from your current file."
-        )
+        """
+        Notify the customer that the entire booking has been cancelled.
+
+        Returns {success, error} — never raises.
+        """
+        from django.core.mail import EmailMultiAlternatives
+        from django.template.loader import render_to_string
+        from django.utils.html import strip_tags
+
+        try:
+            if not booking.customer_email:
+                return {'success': False, 'error': 'No customer email.'}
+
+            context = {
+                'booking': booking,
+                'event': booking.event,
+                'customer_name': booking.customer_name,
+                'refund_amount': booking.refund_amount or 0,
+            }
+
+            try:
+                html_content = render_to_string(
+                    'emails/booking_cancelled.html', context,
+                )
+            except Exception:
+                html_content = (
+                    f'<p>Hi {booking.customer_name},</p>'
+                    f'<p>Your booking <strong>{booking.booking_reference}</strong> '
+                    f'has been cancelled.</p>'
+                    f'<p>Refund amount: ₹{booking.refund_amount or 0}</p>'
+                )
+
+            text_content = strip_tags(html_content)
+            subject = f'❌ Booking Cancelled - {booking.booking_reference}'
+
+            email = EmailMultiAlternatives(
+                subject=subject,
+                body=text_content,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[booking.customer_email],
+            )
+            email.attach_alternative(html_content, 'text/html')
+
+            sent_ok = _safe_send_email(
+                email, context_label='cancellation',
+            )
+            return {
+                'success': sent_ok,
+                'error': None if sent_ok else 'Delivery failed (see logs).',
+            }
+
+        except Exception as exc:
+            logger.exception(
+                '❌ _send_cancellation_email failed for %s: %s',
+                booking.booking_reference, exc,
+            )
+            return {'success': False, 'error': str(exc)}
 
     def _send_refund_email(self, booking):
-        # ... UNCHANGED ...
-        raise NotImplementedError(
-            "Copy _send_refund_email verbatim from your current file."
-        )
+        """
+        Notify the customer that the booking has been refunded.
+
+        Returns {success, error} — never raises.
+        """
+        from django.core.mail import EmailMultiAlternatives
+        from django.template.loader import render_to_string
+        from django.utils.html import strip_tags
+
+        try:
+            if not booking.customer_email:
+                return {'success': False, 'error': 'No customer email.'}
+
+            context = {
+                'booking': booking,
+                'event': booking.event,
+                'customer_name': booking.customer_name,
+                'refund_amount': booking.refund_amount or 0,
+            }
+
+            try:
+                html_content = render_to_string(
+                    'emails/booking_refunded.html', context,
+                )
+            except Exception:
+                html_content = (
+                    f'<p>Hi {booking.customer_name},</p>'
+                    f'<p>Your booking <strong>{booking.booking_reference}</strong> '
+                    f'has been refunded.</p>'
+                    f'<p>Refund amount: ₹{booking.refund_amount or 0}</p>'
+                )
+
+            text_content = strip_tags(html_content)
+            subject = f'💸 Booking Refunded - {booking.booking_reference}'
+
+            email = EmailMultiAlternatives(
+                subject=subject,
+                body=text_content,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[booking.customer_email],
+            )
+            email.attach_alternative(html_content, 'text/html')
+
+            sent_ok = _safe_send_email(
+                email, context_label='refund',
+            )
+            return {
+                'success': sent_ok,
+                'error': None if sent_ok else 'Delivery failed (see logs).',
+            }
+
+        except Exception as exc:
+            logger.exception(
+                '❌ _send_refund_email failed for %s: %s',
+                booking.booking_reference, exc,
+            )
+            return {'success': False, 'error': str(exc)}
 
     # ==================== MISC ACTIONS ====================
 
@@ -2818,20 +3294,44 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def resend_tickets(self, request, pk=None):
+        """
+        POST /api/bookings/<id>/resend_tickets/
+
+        ✅ FIX [P3]: if the client supplies an `email` that differs from
+        the stored `booking.customer_email`, REJECT with 400 instead of
+        silently warning-and-continuing. The old behaviour would send
+        tickets to `booking.customer_email` while the client thought the
+        mail was going elsewhere.
+        """
         booking = self.get_object()
 
         client_supplied_email = None
         if isinstance(request.data, dict):
             client_supplied_email = request.data.get('email')
+
         if client_supplied_email:
-            logger.warning(
-                "⚠️ resend_tickets called with client-supplied email "
-                "for booking %s — ignoring client value %r, "
-                "using stored recipient %r",
-                booking.booking_reference,
-                client_supplied_email,
-                booking.customer_email,
-            )
+            normalised_client = str(client_supplied_email).strip().lower()
+            normalised_stored = (booking.customer_email or '').strip().lower()
+            if normalised_client != normalised_stored:
+                logger.warning(
+                    "⛔ resend_tickets rejected: client supplied email %r "
+                    "does not match stored recipient %r for booking %s",
+                    client_supplied_email,
+                    booking.customer_email,
+                    booking.booking_reference,
+                )
+                return Response(
+                    {
+                        'error': (
+                            'The supplied email does not match the email '
+                            'on this booking. If the customer has changed '
+                            'their email, update the booking first.'
+                        ),
+                        'code': 'EMAIL_MISMATCH',
+                        'stored_recipient': booking.customer_email,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         tickets = booking.tickets.filter(status='active')
 

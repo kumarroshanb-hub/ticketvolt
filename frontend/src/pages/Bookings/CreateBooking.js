@@ -80,7 +80,7 @@ const CreateBooking = () => {
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
 
-    // ✅ All draft state lives in the hook now.
+    // ✅ All draft state lives in the hook.
     const draft = useBookingDraft({
         tiers,
         selectedEvent,
@@ -139,22 +139,10 @@ const CreateBooking = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [events, location.search, autoSelectDone]);
 
-    // =========================================================================
-    // ✅ Re-validate the discount whenever the ticket composition changes.
-    // -------------------------------------------------------------------------
-    // A code that was valid for 4 tickets may not be valid for 1 ticket
-    // (e.g., min_ticket_count, min_order_amount rules). This effect re-runs
-    // the server-side validation silently, so the UI always reflects the
-    // current subtotal and ticket count.
-    //
-    // We deliberately depend ONLY on totalAmount / totalTickets / event id,
-    // NOT on appliedDiscount itself — otherwise this would loop forever.
-    // =========================================================================
+    // Re-validate the discount whenever the ticket composition changes.
     useEffect(() => {
-        // If no discount applied yet, nothing to do.
         if (!appliedDiscount?.valid) return;
 
-        // If there are no tickets left, drop the discount.
         if (totalTickets === 0) {
             setAppliedDiscount(null);
             setDiscountInput('');
@@ -196,26 +184,20 @@ const CreateBooking = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [totalAmount, totalTickets, selectedEvent?.id]);
 
+    // =========================================================================
+    // ✅ FIX [P22]: admins/organizers hit /events/ directly; regular
+    // users hit /events/public/. The old code always tried /events/public/
+    // first, then fell back — which meant two round-trips for every admin
+    // page load and a slightly wrong payload (public serializer lacks
+    // some fields the selection cards use).
+    // =========================================================================
     const loadEvents = async () => {
         setLoading(true);
         setEventLoadError(null);
         try {
             let data = [];
 
-            try {
-                const response = await api.get('/events/public/');
-                if (response.data && response.data.results) {
-                    data = response.data.results;
-                } else if (Array.isArray(response.data)) {
-                    data = response.data;
-                } else if (response.data && typeof response.data === 'object') {
-                    data = Object.values(response.data).filter((item) => item.id && item.title);
-                }
-            } catch (publicError) {
-                console.log('📅 Public endpoint failed:', publicError.message);
-            }
-
-            if (data.length === 0 && canManageEvents) {
+            if (canManageEvents) {
                 try {
                     const response = await api.get('/events/');
                     if (Array.isArray(response.data)) {
@@ -227,6 +209,17 @@ const CreateBooking = () => {
                     }
                 } catch (adminError) {
                     console.log('📅 Admin endpoint failed:', adminError.message);
+                }
+            } else {
+                try {
+                    const response = await api.get('/events/public/');
+                    if (response.data && response.data.results) {
+                        data = response.data.results;
+                    } else if (Array.isArray(response.data)) {
+                        data = response.data;
+                    }
+                } catch (publicError) {
+                    console.log('📅 Public endpoint failed:', publicError.message);
                 }
             }
 
@@ -284,9 +277,15 @@ const CreateBooking = () => {
 
             setSessions(data.sessions || []);
 
-            const availableTiers = (data.tiers || []).filter(
-                (t) => t.quantity_total - t.quantity_sold > 0
-            );
+            // ✅ FIX [P14] (frontend side): prefer the server's clamped
+            // `available` if present. Falls back to computing it, and
+            // clamps at 0 so a legacy negative can't reach the UI.
+            const availableTiers = (data.tiers || []).filter((t) => {
+                const available = (typeof t.available === 'number')
+                    ? t.available
+                    : Math.max(0, (t.quantity_total || 0) - (t.quantity_sold || 0));
+                return available > 0;
+            });
             setTiers(availableTiers);
 
             if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) {
@@ -314,7 +313,6 @@ const CreateBooking = () => {
         setSlotPreferencesInput('');
         setTiers([]);
         setEventDetails(null);
-        // Reset discount — it was scoped to the previous event.
         setDiscountInput('');
         setAppliedDiscount(null);
 
@@ -447,10 +445,6 @@ const CreateBooking = () => {
         try {
             const payload = buildPayload();
 
-            // ✅ Attach the discount code if a valid one is applied.
-            //    The backend RECOMPUTES the discount amount server-side —
-            //    we only send the code, never the amount. This is critical
-            //    for security: a malicious client cannot spoof a discount.
             if (appliedDiscount?.valid && appliedDiscount?.code) {
                 payload.discount_code = appliedDiscount.code;
             }
@@ -935,7 +929,11 @@ const CreateBooking = () => {
             ) : (
                 <Box>
                     {tiers.map((tier) => {
-                        const available = tier.quantity_total - tier.quantity_sold;
+                        // ✅ FIX [P14] (frontend side): prefer server
+                        // `available` (clamped). Falls back with a clamp.
+                        const available = (typeof tier.available === 'number')
+                            ? tier.available
+                            : Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0));
                         const maxQty = Math.min(available, tier.max_per_order || 10);
                         const qty = quantities[tier.id] || 0;
 
@@ -1004,7 +1002,6 @@ const CreateBooking = () => {
                         </Box>
                     )}
 
-                    {/* ---- Discount input (visible only when tickets are selected) ---- */}
                     {totalTickets > 0 && (
                         <Paper sx={{ mt: 3, p: isMobile ? 2 : 3, bgcolor: 'background.default' }}>
                             <Typography
@@ -1277,10 +1274,6 @@ const CreateBooking = () => {
                                     })}
                                 </Typography>
                             )}
-                            {/*
-                              ✅ Slot preferences — rendered as "#1: Slot 2" instead
-                              of a bare "2" that was ambiguous to the operator.
-                            */}
                             {slotPreferences.length > 0 && (
                                 <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     <strong>Slot Preferences:</strong>{' '}
@@ -1361,7 +1354,6 @@ const CreateBooking = () => {
 
                             <Divider sx={{ my: 2 }} />
 
-                            {/* Subtotal */}
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
                                 <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     Subtotal ({totalTickets} ticket{totalTickets === 1 ? '' : 's'})
@@ -1371,7 +1363,6 @@ const CreateBooking = () => {
                                 </Typography>
                             </Box>
 
-                            {/* Discount (only if applied) */}
                             {appliedDiscount?.valid && (
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
                                     <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
@@ -1383,7 +1374,6 @@ const CreateBooking = () => {
                                 </Box>
                             )}
 
-                            {/* Total */}
                             <Box
                                 sx={{
                                     display: 'flex',

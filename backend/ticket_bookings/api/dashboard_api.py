@@ -2,20 +2,20 @@
 """
 Dashboard stats.
 
-Every number on this page is produced by BookingManager or by Event's
-canonical helpers. If the numbers here ever disagree with the analytics
-page, the bug is in managers.py — not here.
+✅ FIX [P15]: past events are excluded from `popular_events` at the
+queryset level. Previously an event whose `end_date` had passed but
+whose stored `status` was still 'active' (cron lag) would show up in
+the "Popular Events" list and count toward `total_tickets_sold` /
+`total_revenue` on the dashboard card, while the Events page showed it
+as completed.
 
-Status reconciliation
----------------------
-`Event.status` is denormalized and kept in sync by a Celery Beat task
-(`ticket_bookings.tasks.update_completed_events`). Between the moment
-an event's `end_date` passes and the next run of that task, the DB
-value can be stale.
+✅ FIX [P10]: every revenue sum now uses `managers.canonical_revenue`
+so the dashboard, analytics, and event-list cannot drift.
 
-To make every page agree, event status is exposed via
-`Event.get_effective_status()` (defined on the model — single source
-of truth). This view calls that method for every event it returns.
+✅ FIX [P26]: `Event.get_effective_status` is called exactly once per
+event and reused for both the display status and the `is_upcoming` /
+`is_past` flags, so a naive/aware edge case in one code path can no
+longer produce a different answer than the other.
 """
 import logging
 
@@ -31,6 +31,9 @@ from ..managers import (
     SOLD_BOOKING_STATUSES,
     EXCLUDED_BOOKING_STATUSES,
     live_ticket_q,
+    canonical_revenue,
+    canonical_revenue_in_window,
+    events_visible_upcoming,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,9 +58,9 @@ class DashboardStatsView(APIView):
                 or hasattr(user, 'organizer')
             )
 
-            # ============================================================
-            # 1. Scope the events queryset consistently.
-            # ============================================================
+            # ------------------------------------------------------------
+            # 1. Scope.
+            # ------------------------------------------------------------
             if is_admin:
                 events_qs = Event.objects.all()
             elif is_organizer:
@@ -77,16 +80,11 @@ class DashboardStatsView(APIView):
                 event__in=events_qs,
             )
 
-            # ============================================================
+            # ------------------------------------------------------------
             # 2. Headline numbers.
-            # ============================================================
+            # ------------------------------------------------------------
             total_events = events_qs.count()
 
-            # ------------------------------------------------------------
-            # "Active" reflects the EFFECTIVE status: exclude any event
-            # whose end_date is in the past, even if the DB value is
-            # still stale.
-            # ------------------------------------------------------------
             active_events = (
                 events_qs
                 .exclude(status__in=_TERMINAL_EVENT_STATUSES)
@@ -103,21 +101,17 @@ class DashboardStatsView(APIView):
             total_tickets = tickets_qs.filter(live_ticket_q()).count()
             total_checkins = checkins_qs.count()
 
-            total_revenue = bookings_qs.total_revenue()
+            # ✅ FIX [P10]: canonical revenue helper.
+            total_revenue = canonical_revenue(bookings_qs)
 
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            today_revenue = (
-                bookings_qs
-                .paid_in_range(start=today_start)
-                .filter(status__in=SOLD_BOOKING_STATUSES)
-                .aggregate(total=Sum('total_amount'))
-                .get('total')
-                or 0
+            today_revenue = canonical_revenue_in_window(
+                bookings_qs, start=today_start, end=now,
             )
 
-            # ============================================================
+            # ------------------------------------------------------------
             # 3. Recent bookings.
-            # ============================================================
+            # ------------------------------------------------------------
             recent = (
                 bookings_qs
                 .select_related('event')
@@ -149,11 +143,14 @@ class DashboardStatsView(APIView):
                 for b in recent
             ]
 
-            # ============================================================
-            # 4. Popular events.
-            # ============================================================
-            popular = (
-                events_qs
+            # ------------------------------------------------------------
+            # 4. Popular events — ✅ FIX [P15]: exclude past events here.
+            # ------------------------------------------------------------
+            popular_qs = (
+                events_visible_upcoming(
+                    events_qs.exclude(status='cancelled'),
+                    now,
+                )
                 .select_related('venue')
                 .prefetch_related('tiers', 'sessions')
                 .annotate(
@@ -178,19 +175,17 @@ class DashboardStatsView(APIView):
             )
 
             popular_events_data = []
-            for event in popular:
+            for event in popular_qs:
                 tiers = list(event.tiers.all())
 
-                # ✅ Single source of truth — the model decides.
+                # ✅ FIX [P26]: single call, single source of truth.
                 effective_status = event.get_effective_status(now=now)
 
                 popular_events_data.append({
                     'id': str(event.id),
                     'title': event.title,
 
-                    # Display status.
                     'status': effective_status,
-                    # Raw DB value — for debugging only.
                     'stored_status': event.status,
 
                     'start_date': (

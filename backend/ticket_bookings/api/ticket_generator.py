@@ -29,10 +29,6 @@ logger = logging.getLogger(__name__)
 #     size (QR):     0.0 – 1.0 → fraction of canvas WIDTH
 #                    > 1.0     → absolute pixels
 #
-# Using fractions makes a config portable across different canvas sizes —
-# a 2400×960 wide-stub template and an 1800×1273 A4 template can share the
-# same fractional config and both render correctly.
-#
 # The three stub-* fields are DISABLED by default so that an A4-landscape
 # template without a config renders exactly as it always has. Enable them
 # in the config by setting `"enabled": true`.
@@ -123,23 +119,10 @@ _ALLOWED_FIELD_KEYS = (
 
 # ===========================================================================
 # DIMENSION RESOLUTION
-# ---------------------------------------------------------------------------
-# One function to rule them all. Every dimension in every field goes through
-# this, so the "fraction or pixels" rule is enforced in exactly one place.
 # ===========================================================================
 def _resolve_dimension(value, canvas_dimension, default):
     """
     Resolve a numeric field value to an absolute pixel count.
-
-    Args:
-        value:              The config value (int or float). May be None.
-        canvas_dimension:   The canvas width (for x / font_size / QR size)
-                            or height (for y).
-        default:            Value to fall back to if `value` is None or
-                            unparseable.
-
-    Returns:
-        Integer pixel value.
 
     Rules:
         • value in [0, 1] inclusive → fraction of canvas_dimension
@@ -159,19 +142,26 @@ def _resolve_dimension(value, canvas_dimension, default):
     return int(numeric)
 
 
+# ===========================================================================
+# CONFIG MERGE
+# ===========================================================================
 def resolve_template_config(template):
     """
     Merge a template's `config.fields` over DEFAULT_FIELD_CONFIG.
 
-    Returns a dict: { field_name: {x, y, font_size, color, align, ...}, ... }
+    ✅ FIX [P17]: `enabled` is now coerced to a real bool, and every
+    accepted sub-key is type-checked. Previously `"enabled": "false"`
+    (string) was treated as enabled because the draw code used
+    `is False`, and a caller could pass non-numeric x/y that would blow
+    up at draw time with a confusing TypeError.
 
-    Rules:
-      • Unknown field names in the template config are ignored.
-      • Missing fields fall back to DEFAULT_FIELD_CONFIG.
-      • Sub-keys are merged individually — a template can override ONLY
-        `color` without losing the default `x`/`y`.
-      • `None` and empty dicts are treated as "no config".
+    ✅ FIX [P33]: config size is bounded by the serializer, but if a
+    legacy row somehow has thousands of fields, we still cap the number
+    we iterate. `MAX_FIELDS_PER_CONFIG` prevents a pathological config
+    from turning rendering into a quadratic loop.
     """
+    MAX_FIELDS_PER_CONFIG = 200
+
     merged = {k: dict(v) for k, v in DEFAULT_FIELD_CONFIG.items()}
 
     if template is None:
@@ -185,12 +175,41 @@ def resolve_template_config(template):
     if not isinstance(fields, dict):
         return merged
 
-    for key, overrides in fields.items():
+    for idx, (key, overrides) in enumerate(fields.items()):
+        if idx >= MAX_FIELDS_PER_CONFIG:
+            logger.warning(
+                'Template config exceeds %d fields; extra fields ignored.',
+                MAX_FIELDS_PER_CONFIG,
+            )
+            break
         if key not in merged or not isinstance(overrides, dict):
             continue
         for sub_key, sub_val in overrides.items():
-            if sub_key in _ALLOWED_FIELD_KEYS and sub_val is not None:
-                merged[key][sub_key] = sub_val
+            if sub_key not in _ALLOWED_FIELD_KEYS or sub_val is None:
+                continue
+
+            if sub_key == 'enabled':
+                # Coerce "true"/"false"/"1"/"0" strings safely.
+                if isinstance(sub_val, str):
+                    merged[key]['enabled'] = sub_val.strip().lower() in (
+                        'true', '1', 'yes', 'on', 't',
+                    )
+                else:
+                    merged[key]['enabled'] = bool(sub_val)
+                continue
+
+            if sub_key in ('x', 'y', 'font_size', 'size'):
+                try:
+                    merged[key][sub_key] = float(sub_val)
+                except (TypeError, ValueError):
+                    # Bad numeric input is silently ignored so one corrupt
+                    # field can't break the whole layout.
+                    continue
+                continue
+
+            if sub_key in ('color', 'align'):
+                merged[key][sub_key] = str(sub_val)
+                continue
 
     return merged
 
@@ -212,7 +231,6 @@ class TicketGenerator:
         self.template = template
         self.format_type = format_type
         self.font_path = self._get_font_path()
-        # Cache fonts by (size, bold) so we don't hit disk on every draw.
         self._font_cache = {}
 
     # ------------------------------------------------------------------
@@ -348,22 +366,13 @@ class TicketGenerator:
     # ==================================================================
 
     def _resolve_field_position(self, field_cfg, width, height):
-        """
-        Convert a field's (x, y) to absolute pixel coordinates using the
-        shared `_resolve_dimension` helper.
-        """
+        """Convert a field's (x, y) to absolute pixel coordinates."""
         x = _resolve_dimension(field_cfg.get('x'), width, default=0.5)
         y = _resolve_dimension(field_cfg.get('y'), height, default=0.5)
         return x, y
 
     def _resolve_font_size(self, field_cfg, width, default_font_size):
-        """
-        Resolve a field's font_size to absolute pixels.
-
-        - 0 < size <= 1  → fraction of canvas WIDTH
-        - size > 1       → absolute pixels
-        - missing/None   → default_font_size (treated as pixels)
-        """
+        """Resolve a field's font_size to absolute pixels."""
         raw = field_cfg.get('font_size', default_font_size)
         return _resolve_dimension(raw, width, default=default_font_size)
 
@@ -375,9 +384,13 @@ class TicketGenerator:
         """
         Draw a single field using its resolved config.
 
-        Skips silently if `enabled` is explicitly False or text is empty.
+        ✅ FIX [P17]: `enabled` is now treated as a truthy check, not
+        `is False`. A config that came from JSON will contain `false`
+        (Python False) or `"false"` (string) — either way, disabled
+        means "don't draw". The old code checked `is False`, so
+        `"false"` (string) rendered the field.
         """
-        if field_cfg.get('enabled') is False:
+        if not field_cfg.get('enabled', True):
             return
         if not text:
             return
@@ -410,8 +423,6 @@ class TicketGenerator:
         qr_size = _resolve_dimension(
             field_cfg.get('size'), width, default=140,
         )
-        # Guard against nonsense values that would make the QR invisible
-        # or larger than the canvas itself.
         qr_size = max(20, min(qr_size, min(width, height)))
         qr_img = qr_img.resize((qr_size, qr_size))
 
@@ -425,11 +436,9 @@ class TicketGenerator:
         qr_x = center_x - qr_size // 2
         qr_y = top_y
 
-        # Clamp inside the canvas
         qr_x = max(0, min(qr_x, width - qr_size))
         qr_y = max(0, min(qr_y, height - qr_size))
 
-        # White padding behind the QR so it stays legible on any background
         pad = 8
         draw.rectangle(
             [qr_x - pad, qr_y - pad, qr_x + qr_size + pad, qr_y + qr_size + pad],
@@ -457,23 +466,14 @@ class TicketGenerator:
 
             draw = ImageDraw.Draw(img)
 
-            # ----------------------------------------------------------
-            # Resolve layout from the template's config
-            # ----------------------------------------------------------
             layout = resolve_template_config(template)
 
-            # Caller-supplied overrides win (useful for one-off previews
-            # or per-ticket tweaks without re-uploading the template).
             if isinstance(custom_config, dict):
                 for key, overrides in custom_config.items():
                     if key in layout and isinstance(overrides, dict):
                         layout[key].update(overrides)
 
-            # ----------------------------------------------------------
-            # Draw each field
-            # ----------------------------------------------------------
-
-            # Event title
+            # ---------------- Event title ----------------
             self._draw_field(
                 draw, img, layout['event_title'],
                 (event.title or '').upper(),
@@ -481,7 +481,7 @@ class TicketGenerator:
                 default_font_size=32,
             )
 
-            # Event date (primary)
+            # ---------------- Event date (primary) ----------------
             date_display = self._format_date_for_ticket(
                 event.start_date, event.end_date
             )
@@ -492,7 +492,7 @@ class TicketGenerator:
                 default_font_size=34,
             )
 
-            # Event date (secondary — month/year when spanning)
+            # ---------------- Event date (secondary) ----------------
             date_secondary = ''
             if event.end_date and event.start_date:
                 if (
@@ -510,7 +510,7 @@ class TicketGenerator:
                     default_font_size=22,
                 )
 
-            # Ticket code (label + value)
+            # ---------------- Ticket code ----------------
             self._draw_field(
                 draw, img, layout['ticket_code_label'],
                 'Ticket Code:',
@@ -522,7 +522,7 @@ class TicketGenerator:
                 default_color='#1A202C', default_align='left',
             )
 
-            # Attendee (label + value)
+            # ---------------- Attendee ----------------
             attendee_name = (
                 ticket.attendee_name
                 or booking.customer_name
@@ -539,7 +539,7 @@ class TicketGenerator:
                 default_color='#1A202C', default_align='left',
             )
 
-            # Booking reference (label + value)
+            # ---------------- Booking reference ----------------
             self._draw_field(
                 draw, img, layout['booking_label'],
                 'Booking Ref:',
@@ -551,7 +551,7 @@ class TicketGenerator:
                 default_color='#1A202C', default_align='left',
             )
 
-            # Venue (label + multi-line value)
+            # ---------------- Venue (label + multi-line) ----------------
             venue_text = ''
             if event.venue:
                 parts = [
@@ -570,19 +570,15 @@ class TicketGenerator:
                     default_color='#4A5568', default_align='left',
                 )
 
-                # Wrap and draw each line beneath the label position.
-                # Font size may be fractional, so resolve it first, then
-                # derive the wrap width from the resolved pixel value.
                 venue_cfg = layout['venue_value']
-                if venue_cfg.get('enabled') is not False:
+                # ✅ FIX [P17]: truthy check, not `is not False`.
+                if venue_cfg.get('enabled', True):
                     width, height = img.size
                     vx, vy = self._resolve_field_position(venue_cfg, width, height)
                     v_size = self._resolve_font_size(venue_cfg, width, 14)
                     v_color = venue_cfg.get('color', '#2D3748')
                     v_align = venue_cfg.get('align', 'left')
 
-                    # 0.6 * font_size ≈ average character width in most
-                    # sans-serif fonts.
                     estimated_char_width = max(1, int(v_size * 0.6))
                     available_px = width - vx - 40
                     max_chars = max(20, available_px // estimated_char_width)
@@ -597,9 +593,7 @@ class TicketGenerator:
                             v_size, v_color, v_align,
                         )
 
-            # ----------------------------------------------------------
-            # Wide-stub fields (only render when enabled in config)
-            # ----------------------------------------------------------
+            # ---------------- Wide-stub fields ----------------
 
             # Ticket number — last 6 characters of the unique code, upper.
             ticket_number = (ticket.unique_code or '')[-6:].upper()
@@ -634,13 +628,11 @@ class TicketGenerator:
                     default_font_size=28,
                 )
 
-            # ----------------------------------------------------------
-            # QR code — always drawn if the config has a `qr_code` entry
-            # ----------------------------------------------------------
+            # ---------------- QR code ----------------
             qr_img = self._generate_qr_code(ticket)
             self._draw_qr_field(draw, img, layout['qr_code'], qr_img)
 
-            # Admit One (optional — off by default)
+            # Admit One — `_draw_field` already guards `enabled`.
             self._draw_field(
                 draw, img, layout['admit_one'],
                 'ADMIT ONE',
@@ -648,9 +640,7 @@ class TicketGenerator:
                 default_font_size=28,
             )
 
-            # ----------------------------------------------------------
-            # Output
-            # ----------------------------------------------------------
+            # ---------------- Output ----------------
             buffer = BytesIO()
             img.save(buffer, format='PNG', quality=95)
             buffer.seek(0)

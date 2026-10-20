@@ -10,18 +10,10 @@
 #
 # ============================================================================
 # IMAGE SPECIFICATION (v4 — relaxed)
-# ----------------------------------------------------------------------------
-# Uploads are now PERMISSIVE by default. Only two hard gates remain:
-#   1. The file must be a decodable image (Pillow can open it).
-#   2. The file must be <= MAX_UPLOAD_BYTES (8 MB absolute cap).
-#
-# Everything else — MIME type, minimum dimensions, maximum dimensions,
-# aspect ratio — is a SOFT WARNING. The image is still saved. Warnings
-# are returned in the response so the UI can show them if it wants.
-#
-# To re-enable a hard gate for a specific template type, set the
-# corresponding `*_hard` flag to True in IMAGE_SPECS below.
 # ============================================================================
+
+import json
+import logging
 
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
@@ -32,63 +24,34 @@ from PIL import Image as PILImage, UnidentifiedImageError
 from ..models import EventTemplate, EventTemplateType, Event
 from ..constants import TemplateTypes, TEMPLATE_TYPE_MAP
 from .serializers import EventTemplateSerializer, EventTemplateTypeSerializer
-import logging
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# IMAGE SPECIFICATION TABLE (v4)
-# ----------------------------------------------------------------------------
-# Each entry:
-#   • formats               — allowed MIME types (soft by default)
-#   • formats_hard          — if True, wrong MIME is a hard rejection
-#   • min_width/min_height  — soft warnings unless *_hard is True
-#   • max_width/max_height  — soft warnings unless *_hard is True
-#   • aspect_ratio          — soft warnings unless *_hard is True
-#   • ratio_tolerance       — ±% allowed around aspect_ratio
-#   • max_bytes             — absolute per-type cap (always hard)
-#   • hint                  — UI copy for the admin upload form
-#
-# Defaults are deliberately permissive: NO format is hard-rejected,
-# and dimensions/ratio only produce warnings. This is intentional —
-# organizers were being blocked from uploading perfectly usable
-# artwork because it wasn't exactly 16:9 PNG, etc.
-# ============================================================================
 IMAGE_SPECS = {
     'announcement': {
         'aspect_ratio': 16 / 9,
-        'ratio_tolerance': 0.35,                 # ±35% — much more lenient
-        'min_width': 600,                        # was 1280
-        'min_height': 340,                       # was 720
-        'formats': [
-            'image/png',
-            'image/jpeg',
-            'image/jpg',
-            'image/webp',
-        ],
+        'ratio_tolerance': 0.35,
+        'min_width': 600,
+        'min_height': 340,
+        'formats': ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'],
         'max_bytes': 5 * 1024 * 1024,
         'hint': (
             'Landscape banner recommended: ~1920×1080 (16:9), PNG or JPG, '
             'under 5 MB. Other sizes still upload — they may be cropped.'
         ),
-        # All soft by default. Flip to True to enforce.
         'formats_hard': False,
         'dimensions_hard': False,
         'ratio_hard': False,
     },
     'ticket': {
         'aspect_ratio': 4 / 1,
-        'ratio_tolerance': 0.25,                 # was 0.05
-        'min_width': 400,                        # was 550
-        'min_height': 100,                       # was 138
-        'max_width': 2200,                       # was 1100 — 2× base
+        'ratio_tolerance': 0.25,
+        'min_width': 400,
+        'min_height': 100,
+        'max_width': 2200,
         'max_height': 552,
-        'formats': [
-            'image/png',
-            'image/jpeg',
-            'image/jpg',
-        ],
+        'formats': ['image/png', 'image/jpeg', 'image/jpg'],
         'max_bytes': 5 * 1024 * 1024,
         'hint': (
             'Wide-stub ticket layout recommended: 550×138 (4:1), PNG, '
@@ -103,12 +66,7 @@ IMAGE_SPECS = {
         'ratio_tolerance': 0.25,
         'min_width': 600,
         'min_height': 800,
-        'formats': [
-            'image/png',
-            'image/jpeg',
-            'image/jpg',
-            'image/webp',
-        ],
+        'formats': ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'],
         'max_bytes': 5 * 1024 * 1024,
         'hint': 'Portrait poster recommended: 1800×2400 (3:4).',
         'formats_hard': False,
@@ -120,13 +78,7 @@ IMAGE_SPECS = {
         'ratio_tolerance': 0.25,
         'min_width': 400,
         'min_height': 400,
-        'formats': [
-            'image/png',
-            'image/jpeg',
-            'image/jpg',
-            'image/webp',
-            'image/gif',
-        ],
+        'formats': ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'],
         'max_bytes': 5 * 1024 * 1024,
         'hint': 'Square post recommended: 1080×1080 (1:1).',
         'formats_hard': False,
@@ -138,12 +90,7 @@ IMAGE_SPECS = {
         'ratio_tolerance': 0.25,
         'min_width': 600,
         'min_height': 450,
-        'formats': [
-            'image/png',
-            'image/jpeg',
-            'image/jpg',
-            'image/webp',
-        ],
+        'formats': ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'],
         'max_bytes': 5 * 1024 * 1024,
         'hint': 'Landscape invitation recommended: 1600×1200 (4:3).',
         'formats_hard': False,
@@ -155,11 +102,7 @@ IMAGE_SPECS = {
         'ratio_tolerance': 0.15,
         'min_width': 1000,
         'min_height': 700,
-        'formats': [
-            'image/png',
-            'image/jpeg',
-            'image/jpg',
-        ],
+        'formats': ['image/png', 'image/jpeg', 'image/jpg'],
         'max_bytes': 5 * 1024 * 1024,
         'hint': 'A4 landscape certificate recommended: 2970×2100.',
         'formats_hard': False,
@@ -168,13 +111,9 @@ IMAGE_SPECS = {
     },
 }
 
-# Absolute hard cap — enforced for every type as a defence in depth.
-MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 
-# ============================================================================
-# Helpers
-# ============================================================================
 def _user_can_manage_event(user, event) -> bool:
     if not user or not user.is_authenticated:
         return False
@@ -191,28 +130,15 @@ def _user_can_manage_event(user, event) -> bool:
 def _validate_image_spec(image_file, template_type_slug):
     """
     Validate an uploaded image against the spec for `template_type_slug`.
-
     Returns (ok: bool, error_message: str | None, warnings: list[str]).
 
-    Hard gates (ALWAYS enforced — no spec can disable these):
+    Hard gates (ALWAYS enforced):
       1. File is decodable by Pillow.
       2. File size <= MAX_UPLOAD_BYTES (8 MB).
-
-    Per-type hard gates (enabled via `*_hard` flags in IMAGE_SPECS):
-      • `formats_hard`    — wrong MIME → reject
-      • `dimensions_hard` — below min / above max → reject
-      • `ratio_hard`      — aspect ratio outside tolerance → reject
-
-    Everything else produces a **warning string** that the caller
-    returns to the frontend. Warnings never block the upload.
-
-    The file cursor is rewound to 0 on return so storage can read it.
     """
     spec = IMAGE_SPECS.get(template_type_slug)
     warnings: list[str] = []
 
-    # No spec → accept unconditionally (forward compatibility for
-    # new template types added later without a spec entry).
     if not spec:
         try:
             image_file.seek(0)
@@ -220,9 +146,6 @@ def _validate_image_spec(image_file, template_type_slug):
             pass
         return True, None, warnings
 
-    # ------------------------------------------------------------
-    # HARD GATE 1 — absolute file size cap (8 MB, non-negotiable)
-    # ------------------------------------------------------------
     if image_file.size > MAX_UPLOAD_BYTES:
         return (
             False,
@@ -234,15 +157,9 @@ def _validate_image_spec(image_file, template_type_slug):
             warnings,
         )
 
-    # ------------------------------------------------------------
-    # MIME check — hard only if `formats_hard` is True
-    # ------------------------------------------------------------
     allowed_formats = spec.get('formats') or []
     content_type = (image_file.content_type or '').lower()
-    format_ok = (
-        not allowed_formats
-        or content_type in allowed_formats
-    )
+    format_ok = (not allowed_formats or content_type in allowed_formats)
 
     if not format_ok:
         msg = (
@@ -253,9 +170,6 @@ def _validate_image_spec(image_file, template_type_slug):
             return False, msg, warnings
         warnings.append(msg)
 
-    # ------------------------------------------------------------
-    # HARD GATE 2 — must decode as an image
-    # ------------------------------------------------------------
     try:
         image_file.seek(0)
         probe = PILImage.open(image_file)
@@ -282,9 +196,6 @@ def _validate_image_spec(image_file, template_type_slug):
         except Exception:
             pass
 
-    # ------------------------------------------------------------
-    # Per-type file size cap — soft warning (global cap already passed)
-    # ------------------------------------------------------------
     per_type_max = spec.get('max_bytes') or MAX_UPLOAD_BYTES
     if image_file.size > per_type_max:
         warnings.append(
@@ -295,9 +206,6 @@ def _validate_image_spec(image_file, template_type_slug):
             f'It will still be uploaded.'
         )
 
-    # ------------------------------------------------------------
-    # Minimum dimensions — hard only if `dimensions_hard` is True
-    # ------------------------------------------------------------
     min_w = spec.get('min_width') or 0
     min_h = spec.get('min_height') or 0
     if width < min_w or height < min_h:
@@ -311,9 +219,6 @@ def _validate_image_spec(image_file, template_type_slug):
             return False, msg, warnings
         warnings.append(msg)
 
-    # ------------------------------------------------------------
-    # Maximum dimensions — hard only if `dimensions_hard` is True
-    # ------------------------------------------------------------
     max_w = spec.get('max_width')
     max_h = spec.get('max_height')
     if (max_w and width > max_w) or (max_h and height > max_h):
@@ -327,9 +232,6 @@ def _validate_image_spec(image_file, template_type_slug):
             return False, msg, warnings
         warnings.append(msg)
 
-    # ------------------------------------------------------------
-    # Aspect ratio — hard only if `ratio_hard` is True
-    # ------------------------------------------------------------
     target_ratio = spec.get('aspect_ratio')
     tolerance = spec.get('ratio_tolerance', 0.15)
     if target_ratio and height > 0:
@@ -350,9 +252,6 @@ def _validate_image_spec(image_file, template_type_slug):
     return True, None, warnings
 
 
-# ============================================================================
-# TemplateTypeViewSet
-# ============================================================================
 class TemplateTypeViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -381,9 +280,6 @@ class TemplateTypeViewSet(viewsets.ViewSet):
         return Response(data)
 
 
-# ============================================================================
-# EventTemplateViewSet
-# ============================================================================
 class EventTemplateViewSet(viewsets.ModelViewSet):
     queryset = EventTemplate.objects.all()
     permission_classes = [permissions.IsAuthenticated]
@@ -418,6 +314,10 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
         return default
 
     def _get_or_create_template_type(self, slug):
+        """
+        ✅ FIX [P13]: get_or_create handles the concurrent-upload race
+        on the unique `slug` column.
+        """
         if not TemplateTypes.is_valid(slug):
             return None
 
@@ -428,16 +328,60 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             if not type_info:
                 return None
 
-            template_type = EventTemplateType.objects.create(
-                slug=slug,
-                name=type_info.get('name', slug),
-                icon=type_info.get('icon', '📄'),
-                is_active=True,
-            )
-            logger.info(
-                "✅ Created template type in database from constants: %s", slug,
-            )
+            try:
+                template_type, created = EventTemplateType.objects.get_or_create(
+                    slug=slug,
+                    defaults={
+                        'name': type_info.get('name', slug),
+                        'icon': type_info.get('icon', '📄'),
+                        'is_active': True,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to get_or_create template type %r", slug,
+                )
+                return EventTemplateType.objects.filter(slug=slug).first()
+
+            if created:
+                logger.info(
+                    "✅ Created template type in database from constants: %s", slug,
+                )
             return template_type
+
+    # ==================================================================
+    # DESTROY — also remove the object from storage
+    # ==================================================================
+    def destroy(self, request, *args, **kwargs):
+        """
+        ✅ FIX [P8]: ModelViewSet's default destroy removes the DB row
+        but leaves the image blob on the storage backend forever. Over
+        time that leaks quota (Tigris free tier = 5 GB).
+
+        We capture the image reference BEFORE delete and delete the
+        object afterwards. Order matters: delete the DB row first so a
+        storage failure doesn't leave a dangling DB row pointing at a
+        deleted blob.
+        """
+        template = self.get_object()
+        image_name = template.image.name if template.image else None
+        image_field = template.image if template.image else None
+
+        response = super().destroy(request, *args, **kwargs)
+
+        if image_name and image_field is not None:
+            try:
+                image_field.delete(save=False)
+                logger.info(
+                    "🗑️ Deleted template image from storage: %s", image_name,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to delete template image %r from storage "
+                    "(DB row already removed)", image_name,
+                )
+
+        return response
 
     # ==================================================================
     # UPLOAD
@@ -552,7 +496,46 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Per-type validation (v4: warnings, not errors) ----------
+            # ---------- Config validation (✅ FIX [P33]) ----------
+            if isinstance(config, str):
+                try:
+                    config = json.loads(config)
+                except (TypeError, ValueError):
+                    return Response(
+                        {'error': 'config must be valid JSON.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            if config is None:
+                config = {}
+            if not isinstance(config, dict):
+                return Response(
+                    {'error': 'config must be a JSON object.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                _config_bytes = json.dumps(config, separators=(',', ':')).encode('utf-8')
+            except (TypeError, ValueError) as exc:
+                return Response(
+                    {'error': f'config is not JSON-serialisable: {exc}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if len(_config_bytes) > 64 * 1024:
+                return Response(
+                    {
+                        'error': (
+                            f'config is too large ({len(_config_bytes)} bytes); '
+                            f'maximum is 65536 bytes.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if 'fields' in config and not isinstance(config['fields'], dict):
+                return Response(
+                    {'error': 'config.fields must be an object.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ---------- Per-type validation ----------
             ok, spec_error, spec_warnings = _validate_image_spec(
                 image_file, template_type_slug,
             )
@@ -573,7 +556,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     ' | '.join(spec_warnings),
                 )
 
-            # Guarantee the stream is at position 0 before storage writes.
             try:
                 image_file.seek(0)
             except Exception:
@@ -599,7 +581,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                         is_default=True,
                     ).exclude(id=template.id).update(is_default=False)
 
-            # Pass the request so `image_url` is absolute.
             serializer = EventTemplateSerializer(
                 template,
                 context={'request': request},
@@ -610,7 +591,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     'success': True,
                     'message': 'Template uploaded successfully',
                     'template': serializer.data,
-                    # ✅ NEW: non-blocking warnings the UI can display.
                     'warnings': spec_warnings,
                 },
                 status=status.HTTP_201_CREATED,
@@ -668,12 +648,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
 
         if not _user_can_manage_event(request.user, event):
             return Response(
-                {
-                    'error': (
-                        'You do not have permission to view templates for '
-                        'this event.'
-                    )
-                },
+                {'error': 'You do not have permission to view templates for this event.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -688,11 +663,21 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             context={'request': request},
         )
 
+        # ✅ FIX [P16]: group by slug (stable) not display name (mutable).
+        # The frontend used to key by name, so renaming "Ticket" to
+        # "Admission Ticket" broke every consumer. `name` and `icon` are
+        # attached to each bucket so the UI still has the display data.
         grouped = {}
         for template in serializer.data:
-            type_name = template.get(
-                'template_type_details', {},
-            ).get('name', 'Unknown')
-            grouped.setdefault(type_name, []).append(template)
+            details = template.get('template_type_details', {}) or {}
+            slug = details.get('slug') or 'unknown'
+
+            bucket = grouped.setdefault(slug, {
+                'slug': slug,
+                'name': details.get('name', slug),
+                'icon': details.get('icon', '📄'),
+                'templates': [],
+            })
+            bucket['templates'].append(template)
 
         return Response(grouped)

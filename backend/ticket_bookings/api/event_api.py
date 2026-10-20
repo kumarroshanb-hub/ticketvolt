@@ -1,5 +1,6 @@
 # backend/ticket_bookings/api/event_api.py
 import logging
+
 logger = logging.getLogger(__name__)
 
 from rest_framework import viewsets, status
@@ -10,9 +11,10 @@ from rest_framework.throttling import ScopedRateThrottle
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import datetime
+from django.db import transaction
 from django.db.models import Sum, Count, Q
 
-from ..models import Event, Venue, Session, TicketTier, CancellationPolicy
+from ..models import Event, Venue, Session, TicketTier, CancellationPolicy, Ticket
 from .serializers import (
     EventSerializer,
     EventDetailSerializer,
@@ -24,6 +26,7 @@ from ..managers import (
     SOLD_BOOKING_STATUSES,
     EXCLUDED_BOOKING_STATUSES,
     EXCLUDED_TICKET_STATUSES,
+    canonical_revenue,
 )
 
 
@@ -61,11 +64,9 @@ def _apply_effective_status(serialized, event_objs, now=None):
 
 
 # ---------------------------------------------------------------------------
-# ✅ FIX: shared prefetch list
+# Shared prefetch list — every public read path uses this so
+# `get_template_images()` doesn't trigger an N+1 per event.
 # ---------------------------------------------------------------------------
-# Every read path that returns a PublicEventSerializer (list, retrieve,
-# public, public_detail) must prefetch templates + their type, otherwise
-# `get_template_images()` triggers an N+1 query per event.
 _PUBLIC_PREFETCH = ('tiers', 'sessions', 'templates__template_type')
 
 
@@ -136,7 +137,11 @@ class EventViewSet(viewsets.ModelViewSet):
     def _parse_dt(value):
         """
         Parse a datetime string from the frontend into an AWARE datetime.
-        See full docstring in the original file.
+        Accepts:
+          • None                  → None
+          • already a datetime    → returned (naive converted to aware)
+          • ISO string            → parsed to aware
+          • anything else         → returns the original value unchanged
         """
         if value is None:
             return None
@@ -307,8 +312,6 @@ class EventViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         manager = _is_manager(request.user)
 
-        # ✅ FIX: prefetch templates + template_type so get_template_images
-        # doesn't trigger N+1 queries.
         queryset = (
             queryset
             .select_related('venue', 'cancellation_policy')
@@ -353,8 +356,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
     # ---------------- RETRIEVE ----------------
     def retrieve(self, request, *args, **kwargs):
-        # ✅ FIX: prefetch templates so template_images is populated
-        # in detail responses too.
         queryset = self.get_queryset().prefetch_related(*_PUBLIC_PREFETCH)
         instance = get_object_or_404(queryset, pk=kwargs.get('pk'))
         user = request.user
@@ -389,13 +390,9 @@ class EventViewSet(viewsets.ModelViewSet):
                 ~Q(status__in=EXCLUDED_TICKET_STATUSES),
                 booking__status__in=SOLD_BOOKING_STATUSES,
             ).count()
-            actual_revenue = (
-                instance.bookings
-                .filter(status__in=SOLD_BOOKING_STATUSES)
-                .aggregate(total=Sum('total_amount'))
-                .get('total')
-                or 0
-            )
+            # ✅ FIX [P10]: canonical revenue helper — same filter used by
+            # dashboard and analytics.
+            actual_revenue = canonical_revenue(instance.bookings.all())
             active_bookings_count = instance.bookings.exclude(
                 status__in=EXCLUDED_BOOKING_STATUSES
             ).count()
@@ -410,6 +407,28 @@ class EventViewSet(viewsets.ModelViewSet):
 
     # ---------------- UPDATE ----------------
     def update(self, request, *args, **kwargs):
+        """
+        PUT/PATCH /api/events/<uuid>/
+
+        ✅ FIX [P18]: the old implementation did
+            instance.tiers.all().delete()
+            ... create new tiers
+        on every request that contained a `tiers` key. Because
+        `Ticket.tier` is `on_delete=CASCADE`, that deleted EVERY ticket
+        on EVERY booking of the event. A single save from the edit page
+        could wipe all sold inventory.
+
+        The new implementation reconciles by id:
+          • Tier ids present in the request and in the DB → UPDATE in place
+          • Ids in the request but not in the DB → CREATE
+          • Ids in the DB but not in the request → DELETE only if the
+            tier has no sold tickets and no tickets reference it;
+            otherwise reject with 409.
+
+        The same reconciliation pattern is applied to sessions, since
+        `Ticket.session` is `SET_NULL` (data isn't lost, but the
+        assignment silently blanks).
+        """
         instance = self.get_object()
         data = request.data
         user = request.user
@@ -464,26 +483,130 @@ class EventViewSet(viewsets.ModelViewSet):
                 setattr(instance, field, data[field])
         instance.save()
 
-        if 'sessions' in data:
-            instance.sessions.all().delete()
-            for session_data in data['sessions']:
-                Session.objects.create(
-                    event=instance,
-                    start_time=self._parse_dt(session_data.get('start_time')),
-                    end_time=self._parse_dt(session_data.get('end_time')),
-                    capacity=session_data.get('capacity', 100),
-                )
+        # ============================================================
+        # Sessions — diff-based upsert
+        # ============================================================
+        if 'sessions' in data and isinstance(data['sessions'], list):
+            incoming = data['sessions'] or []
+            existing_by_id = {str(s.id): s for s in instance.sessions.all()}
+            seen_ids = set()
 
-        if 'tiers' in data:
-            instance.tiers.all().delete()
-            for tier_data in data['tiers']:
-                TicketTier.objects.create(
-                    event=instance,
-                    name=tier_data.get('name', 'General'),
-                    price=tier_data.get('price', 0),
-                    quantity_total=tier_data.get('quantity_total', 100),
-                    ticket_type=tier_data.get('ticket_type', 'ga'),
-                )
+            for sess_payload in incoming:
+                sess_id = str(sess_payload.get('id') or '').strip()
+                s_start = self._parse_dt(sess_payload.get('start_time'))
+                s_end = self._parse_dt(sess_payload.get('end_time'))
+                s_capacity = int(sess_payload.get('capacity', 100) or 100)
+
+                if sess_id and sess_id in existing_by_id:
+                    sess = existing_by_id[sess_id]
+                    if s_start:
+                        sess.start_time = s_start
+                    if s_end:
+                        sess.end_time = s_end
+                    sess.capacity = s_capacity
+                    sess.save(update_fields=['start_time', 'end_time', 'capacity'])
+                    seen_ids.add(sess_id)
+                else:
+                    if not s_start or not s_end:
+                        continue
+                    created = Session.objects.create(
+                        event=instance,
+                        start_time=s_start,
+                        end_time=s_end,
+                        capacity=s_capacity,
+                    )
+                    seen_ids.add(str(created.id))
+
+            # Delete sessions that were removed AND have no tickets.
+            for sess_id, sess in existing_by_id.items():
+                if sess_id in seen_ids:
+                    continue
+                if sess.booked and sess.booked > 0:
+                    return Response(
+                        {
+                            'error': (
+                                f'Cannot delete session {sess_id}: it has '
+                                f'{sess.booked} booked seat(s). Cancel or '
+                                f'reassign those bookings first.'
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if Ticket.objects.filter(session=sess).exists():
+                    return Response(
+                        {
+                            'error': (
+                                f'Cannot delete session {sess_id}: existing '
+                                f'tickets reference it.'
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                sess.delete()
+
+        # ============================================================
+        # Tiers — diff-based upsert
+        # ============================================================
+        if 'tiers' in data and isinstance(data['tiers'], list):
+            incoming = data['tiers'] or []
+            existing_by_id = {str(t.id): t for t in instance.tiers.all()}
+            seen_ids = set()
+
+            for tier_payload in incoming:
+                tier_id = str(tier_payload.get('id') or '').strip()
+                name = tier_payload.get('name', 'General')
+                price = tier_payload.get('price', 0) or 0
+                quantity_total = int(tier_payload.get('quantity_total', 100) or 100)
+                ticket_type = tier_payload.get('ticket_type', 'ga')
+
+                if tier_id and tier_id in existing_by_id:
+                    tier = existing_by_id[tier_id]
+                    tier.name = name
+                    tier.price = price
+                    tier.quantity_total = quantity_total
+                    tier.ticket_type = ticket_type
+                    tier.save(update_fields=[
+                        'name', 'price', 'quantity_total', 'ticket_type',
+                    ])
+                    seen_ids.add(tier_id)
+                else:
+                    created = TicketTier.objects.create(
+                        event=instance,
+                        name=name,
+                        price=price,
+                        quantity_total=quantity_total,
+                        ticket_type=ticket_type,
+                    )
+                    seen_ids.add(str(created.id))
+
+            # Delete tiers that were removed. Refuse if the tier has sold
+            # tickets — deleting would CASCADE-delete every Ticket row
+            # referencing it.
+            for tier_id, tier in existing_by_id.items():
+                if tier_id in seen_ids:
+                    continue
+                if tier.quantity_sold and tier.quantity_sold > 0:
+                    return Response(
+                        {
+                            'error': (
+                                f'Cannot delete tier "{tier.name}": it has '
+                                f'{tier.quantity_sold} sold ticket(s). '
+                                f'Cancel those tickets first.'
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if Ticket.objects.filter(tier=tier).exists():
+                    return Response(
+                        {
+                            'error': (
+                                f'Cannot delete tier "{tier.name}": existing '
+                                f'tickets reference it.'
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                tier.delete()
 
         instance.update_ticket_counts()
         instance.refresh_from_db()
@@ -547,8 +670,6 @@ class EventViewSet(viewsets.ModelViewSet):
         """Public upcoming events — no auth, narrow field set."""
         now = timezone.now()
 
-        # ✅ FIX: prefetch templates + template_type so the
-        # template_images field is populated without N+1 queries.
         queryset = (
             Event.objects
             .filter(

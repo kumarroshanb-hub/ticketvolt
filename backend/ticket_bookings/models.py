@@ -1,5 +1,5 @@
 # backend/ticket_bookings/models.py
-
+#
 # ============================================================================
 # CONVENTION: Effective status
 # ----------------------------------------------------------------------------
@@ -256,13 +256,11 @@ class Event(models.Model):
         ).count()
 
     def get_active_revenue(self):
-        return (
-            self.bookings
-            .filter(status__in=SOLD_BOOKING_STATUSES)
-            .aggregate(total=Sum('total_amount'))
-            .get('total')
-            or 0
-        )
+        # ✅ FIX [P10]: use canonical revenue helper so every consumer
+        # agrees. `canonical_revenue` is imported lazily to avoid a
+        # circular import with managers.py.
+        from .managers import canonical_revenue
+        return canonical_revenue(self.bookings.all())
 
     def get_active_bookings_count(self):
         return self.bookings.exclude(
@@ -287,30 +285,15 @@ class Event(models.Model):
           1. 'cancelled' is terminal — always returned as-is.
           2. 'completed' is terminal — always returned as-is.
           3. If `end_date` has passed and the event is not terminal,
-             return 'completed'. This makes the UI agree with reality
-             even if the Celery Beat task (update_completed_events)
-             hasn't fired yet.
+             return 'completed'.
           4. Otherwise return the stored status.
 
-        Mirrors ticket_bookings.tasks.update_completed_events.
-        Never mutates self.
-
-        This is the single source of truth. Do NOT inline this logic
-        anywhere else — call this method.
-
-        Naive-datetime safety
-        ---------------------
-        With USE_TZ=True, Django returns timezone-aware datetimes when
-        reading from the DB. BUT — inside a single request, if the view
-        just assigned `self.end_date` from a naive value (before the DB
-        round-trip), the attribute is still naive. Comparing it against
-        an aware `now` raises:
-
-            TypeError: can't compare offset-naive and offset-aware datetimes
-
-        We normalize `end_date` here as a defensive measure so the read
-        path never crashes. The write path (EventViewSet._parse_dt) is
-        the primary fix — this is the safety net.
+        ✅ FIX [P26] note: the naive/aware guard below is load-bearing.
+        Removing it will re-introduce
+          TypeError: can't compare offset-naive and offset-aware datetimes
+        in `EventViewSet.create()` because the view assigns a naive
+        `end_date` from `_parse_dt()` before the DB round-trip. Do not
+        remove the `is_naive(end)` branch.
         """
         from django.utils import timezone as _tz
 
@@ -351,17 +334,8 @@ class Session(models.Model):
 
     def remaining_capacity(self):
         """
-        Seats still available in this session.
-
-        Clamped at 0 so a bad data state (booked > capacity, however it
-        got there) never returns a negative number. A negative here
-        would propagate silently into UI arithmetic and produce
-        confusing results like "-2 seats remaining".
-
-        The invariant we want is: 0 <= booked <= capacity. Booking
-        creation now reserves seats inside a row lock, so this should
-        hold for all data written after the fix. Clamping is a
-        defensive belt-and-braces for legacy rows.
+        Seats still available in this session. Clamped at 0 so a bad
+        data state never returns a negative number.
         """
         return max(0, self.capacity - self.booked)
 
@@ -370,17 +344,7 @@ class Session(models.Model):
         Return (ok: bool, reason: str | None) for a request to reserve
         `requested` seats.
 
-        This is the single source of truth for the capacity rule.
-        Called from:
-          • BookingSerializer.validate()  — fail-fast UX
-          • BookingViewSet.create()       — transactional correctness
-
-        Both callers get the same rule and the same error wording, so
-        the UI never has to reconcile two different messages.
-
-        `requested` <= 0 is treated as "nothing to reserve" and always
-        passes. Callers that don't know the ticket count pass 0 and
-        skip the check.
+        Single source of truth for the capacity rule.
         """
         if requested <= 0:
             return True, None
@@ -418,7 +382,11 @@ class TicketTier(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def available_tickets(self):
-        return self.quantity_total - self.quantity_sold
+        # ✅ FIX [P14]: clamp at 0. If `quantity_sold` exceeds
+        # `quantity_total` due to a race or legacy data, the old code
+        # returned a negative number and the UI rendered "-2 available".
+        # Matches Session.remaining_capacity() which already clamps.
+        return max(0, self.quantity_total - self.quantity_sold)
 
     def __str__(self):
         return f"{self.name} - ₹{self.price}"
@@ -728,19 +696,6 @@ class EventTemplate(models.Model):
           "orientation": "landscape",
           "shape": "wide_stub"
         }
-
-    Supported field names (see ticket_generator.DEFAULT_FIELD_CONFIG):
-      organizer, organizer_sub,
-      event_title, event_date, event_date_secondary,
-      ticket_code_label, ticket_code_value,
-      attendee_label, attendee_value,
-      booking_label, booking_value,
-      venue_label, venue_value,
-      ticket_number, slot_time_label, slot_time_value,
-      qr_code, admit_one
-
-    Unknown field names are ignored (safe forward compatibility).
-    Missing fields fall back to defaults in ticket_generator.py.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='templates')

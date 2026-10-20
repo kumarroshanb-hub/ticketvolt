@@ -4,6 +4,7 @@ from django.contrib.auth.models import User
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
+import json
 import os
 import re
 import logging
@@ -66,13 +67,91 @@ def get_or_create_whatsapp_bot_user():
         whatsapp_user.save()
         logger.info("✅ Created whatsapp_bot service account.")
     else:
+        # ✅ FIX [P4]: rotate on mismatch. The old code only logged a
+        # warning; if WHATSAPP_BOT_PASSWORD was rotated, the DB kept the
+        # old password and every WhatsApp-driven booking path silently
+        # used a stale credential. Rotation is idempotent — if the
+        # password already matches, check_password returns True and we
+        # skip the write.
         if not whatsapp_user.check_password(service_password):
+            whatsapp_user.set_password(service_password)
+            whatsapp_user.save(update_fields=['password'])
             logger.warning(
-                "⚠️ whatsapp_bot exists but stored password does not match "
-                "WHATSAPP_BOT_PASSWORD. Rotate via admin."
+                "🔑 whatsapp_bot password did NOT match WHATSAPP_BOT_PASSWORD — "
+                "rotated to the value from the environment. "
+                "If this was unintended, rotate BOTH."
             )
 
     return whatsapp_user
+
+
+# ============================================================
+# ✅ FIX [P6]: booking-triggered user creation was creating a NEW user
+# every time a booking came in with a customer_email, even if a real
+# user with that email already existed. That produced `username_1`,
+# `username_2`, … duplicates and unusable accounts.
+#
+# Resolution order:
+#   1. If a User with the given email already exists → return it.
+#      (Do NOT overwrite their password. They're a real user.)
+#   2. Otherwise, create a new user with an unusable password and
+#      attach them to the booking as the "purchaser" record.
+# ============================================================
+def _resolve_or_create_user_for_booking(*, customer_email, customer_name, customer_phone):
+    if not customer_email:
+        return get_or_create_whatsapp_bot_user()
+
+    existing = User.objects.filter(email__iexact=customer_email).first()
+    if existing is not None:
+        logger.info(
+            "♻️ Booking purchaser email %r already belongs to user %r — reusing.",
+            customer_email, existing.username,
+        )
+        return existing
+
+    # No existing user — create one. Password is unusable by design:
+    # this user will need to register (or reset) before they can log in.
+    try:
+        base_username = re.sub(
+            r'[^a-zA-Z0-9_]', '_',
+            customer_email.split('@')[0]
+        )[:140] or 'user'
+        username = base_username
+        counter = 1
+        while User.objects.filter(username=username).exists():
+            username = f"{base_username}_{counter}"[:150]
+            counter += 1
+
+        name_parts = (customer_name or '').split()
+        first_name = (name_parts[0] if name_parts else customer_name or '')[:150]
+        last_name = (' '.join(name_parts[1:]) if len(name_parts) > 1 else '')[:150]
+
+        user = User.objects.create_user(
+            username=username,
+            email=customer_email,
+            password=None,  # unusable — user must set password via reset
+            first_name=first_name,
+            last_name=last_name,
+        )
+        user.is_active = True
+        user.save(update_fields=['is_active'])
+
+        try:
+            UserProfile.objects.get_or_create(
+                user=user,
+                defaults={
+                    'email': customer_email,
+                    'phone': customer_phone or '',
+                    'whatsapp_number': customer_phone or '',
+                },
+            )
+        except Exception as profile_err:
+            logger.warning(f"⚠️ Could not create UserProfile: {profile_err}")
+
+        return user
+    except Exception:
+        logger.exception("Error creating user from booking email")
+        return get_or_create_whatsapp_bot_user()
 
 
 # ============================================================
@@ -122,7 +201,6 @@ class PublicEventSerializer(serializers.ModelSerializer):
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
-    # ✅ NEW: Expose uploaded announcement/ticket/flyer images
     template_images = serializers.SerializerMethodField()
 
     class Meta:
@@ -137,7 +215,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'venue',
             'tier_count', 'session_count', 'total_capacity',
-            'template_images',  # ✅ NEW
+            'template_images',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -165,23 +243,6 @@ class PublicEventSerializer(serializers.ModelSerializer):
         result = obj.tiers.aggregate(total=Sum('quantity_total'))
         return result.get('total') or 0
 
-    # ============================================================
-    # ✅ FIX: Return ABSOLUTE URLs, and always include a 'default' key
-    # ------------------------------------------------------------
-    # Why:
-    #   • `template.image.url` returns a relative path like
-    #     "/media/event_templates/x.png". The frontend runs on a
-    #     different origin (localhost:3000, Render static site, …),
-    #     so <img src="/media/..."> hits the FRONTEND origin → 404.
-    #   • `request.build_absolute_uri()` turns it into
-    #     "http://backend:8000/media/..." which the browser can load.
-    #   • When MEDIA_URL is already absolute (Tigris / S3), we skip
-    #     the rewrite — those URLs are already correct.
-    #   • We always add a 'default' key: the first `is_default=True`
-    #     template if any, otherwise the first image found. The
-    #     frontend's EventCard can then use a single stable key
-    #     regardless of which template type was uploaded.
-    # ============================================================
     def get_template_images(self, obj):
         images = {}
         default_url = None
@@ -196,17 +257,12 @@ class PublicEventSerializer(serializers.ModelSerializer):
             try:
                 url = template.image.url
             except ValueError:
-                # File is set on the model but missing from storage.
                 continue
 
-            # Rewrite relative URLs to absolute so cross-origin
-            # frontends can load them.
             if request is not None and url.startswith('/'):
                 try:
                     url = request.build_absolute_uri(url)
                 except Exception:
-                    # Never let a URL-build failure break the whole
-                    # response; fall back to the relative URL.
                     pass
 
             images[template.template_type.slug] = url
@@ -214,7 +270,6 @@ class PublicEventSerializer(serializers.ModelSerializer):
             if template.is_default and default_url is None:
                 default_url = url
 
-        # Always provide a stable 'default' key for consumers.
         if default_url is not None:
             images['default'] = default_url
         elif images:
@@ -252,7 +307,8 @@ class PublicEventDetailSerializer(PublicEventSerializer):
                 'price': float(t.price),
                 'quantity_total': t.quantity_total,
                 'quantity_sold': t.quantity_sold,
-                'available': max(0, (t.quantity_total or 0) - (t.quantity_sold or 0)),
+                # ✅ FIX [P14]: use the clamped model helper.
+                'available': t.available_tickets(),
                 'ticket_type': t.ticket_type,
                 'max_per_order': t.max_per_order,
                 'min_per_order': t.min_per_order,
@@ -432,6 +488,9 @@ class EventDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_sessions(self, obj):
+        # ✅ FIX [P34]: include `remaining` so the frontend can render
+        # availability without recomputing (it was already computing it,
+        # but every other session payload emitted it — this one didn't).
         return [
             {
                 'id': str(s.id),
@@ -439,6 +498,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
                 'end_time': s.end_time,
                 'capacity': s.capacity,
                 'booked': s.booked,
+                'remaining': max(0, (s.capacity or 0) - (s.booked or 0)),
+                'is_active': s.is_active,
             }
             for s in obj.sessions.all()
         ]
@@ -451,6 +512,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
                 'price': float(t.price),
                 'quantity_total': t.quantity_total,
                 'quantity_sold': t.quantity_sold,
+                # ✅ FIX [P14]: clamped.
+                'available': t.available_tickets(),
+                'ticket_type': t.ticket_type,
+                'max_per_order': t.max_per_order,
+                'min_per_order': t.min_per_order,
             }
             for t in obj.tiers.all()
         ]
@@ -729,6 +795,14 @@ class BookingSerializer(serializers.ModelSerializer):
             if not ok:
                 raise serializers.ValidationError({'session': reason})
 
+        # ============================================================
+        # ✅ FIX [P12]: delegate ALL discount eligibility rules to
+        # services.discount_service.validate_discount. Previously this
+        # method re-implemented a SUBSET of those rules inline, so a
+        # code could pass the preview endpoint and still be rejected
+        # here (or worse, accepted here while the preview rejected it).
+        # One source of truth now.
+        # ============================================================
         raw_code = (
             data.get('discount_code')
             or self.initial_data.get('discount_code')
@@ -738,6 +812,11 @@ class BookingSerializer(serializers.ModelSerializer):
         discount_amount = Decimal('0.00')
 
         if discount_code:
+            from ..services.discount_service import (
+                validate_discount as _validate_discount,
+                DiscountError,
+            )
+
             try:
                 discount_obj = Discount.objects.get(
                     code__iexact=discount_code, is_active=True,
@@ -749,52 +828,20 @@ class BookingSerializer(serializers.ModelSerializer):
 
             request = self.context.get('request')
             requester = getattr(request, 'user', None)
-            if requester and not (requester.is_staff or requester.is_superuser):
-                if discount_obj.organizer_id != self._event_obj.organizer_id:
-                    raise serializers.ValidationError(
-                        {'discount_code': 'This code is not valid for this event.'}
-                    )
 
-            now = timezone.now()
-            if discount_obj.valid_from and discount_obj.valid_from > now:
-                raise serializers.ValidationError(
-                    {'discount_code': 'This code is not yet valid.'}
+            # Non-authenticated / bot caller: treat the eventual purchaser
+            # as an anonymous user for per-user rules. `validate_discount`
+            # handles the None user gracefully.
+            try:
+                _validate_discount(
+                    discount=discount_obj,
+                    user=requester if requester and requester.is_authenticated else None,
+                    event=self._event_obj,
+                    ticket_count=len(tickets_payload),
+                    order_subtotal=computed_total,
                 )
-            if discount_obj.valid_to and discount_obj.valid_to < now:
-                raise serializers.ValidationError(
-                    {'discount_code': 'This code has expired.'}
-                )
-
-            if discount_obj.max_uses and discount_obj.used_count >= discount_obj.max_uses:
-                raise serializers.ValidationError(
-                    {'discount_code': 'This code has reached its usage limit.'}
-                )
-
-            scoped_ids = list(
-                discount_obj.applicable_events.values_list('id', flat=True)
-            )
-            if scoped_ids and self._event_obj.id not in scoped_ids:
-                raise serializers.ValidationError(
-                    {'discount_code': 'This code is not valid for this event.'}
-                )
-
-            if (
-                discount_obj.min_order_amount
-                and computed_total < Decimal(str(discount_obj.min_order_amount))
-            ):
-                raise serializers.ValidationError(
-                    {'discount_code':
-                     f'Minimum order ₹{discount_obj.min_order_amount} required.'}
-                )
-
-            if (
-                discount_obj.min_ticket_count
-                and len(tickets_payload) < discount_obj.min_ticket_count
-            ):
-                raise serializers.ValidationError(
-                    {'discount_code':
-                     f'Minimum {discount_obj.min_ticket_count} tickets required.'}
-                )
+            except DiscountError as exc:
+                raise serializers.ValidationError({'discount_code': str(exc)})
 
             if discount_obj.type == 'percentage':
                 discount_amount = (
@@ -837,50 +884,14 @@ class BookingSerializer(serializers.ModelSerializer):
             customer_name = validated_data.get('customer_name', 'WhatsApp User')
             customer_phone = validated_data.get('customer_phone', '')
 
-            if customer_email:
-                try:
-                    username = re.sub(
-                        r'[^a-zA-Z0-9_]', '_',
-                        customer_email.split('@')[0]
-                    )[:140] or 'user'
-                    base_username = username
-                    counter = 1
-                    while User.objects.filter(username=username).exists():
-                        username = f"{base_username}_{counter}"[:150]
-                        counter += 1
-
-                    name_parts = customer_name.split()
-                    first_name = (name_parts[0] if name_parts else customer_name)[:150]
-                    last_name = (' '.join(name_parts[1:]) if len(name_parts) > 1 else '')[:150]
-
-                    user = User.objects.create_user(
-                        username=username,
-                        email=customer_email,
-                        password=None,
-                        first_name=first_name,
-                        last_name=last_name,
-                    )
-                    user.is_active = True
-                    user.save(update_fields=['is_active'])
-
-                    try:
-                        UserProfile.objects.get_or_create(
-                            user=user,
-                            defaults={
-                                'email': customer_email,
-                                'phone': customer_phone,
-                                'whatsapp_number': customer_phone,
-                            },
-                        )
-                    except Exception as profile_err:
-                        logger.warning(f"⚠️ Could not create UserProfile: {profile_err}")
-
-                    validated_data['user'] = user
-                except Exception:
-                    logger.exception("Error creating user from email")
-                    validated_data['user'] = get_or_create_whatsapp_bot_user()
-            else:
-                validated_data['user'] = get_or_create_whatsapp_bot_user()
+            # ✅ FIX [P6]: resolve existing user by email before creating
+            # a new one. Prevents `username_1` duplicates for real users
+            # who book as a guest.
+            validated_data['user'] = _resolve_or_create_user_for_booking(
+                customer_email=customer_email,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+            )
 
         if not validated_data.get('total_amount'):
             total = Decimal('0.00')
@@ -896,6 +907,23 @@ class BookingSerializer(serializers.ModelSerializer):
         validated_data['discount_code'] = discount_code
         validated_data['discount_applied'] = discount_applied
 
+        # ✅ FIX [P28]: stamp the booking source so the analytics
+        # "Booking Source" pie chart isn't always "Unknown" for
+        # non-WhatsApp bookings.
+        metadata = validated_data.get('metadata')
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if 'booking_source' not in metadata or not metadata.get('booking_source'):
+            request = self.context.get('request')
+            if request is not None and getattr(request, 'user', None):
+                if request.user.is_staff or request.user.is_superuser:
+                    metadata['booking_source'] = 'admin_portal'
+                else:
+                    metadata['booking_source'] = 'user_portal'
+            else:
+                metadata['booking_source'] = 'whatsapp'
+        validated_data['metadata'] = metadata
+
         booking = super().create(validated_data)
 
         if discount_code and discount_applied and discount_applied > 0:
@@ -903,6 +931,13 @@ class BookingSerializer(serializers.ModelSerializer):
                 discount_obj = getattr(self, '_discount_obj', None) or Discount.objects.get(
                     code__iexact=discount_code
                 )
+                # ✅ FIX [P25] note: this call is inside the same
+                # transaction.atomic() block as the session row lock in
+                # BookingViewSet.create(). Two concurrent bookings using
+                # the last available seat OR the last available discount
+                # use both serialize on the session lock, so
+                # `max_uses_per_user` and `max_uses` cannot both pass for
+                # a single use. Do NOT move this out of the transaction.
                 DiscountUsage.objects.create(
                     discount=discount_obj,
                     booking=booking,
@@ -960,8 +995,13 @@ class BookingSerializer(serializers.ModelSerializer):
                 tier_ids = md['tier_ids']
                 tier_quantities = md.get('tier_quantities', {})
                 for tier_id in tier_ids:
-                    quantity = tier_quantities.get(str(tier_id), 1)
-                    for i in range(int(quantity)):
+                    # ✅ FIX [P11]: default 0, not 1.
+                    quantity = tier_quantities.get(str(tier_id), 0)
+                    try:
+                        quantity = int(quantity)
+                    except (ValueError, TypeError):
+                        quantity = 0
+                    for i in range(quantity):
                         attendee_name = booking.customer_name
                         attendee_names = md.get('attendee_names', {})
                         if str(tier_id) in attendee_names:
@@ -1391,6 +1431,11 @@ class EventTemplateSerializer(serializers.ModelSerializer):
     )
     image_url = serializers.SerializerMethodField()
 
+    # ✅ FIX [P33]: hard cap on config size. 64 KB is generous for any
+    # realistic layout JSON; anything larger is almost certainly an
+    # attack or a bug.
+    MAX_CONFIG_BYTES = 64 * 1024
+
     class Meta:
         model = EventTemplate
         fields = [
@@ -1401,7 +1446,33 @@ class EventTemplateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
-    # ✅ FIX: return absolute URL here too (used by the admin templates UI).
+    # ✅ FIX [P33]: validate shape and size.
+    def validate_config(self, value):
+        if value is None:
+            return {}
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('config must be a JSON object.')
+
+        try:
+            encoded = json.dumps(value, separators=(',', ':'))
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(
+                f'config is not JSON-serialisable: {exc}'
+            )
+
+        if len(encoded) > self.MAX_CONFIG_BYTES:
+            raise serializers.ValidationError(
+                f'config is too large ({len(encoded)} bytes); '
+                f'maximum is {self.MAX_CONFIG_BYTES} bytes.'
+            )
+
+        fields = value.get('fields')
+        if fields is not None and not isinstance(fields, dict):
+            raise serializers.ValidationError('config.fields must be an object.')
+
+        return value
+
     def get_image_url(self, obj):
         if not obj.image:
             return None

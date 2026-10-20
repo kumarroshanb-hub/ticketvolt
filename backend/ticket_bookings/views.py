@@ -64,6 +64,8 @@ from axes.helpers import get_client_ip_address
 
 from .constants import BookingStatus, TicketStatus
 from .models import Ticket, CheckInLog
+# ✅ FIX [P9]: single canonical completed-booking reconciler.
+from .services.booking_status import reconcile_completed_booking
 
 import logging
 
@@ -141,6 +143,48 @@ def verify_ticket_signature(payload: dict) -> bool:
         return False
 
     return hmac.compare_digest(expected, provided_sig)
+
+
+# ✅ FIX [P7]: raise a distinct exception so callers can return 503
+# (server misconfigured) instead of 400 (client's fault / bad sig).
+class SigningSecretUnavailable(RuntimeError):
+    """Raised when TICKET_SIGNING_SECRET is missing or too short."""
+
+
+def verify_ticket_signature_or_503(payload: dict) -> tuple[bool, str | None]:
+    """
+    Verify a signed payload, distinguishing "secret missing" from
+    "signature wrong". Returns (ok, error_message).
+
+    - ok=True,  error=None          → valid signature
+    - ok=False, error='misconfigured' → server has no secret → 503
+    - ok=False, error='mismatch'    → sig is wrong → 200 with valid:false
+    - ok=False, error='malformed'   → payload missing sig, etc.
+    """
+    if not isinstance(payload, dict):
+        return False, 'malformed'
+
+    provided_sig = payload.get('sig')
+    if not isinstance(provided_sig, str) or not provided_sig:
+        return False, 'malformed'
+
+    try:
+        secret = _get_ticket_signing_secret()
+    except RuntimeError:
+        # Missing/misconfigured secret is a SERVER problem, not a bad ticket.
+        logger.critical(
+            "🚨 TICKET_SIGNING_SECRET is unavailable — cannot verify signed "
+            "QR payloads. This is a configuration error, not a scan error."
+        )
+        return False, 'misconfigured'
+
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        _canonical_ticket_message(payload),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, provided_sig), None
 
 
 def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
@@ -335,47 +379,6 @@ def _rejection_for_ticket(ticket):
     return None
 
 
-def _check_and_complete_booking(booking) -> bool:
-    """
-    Promote the booking to `completed` iff at least one ticket is `used`
-    and no ticket is still check-in-able. Returns True if changed.
-    """
-    if not booking:
-        return False
-
-    if booking.status in (
-        BookingStatus.COMPLETED,
-        BookingStatus.CANCELLED,
-        BookingStatus.REFUNDED,
-    ):
-        return False
-
-    terminal_states = (
-        TicketStatus.USED,
-        TicketStatus.CANCELLED,
-        TicketStatus.REFUNDED,
-        TicketStatus.EXPIRED,
-    )
-
-    total_tickets = booking.tickets.count()
-    if total_tickets == 0:
-        return False
-
-    used_tickets = booking.tickets.filter(status=TicketStatus.USED).count()
-    actionable_tickets = booking.tickets.exclude(
-        status__in=terminal_states,
-    ).count()
-
-    if used_tickets == 0:
-        return False
-    if actionable_tickets > 0:
-        return False
-
-    booking.status = BookingStatus.COMPLETED
-    booking.save(update_fields=['status'])
-    return True
-
-
 def _perform_checkin(request, ticket, device_id):
     """
     Shared atomic check-in core. Caller must have already:
@@ -405,7 +408,9 @@ def _perform_checkin(request, ticket, device_id):
 
     booking_completed = False
     if ticket.booking:
-        booking_completed = _check_and_complete_booking(ticket.booking)
+        # ✅ FIX [P9]: delegate to the canonical reconciler so this
+        # endpoint, `checkin_api`, and `booking_api` all agree.
+        booking_completed = reconcile_completed_booking(ticket.booking)
 
     return Response(
         {
@@ -524,15 +529,12 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # ✅ FIX [P2]: removed the Axes lockout check. This view requires
+        # an already-valid JWT, so a brute-force check here is redundant
+        # and — more importantly — the previous call passed
+        # `credentials=None`, which Axes does not support. The lockout
+        # belongs on LoginView only.
         user = request.user
-        raw_request = getattr(request, '_request', request)
-
-        if AxesProxyHandler.is_locked(request=raw_request, credentials=None):
-            return Response(
-                {'detail': 'Account temporarily locked'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         role = get_user_role(user)
 
         return Response({
@@ -565,6 +567,7 @@ def checkin_verify(request):
       200 { "valid": true,  "ticket": {...}, "slot_window": {...} }
       200 { "valid": false, "detail": "..." }  for well-formed but invalid tickets
       400 { "detail": "..." }                  for malformed payloads
+      503 { "detail": "..." }                  for server misconfiguration
     """
     payload, reason = _validate_ticket_payload(request.data)
     if payload is None:
@@ -573,7 +576,25 @@ def checkin_verify(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    if not verify_ticket_signature(payload):
+    # ✅ FIX [P7]: distinguish "server has no secret" (503) from
+    # "signature wrong" (200, valid:false). The old code collapsed both
+    # into "Signature mismatch", which made a misconfigured deployment
+    # look like an invalid ticket.
+    ok, err = verify_ticket_signature_or_503(payload)
+    if not ok:
+        if err == 'misconfigured':
+            return Response(
+                {
+                    'valid': False,
+                    'code': 'SERVER_MISCONFIGURED',
+                    'detail': (
+                        'Server cannot verify signatures: '
+                        'TICKET_SIGNING_SECRET is not configured. '
+                        'Contact the administrator.'
+                    ),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response(
             {'valid': False, 'detail': 'Signature mismatch.'},
             status=status.HTTP_200_OK,
@@ -634,7 +655,20 @@ def checkin_perform(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    if not verify_ticket_signature(payload):
+    # ✅ FIX [P7]: same 503-vs-mismatch distinction as checkin_verify.
+    ok, err = verify_ticket_signature_or_503(payload)
+    if not ok:
+        if err == 'misconfigured':
+            return Response(
+                {
+                    'code': 'SERVER_MISCONFIGURED',
+                    'detail': (
+                        'Server cannot verify signatures: '
+                        'TICKET_SIGNING_SECRET is not configured.'
+                    ),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response(
             {'detail': 'Invalid signature.'},
             status=status.HTTP_400_BAD_REQUEST,

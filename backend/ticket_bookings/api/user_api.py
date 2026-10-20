@@ -79,6 +79,17 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by('-date_joined')
 
+    # ✅ FIX [P1]: shared "can the caller touch this user?" guard.
+    # Admins/superadmins may act on anyone (with the superadmin exception
+    # already enforced elsewhere). Everyone else may only act on themselves.
+    # This is used by `profile`, `update_profile`, and any future
+    # self-scoped detail action.
+    def _can_view_or_edit_user(self, request, target_user):
+        requester = request.user
+        if requester.is_staff or requester.is_superuser:
+            return True
+        return requester.id == target_user.id
+
     def create(self, request, *args, **kwargs):
         """
         Create a new user (Admin/Super Admin only)
@@ -259,7 +270,17 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def profile(self, request, pk=None):
+        # ✅ FIX [P1]: a non-staff caller must only be able to read their
+        # own profile. Without this check any authenticated user could
+        # GET /api/users/<someone-elses-id>/profile/ and harvest PII.
         user = self.get_object()
+
+        if not self._can_view_or_edit_user(request, user):
+            return Response(
+                {'error': 'You do not have permission to view this profile.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         profile, created = UserProfile.objects.get_or_create(
             user=user,
             defaults={'email': user.email}
@@ -269,7 +290,19 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def update_profile(self, request, pk=None):
+        # ✅ FIX [P1]: a non-staff caller may only edit their own profile.
+        # `get_object()` returns *any* user for staff, and for regular
+        # users it already scopes to `id=user.id` — but the guard below
+        # is defensive against a future change to `get_queryset()` that
+        # would widen the base queryset.
         user = self.get_object()
+
+        if not self._can_view_or_edit_user(request, user):
+            return Response(
+                {'error': 'You do not have permission to edit this profile.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         profile, created = UserProfile.objects.get_or_create(
             user=user,
             defaults={'email': user.email}
@@ -286,10 +319,16 @@ class UserViewSet(viewsets.ModelViewSet):
             user.save()
             profile.email = data['email']
 
+        # ✅ FIX [P1]: only staff/superadmins may flip `is_organizer`
+        # through this endpoint. Without this, a regular user could
+        # self-promote to organizer and gain event-management access.
         profile_fields = [
             'phone', 'whatsapp_number', 'address', 'city', 'state',
-            'country', 'postal_code', 'is_organizer',
+            'country', 'postal_code',
         ]
+        if request.user.is_staff or request.user.is_superuser:
+            profile_fields.append('is_organizer')
+
         for field in profile_fields:
             if field in data:
                 setattr(profile, field, data[field])

@@ -574,7 +574,11 @@ const Landing = () => {
         setError(null);
         try {
             const data = await eventService.getPublicEvents();
-            setEvents(data.results || []);
+            // ✅ Defensive: the API returns `{count, results}` but a
+            // future endpoint change to a bare array should not break
+            // the page.
+            const list = Array.isArray(data) ? data : (data?.results || []);
+            setEvents(list);
         } catch (err) {
             console.error('Failed to load public events:', err);
             setError('Could not load events. Please try again later.');
@@ -622,6 +626,10 @@ const Landing = () => {
         return {
             eventCount: events.length,
             cityCount: cities.size,
+            // ✅ FIX [P24]: show a friendly label instead of the em-dash
+            // when no events have a city set. Without this, an empty
+            // events list rendered "Cities: —" which looked broken.
+            cityCountLabel: cities.size > 0 ? String(cities.size) : 'All',
         };
     }, [events]);
 
@@ -658,7 +666,8 @@ const Landing = () => {
                             </HeroStat>
                             <HeroStatDivider />
                             <HeroStat>
-                                <span className="value">{heroStats.cityCount || '—'}</span>
+                                {/* ✅ FIX [P24] */}
+                                <span className="value">{heroStats.cityCountLabel}</span>
                                 <span className="label">Cities</span>
                             </HeroStat>
                             <HeroStatDivider />

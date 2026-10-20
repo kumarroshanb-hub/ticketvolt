@@ -21,9 +21,6 @@ from django.db.models import Q, Sum, Count
 
 # ============================================================================
 # CANONICAL STATUS GROUPS
-# ----------------------------------------------------------------------------
-# Single source of truth for "which booking statuses count". Add new
-# groupings here; never inline status lists in views again.
 # ============================================================================
 
 # Bookings that should NOT count toward any "how many bookings do we have?" stat.
@@ -32,8 +29,7 @@ EXCLUDED_BOOKING_STATUSES = ('cancelled', 'refunded')
 # Bookings that DO count toward revenue.
 REVENUE_BOOKING_STATUSES = ('paid', 'confirmed', 'completed')
 
-# Bookings whose tickets should count as "sold". Same as revenue — a ticket
-# is only sold once payment cleared.
+# Bookings whose tickets should count as "sold". Same as revenue.
 SOLD_BOOKING_STATUSES = REVENUE_BOOKING_STATUSES
 
 # Bookings awaiting payment.
@@ -211,3 +207,73 @@ def bucket_label(dt, granularity):
     if granularity == 'month':
         return dt.strftime('%b %Y')
     return dt.strftime('%b %d')
+
+
+# ============================================================================
+# ✅ FIX [P10]: CANONICAL REVENUE AGGREGATORS
+# ----------------------------------------------------------------------------
+# Before this existed, DashboardStatsView used `.total_revenue()`,
+# AnalyticsView computed a raw `Sum`, and EventViewSet.list computed its
+# own `Sum` for the annotation. Three slightly different filters →
+# numbers could disagree on rounding, edge statuses, or event scoping.
+#
+# Everything that produces a "revenue" number MUST go through
+# `canonical_revenue(bookings_qs)`.
+# ============================================================================
+
+def canonical_revenue(bookings_qs):
+    """
+    Sum of `total_amount` across bookings that count toward revenue.
+
+    `bookings_qs` may be any queryset of Booking (already scoped to the
+    events/user the caller cares about). The function applies the
+    canonical `SOLD_BOOKING_STATUSES` filter — nothing else.
+    """
+    return (
+        bookings_qs
+        .filter(status__in=SOLD_BOOKING_STATUSES)
+        .aggregate(total=Sum('total_amount'))
+        .get('total')
+        or 0
+    )
+
+
+def canonical_revenue_in_window(bookings_qs, start=None, end=None):
+    """
+    Revenue that was *paid* within [start, end], using `paid_at` as the
+    pivot. Falls back to `created_at` when `paid_at` is null for legacy
+    rows.
+    """
+    qs = bookings_qs.filter(status__in=SOLD_BOOKING_STATUSES)
+
+    if start is not None:
+        qs = qs.filter(
+            (Q(paid_at__gte=start) & Q(paid_at__isnull=False))
+            | (Q(paid_at__isnull=True) & Q(created_at__gte=start))
+        )
+    if end is not None:
+        qs = qs.filter(
+            (Q(paid_at__lte=end) & Q(paid_at__isnull=False))
+            | (Q(paid_at__isnull=True) & Q(created_at__lte=end))
+        )
+
+    return (
+        qs.aggregate(total=Sum('total_amount')).get('total')
+        or 0
+    )
+
+
+# ============================================================================
+# ✅ FIX [P15]: UPCOMING-EVENT FILTER HELPER
+# ----------------------------------------------------------------------------
+# Used by DashboardStatsView to exclude past events from the "popular"
+# list even when their stored status is still 'active' (cron lag).
+# ============================================================================
+
+def events_visible_upcoming(events_qs, now):
+    """
+    Events whose end_date has not yet passed (or has no end_date).
+    Pass-through for terminal statuses (cancelled/completed) — callers
+    can filter those separately.
+    """
+    return events_qs.filter(Q(end_date__isnull=True) | Q(end_date__gte=now))

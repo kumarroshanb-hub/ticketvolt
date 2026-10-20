@@ -3,36 +3,38 @@
 #
 # ✅ FIX [P39]: only run migrations + collectstatic when RUN_MIGRATIONS=1.
 #
-# Docker Compose starts `backend`, `celery-worker`, and `celery-beat`
-# from the same image with the same entrypoint. Previously all three
-# ran `migrate` concurrently on boot, which can produce partial
-# migrations or a Postgres "relation already exists" race.
+# ✅ FIX [P39-bug]: WhiteNoise warns "No directory at: /app/staticfiles/"
+# if `collectstatic` hasn't run before Gunicorn boots. The previous
+# version of this script skipped BOTH migrate AND collectstatic when
+# RUN_MIGRATIONS=0, which is fine for celery-worker/beat — but if the
+# primary `backend` service was ever started without RUN_MIGRATIONS=1,
+# no static files existed at runtime and WhiteNoise complained on every
+# request that touched a static URL.
 #
-# The primary `backend` service sets RUN_MIGRATIONS=1; workers set 0.
-#
-# Behaviour is backwards-compatible: if RUN_MIGRATIONS is unset, we do
-# NOT run migrate — this matches "worker container" semantics and is
-# the safe default. The primary service in docker-compose.prod.yml
-# explicitly sets it to 1.
+# The fix: decouple the two. `collectstatic` ALWAYS runs on the
+# primary service (it's idempotent and fast). `migrate` runs only when
+# RUN_MIGRATIONS=1. Workers skip both.
 
 set -e
 
+# -------------------- collectstatic --------------------
+# Always run on the primary service. Idempotent, cheap, and required
+# for WhiteNoise to find the static root at runtime.
+if [ "${RUN_COLLECTSTATIC:-1}" = "1" ]; then
+    echo "📦 Collecting static files..."
+    python manage.py collectstatic --noinput
+else
+    echo "⏭️  Skipping collectstatic (RUN_COLLECTSTATIC=${RUN_COLLECTSTATIC:-0})"
+fi
+
+# -------------------- migrate --------------------
 if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
     echo "🚀 Running migrations..."
     python manage.py migrate --noinput
 
-    echo "📦 Collecting static files..."
-    python manage.py collectstatic --noinput
-
-    # ✅ FIX [P39]: wait for Redis to be reachable before the app starts
-    # accepting traffic. Celery brokers will retry on their own, but the
-    # Django app can crash-loop if a view triggers a Redis read on the
-    # first request. Fail-open here (warn, don't abort) — the container
-    # should still start so operators can hit `/health/` to diagnose.
+    # Wait for Redis to be reachable before accepting traffic. Fail-open.
     if [ -n "${REDIS_URL:-}" ]; then
         echo "⏳ Waiting for Redis at ${REDIS_URL}..."
-        # Extract host:port from redis://host:port/db — best-effort, no
-        # external dependencies (netcat is not in python:3.11-slim).
         REDIS_HOSTPORT="$(printf '%s' "$REDIS_URL" | sed -E 's#^redis://([^/]+).*#\1#')"
         REDIS_HOST="${REDIS_HOSTPORT%%:*}"
         REDIS_PORT="${REDIS_HOSTPORT##*:}"
@@ -56,7 +58,7 @@ PY
         echo "ℹ️ REDIS_URL not set — skipping Redis readiness check."
     fi
 else
-    echo "⏭️  Skipping migrate/collectstatic (RUN_MIGRATIONS=${RUN_MIGRATIONS:-0})"
+    echo "⏭️  Skipping migrate (RUN_MIGRATIONS=${RUN_MIGRATIONS:-0})"
 fi
 
 exec "$@"

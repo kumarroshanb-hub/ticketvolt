@@ -45,14 +45,15 @@ services:
     environment:
       ENVIRONMENT: production
       DEBUG: 'False'
-      # ✅ FIX [P39]: only this service runs migrations on boot.
+      # ✅ FIX [P39]: primary service runs migrations.
       RUN_MIGRATIONS: '1'
+      # ✅ FIX [P39-bug]: primary service also runs collectstatic so
+      # WhiteNoise finds the static root at runtime.
+      RUN_COLLECTSTATIC: '1'
     depends_on:
       redis:
         condition: service_healthy
     volumes:
-      # NOTE: bind mount is intentional for this TEST environment only.
-      # See file header.
       - ./backend:/app
     networks:
       - ticketvolt-network

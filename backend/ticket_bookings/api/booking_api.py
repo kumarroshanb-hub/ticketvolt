@@ -357,6 +357,12 @@ class BookingViewSet(viewsets.ModelViewSet):
         code mutated the caller's dict directly. We take a shallow copy
         up front and operate on that.
 
+        ✅ FIX [P40]: DRF's `Request.data` is a read-only property.
+        The previous implementation assigned `request.data = data` and
+        crashed with `AttributeError: property 'data' of 'Request'
+        object has no setter`. We now build the serializer directly with
+        our normalised `data` and never touch `request.data`.
+
         All other behaviour (session lock, capacity reservation, undo on
         downstream failure) is preserved verbatim.
         """
@@ -462,11 +468,21 @@ class BookingViewSet(viewsets.ModelViewSet):
                     locked_session.booked += requested_count
                     locked_session.save(update_fields=['booked'])
 
-                # ---------- Delegate actual creation to DRF ----------
-                # ✅ FIX [P5]: replace request.data with our copy so the
-                # serializer sees the normalised data.
-                request.data = data
-                response = super().create(request, *args, **kwargs)
+                # ---------- Delegate actual creation to the serializer ----------
+                # ✅ FIX [P40]: build the serializer with our normalised
+                # `data` instead of overwriting `request.data` (which is
+                # a read-only property on DRF's Request). `super().create()`
+                # is not called here because it reads `request.data`.
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                self.perform_create(serializer)
+
+                headers = self.get_success_headers(serializer.data)
+                response = Response(
+                    serializer.data,
+                    status=status.HTTP_201_CREATED,
+                    headers=headers,
+                )
 
                 if locked_session is not None and response.status_code >= 400:
                     locked_session.booked = max(

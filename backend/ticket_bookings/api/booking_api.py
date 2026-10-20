@@ -2591,7 +2591,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             'attachments_count': len(attachments or []),
             'first_qr_base64': first_qr_base64 or '',
             'frontend_url': settings.FRONTEND_URL,
-            'ticket_url': ticket_url,
+            #'ticket_url': ticket_url,# ❌ REMOVE OR COMMENT OUT THIS LINE
         }
 
         html_content = render_to_string('emails/ticket_email.html', context)

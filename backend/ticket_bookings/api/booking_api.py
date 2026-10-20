@@ -2549,40 +2549,12 @@ class BookingViewSet(viewsets.ModelViewSet):
         """
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
-        import base64
-        from io import BytesIO
-        import qrcode
-        from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
 
-        # ✅ Fetch active tickets
+        # ✅ FIX: Fetch tickets directly from the database.
+        # This ensures attendee names and ticket codes are populated
+        # even if PDF generation (ticket_buffers) failed.
         active_tickets = list(booking.tickets.filter(status='active'))
         
-        # ✅ FIX: Generate a SMALL QR code for email to prevent Gmail from stripping the image
-        valid_qr = ''
-        if active_tickets:
-            try:
-                first_ticket = active_tickets[0]
-                payload = serialise_ticket_qr_payload(first_ticket)
-                
-                # Use a much smaller box_size and no border to keep the string short
-                qr = qrcode.QRCode(
-                    version=None,
-                    error_correction=qrcode.constants.ERROR_CORRECT_L,
-                    box_size=3,  # ✅ Smaller size = shorter base64 string
-                    border=1,
-                )
-                qr.add_data(payload)
-                qr.make(fit=True)
-                img = qr.make_image(fill_color="black", back_color="white")
-                
-                buffered = BytesIO()
-                img.save(buffered, format="PNG", optimize=True) # ✅ Optimize compression
-                img_str = base64.b64encode(buffered.getvalue()).decode()
-                valid_qr = f"data:image/png;base64,{img_str}"
-                
-            except Exception as exc:
-                logger.error(f"Failed to generate QR code in email HTML: {exc}")
-
         # ✅ Determine the correct date/time (Slot vs Event)
         display_date = booking.session.start_time if booking.session else booking.event.start_date
 
@@ -2596,7 +2568,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             'format_names': format_names or '',
             'is_combined': bool(is_combined),
             'attachments_count': len(attachments or []),
-            'first_qr_base64': valid_qr,
+            'first_qr_base64': first_qr_base64,
             'frontend_url': settings.FRONTEND_URL,
         }
 
@@ -2749,22 +2721,16 @@ class BookingViewSet(viewsets.ModelViewSet):
             # ✅ FIX [P27-bug4]: `first_qr_base64` is a real QR image
             # (not the whole ticket). Mail clients can render it inline.
             # ✅ FIX: Ensure the string is a full Data URI for email rendering
+            # ✅ FIX: Get the saved QR code directly from the database ticket.
+            # Do not use QRCodeService here; the ticket already has a saved QR code.
             first_qr_base64 = ''
-            if tickets:
-                try:
-                    from ..services.qr_service import QRCodeService
-                    raw_qr = QRCodeService.generate_ticket_qr(tickets[0]) or ''
-                    
-                    if raw_qr and not raw_qr.startswith('data:image'):
-                        first_qr_base64 = f"data:image/png;base64,{raw_qr}"
-                    else:
-                        first_qr_base64 = raw_qr
-                except Exception as exc:
-                    logger.warning(
-                        "⚠️ Could not generate inline QR for booking %s: %s",
-                        booking.booking_reference, exc,
-                    )
-                    first_qr_base64 = ''
+            if tickets and tickets[0].qr_code:
+                raw_qr = tickets[0].qr_code
+                # Gmail requires the Data URI prefix to render inline images
+                if not raw_qr.startswith('data:image'):
+                    first_qr_base64 = f"data:image/png;base64,{raw_qr}"
+                else:
+                    first_qr_base64 = raw_qr
 
             # ---- 2. Combined file (only when combine=True) ----
             #

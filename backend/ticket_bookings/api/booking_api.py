@@ -2549,27 +2549,48 @@ class BookingViewSet(viewsets.ModelViewSet):
         """
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
+        import base64
+        from io import BytesIO
+        import qrcode
+        from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
 
-        # ✅ FIX: Force the Data URI prefix so Gmail renders the image
-        valid_qr = ''
-        if first_qr_base64:
-            if not first_qr_base64.startswith('data:image'):
-                valid_qr = f"data:image/png;base64,{first_qr_base64}"
-            else:
-                valid_qr = first_qr_base64
-
-        # ✅ FIX: Fetch the active tickets directly to ensure data populates
+        # ✅ Fetch active tickets
         active_tickets = list(booking.tickets.filter(status='active'))
+        
+        # ✅ FIX: Generate a SMALL QR code for email to prevent Gmail from stripping the image
+        valid_qr = ''
+        if active_tickets:
+            try:
+                first_ticket = active_tickets[0]
+                payload = serialise_ticket_qr_payload(first_ticket)
+                
+                # Use a much smaller box_size and no border to keep the string short
+                qr = qrcode.QRCode(
+                    version=None,
+                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=3,  # ✅ Smaller size = shorter base64 string
+                    border=1,
+                )
+                qr.add_data(payload)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                
+                buffered = BytesIO()
+                img.save(buffered, format="PNG", optimize=True) # ✅ Optimize compression
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                valid_qr = f"data:image/png;base64,{img_str}"
+                
+            except Exception as exc:
+                logger.error(f"Failed to generate QR code in email HTML: {exc}")
 
-        # ✅ FIX: Determine the correct date/time (Slot vs Event)
-        # If the booking has a specific session (slot), use it. Otherwise, use the event start.
+        # ✅ Determine the correct date/time (Slot vs Event)
         display_date = booking.session.start_time if booking.session else booking.event.start_date
 
         context = {
             'booking': booking,
             'event': booking.event,
-            'session': booking.session,  # Pass session to template
-            'display_date': display_date, # Pass the resolved date
+            'session': booking.session,  
+            'display_date': display_date, 
             'customer_name': booking.customer_name,
             'tickets': active_tickets,
             'format_names': format_names or '',

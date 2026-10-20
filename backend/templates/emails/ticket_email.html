@@ -53,9 +53,10 @@
                                             <tr>
                                                 <td align="center" style="padding: 12px;">
                                                     {% if first_qr_base64 %}
-                                                        <img src="{{ first_qr_base64 }}" alt="QR Code" width="90" height="90" style="display: block; border: 0;" />
+                                                        <!-- Scaled up slightly to fit the box cleanly -->
+                                                        <img src="{{ first_qr_base64 }}" alt="QR Code" width="110" height="110" style="display: block; border: 0; width: 110px; height: 110px;" />
                                                     {% else %}
-                                                        <div style="width: 90px; height: 90px; background-color: #f4f4f4; line-height: 90px; color: #999999; font-size: 10px; text-align: center; border-radius: 6px;">No QR</div>
+                                                        <div style="width: 110px; height: 110px; background-color: #f4f4f4; line-height: 110px; color: #999999; font-size: 10px; text-align: center; border-radius: 6px;">No QR</div>
                                                     {% endif %}
                                                 </td>
                                             </tr>

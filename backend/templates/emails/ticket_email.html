@@ -21,7 +21,6 @@
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td valign="middle">
-                                        <!-- Branding Wordmark Block -->
                                         <div style="background-color: #ffffff; display: inline-block; padding: 8px 16px; border-radius: 8px;">
                                             <span style="color: #333333; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; font-family: Arial, sans-serif;">
                                                 Ti<span style="color: #FF2A2A;">K</span>etVault
@@ -73,11 +72,7 @@
                                                 <td style="padding-bottom: 8px;">
                                                     <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Attendee</div>
                                                     <div style="font-size: 16px; font-weight: 700; color: #333333; margin-top: 2px;">
-                                                        {% if tickets %}
-                                                            {{ tickets.0.attendee_name|default:"Guest" }}
-                                                        {% else %}
-                                                            Guest
-                                                        {% endif %}
+                                                        {% if tickets %}{{ tickets.0.attendee_name|default:"Guest" }}{% else %}Guest{% endif %}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -85,11 +80,7 @@
                                                 <td>
                                                     <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Ticket Code</div>
                                                     <div style="font-size: 14px; font-family: 'Courier New', Courier, monospace; font-weight: 700; color: #333333; margin-top: 2px; letter-spacing: 0.5px;">
-                                                        {% if tickets %}
-                                                            {{ tickets.0.unique_code }}
-                                                        {% else %}
-                                                            {{ booking.booking_reference }}
-                                                        {% endif %}
+                                                        {% if tickets %}{{ tickets.0.unique_code }}{% else %}{{ booking.booking_reference }}{% endif %}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -115,13 +106,15 @@
 
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
+                                    <!-- ✅ Changed Label to Event Date -->
                                     <td width="50%" valign="top" style="padding-bottom: 20px;">
-                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">📅 Show Date</div>
-                                        <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ booking.event.start_date|date:"d M Y" }}</div>
+                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">📅 Event Date</div>
+                                        <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ display_date|date:"d M Y" }}</div>
                                     </td>
+                                    <!-- ✅ Changed Label to Allotted Slot -->
                                     <td width="50%" valign="top" style="padding-bottom: 20px;">
-                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">⏰ Show Time</div>
-                                        <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ booking.event.start_date|time:"g:i A" }}</div>
+                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">⏰ Allotted Slot</div>
+                                        <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ display_date|time:"g:i A" }}</div>
                                     </td>
                                 </tr>
                                 <tr>

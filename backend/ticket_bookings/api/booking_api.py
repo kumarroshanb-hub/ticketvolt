@@ -2550,8 +2550,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
 
-        # ✅ FIX 1: Ensure the QR code has the correct Data URI prefix
-        # Gmail will not render the image if it just starts with "iVBORw..."
+        # ✅ FIX: Force the Data URI prefix so Gmail renders the image
         valid_qr = ''
         if first_qr_base64:
             if not first_qr_base64.startswith('data:image'):
@@ -2559,13 +2558,18 @@ class BookingViewSet(viewsets.ModelViewSet):
             else:
                 valid_qr = first_qr_base64
 
-        # ✅ FIX 2: Pass the actual active tickets directly from the DB.
-        # This guarantees attendee names and codes are populated.
+        # ✅ FIX: Fetch the active tickets directly to ensure data populates
         active_tickets = list(booking.tickets.filter(status='active'))
+
+        # ✅ FIX: Determine the correct date/time (Slot vs Event)
+        # If the booking has a specific session (slot), use it. Otherwise, use the event start.
+        display_date = booking.session.start_time if booking.session else booking.event.start_date
 
         context = {
             'booking': booking,
             'event': booking.event,
+            'session': booking.session,  # Pass session to template
+            'display_date': display_date, # Pass the resolved date
             'customer_name': booking.customer_name,
             'tickets': active_tickets,
             'format_names': format_names or '',

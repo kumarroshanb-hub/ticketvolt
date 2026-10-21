@@ -12,7 +12,6 @@ import {
     Event as EventIcon,
 } from '@mui/icons-material';
 
-// ✅ Import from constants
 import {
     BOOKING_STATUS,
     BookingStatusUtils,
@@ -21,6 +20,11 @@ import {
     EVENT_STATUS,
     EventStatusUtils,
 } from '../../constants';
+
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
 
 // ============================================
 // ICON MAPPINGS
@@ -64,13 +68,11 @@ const getEventIcon = (status) => {
 };
 
 // ============================================
-// GET COLOR - Returns MUI color name
+// GET COLOR — returns MUI color name
 // ============================================
 
 const getStatusColor = (status, type) => {
-    if (!status) {
-        return 'default';
-    }
+    if (!status) return 'default';
 
     let color;
     switch (type) {
@@ -85,8 +87,7 @@ const getStatusColor = (status, type) => {
             color = BookingStatusUtils.getColor(status);
             break;
     }
-    
-    // ✅ Valid MUI colors
+
     const validColors = ['default', 'primary', 'secondary', 'error', 'info', 'success', 'warning'];
     return validColors.includes(color) ? color : 'default';
 };
@@ -96,9 +97,7 @@ const getStatusColor = (status, type) => {
 // ============================================
 
 const getStatusLabel = (status, type) => {
-    if (!status) {
-        return 'Unknown';
-    }
+    if (!status) return 'Unknown';
 
     let label;
     switch (type) {
@@ -113,7 +112,7 @@ const getStatusLabel = (status, type) => {
             label = BookingStatusUtils.getLabel(status);
             break;
     }
-    
+
     return label || status || 'Unknown';
 };
 
@@ -122,9 +121,7 @@ const getStatusLabel = (status, type) => {
 // ============================================
 
 const getStatusIcon = (status, type) => {
-    if (!status) {
-        return null;
-    }
+    if (!status) return null;
 
     switch (type) {
         case 'ticket':
@@ -138,73 +135,81 @@ const getStatusIcon = (status, type) => {
 };
 
 // ============================================
-// MAIN COMPONENT - Using inline styles instead of styled-components
+// COLOR STYLES — derived from tokens
+// ------------------------------------------------------------
+// Each status uses the matching semantic token with a soft
+// alpha background and a solid color for text/icon.
 // ============================================
 
-const StatusChip = ({ 
-    status, 
-    type = 'booking', // 'booking', 'ticket', 'event'
-    size = 'small', 
+const colorStyles = {
+    success: {
+        backgroundColor: `${C.success}1A`,
+        color: C.successDark,
+    },
+    error: {
+        backgroundColor: `${C.error}1A`,
+        color: C.errorDark,
+    },
+    warning: {
+        backgroundColor: `${C.warning}1A`,
+        color: C.warningDark,
+    },
+    info: {
+        backgroundColor: `${C.info}1A`,
+        color: C.infoDark,
+    },
+    secondary: {
+        backgroundColor: `${C.secondary}1A`,
+        color: C.secondaryDark,
+    },
+    primary: {
+        backgroundColor: `${C.primary}1A`,
+        color: C.primary,
+    },
+    default: {
+        backgroundColor: C.bgInput,
+        color: C.textSecondary,
+    },
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
+const StatusChip = ({
+    status,
+    type = 'booking',
+    size = 'small',
     showIcon = true,
     variant = 'filled',
     clickable = false,
     onClick = null,
     className = '',
-    ...props 
+    ...props
 }) => {
-    // Get label, color, and icon
     const label = getStatusLabel(status, type);
     const color = getStatusColor(status, type);
     const icon = showIcon ? getStatusIcon(status, type) : undefined;
-    
-    // Check if cancelled for line-through
+
     const isCancelled = status === BOOKING_STATUS.CANCELLED;
 
-    // Custom styles based on color
     const customStyles = {
         fontWeight: 600,
         borderRadius: '20px',
         minWidth: '80px',
+        fontFamily: F.family,
         ...(isCancelled && {
             textDecoration: 'line-through',
         }),
     };
 
-    // Add color-specific styles
-    const colorStyles = {
-        success: {
-            backgroundColor: '#dcfce7',
-            color: '#16a34a',
-        },
-        error: {
-            backgroundColor: '#fee2e2',
-            color: '#dc2626',
-        },
-        warning: {
-            backgroundColor: '#fef3c7',
-            color: '#d97706',
-        },
-        info: {
-            backgroundColor: '#dbeafe',
-            color: '#2563eb',
-        },
-        secondary: {
-            backgroundColor: '#f3e8ff',
-            color: '#7c3aed',
-        },
-        default: {
-            backgroundColor: '#f1f5f9',
-            color: '#64748b',
-        },
-    };
-    console.log(`🔵 StatusChip: status="${status}", type="${type}", color="${color}", label="${label}"`);
     const selectedColorStyles = colorStyles[color] || colorStyles.default;
 
     return (
         <Chip
             label={label}
             size={size}
-            color={color}  // Pass MUI color
+            color={color}
             icon={icon}
             variant={variant}
             clickable={clickable}

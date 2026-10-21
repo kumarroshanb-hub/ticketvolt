@@ -4,7 +4,14 @@
 .env.neon
 .env.production
 *.env
+.env*
 
 # Keep example files
 !.env.local.example
 !.env.production.example
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python

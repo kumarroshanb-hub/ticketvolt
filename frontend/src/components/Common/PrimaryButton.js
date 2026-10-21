@@ -1,24 +1,28 @@
 // src/components/Common/PrimaryButton.js
 import { styled } from '@mui/material/styles';
 import { Button } from '@mui/material';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 const PrimaryButton = styled(Button)`
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-    color: white;
+    background: ${C.primaryGradient};
+    color: ${C.textInverse};
     text-transform: none;
     font-weight: 600;
     padding: 8px 24px;
     border-radius: 8px;
-    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
-    
+    box-shadow: ${theme.shadows.button};
+
     &:hover {
-        background: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%);
-        box-shadow: 0 6px 20px rgba(79, 70, 229, 0.45);
+        background: linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%);
+        box-shadow: ${theme.shadows.buttonHover};
         transform: translateY(-1px);
     }
-    
+
     &:disabled {
-        background: #94a3b8;
+        background: ${C.textLight};
+        color: ${C.textInverse};
         box-shadow: none;
         transform: none;
     }

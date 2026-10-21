@@ -84,7 +84,7 @@ const Venues = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -148,7 +148,7 @@ const Venues = () => {
                     <PrimaryButton
                         variant="contained"
                         startIcon={<AddIcon />}
-                        onClick={() => navigate('/venues/create')}
+                        onClick={() => navigate('/app/venues/create')}
                         sx={isMobile ? { flex: 1, minWidth: 140 } : undefined}
                     >
                         Add Venue
@@ -161,21 +161,21 @@ const Venues = () => {
                     sx={{
                         textAlign: 'center',
                         py: { xs: 6, sm: 8 },
-                        color: '#94a3b8',
+                        color: 'text.disabled',
                         px: 2,
                     }}
                 >
                     <LocationIcon sx={{ fontSize: 48, opacity: 0.3, mb: 2 }} />
-                    <Typography variant="h6" sx={{ color: '#64748b' }}>
+                    <Typography variant="h6" sx={{ color: 'text.secondary' }}>
                         No venues found
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                    <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                         Create your first venue
                     </Typography>
                     <Button
                         variant="contained"
                         startIcon={<AddIcon />}
-                        onClick={() => navigate('/venues/create')}
+                        onClick={() => navigate('/app/venues/create')}
                         sx={{ mt: 2 }}
                     >
                         Add Venue
@@ -188,7 +188,7 @@ const Venues = () => {
                             <Card
                                 sx={{
                                     borderRadius: 2,
-                                    border: '1px solid #e2e8f0',
+                                    border: '1px solid rgba(226, 232, 240, 1)',
                                     height: '100%',
                                     transition: 'all 0.2s ease',
                                     '&:hover': {
@@ -206,7 +206,7 @@ const Venues = () => {
                                         title={venue.name}
                                         sx={{
                                             fontWeight: 600,
-                                            color: '#0f172a',
+                                            color: 'text.primary',
                                             mb: 1,
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
@@ -227,13 +227,13 @@ const Venues = () => {
                                         }}
                                     >
                                         <LocationIcon
-                                            sx={{ fontSize: 16, color: '#64748b', flexShrink: 0 }}
+                                            sx={{ fontSize: 16, color: 'text.secondary', flexShrink: 0 }}
                                         />
                                         <Typography
                                             variant="body2"
                                             noWrap
                                             sx={{
-                                                color: '#64748b',
+                                                color: 'text.secondary',
                                                 overflow: 'hidden',
                                                 textOverflow: 'ellipsis',
                                                 minWidth: 0,
@@ -252,9 +252,9 @@ const Venues = () => {
                                         }}
                                     >
                                         <PeopleIcon
-                                            sx={{ fontSize: 16, color: '#64748b', flexShrink: 0 }}
+                                            sx={{ fontSize: 16, color: 'text.secondary', flexShrink: 0 }}
                                         />
-                                        <Typography variant="body2" sx={{ color: '#64748b' }}>
+                                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                             Capacity: {venue.capacity || 'N/A'}
                                         </Typography>
                                     </Box>
@@ -279,11 +279,11 @@ const Venues = () => {
                                                 <IconButton
                                                     size="small"
                                                     sx={{
-                                                        color: '#64748b',
+                                                        color: 'text.secondary',
                                                         minWidth: { xs: 44, md: 40 },
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
-                                                    onClick={() => navigate(`/venues/${venue.id}`)}
+                                                    onClick={() => navigate(`/app/venues/${venue.id}`)}
                                                     aria-label={`View ${venue.name}`}
                                                 >
                                                     <VisibilityIcon fontSize="small" />
@@ -293,11 +293,11 @@ const Venues = () => {
                                                 <IconButton
                                                     size="small"
                                                     sx={{
-                                                        color: '#4f46e5',
+                                                        color: 'primary.main',
                                                         minWidth: { xs: 44, md: 40 },
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
-                                                    onClick={() => navigate(`/venues/edit/${venue.id}`)}
+                                                    onClick={() => navigate(`/app/venues/edit/${venue.id}`)}
                                                     aria-label={`Edit ${venue.name}`}
                                                 >
                                                     <EditIcon fontSize="small" />
@@ -307,7 +307,7 @@ const Venues = () => {
                                                 <IconButton
                                                     size="small"
                                                     sx={{
-                                                        color: '#ef4444',
+                                                        color: 'error.main',
                                                         minWidth: { xs: 44, md: 40 },
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}

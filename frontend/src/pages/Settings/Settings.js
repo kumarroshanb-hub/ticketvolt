@@ -1,7 +1,6 @@
 // frontend/src/pages/Settings/Settings.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import styled from 'styled-components';
-import { motion } from 'framer-motion';
 import {
     Person as PersonIcon,
     Security as SecurityIcon,
@@ -9,17 +8,12 @@ import {
     Palette as PaletteIcon,
     Language as LanguageIcon,
     Save as SaveIcon,
-    Visibility as VisibilityIcon,
-    VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 import {
     Alert,
     CircularProgress,
     Switch,
     FormControlLabel,
-    Divider,
-    IconButton,
-    InputAdornment,
     useMediaQuery,
     useTheme,
 } from '@mui/material';
@@ -33,9 +27,15 @@ import {
     PageSubtitle,
     PageHeaderLeft,
     PrimaryButton,
-    OutlineButton,
-    LoadingWrapper,
 } from '../../components/Common';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
+// ============================================
+// STYLED COMPONENTS
+// ============================================
 
 const SettingsGrid = styled.div`
     display: grid;
@@ -79,7 +79,7 @@ const SettingsTab = styled.button`
     width: 100%;
     min-height: 44px;
     border: none;
-    background: ${props => props.active ? 'rgba(79, 70, 229, 0.08)' : 'transparent'};
+    background: ${props => props.active ? 'rgba(51, 51, 51, 0.08)' : 'transparent'};
     color: ${props => props.active ? props.theme.colors.primary : props.theme.colors.textSecondary};
     border-radius: ${props => props.theme.borderRadius.md};
     cursor: pointer;
@@ -87,6 +87,7 @@ const SettingsTab = styled.button`
     font-weight: 500;
     transition: all 0.2s ease;
     touch-action: manipulation;
+    font-family: ${F.family};
 
     .icon {
         font-size: 20px;
@@ -94,7 +95,7 @@ const SettingsTab = styled.button`
     }
 
     &:hover {
-        background: ${props => props.active ? 'rgba(79, 70, 229, 0.08)' : props.theme.colors.bgCardHover};
+        background: ${props => props.active ? 'rgba(51, 51, 51, 0.08)' : props.theme.colors.bgCardHover};
         color: ${props => props.theme.colors.textPrimary};
 
         .icon {
@@ -135,6 +136,7 @@ const SettingsSection = styled.div`
         font-weight: 600;
         color: ${props => props.theme.colors.textPrimary};
         margin-bottom: 8px;
+        font-family: ${F.family};
 
         @media (max-width: 900px) {
             font-size: 18px;
@@ -172,14 +174,14 @@ const FormGroup = styled.div`
         color: ${props => props.theme.colors.textPrimary};
         font-size: 16px;
         transition: all 0.2s ease;
-        font-family: 'Inter', sans-serif;
+        font-family: ${F.family};
         min-height: 44px;
         box-sizing: border-box;
 
         &:focus {
             outline: none;
             border-color: ${props => props.theme.colors.primary};
-            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+            box-shadow: 0 0 0 3px rgba(51, 51, 51, 0.1);
         }
 
         &::placeholder {
@@ -203,6 +205,18 @@ const SaveButton = styled(PrimaryButton)`
     }
 `;
 
+// Shared MUI Switch styling — reads from tokens
+const switchSx = {
+    '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
+    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+        backgroundColor: C.primary,
+    },
+};
+
+// ============================================
+// TABS CONFIG
+// ============================================
+
 const settingsTabs = [
     { id: 'profile', label: 'Profile', icon: <PersonIcon /> },
     { id: 'security', label: 'Security', icon: <SecurityIcon /> },
@@ -210,6 +224,10 @@ const settingsTabs = [
     { id: 'appearance', label: 'Appearance', icon: <PaletteIcon /> },
     { id: 'language', label: 'Language', icon: <LanguageIcon /> },
 ];
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 
 const Settings = () => {
     const { user, updateUser } = useAuth();
@@ -237,38 +255,33 @@ const Settings = () => {
         confirmPassword: '',
     });
 
-    useEffect(() => {
-        loadSettings();
-    }, []);
-
-    const loadSettings = async () => {
+    // ✅ Memoized so the effect dep list is stable and React doesn't re-warn.
+    const loadSettings = useCallback(async () => {
         try {
             const response = await api.get('/settings/');
             if (response.data) {
-                setFormData({
-                    ...formData,
-                    ...response.data,
-                });
+                setFormData((prev) => ({ ...prev, ...response.data }));
             }
-        } catch (error) {
-            console.error('Failed to load settings:', error);
+        } catch (err) {
+            console.error('Failed to load settings:', err);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        loadSettings();
+    }, [loadSettings]);
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
-        setFormData({
-            ...formData,
+        setFormData((prev) => ({
+            ...prev,
             [name]: type === 'checkbox' ? checked : value,
-        });
+        }));
     };
 
     const handlePasswordChange = (e) => {
         const { name, value } = e.target;
-        setPasswordData({
-            ...passwordData,
-            [name]: value,
-        });
+        setPasswordData((prev) => ({ ...prev, [name]: value }));
     };
 
     const handleSaveProfile = async () => {
@@ -282,18 +295,17 @@ const Settings = () => {
                 timezone: formData.timezone,
             });
 
-            if (updateUser) {
-                updateUser(response.data);
-            }
+            if (updateUser) updateUser(response.data);
 
             setSuccess('Profile updated successfully!');
             toast.success('Profile updated successfully!');
-        } catch (error) {
-            console.error('Save error:', error);
-            setError(error.response?.data?.detail || 'Failed to update profile');
+        } catch (err) {
+            console.error('Save error:', err);
+            setError(err.response?.data?.detail || 'Failed to update profile');
             toast.error('Failed to update profile');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const handleSavePassword = async () => {
@@ -314,17 +326,14 @@ const Settings = () => {
 
             setSuccess('Password updated successfully!');
             toast.success('Password updated successfully!');
-            setPasswordData({
-                currentPassword: '',
-                newPassword: '',
-                confirmPassword: '',
-            });
-        } catch (error) {
-            console.error('Password error:', error);
-            setError(error.response?.data?.detail || 'Failed to update password');
+            setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+        } catch (err) {
+            console.error('Password error:', err);
+            setError(err.response?.data?.detail || 'Failed to update password');
             toast.error('Failed to update password');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const handleSaveNotifications = async () => {
@@ -339,12 +348,13 @@ const Settings = () => {
 
             setSuccess('Notification preferences updated!');
             toast.success('Notification preferences updated!');
-        } catch (error) {
-            console.error('Save error:', error);
-            setError(error.response?.data?.detail || 'Failed to update preferences');
+        } catch (err) {
+            console.error('Save error:', err);
+            setError(err.response?.data?.detail || 'Failed to update preferences');
             toast.error('Failed to update preferences');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const handleSaveAppearance = async () => {
@@ -352,18 +362,17 @@ const Settings = () => {
         setError('');
         setSuccess('');
         try {
-            await api.put('/settings/appearance/', {
-                theme: formData.theme,
-            });
+            await api.put('/settings/appearance/', { theme: formData.theme });
 
             setSuccess('Theme updated successfully!');
             toast.success('Theme updated successfully!');
-        } catch (error) {
-            console.error('Save error:', error);
-            setError(error.response?.data?.detail || 'Failed to update theme');
+        } catch (err) {
+            console.error('Save error:', err);
+            setError(err.response?.data?.detail || 'Failed to update theme');
             toast.error('Failed to update theme');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const handleSaveLanguage = async () => {
@@ -371,19 +380,22 @@ const Settings = () => {
         setError('');
         setSuccess('');
         try {
-            await api.put('/settings/language/', {
-                language: formData.language,
-            });
+            await api.put('/settings/language/', { language: formData.language });
 
             setSuccess('Language updated successfully!');
             toast.success('Language updated successfully!');
-        } catch (error) {
-            console.error('Save error:', error);
-            setError(error.response?.data?.detail || 'Failed to update language');
+        } catch (err) {
+            console.error('Save error:', err);
+            setError(err.response?.data?.detail || 'Failed to update language');
             toast.error('Failed to update language');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
+
+    // ------------------------------------------------------------
+    // TAB CONTENT
+    // ------------------------------------------------------------
 
     const renderContent = () => {
         switch (activeTab) {
@@ -458,7 +470,9 @@ const Settings = () => {
                             </select>
                         </FormGroup>
                         <SaveButton onClick={handleSaveProfile} disabled={loading}>
-                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : (
+                            {loading ? (
+                                <CircularProgress size={24} sx={{ color: C.textInverse }} />
+                            ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
                                     Save Changes
@@ -467,6 +481,7 @@ const Settings = () => {
                         </SaveButton>
                     </SettingsSection>
                 );
+
             case 'security':
                 return (
                     <SettingsSection>
@@ -517,19 +532,18 @@ const Settings = () => {
                             control={
                                 <Switch
                                     checked={showPassword}
-                                    onChange={() => setShowPassword(!showPassword)}
-                                    sx={{
-                                        '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
-                                        '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
-                                    }}
+                                    onChange={() => setShowPassword((v) => !v)}
+                                    sx={switchSx}
                                 />
                             }
                             label="Show passwords"
-                            sx={{ color: '#475569', mb: 2 }}
+                            sx={{ color: C.textSecondary, mb: 2 }}
                         />
 
                         <SaveButton onClick={handleSavePassword} disabled={loading}>
-                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : (
+                            {loading ? (
+                                <CircularProgress size={24} sx={{ color: C.textInverse }} />
+                            ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
                                     Update Password
@@ -538,6 +552,7 @@ const Settings = () => {
                         </SaveButton>
                     </SettingsSection>
                 );
+
             case 'notifications':
                 return (
                     <SettingsSection>
@@ -554,14 +569,11 @@ const Settings = () => {
                                         checked={formData.emailNotifications}
                                         onChange={handleChange}
                                         name="emailNotifications"
-                                        sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
-                                            '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
-                                        }}
+                                        sx={switchSx}
                                     />
                                 }
                                 label="Email Notifications"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: C.textSecondary }}
                             />
                         </FormGroup>
                         <FormGroup>
@@ -571,19 +583,18 @@ const Settings = () => {
                                         checked={formData.pushNotifications}
                                         onChange={handleChange}
                                         name="pushNotifications"
-                                        sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
-                                            '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
-                                        }}
+                                        sx={switchSx}
                                     />
                                 }
                                 label="Push Notifications"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: C.textSecondary }}
                             />
                         </FormGroup>
 
                         <SaveButton onClick={handleSaveNotifications} disabled={loading}>
-                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : (
+                            {loading ? (
+                                <CircularProgress size={24} sx={{ color: C.textInverse }} />
+                            ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
                                     Save Preferences
@@ -592,6 +603,7 @@ const Settings = () => {
                         </SaveButton>
                     </SettingsSection>
                 );
+
             case 'appearance':
                 return (
                     <SettingsSection>
@@ -616,7 +628,9 @@ const Settings = () => {
                         </FormGroup>
 
                         <SaveButton onClick={handleSaveAppearance} disabled={loading}>
-                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : (
+                            {loading ? (
+                                <CircularProgress size={24} sx={{ color: C.textInverse }} />
+                            ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
                                     Save Theme
@@ -625,6 +639,7 @@ const Settings = () => {
                         </SaveButton>
                     </SettingsSection>
                 );
+
             case 'language':
                 return (
                     <SettingsSection>
@@ -660,7 +675,9 @@ const Settings = () => {
                         </FormGroup>
 
                         <SaveButton onClick={handleSaveLanguage} disabled={loading}>
-                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : (
+                            {loading ? (
+                                <CircularProgress size={24} sx={{ color: C.textInverse }} />
+                            ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
                                     Save Language
@@ -669,6 +686,7 @@ const Settings = () => {
                         </SaveButton>
                     </SettingsSection>
                 );
+
             default:
                 return <div>Select a tab</div>;
         }
@@ -679,13 +697,15 @@ const Settings = () => {
             <PageHeader>
                 <PageHeaderLeft>
                     <PageTitle>Settings</PageTitle>
-                    {!isMobile && <PageSubtitle>Manage your account settings and preferences</PageSubtitle>}
+                    {!isMobile && (
+                        <PageSubtitle>Manage your account settings and preferences</PageSubtitle>
+                    )}
                 </PageHeaderLeft>
             </PageHeader>
 
             <SettingsGrid>
                 <SettingsSidebar>
-                    {settingsTabs.map(tab => (
+                    {settingsTabs.map((tab) => (
                         <SettingsTab
                             key={tab.id}
                             active={activeTab === tab.id}

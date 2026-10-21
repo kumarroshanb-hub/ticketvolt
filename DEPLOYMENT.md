@@ -18,7 +18,7 @@
 ## Env Vars (Backend)
 - ENVIRONMENT=production
 - DEBUG=False
-- DB_HOST=ep-soft-leaf-b3q3ej0e.c-4.ap-southeast-1.aws.neon.tech
+- DB_HOST=neon.tech
 - CORS_ALLOWED_ORIGINS=https://your-frontend.onrender.com
 - ...
 

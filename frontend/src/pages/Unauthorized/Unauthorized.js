@@ -1,8 +1,12 @@
-// frontend/src/pages/Unauthorized.js
+// frontend/src/pages/Unauthorized/Unauthorized.js
 import React from 'react';
 import { Box, Typography, Button, Paper } from '@mui/material';
 import { Lock as LockIcon } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { theme as appTheme } from '../../theme/tokens';
+
+const C = appTheme.colors;
+const F = appTheme.fonts;
 
 const Unauthorized = () => {
     const navigate = useNavigate();
@@ -14,7 +18,8 @@ const Unauthorized = () => {
                 justifyContent: 'center',
                 alignItems: 'center',
                 minHeight: '100vh',
-                bgcolor: '#f8fafc',
+                bgcolor: 'background.default',
+                fontFamily: F.family,
             }}
         >
             <Paper
@@ -23,21 +28,32 @@ const Unauthorized = () => {
                     maxWidth: 500,
                     textAlign: 'center',
                     borderRadius: 3,
+                    bgcolor: 'background.paper',
+                    border: `1px solid ${C.borderLight}`,
                 }}
             >
-                <LockIcon sx={{ fontSize: 64, color: '#ef4444', mb: 2 }} />
-                <Typography variant="h5" sx={{ fontWeight: 700, color: '#0f172a', mb: 1 }}>
+                <LockIcon sx={{ fontSize: 64, color: C.error, mb: 2 }} />
+                <Typography
+                    variant="h5"
+                    sx={{ fontWeight: 700, color: C.textPrimary, mb: 1, fontFamily: F.family }}
+                >
                     Access Denied
                 </Typography>
-                <Typography variant="body2" sx={{ color: '#64748b', mb: 4 }}>
+                <Typography variant="body2" sx={{ color: C.textSecondary, mb: 4 }}>
                     You don't have permission to access this page. Please contact your administrator if you believe this is a mistake.
                 </Typography>
                 <Button
                     variant="contained"
-                    onClick={() => navigate('/dashboard')}
+                    onClick={() => navigate('/app/dashboard')}
                     sx={{
-                        bgcolor: '#4f46e5',
-                        '&:hover': { bgcolor: '#4338ca' },
+                        background: C.primaryGradient,
+                        color: C.textInverse,
+                        textTransform: 'none',
+                        fontWeight: 600,
+                        minHeight: 44,
+                        '&:hover': {
+                            background: `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`,
+                        },
                     }}
                 >
                     Go to Dashboard

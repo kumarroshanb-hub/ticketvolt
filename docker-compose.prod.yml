@@ -1,4 +1,24 @@
-# docker-compose.prod.yml - NEON TESTING (Local Docker + Neon DB)
+# docker-compose.prod.yml
+#
+# ✅ FIX [P37]: this file is a **local Docker + Neon DB TEST environment**,
+# not a production deployment. The name is kept for backwards compatibility
+# with existing runbooks, but the header now makes the intent explicit.
+#
+# Why this matters:
+#   • `backend` and `baileys-gateway` bind-mount the source tree into
+#     the container. That is the whole point for a test environment
+#     (hot reload), but it means the container runs the HOST's
+#     checkout — not the image built from `./backend/Dockerfile`.
+#   • For a real production deploy, use a separate compose file that
+#     builds from the Dockerfile with NO bind mounts, or use the
+#     managed platform (Render / Fly) with the built images.
+#
+# ✅ FIX [P39]: only the primary `backend` service runs `migrate` and
+# `collectstatic` on boot. Previously `backend`, `celery-worker`, and
+# `celery-beat` all ran the same entrypoint concurrently, which can
+# produce partial migrations or "relation already exists" races on
+# cold start. The workers now set RUN_MIGRATIONS=0.
+
 services:
   redis:
     image: redis:7-alpine
@@ -21,10 +41,15 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env.neon      # ← Load from .env.neon
+      - ./backend/.env.neon
     environment:
-      ENVIRONMENT: production    # ← Selects production.py settings
-      DEBUG: 'True'              # Override for testing
+      ENVIRONMENT: production
+      DEBUG: 'False'
+      # ✅ FIX [P39]: primary service runs migrations.
+      RUN_MIGRATIONS: '1'
+      # ✅ FIX [P39-bug]: primary service also runs collectstatic so
+      # WhiteNoise finds the static root at runtime.
+      RUN_COLLECTSTATIC: '1'
     depends_on:
       redis:
         condition: service_healthy
@@ -42,6 +67,8 @@ services:
       - ./backend/.env.neon
     environment:
       ENVIRONMENT: production
+      # ✅ FIX [P39]: workers must NOT run migrate/collectstatic.
+      RUN_MIGRATIONS: '0'
     depends_on:
       - redis
       - backend
@@ -58,6 +85,8 @@ services:
       - ./backend/.env.neon
     environment:
       ENVIRONMENT: production
+      # ✅ FIX [P39]: beat must NOT run migrate/collectstatic either.
+      RUN_MIGRATIONS: '0'
     depends_on:
       - redis
       - celery-worker
@@ -84,9 +113,13 @@ services:
       - "3002:3002"
     environment:
       PORT: 3002
-      NODE_ENV: development
+      NODE_ENV: production
       DJANGO_API_URL: http://backend:8000/api
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      # ✅ FIX [P20] dependency: baileys-gateway now persists conversation
+      # sessions to Redis (see whatsappService.js). REDIS_URL is already
+      # present in the original file — keeping the comment so anyone
+      # reading the file understands why it's load-bearing.
       REDIS_URL: redis://redis:6379
       WHATSAPP_ENABLED: 'True'
       WHATSAPP_TICKET_DELIVERY_ENABLED: 'False'

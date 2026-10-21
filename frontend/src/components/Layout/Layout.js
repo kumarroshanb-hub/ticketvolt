@@ -1,23 +1,27 @@
+// frontend/src/components/Layout/Layout.js
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import styled from 'styled-components';
-import { useMediaQuery, useTheme, Drawer, Box } from '@mui/material';
+import { useMediaQuery, useTheme, Drawer } from '@mui/material';
 import Sidebar from '../Sidebar';
 import Navbar from '../Navbar';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 const LayoutContainer = styled.div`
     display: flex;
     min-height: 100vh;
-    background: #f1f5f9;
+    background: ${C.bgPrimary};
 `;
 
 const MainContent = styled.main`
     flex: 1;
-    margin-left: ${props => props.collapsed ? '80px' : '260px'};
+    margin-left: ${props => (props.collapsed ? '80px' : '260px')};
     padding: 24px 32px;
     transition: margin-left 0.3s ease;
     min-height: 100vh;
-    background: #f1f5f9;
+    background: ${C.bgPrimary};
 
     @media (max-width: 900px) {
         margin-left: 0;
@@ -56,7 +60,7 @@ const Layout = () => {
                     PaperProps={{
                         sx: {
                             width: 260,
-                            borderRight: '1px solid #e2e8f0',
+                            borderRight: `1px solid ${C.borderLight}`,
                         },
                     }}
                 >

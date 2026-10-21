@@ -1,5 +1,5 @@
 // frontend/src/pages/Checkin/Checkin.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box,
     Grid,
@@ -19,14 +19,12 @@ import {
     Chip,
     IconButton,
     Alert,
-    Snackbar,
     Tooltip,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
     Divider,
-    Stack,
     Avatar,
     InputAdornment,
     useMediaQuery,
@@ -49,11 +47,10 @@ import {
     Close as CloseIcon,
     Keyboard as KeyboardIcon,
     Today as TodayIcon,
-    TrendingUp as TrendingUpIcon,
-    People as PeopleIcon,
     Error as ErrorIcon,
     Check as CheckIcon,
-    RadioButtonChecked as RadioButtonCheckedIcon,
+    Undo as UndoIcon,
+    Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
@@ -66,32 +63,68 @@ import {
     PageHeaderLeft,
     PageHeaderRight,
     OutlineButton,
-    StatusChip,
     LoadingWrapper,
 } from '../../components/Common';
 
-import {
-    TICKET_STATUS,
-    TICKET_STATUS_LABELS,
-    TicketStatusUtils,
-} from '../../constants';
+// frontend/src/pages/Checkin/Checkin.js — ADD THIS IMPORT
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
+// ============================================
+// CHECK-IN LOG STATUS → UI PRESENTATION
+// ------------------------------------------------------------
+// The backend CheckInLog.status field can be one of:
+//   'success'   — a real, valid check-in
+//   'failed'    — a scan that did not result in a check-in
+//   'cancelled' — a check-in that was later undone by a superuser
+//
+// The old code assumed status === 'success' → Success, ELSE Failed.
+// That mislabeled 'cancelled' rows as "Failed" and hid real failures.
+// This map makes the mapping explicit and exhaustive.
+// ============================================
+const LOG_STATUS_UI = {
+    success: {
+        label: 'Success',
+        color: 'success',
+        icon: <CheckCircleIcon fontSize="small" />,
+    },
+    failed: {
+        label: 'Failed',
+        color: 'error',
+        icon: <CancelIcon fontSize="small" />,
+    },
+    cancelled: {
+        label: 'Undone',
+        color: 'warning',
+        icon: <UndoIcon fontSize="small" />,
+    },
+};
+
+const getLogStatusUI = (status) =>
+    LOG_STATUS_UI[status] || {
+        label: status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown',
+        color: 'default',
+        icon: <InfoIcon fontSize="small" />,
+    };
 
 // ============================================
 // STAT CARD
 // ============================================
 const StatCard = ({ title, value, icon, color, subtitle }) => (
-    <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+    <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
         <CardContent>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <Box>
-                    <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, letterSpacing: 0.5 }}>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: 0.5 }}>
                         {title}
                     </Typography>
-                    <Typography variant="h4" sx={{ fontWeight: 700, color: '#0f172a', mt: 1 }}>
+                    <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary', mt: 1 }}>
                         {value}
                     </Typography>
                     {subtitle && (
-                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                             {subtitle}
                         </Typography>
                     )}
@@ -131,11 +164,11 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
 
     const getResultIcon = () => {
         switch (result.type) {
-            case 'success': return <CheckCircleIcon sx={{ fontSize: 48, color: '#10b981' }} />;
-            case 'error': return <CancelIcon sx={{ fontSize: 48, color: '#ef4444' }} />;
-            case 'warning': return <WarningIcon sx={{ fontSize: 48, color: '#f59e0b' }} />;
-            case 'info': return <InfoIcon sx={{ fontSize: 48, color: '#3b82f6' }} />;
-            default: return <InfoIcon sx={{ fontSize: 48, color: '#64748b' }} />;
+            case 'success': return <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main' }} />;
+            case 'error': return <CancelIcon sx={{ fontSize: 48, color: 'error.main' }} />;
+            case 'warning': return <WarningIcon sx={{ fontSize: 48, color: 'warning.main' }} />;
+            case 'info': return <InfoIcon sx={{ fontSize: 48, color: 'info.main' }} />;
+            default: return <InfoIcon sx={{ fontSize: 48, color: 'text.secondary' }} />;
         }
     };
 
@@ -154,7 +187,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         <Typography variant="h6" sx={{ fontWeight: 600, color: getResultColor() }}>
                             {result.title}
                         </Typography>
-                        <Typography variant="body2" sx={{ color: '#64748b' }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                             {result.message}
                         </Typography>
                     </Box>
@@ -162,15 +195,15 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
             </Alert>
 
             {result.ticket && (
-                <Paper sx={{ p: 2, mt: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                <Paper sx={{ p: 2, mt: 2, borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                     <Grid container spacing={2}>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Avatar sx={{ bgcolor: '#4f46e5', width: 48, height: 48 }}>
+                                <Avatar sx={{ bgcolor: 'primary.main', width: 48, height: 48 }}>
                                     <PersonIcon />
                                 </Avatar>
                                 <Box>
-                                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                         Attendee
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -181,9 +214,9 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         </Grid>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <VerifiedIcon sx={{ color: '#4f46e5' }} />
+                                <VerifiedIcon sx={{ color: 'primary.main' }} />
                                 <Box>
-                                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                         Ticket Code
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-all' }}>
@@ -194,9 +227,9 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         </Grid>
                         <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <EventIcon sx={{ color: '#4f46e5' }} />
+                                <EventIcon sx={{ color: 'primary.main' }} />
                                 <Box>
-                                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                         Event
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontWeight: 500 }}>
@@ -208,9 +241,9 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         {result.checkin_time && (
                             <Grid item xs={12} sm={6}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <AccessTimeIcon sx={{ color: '#10b981' }} />
+                                    <AccessTimeIcon sx={{ color: 'success.main' }} />
                                     <Box>
-                                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                                             Checked In
                                         </Typography>
                                         <Typography variant="body1" sx={{ fontWeight: 500 }}>
@@ -264,38 +297,41 @@ const Checkin = () => {
     const [checkingIn, setCheckingIn] = useState(false);
     const [result, setResult] = useState(null);
     const [history, setHistory] = useState([]);
-    const [stats, setStats] = useState({
-        total_scans: 0,
-        today_scans: 0,
-        success_scans: 0,
-        failed_scans: 0,
-    });
     const [filter, setFilter] = useState('all');
     const [search, setSearch] = useState('');
     const [openScanner, setOpenScanner] = useState(false);
 
+    // ============================================================
+    // LOAD DATA
+    // ------------------------------------------------------------
+    // We fetch up to 100 history rows and derive the stat cards
+    // from that dataset. This makes the "Failed" card actually
+    // reflect reality (the /dashboard/stats/ endpoint does not
+    // know about failed/cancelled CheckInLog rows).
+    //
+    // If you need true all-time totals, expose a dedicated
+    // /checkin/stats/ endpoint that returns log-status counts
+    // and swap this out.
+    // ============================================================
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
             const historyResponse = await api.get('/checkin/history/', {
-                params: { limit: 20 }
+                params: { limit: 100 },
             });
 
-            const historyData = historyResponse.data?.history || historyResponse.data || [];
+            const raw = historyResponse.data;
+            const historyData = Array.isArray(raw?.history)
+                ? raw.history
+                : Array.isArray(raw)
+                    ? raw
+                    : [];
+
             setHistory(historyData);
-
-            const statsResponse = await api.get('/dashboard/stats/');
-            const data = statsResponse.data;
-
-            setStats({
-                total_scans: data?.total_checkins || 0,
-                today_scans: data?.today_checkins || 0,
-                success_scans: data?.total_checkins || 0,
-                failed_scans: 0,
-            });
         } catch (error) {
             console.error('Error loading check-in data:', error);
             toast.error('Failed to load check-in data');
+            setHistory([]);
         } finally {
             setLoading(false);
         }
@@ -305,115 +341,187 @@ const Checkin = () => {
         loadData();
     }, [loadData]);
 
-    const verifyTicket = async (code) => {
-        setVerifying(true);
-        setResult(null);
+    // ============================================================
+    // DERIVED STATS
+    // ------------------------------------------------------------
+    // Recompute on every history change so the numbers on the
+    // stat cards always agree with what's shown in the table.
+    // ============================================================
+    const stats = useMemo(() => {
+        const total = history.length;
+        const success = history.filter((h) => h.status === 'success').length;
+        const failed = history.filter((h) => h.status === 'failed').length;
+        const cancelled = history.filter((h) => h.status === 'cancelled').length;
 
-        try {
-            const response = await api.get(`/checkin/verify/?code=${encodeURIComponent(code)}`);
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const today = history.filter((h) => {
+            if (!h.checked_in_at) return false;
+            return new Date(h.checked_in_at) >= startOfToday;
+        }).length;
 
-            if (response.data?.valid) {
+        return {
+            total_scans: total,
+            today_scans: today,
+            success_scans: success,
+            failed_scans: failed,
+            cancelled_scans: cancelled,
+        };
+    }, [history]);
+
+// ============================================================
+// VERIFY (read-only)
+// ------------------------------------------------------------
+// The admin UI does NOT hold TICKET_SIGNING_SECRET, so it cannot
+// construct a signed payload. It calls /checkin/manual-verify/
+// which accepts a bare ticket code. The server enforces
+// IsAuthenticated + role checks (admin/staff/organizer with
+// ownership of the event).
+// ============================================================
+const verifyTicket = async (code) => {
+    setVerifying(true);
+    setResult(null);
+
+    try {
+        const response = await api.post('/checkin/manual-verify/', {
+            code: code.trim(),
+        });
+
+        if (response.data?.valid) {
+            const slotWindow = response.data?.slot_window;
+
+            if (slotWindow && slotWindow.open === false) {
+                setResult({
+                    type: 'warning',
+                    title: 'Outside Slot Window',
+                    message:
+                        slotWindow.message ||
+                        'This ticket is valid, but its slot is not currently open for check-in.',
+                    ticket: response.data.ticket,
+                });
+            } else {
                 setResult({
                     type: 'success',
                     title: 'Ticket Valid',
                     message: 'This ticket is valid and ready for check-in',
-                    ticket: response.data.ticket
-                });
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Invalid Ticket',
-                    message: response.data?.detail || 'This ticket is not valid',
-                    ticket: response.data?.ticket
-                });
-            }
-        } catch (error) {
-            const errorData = error.response?.data;
-
-            if (errorData?.ticket?.is_checked_in) {
-                setResult({
-                    type: 'warning',
-                    title: 'Already Checked In',
-                    message: 'This ticket has already been checked in',
-                    ticket: errorData.ticket
-                });
-            } else if (errorData?.code === 'TICKET_USED' || errorData?.detail?.includes('already been used')) {
-                setResult({
-                    type: 'warning',
-                    title: 'Already Used',
-                    message: 'This ticket has already been used',
-                    ticket: errorData?.ticket
-                });
-            } else if (errorData?.detail) {
-                setResult({
-                    type: 'error',
-                    title: 'Invalid Ticket',
-                    message: errorData.detail,
-                    ticket: errorData?.ticket
-                });
-            } else {
-                setResult({
-                    type: 'error',
-                    title: 'Verification Failed',
-                    message: 'Failed to verify ticket. Please try again.',
-                    ticket: null
-                });
-            }
-        } finally {
-            setVerifying(false);
-        }
-    };
-
-    const checkInTicket = async (code) => {
-        setCheckingIn(true);
-
-        try {
-            const response = await api.post('/checkin/', {
-                code: code,
-                device_id: 'admin-panel'
-            });
-
-            if (response.data?.success) {
-                setResult({
-                    type: 'success',
-                    title: 'Check-in Successful!',
-                    message: response.data.message,
                     ticket: response.data.ticket,
-                    checkin_time: response.data.checkin_time
                 });
-                toast.success('Check-in successful!');
-
-                setStats(prev => ({
-                    ...prev,
-                    total_scans: prev.total_scans + 1,
-                    today_scans: prev.today_scans + 1,
-                    success_scans: prev.success_scans + 1,
-                }));
-                loadData();
             }
-        } catch (error) {
-            const errorData = error.response?.data;
-
-            if (errorData?.detail) {
-                setResult({
-                    type: 'error',
-                    title: 'Check-in Failed',
-                    message: errorData.detail,
-                    ticket: errorData?.ticket
-                });
-                toast.error(errorData.detail);
-            } else {
-                toast.error('Failed to check in ticket');
-            }
-        } finally {
-            setCheckingIn(false);
+        } else {
+            setResult({
+                type: 'error',
+                title: 'Invalid Ticket',
+                message: response.data?.detail || 'This ticket is not valid',
+                ticket: response.data?.ticket,
+            });
         }
-    };
+    } catch (error) {
+        const errorData = error.response?.data;
+
+        if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+            setResult({
+                type: 'warning',
+                title: 'Outside Slot Window',
+                message: errorData.detail,
+                ticket: errorData?.ticket,
+            });
+        } else if (errorData?.ticket?.is_checked_in) {
+            setResult({
+                type: 'warning',
+                title: 'Already Checked In',
+                message: 'This ticket has already been checked in',
+                ticket: errorData.ticket,
+            });
+        } else if (
+            errorData?.code === 'TICKET_USED' ||
+            errorData?.detail?.includes('already been used')
+        ) {
+            setResult({
+                type: 'warning',
+                title: 'Already Used',
+                message: 'This ticket has already been used',
+                ticket: errorData?.ticket,
+            });
+        } else if (errorData?.detail) {
+            setResult({
+                type: 'error',
+                title: 'Invalid Ticket',
+                message: errorData.detail,
+                ticket: errorData?.ticket,
+            });
+        } else {
+            setResult({
+                type: 'error',
+                title: 'Verification Failed',
+                message: 'Failed to verify ticket. Please try again.',
+                ticket: null,
+            });
+        }
+    } finally {
+        setVerifying(false);
+    }
+};
+
+// ============================================================
+// CHECK-IN (state-changing)
+// ------------------------------------------------------------
+// Same rationale as verifyTicket — the admin UI calls the
+// bare-code manual endpoint, not the signed-payload one.
+// ============================================================
+const checkInTicket = async (code) => {
+    setCheckingIn(true);
+
+    try {
+        const response = await api.post('/checkin/manual/', {
+            code: code.trim(),
+            device_id: 'admin-panel',
+        });
+
+        if (response.data?.success) {
+            setResult({
+                type: 'success',
+                title: 'Check-in Successful!',
+                message: response.data.message,
+                ticket: response.data.ticket,
+                checkin_time: response.data.checkin_time,
+            });
+            toast.success('Check-in successful!');
+            loadData();
+        } else {
+            setResult({
+                type: 'error',
+                title: 'Check-in Failed',
+                message: response.data?.detail || 'The server rejected this check-in.',
+                ticket: response.data?.ticket,
+            });
+            toast.error(response.data?.detail || 'Check-in failed');
+        }
+    } catch (error) {
+        const errorData = error.response?.data;
+        let title = 'Check-in Failed';
+        let message = errorData?.detail || 'An unexpected error occurred.';
+        let resultType = 'error';
+
+        if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+            title = 'Invalid Check-in Time';
+            resultType = 'warning';
+        }
+
+        setResult({
+            type: resultType,
+            title: title,
+            message: message,
+            ticket: errorData?.ticket,
+        });
+        toast.error(message);
+    } finally {
+        setCheckingIn(false);
+    }
+};
 
     const handleManualEntry = async (e) => {
         e.preventDefault();
         if (!manualCode.trim()) return;
-
         await verifyTicket(manualCode.trim());
     };
 
@@ -428,29 +536,45 @@ const Checkin = () => {
         setManualCode('');
     };
 
-    const filteredHistory = history.filter(item => {
-        if (search && !item.code?.toLowerCase().includes(search.toLowerCase()) &&
-            !item.attendee_name?.toLowerCase().includes(search.toLowerCase())) {
-            return false;
-        }
-        if (filter === 'success') return item.status === 'success';
-        if (filter === 'failed') return item.status !== 'success';
-        return true;
-    });
+    // ============================================================
+    // FILTERED HISTORY
+    // ------------------------------------------------------------
+    // The `failed` filter now means *exactly* status === 'failed',
+    // not "anything that isn't success". A cancelled row is no
+    // longer counted as failed.
+    // ============================================================
+    const filteredHistory = useMemo(() => {
+        const q = search.trim().toLowerCase();
+
+        return history.filter((item) => {
+            if (q) {
+                const code = (item.code || '').toLowerCase();
+                const name = (item.attendee_name || '').toLowerCase();
+                if (!code.includes(q) && !name.includes(q)) return false;
+            }
+
+            if (filter === 'all') return true;
+            if (filter === 'success') return item.status === 'success';
+            if (filter === 'failed') return item.status === 'failed';
+            if (filter === 'cancelled') return item.status === 'cancelled';
+            return true;
+        });
+    }, [history, search, filter]);
 
     const formatDateTime = (dateString) => {
-        if (!dateString) return 'N/A';
+        if (!dateString) return { date: 'N/A', time: 'N/A' };
         const date = new Date(dateString);
+        if (isNaN(date.getTime())) return { date: 'N/A', time: 'N/A' };
         return {
             date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+            time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         };
     };
 
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: 'primary.main' }} />
             </LoadingWrapper>
         );
     }
@@ -459,9 +583,9 @@ const Checkin = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle variant="h4">QR Scanner & Check-in</PageTitle>
+                    <PageTitle variant="h4">QR Scanner &amp; Check-in</PageTitle>
                     {!isMobile && (
-                        <Typography variant="body2" sx={{ color: '#64748b', ml: 2 }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
                             Scan and verify tickets at event entrance
                         </Typography>
                     )}
@@ -478,37 +602,37 @@ const Checkin = () => {
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Total Scans"
-                        value={stats.total_scans || 0}
-                        icon={<ScannerIcon sx={{ color: '#4f46e5' }} />}
-                        color="#4f46e5"
-                        subtitle={isMobile ? undefined : "All time check-ins"}
+                        value={stats.total_scans}
+                        icon={<ScannerIcon sx={{ color: C.primary }} />}
+                        color={C.primary}
+                        subtitle={isMobile ? undefined : 'All time check-ins'}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Today"
-                        value={stats.today_scans || 0}
-                        icon={<TodayIcon sx={{ color: '#10b981' }} />}
-                        color="#10b981"
+                        value={stats.today_scans}
+                        icon={<TodayIcon sx={{ color: C.success }} />}
+                        color={C.success}
                         subtitle={isMobile ? undefined : "Today's check-ins"}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Success"
-                        value={stats.success_scans || 0}
-                        icon={<CheckCircleIcon sx={{ color: '#3b82f6' }} />}
-                        color="#3b82f6"
-                        subtitle={isMobile ? undefined : "Valid tickets"}
+                        value={stats.success_scans}
+                        icon={<CheckCircleIcon sx={{ color: C.info }} />}
+                        color={C.info}
+                        subtitle={isMobile ? undefined : 'Valid tickets'}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Failed"
-                        value={stats.failed_scans || 0}
-                        icon={<ErrorIcon sx={{ color: '#ef4444' }} />}
-                        color="#ef4444"
-                        subtitle={isMobile ? undefined : "Invalid tickets"}
+                        value={stats.failed_scans}
+                        icon={<ErrorIcon sx={{ color: C.error }} />}
+                        color={C.error}
+                        subtitle={isMobile ? undefined : 'Invalid tickets'}
                     />
                 </Grid>
             </Grid>
@@ -517,10 +641,10 @@ const Checkin = () => {
             <Grid container spacing={3}>
                 {/* Left Column - Scanner */}
                 <Grid item xs={12} md={5}>
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                         <CardContent>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                <Typography variant="h6" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                     <ScannerIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                                     Ticket Scanner
                                 </Typography>
@@ -528,7 +652,7 @@ const Checkin = () => {
                                     <IconButton
                                         color="primary"
                                         onClick={() => setOpenScanner(true)}
-                                        sx={{ border: '1px solid #4f46e5' }}
+                                        sx={{ border: '1px solid rgba(51, 51, 51, 1)' }}
                                     >
                                         <CameraIcon />
                                     </IconButton>
@@ -560,9 +684,23 @@ const Checkin = () => {
                                 </Box>
                             </Box>
 
+                            {/* Slot window info strip */}
+                            <Alert
+                                severity="info"
+                                icon={<ScheduleIcon fontSize="small" />}
+                                sx={{
+                                    mb: 2,
+                                    borderRadius: 2,
+                                    '& .MuiAlert-message': { fontSize: '0.75rem' },
+                                }}
+                            >
+                                Check-in opens <strong>30 min before</strong> slot start and closes{' '}
+                                <strong>15 min after</strong> slot end.
+                            </Alert>
+
                             {/* Manual Entry */}
                             <Box component="form" onSubmit={handleManualEntry} sx={{ mb: 2 }}>
-                                <Typography variant="subtitle2" sx={{ color: '#64748b', mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ color: 'text.secondary', mb: 1 }}>
                                     <KeyboardIcon sx={{ mr: 0.5, verticalAlign: 'middle' }} />
                                     Manual Code Entry
                                 </Typography>
@@ -575,7 +713,7 @@ const Checkin = () => {
                                     InputProps={{
                                         startAdornment: (
                                             <InputAdornment position="start">
-                                                <VerifiedIcon sx={{ color: '#4f46e5' }} />
+                                                <VerifiedIcon sx={{ color: 'primary.main' }} />
                                             </InputAdornment>
                                         ),
                                     }}
@@ -605,7 +743,7 @@ const Checkin = () => {
 
                 {/* Right Column - History */}
                 <Grid item xs={12} md={7}>
-                    <Card sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                    <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                         <CardContent>
                             <Box
                                 sx={{
@@ -617,7 +755,7 @@ const Checkin = () => {
                                     mb: 2,
                                 }}
                             >
-                                <Typography variant="h6" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                                <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                     <HistoryIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                                     Recent Check-ins
                                 </Typography>
@@ -641,12 +779,13 @@ const Checkin = () => {
                                         size="small"
                                         value={filter}
                                         onChange={(e) => setFilter(e.target.value)}
-                                        sx={{ flex: isMobile ? 1 : 'unset', width: isMobile ? 'auto' : 120 }}
+                                        sx={{ flex: isMobile ? 1 : 'unset', width: isMobile ? 'auto' : 140 }}
                                         SelectProps={{ native: true }}
                                     >
                                         <option value="all">All</option>
                                         <option value="success">Success</option>
                                         <option value="failed">Failed</option>
+                                        <option value="cancelled">Undone</option>
                                     </TextField>
                                 </Box>
                             </Box>
@@ -655,14 +794,17 @@ const Checkin = () => {
                                 /* ---------- MOBILE: CARD LIST ---------- */
                                 filteredHistory.length > 0 ? (
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                                        {filteredHistory.map((item, index) => {
+                                        {filteredHistory.map((item) => {
                                             const { date, time } = formatDateTime(item.checked_in_at);
+                                            const statusUI = getLogStatusUI(item.status);
+                                            const rowKey = item.id || `${item.code}-${item.checked_in_at}`;
+
                                             return (
                                                 <Card
-                                                    key={index}
+                                                    key={rowKey}
                                                     sx={{
                                                         borderRadius: 2,
-                                                        border: '1px solid #e2e8f0',
+                                                        border: '1px solid rgba(226, 232, 240, 1)',
                                                         overflow: 'hidden',
                                                     }}
                                                 >
@@ -673,7 +815,7 @@ const Checkin = () => {
                                                                 sx={{
                                                                     fontFamily: 'monospace',
                                                                     fontWeight: 700,
-                                                                    color: '#0f172a',
+                                                                    color: 'text.primary',
                                                                     overflow: 'hidden',
                                                                     textOverflow: 'ellipsis',
                                                                     whiteSpace: 'nowrap',
@@ -682,40 +824,42 @@ const Checkin = () => {
                                                             >
                                                                 {item.code || 'N/A'}
                                                             </Typography>
-                                                            {item.status === 'success' ? (
-                                                                <Chip size="small" label="Success" icon={<CheckCircleIcon />} color="success" variant="outlined" />
-                                                            ) : (
-                                                                <Chip size="small" label="Failed" icon={<CancelIcon />} color="error" variant="outlined" />
-                                                            )}
+                                                            <Chip
+                                                                size="small"
+                                                                label={statusUI.label}
+                                                                icon={statusUI.icon}
+                                                                color={statusUI.color}
+                                                                variant="outlined"
+                                                            />
                                                         </Box>
 
                                                         <Divider sx={{ my: 1 }} />
 
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                                            <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                                            <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                                                 Attendee
                                                             </Typography>
-                                                            <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                                                            <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
                                                                 {item.attendee_name || 'Guest'}
                                                             </Typography>
                                                         </Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                                            <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                                            <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                                                 Event
                                                             </Typography>
-                                                            <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                                                            <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
                                                                 {item.event || 'N/A'}
                                                             </Typography>
                                                         </Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                            <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>
+                                                            <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
                                                                 Time
                                                             </Typography>
                                                             <Box sx={{ textAlign: 'right' }}>
-                                                                <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: '#334155' }}>
+                                                                <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: 'text.primary' }}>
                                                                     {time}
                                                                 </Typography>
-                                                                <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                                                <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                                                     {date}
                                                                 </Typography>
                                                             </Box>
@@ -726,76 +870,69 @@ const Checkin = () => {
                                         })}
                                     </Box>
                                 ) : (
-                                    <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                    <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                                         <HistoryIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 1 }} />
                                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
                                             No Check-in History
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: '#94a3b8' }}>
-                                            Scan tickets to see them here
+                                        <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+                                            {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
                                         </Typography>
                                     </Paper>
                                 )
                             ) : (
                                 /* ---------- DESKTOP: TABLE ---------- */
-                                <TableContainer component={Paper} sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                <TableContainer component={Paper} sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                                     <Table size="small">
                                         <TableHead>
                                             <TableRow>
-                                                <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Ticket</TableCell>
-                                                <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Attendee</TableCell>
-                                                <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Event</TableCell>
-                                                <TableCell align="center" sx={{ fontWeight: 600, color: '#475569' }}>Status</TableCell>
-                                                <TableCell align="center" sx={{ fontWeight: 600, color: '#475569' }}>Time</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Ticket</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Attendee</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Event</TableCell>
+                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>Status</TableCell>
+                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>Time</TableCell>
                                             </TableRow>
                                         </TableHead>
                                         <TableBody>
                                             {filteredHistory.length > 0 ? (
-                                                filteredHistory.map((item, index) => {
+                                                filteredHistory.map((item) => {
                                                     const { date, time } = formatDateTime(item.checked_in_at);
+                                                    const statusUI = getLogStatusUI(item.status);
+                                                    const rowKey = item.id || `${item.code}-${item.checked_in_at}`;
+
                                                     return (
                                                         <TableRow
-                                                            key={index}
+                                                            key={rowKey}
                                                             hover
                                                             sx={{
                                                                 cursor: 'pointer',
-                                                                '&:hover': { backgroundColor: '#f8fafc' }
+                                                                '&:hover': { backgroundColor: '#f8fafc' },
                                                             }}
                                                         >
-                                                            <TableCell sx={{ fontFamily: 'monospace', color: '#0f172a', fontWeight: 600 }}>
+                                                            <TableCell sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 600 }}>
                                                                 {item.code || 'N/A'}
                                                             </TableCell>
-                                                            <TableCell sx={{ color: '#334155' }}>
+                                                            <TableCell sx={{ color: 'text.primary' }}>
                                                                 {item.attendee_name || 'Guest'}
                                                             </TableCell>
-                                                            <TableCell sx={{ color: '#334155' }}>
+                                                            <TableCell sx={{ color: 'text.primary' }}>
                                                                 {item.event || 'N/A'}
                                                             </TableCell>
                                                             <TableCell align="center">
-                                                                {item.status === 'success' ? (
-                                                                    <Chip
-                                                                        size="small"
-                                                                        label="Success"
-                                                                        icon={<CheckCircleIcon />}
-                                                                        color="success"
-                                                                        variant="outlined"
-                                                                    />
-                                                                ) : (
-                                                                    <Chip
-                                                                        size="small"
-                                                                        label="Failed"
-                                                                        icon={<CancelIcon />}
-                                                                        color="error"
-                                                                        variant="outlined"
-                                                                    />
-                                                                )}
+                                                                <Chip
+                                                                    size="small"
+                                                                    label={statusUI.label}
+                                                                    icon={statusUI.icon}
+                                                                    color={statusUI.color}
+                                                                    variant="outlined"
+                                                                />
                                                             </TableCell>
-                                                            <TableCell align="center" sx={{ color: '#64748b' }}>
+                                                            <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                                 <Box>
                                                                     <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
                                                                         {time}
                                                                     </Typography>
-                                                                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                                                                    <Typography variant="caption" sx={{ color: 'text.disabled' }}>
                                                                         {date}
                                                                     </Typography>
                                                                 </Box>
@@ -805,14 +942,14 @@ const Checkin = () => {
                                                 })
                                             ) : (
                                                 <TableRow>
-                                                    <TableCell colSpan={5} align="center" sx={{ py: 4, color: '#94a3b8' }}>
+                                                    <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.disabled' }}>
                                                         <Box sx={{ textAlign: 'center' }}>
                                                             <HistoryIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 1 }} />
                                                             <Typography variant="body1" sx={{ fontWeight: 600 }}>
                                                                 No Check-in History
                                                             </Typography>
-                                                            <Typography variant="body2" sx={{ color: '#94a3b8' }}>
-                                                                Scan tickets to see them here
+                                                            <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+                                                                {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
                                                             </Typography>
                                                         </Box>
                                                     </TableCell>

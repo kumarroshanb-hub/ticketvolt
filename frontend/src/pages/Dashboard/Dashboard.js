@@ -1,22 +1,9 @@
 // frontend/src/pages/Dashboard/Dashboard.js
 import React, { useState, useEffect } from 'react';
 import {
-    Box,
-    Grid,
-    Card,
-    CardContent,
-    Typography,
-    Paper,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    CircularProgress,
-    useMediaQuery,
-    useTheme,
-    Divider,
+    Box, Grid, Card, CardContent, Typography, Paper,
+    Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+    CircularProgress, useMediaQuery, useTheme, Divider,
 } from '@mui/material';
 import {
     Event as EventIcon,
@@ -24,47 +11,110 @@ import {
     ConfirmationNumber as TicketIcon,
     AttachMoney as MoneyIcon,
     Refresh as RefreshIcon,
+    Schedule as ScheduleIcon,
+    LocationOn as LocationIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
 
-// ✅ Import from Common
 import {
-    PageContainer,
-    PageHeader,
-    PageTitle,
-    PageHeaderLeft,
-    PageHeaderRight,
-    OutlineButton,
-    StatusChip,
-    LoadingWrapper,
+    PageContainer, PageHeader, PageTitle, PageHeaderLeft, PageHeaderRight,
+    OutlineButton, StatusChip, LoadingWrapper,
 } from '../../components/Common';
 
-// ✅ Import shared constants
 import {
     BOOKING_STATUS,
     BookingStatusUtils,
     EventStatusUtils,
 } from '../../constants';
 
+import { theme as appTheme } from '../../theme/tokens';
+
+const C = appTheme.colors;
+const F = appTheme.fonts;
+
 // ============================================
-// STAT CARD — Phase 4 polish
+// MONEY HELPERS
+// ============================================
+const getNetAmount = (booking) => {
+    if (!booking) return 0;
+    if (booking.net_amount !== undefined && booking.net_amount !== null) {
+        return Number(booking.net_amount);
+    }
+    return Number(booking.total_amount || 0) - Number(booking.discount_applied || 0);
+};
+
+const getGrossAmount = (booking) => Number(booking?.total_amount || 0);
+const getDiscountAmount = (booking) => Number(booking?.discount_applied || 0);
+const formatMoney = (value) => `₹${Number(value || 0).toFixed(2)}`;
+
+// ============================================
+// AMOUNT DISPLAY
+// ============================================
+const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
+    const net = getNetAmount(booking);
+    const gross = getGrossAmount(booking);
+    const discount = getDiscountAmount(booking);
+    const hasDiscount = discount > 0;
+
+    return (
+        <Box sx={{ textAlign: align === 'right' ? 'right' : 'left' }}>
+            <Typography
+                variant={size}
+                sx={{ fontWeight: 700, color: C.textPrimary, lineHeight: 1.2 }}
+            >
+                {formatMoney(net)}
+            </Typography>
+
+            {hasDiscount && (
+                <>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: C.textLight,
+                            textDecoration: 'line-through',
+                            display: 'block',
+                            mt: 0.25,
+                        }}
+                    >
+                        {formatMoney(gross)}
+                    </Typography>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: C.success,
+                            fontWeight: 600,
+                            display: 'block',
+                            fontSize: '10px',
+                        }}
+                    >
+                        −{formatMoney(discount)}
+                        {booking.discount_code ? ` (${booking.discount_code})` : ''}
+                    </Typography>
+                </>
+            )}
+        </Box>
+    );
+};
+
+// ============================================
+// STAT CARD
 // ============================================
 const StatCard = ({ title, value, icon, color, subtitle }) => {
     const theme = useTheme();
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
 
     return (
-        <Card sx={{ height: '100%', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+        <Card sx={{ height: '100%', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
             <CardContent sx={{ p: isSmall ? 1.5 : 2, '&:last-child': { pb: isSmall ? 1.5 : 2 } }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
                     <Box sx={{ minWidth: 0, flex: 1 }}>
                         <Typography
                             variant="caption"
                             sx={{
-                                color: '#64748b',
+                                color: C.textSecondary,
                                 fontWeight: 600,
                                 letterSpacing: 0.5,
                                 fontSize: isSmall ? '10px' : '12px',
@@ -76,7 +126,7 @@ const StatCard = ({ title, value, icon, color, subtitle }) => {
                             variant="h4"
                             sx={{
                                 fontWeight: 700,
-                                color: '#0f172a',
+                                color: C.textPrimary,
                                 mt: 1,
                                 fontSize: isSmall ? '1.25rem' : '2rem',
                                 overflow: 'hidden',
@@ -90,7 +140,7 @@ const StatCard = ({ title, value, icon, color, subtitle }) => {
                             <Typography
                                 variant="caption"
                                 sx={{
-                                    color: '#64748b',
+                                    color: C.textSecondary,
                                     fontSize: isSmall ? '10px' : '12px',
                                     display: 'block',
                                     overflow: 'hidden',
@@ -122,7 +172,7 @@ const StatCard = ({ title, value, icon, color, subtitle }) => {
 };
 
 // ============================================
-// MOBILE BOOKING CARD — Phase 3 (unchanged)
+// MOBILE BOOKING CARD
 // ============================================
 const MobileBookingCard = ({ booking, onClick }) => {
     const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
@@ -132,13 +182,13 @@ const MobileBookingCard = ({ booking, onClick }) => {
             onClick={onClick}
             sx={{
                 borderRadius: 2,
-                border: '1px solid #e2e8f0',
+                border: `1px solid ${C.borderLight}`,
                 cursor: 'pointer',
                 opacity: isCompleted ? 0.75 : 1,
                 transition: 'all 0.2s ease',
                 '&:active': {
                     transform: 'scale(0.99)',
-                    backgroundColor: '#f8fafc',
+                    backgroundColor: C.bgPrimary,
                 },
             }}
         >
@@ -148,9 +198,9 @@ const MobileBookingCard = ({ booking, onClick }) => {
                         <Typography
                             variant="subtitle1"
                             sx={{
-                                fontFamily: 'monospace',
+                                fontFamily: F.familyMono,
                                 fontWeight: 700,
-                                color: '#0f172a',
+                                color: C.textPrimary,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
@@ -158,38 +208,50 @@ const MobileBookingCard = ({ booking, onClick }) => {
                         >
                             {booking.booking_reference}
                         </Typography>
-                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                        <Typography variant="caption" sx={{ color: C.textSecondary, display: 'block' }}>
                             {booking.formatted_date || new Date(booking.created_at).toLocaleDateString()}
                         </Typography>
                     </Box>
-                    <StatusChip
-                        status={booking.status}
-                        type="booking"
-                        size="small"
-                        showIcon={true}
-                        variant="filled"
-                    />
+                    <StatusChip status={booking.status} type="booking" size="small" showIcon variant="filled" />
                 </Box>
 
                 <Divider sx={{ mb: 1.5 }} />
 
                 <Box sx={{ mb: 1 }}>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: C.textLight,
+                            textTransform: 'uppercase',
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            letterSpacing: 0.5,
+                        }}
+                    >
                         Customer
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                    <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 500 }}>
                         {booking.customer_name || 'N/A'}
                     </Typography>
                 </Box>
 
                 <Box sx={{ mb: 1.5 }}>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', textTransform: 'uppercase', fontSize: '10px', fontWeight: 600, letterSpacing: 0.5 }}>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: C.textLight,
+                            textTransform: 'uppercase',
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            letterSpacing: 0.5,
+                        }}
+                    >
                         Event
                     </Typography>
                     <Typography
                         variant="body2"
                         sx={{
-                            color: '#334155',
+                            color: C.textPrimary,
                             fontWeight: 500,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -200,18 +262,178 @@ const MobileBookingCard = ({ booking, onClick }) => {
                     </Typography>
                 </Box>
 
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 1.5, borderTop: '1px dashed #e2e8f0' }}>
-                    <Typography variant="h6" sx={{ color: '#4f46e5', fontWeight: 700 }}>
-                        ₹{booking.total_amount}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                <Box
+                    sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-end',
+                        pt: 1.5,
+                        borderTop: `1px dashed ${C.borderLight}`,
+                    }}
+                >
+                    <AmountDisplay booking={booking} align="left" size="h6" />
+                    <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
                         {booking.ticket_count || 0} ticket{(booking.ticket_count || 0) !== 1 ? 's' : ''}
                     </Typography>
                 </Box>
 
                 {isCompleted && (
-                    <Typography variant="caption" sx={{ color: '#10b981', display: 'block', mt: 1, fontWeight: 600 }}>
+                    <Typography variant="caption" sx={{ color: C.success, display: 'block', mt: 1, fontWeight: 600 }}>
                         ✅ All tickets used
+                    </Typography>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
+
+// ============================================
+// POPULAR EVENT CARD
+// ============================================
+const PopularEventCard = ({ event, onClick, isMobile }) => {
+    const isActive = EventStatusUtils.isActive(event.status);
+    const isTerminal = EventStatusUtils.isTerminal(event.status);
+
+    const tierCount = event.tier_count ?? 0;
+    const sessionCount = event.session_count ?? 0;
+    const totalCapacity = event.total_capacity ?? 0;
+
+    const venueName = event.venue_name || null;
+    const venueCity = event.venue_city || null;
+
+    const formattedDate = event.start_date
+        ? new Date(event.start_date).toLocaleDateString('en-IN', {
+              day: '2-digit', month: 'short', year: 'numeric',
+          })
+        : 'TBD';
+
+    return (
+        <Card
+            onClick={onClick}
+            sx={{
+                borderRadius: 2,
+                border: `1px solid ${C.borderLight}`,
+                cursor: 'pointer',
+                opacity: isTerminal ? 0.7 : 1,
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                transition: 'all 0.2s ease',
+                '&:hover': {
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                    transform: 'translateY(-2px)',
+                },
+                '&:active': { transform: 'scale(0.99)' },
+            }}
+        >
+            <CardContent
+                sx={{
+                    p: isMobile ? 1.5 : 2,
+                    flexGrow: 1,
+                    '&:last-child': { pb: isMobile ? 1.5 : 2 },
+                }}
+            >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, mb: 1 }}>
+                    <Typography
+                        variant="h6"
+                        sx={{
+                            color: C.textPrimary,
+                            fontWeight: 600,
+                            fontSize: isMobile ? '1rem' : '1.1rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            flex: 1,
+                            minWidth: 0,
+                        }}
+                    >
+                        {event.title}
+                    </Typography>
+                    <StatusChip status={event.status} type="event" size="small" showIcon variant="filled" />
+                </Box>
+
+                <Typography
+                    variant="body2"
+                    sx={{
+                        color: C.textSecondary,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        mb: 0.75,
+                    }}
+                >
+                    <ScheduleIcon sx={{ fontSize: 16, color: C.textLight }} />
+                    {formattedDate}
+                </Typography>
+
+                {venueName || venueCity ? (
+                    <Typography
+                        variant="body2"
+                        sx={{
+                            color: C.textSecondary,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            mb: 0.75,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        <LocationIcon sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
+                        {venueName || 'Venue'}
+                        {venueCity ? `, ${venueCity}` : ''}
+                    </Typography>
+                ) : (
+                    <Typography
+                        variant="body2"
+                        sx={{
+                            color: C.textLight,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            mb: 0.75,
+                            fontStyle: 'italic',
+                        }}
+                    >
+                        <LocationIcon sx={{ fontSize: 16 }} />
+                        No venue assigned
+                    </Typography>
+                )}
+
+                <Divider sx={{ my: 1.5 }} />
+
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1.5 }}>
+                    <Typography variant="caption" sx={{ color: C.textSecondary, display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600 }}>
+                        🎫 {tierCount} tier{tierCount === 1 ? '' : 's'}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: C.textSecondary, display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600 }}>
+                        ⏱️ {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                    </Typography>
+                    {totalCapacity > 0 && (
+                        <Typography variant="caption" sx={{ color: C.textLight, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            👥 {totalCapacity} seats
+                        </Typography>
+                    )}
+                </Box>
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                    <Typography variant="body2" sx={{ color: C.textSecondary }}>Tickets Sold</Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
+                        {event.total_tickets_sold || 0}
+                    </Typography>
+                </Box>
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Typography variant="body2" sx={{ color: C.textSecondary }}>Revenue</Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
+                        ₹{event.total_revenue?.toLocaleString() || 0}
+                    </Typography>
+                </Box>
+
+                {isActive && (
+                    <Typography variant="caption" sx={{ color: C.success, mt: 1, display: 'block' }}>
+                        🟢 Live
                     </Typography>
                 )}
             </CardContent>
@@ -263,7 +485,7 @@ const Dashboard = () => {
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: '#4f46e5' }} />
+                <CircularProgress sx={{ color: C.primary }} />
             </LoadingWrapper>
         );
     }
@@ -278,7 +500,7 @@ const Dashboard = () => {
                     <Typography
                         variant="body2"
                         sx={{
-                            color: '#64748b',
+                            color: C.textSecondary,
                             ml: isMobile ? 0 : 2,
                             display: 'block',
                             width: isMobile ? '100%' : 'auto',
@@ -294,14 +516,13 @@ const Dashboard = () => {
                 </PageHeaderRight>
             </PageHeader>
 
-            {/* Stats Cards — 2 per row on phone */}
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Total Events"
                         value={stats.total_events || 0}
-                        icon={<EventIcon sx={{ color: '#4f46e5', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#4f46e5"
+                        icon={<EventIcon sx={{ color: C.primary, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.primary}
                         subtitle={`${stats.active_events || 0} active`}
                     />
                 </Grid>
@@ -309,8 +530,8 @@ const Dashboard = () => {
                     <StatCard
                         title="Total Bookings"
                         value={stats.total_bookings || 0}
-                        icon={<PeopleIcon sx={{ color: '#10b981', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#10b981"
+                        icon={<PeopleIcon sx={{ color: C.success, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.success}
                         subtitle={`${stats.pending_bookings || 0} pending`}
                     />
                 </Grid>
@@ -318,8 +539,8 @@ const Dashboard = () => {
                     <StatCard
                         title="Tickets"
                         value={stats.total_tickets || 0}
-                        icon={<TicketIcon sx={{ color: '#8b5cf6', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#8b5cf6"
+                        icon={<TicketIcon sx={{ color: C.secondary, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.secondary}
                         subtitle={`${stats.used_tickets || 0} used`}
                     />
                 </Grid>
@@ -327,19 +548,18 @@ const Dashboard = () => {
                     <StatCard
                         title="Revenue"
                         value={`₹${stats.total_revenue?.toLocaleString() || 0}`}
-                        icon={<MoneyIcon sx={{ color: '#f59e0b', fontSize: isMobile ? 20 : 24 }} />}
-                        color="#f59e0b"
+                        icon={<MoneyIcon sx={{ color: C.warning, fontSize: isMobile ? 20 : 24 }} />}
+                        color={C.warning}
                         subtitle={`Today: ₹${stats.today_revenue?.toLocaleString() || 0}`}
                     />
                 </Grid>
             </Grid>
 
-            {/* Recent Bookings */}
             <Box sx={{ mb: 4 }}>
                 <Typography
                     variant="h6"
                     sx={{
-                        color: '#0f172a',
+                        color: C.textPrimary,
                         fontWeight: 600,
                         mb: 2,
                         fontSize: isMobile ? '1rem' : '1.25rem',
@@ -355,26 +575,26 @@ const Dashboard = () => {
                                 <MobileBookingCard
                                     key={booking.id}
                                     booking={booking}
-                                    onClick={() => navigate(`/bookings/${booking.id}`)}
+                                    onClick={() => navigate(`/app/bookings/${booking.id}`)}
                                 />
                             ))}
                         </Box>
                     ) : (
-                        <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid #e2e8f0' }}>
-                            <Typography sx={{ color: '#94a3b8' }}>No recent bookings</Typography>
+                        <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
+                            <Typography sx={{ color: C.textLight }}>No recent bookings</Typography>
                         </Paper>
                     )
                 ) : (
-                    <TableContainer component={Paper} sx={{ borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                    <TableContainer component={Paper} sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
                         <Table>
                             <TableHead>
                                 <TableRow>
-                                    <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Reference</TableCell>
-                                    <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Customer</TableCell>
-                                    <TableCell sx={{ fontWeight: 600, color: '#475569' }}>Event</TableCell>
-                                    <TableCell align="right" sx={{ fontWeight: 600, color: '#475569' }}>Amount</TableCell>
-                                    <TableCell align="center" sx={{ fontWeight: 600, color: '#475569' }}>Status</TableCell>
-                                    <TableCell align="center" sx={{ fontWeight: 600, color: '#475569' }}>Date</TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Reference</TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Customer</TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Event</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>Amount</TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>Status</TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>Date</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -385,36 +605,30 @@ const Dashboard = () => {
                                             <TableRow
                                                 key={booking.id}
                                                 hover
-                                                onClick={() => navigate(`/bookings/${booking.id}`)}
+                                                onClick={() => navigate(`/app/bookings/${booking.id}`)}
                                                 sx={{
                                                     cursor: 'pointer',
                                                     opacity: isCompleted ? 0.7 : 1,
-                                                    '&:hover': { backgroundColor: '#f8fafc' },
+                                                    '&:hover': { backgroundColor: C.bgPrimary },
                                                 }}
                                             >
-                                                <TableCell sx={{ fontFamily: 'monospace', color: '#0f172a' }}>
+                                                <TableCell sx={{ fontFamily: F.familyMono, color: C.textPrimary }}>
                                                     {booking.booking_reference}
                                                     {isCompleted && (
-                                                        <Typography variant="caption" sx={{ color: '#10b981', display: 'block' }}>
+                                                        <Typography variant="caption" sx={{ color: C.success, display: 'block' }}>
                                                             ✅ All tickets used
                                                         </Typography>
                                                     )}
                                                 </TableCell>
-                                                <TableCell sx={{ color: '#334155' }}>{booking.customer_name}</TableCell>
-                                                <TableCell sx={{ color: '#334155' }}>{booking.event_title}</TableCell>
-                                                <TableCell align="right" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                                                    ₹{booking.total_amount}
+                                                <TableCell sx={{ color: C.textPrimary }}>{booking.customer_name}</TableCell>
+                                                <TableCell sx={{ color: C.textPrimary }}>{booking.event_title}</TableCell>
+                                                <TableCell align="right">
+                                                    <AmountDisplay booking={booking} align="right" size="body2" />
                                                 </TableCell>
                                                 <TableCell align="center">
-                                                    <StatusChip
-                                                        status={booking.status}
-                                                        type="booking"
-                                                        size="small"
-                                                        showIcon={true}
-                                                        variant="filled"
-                                                    />
+                                                    <StatusChip status={booking.status} type="booking" size="small" showIcon variant="filled" />
                                                 </TableCell>
-                                                <TableCell align="center" sx={{ color: '#64748b' }}>
+                                                <TableCell align="center" sx={{ color: C.textSecondary }}>
                                                     {booking.formatted_date || new Date(booking.created_at).toLocaleDateString()}
                                                 </TableCell>
                                             </TableRow>
@@ -422,7 +636,7 @@ const Dashboard = () => {
                                     })
                                 ) : (
                                     <TableRow>
-                                        <TableCell colSpan={6} align="center" sx={{ py: 4, color: '#94a3b8' }}>
+                                        <TableCell colSpan={6} align="center" sx={{ py: 4, color: C.textLight }}>
                                             No recent bookings
                                         </TableCell>
                                     </TableRow>
@@ -433,12 +647,11 @@ const Dashboard = () => {
                 )}
             </Box>
 
-            {/* Popular Events */}
             <Box>
                 <Typography
                     variant="h6"
                     sx={{
-                        color: '#0f172a',
+                        color: C.textPrimary,
                         fontWeight: 600,
                         mb: 2,
                         fontSize: isMobile ? '1rem' : '1.25rem',
@@ -448,88 +661,18 @@ const Dashboard = () => {
                 </Typography>
                 <Grid container spacing={isMobile ? 1.5 : 2}>
                     {stats.popular_events && stats.popular_events.length > 0 ? (
-                        stats.popular_events.map((event) => {
-                            const isActive = EventStatusUtils.isActive(event.status);
-                            const isTerminal = EventStatusUtils.isTerminal(event.status);
-
-                            return (
-                                <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                    <Card
-                                        sx={{
-                                            borderRadius: 2,
-                                            border: '1px solid #e2e8f0',
-                                            cursor: 'pointer',
-                                            opacity: isTerminal ? 0.7 : 1,
-                                            height: '100%',
-                                            transition: 'all 0.2s ease',
-                                            '&:hover': {
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                                transform: 'translateY(-2px)',
-                                            },
-                                            '&:active': {
-                                                transform: 'scale(0.99)',
-                                            },
-                                        }}
-                                        onClick={() => navigate(`/events/${event.id}`)}
-                                    >
-                                        <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-                                            <Typography
-                                                variant="h6"
-                                                sx={{
-                                                    color: '#0f172a',
-                                                    fontWeight: 600,
-                                                    mb: 1,
-                                                    fontSize: isMobile ? '1rem' : '1.25rem',
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                            >
-                                                {event.title}
-                                            </Typography>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                                <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                    Tickets Sold
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                                                    {event.total_tickets_sold || 0}
-                                                </Typography>
-                                            </Box>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                                <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                    Revenue
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                                                    ₹{event.total_revenue?.toLocaleString() || 0}
-                                                </Typography>
-                                            </Box>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                <Typography variant="body2" sx={{ color: '#64748b' }}>
-                                                    Status
-                                                </Typography>
-                                                <StatusChip
-                                                    status={event.status}
-                                                    type="event"
-                                                    size="small"
-                                                    showIcon={true}
-                                                    variant="filled"
-                                                />
-                                            </Box>
-                                            {isActive && (
-                                                <Box sx={{ mt: 1 }}>
-                                                    <Typography variant="caption" sx={{ color: '#10b981' }}>
-                                                        🟢 Live
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                        </CardContent>
-                                    </Card>
-                                </Grid>
-                            );
-                        })
+                        stats.popular_events.map((event) => (
+                            <Grid item xs={12} sm={6} md={4} key={event.id}>
+                                <PopularEventCard
+                                    event={event}
+                                    onClick={() => navigate(`/app/events/${event.id}`)}
+                                    isMobile={isMobile}
+                                />
+                            </Grid>
+                        ))
                     ) : (
                         <Grid item xs={12}>
-                            <Box sx={{ textAlign: 'center', py: 4, color: '#94a3b8' }}>
+                            <Box sx={{ textAlign: 'center', py: 4, color: C.textLight }}>
                                 No events found
                             </Box>
                         </Grid>

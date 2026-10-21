@@ -8,12 +8,14 @@ from django.db import transaction
 from django.db.models import Q
 from django.core.mail import send_mail
 from django.conf import settings
+from django.utils.html import strip_tags
 from ..models import UserProfile
 from .serializers import UserSerializer, UserProfileSerializer, UserRegistrationSerializer
 import logging
 import re
 
 logger = logging.getLogger(__name__)
+
 
 class UserViewSet(viewsets.ModelViewSet):
     """
@@ -34,22 +36,38 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         role = self.request.query_params.get('role', None)
-        
-        # Super admin can see all users
+        is_active_param = self.request.query_params.get('is_active', None)
+        search = self.request.query_params.get('search', None)
+
+        # Base queryset based on caller's role
         if user.is_superuser:
             queryset = User.objects.all()
-        # Admin can see all users except super admins
         elif user.is_staff:
             queryset = User.objects.exclude(is_superuser=True)
-        # Regular users can only see themselves
         else:
             queryset = User.objects.filter(id=user.id)
-        
-        # Filter by role if provided
-        if role == 'organizer':
-            # Get users with organizer profile or role
+
+        # ✅ Prefetch profile so the serializer doesn't N+1 on user.profile
+        queryset = queryset.select_related('profile')
+
+        # ✅ Handle is_active filter (frontend sends 'active' / 'inactive')
+        if is_active_param is not None:
+            is_active_bool = str(is_active_param).lower() in ('true', '1', 'yes')
+            queryset = queryset.filter(is_active=is_active_bool)
+
+        # ✅ Handle search filter across username / email / name
+        if search:
             queryset = queryset.filter(
-                Q(profile__is_organizer=True) | 
+                Q(username__icontains=search) |
+                Q(email__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search)
+            )
+
+        # Role filter
+        if role == 'organizer':
+            queryset = queryset.filter(
+                Q(profile__is_organizer=True) |
                 Q(is_organizer=True)
             )
         elif role == 'admin':
@@ -58,25 +76,35 @@ class UserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_superuser=True)
         elif role == 'user':
             queryset = queryset.filter(is_staff=False, is_superuser=False)
-        
+
         return queryset.order_by('-date_joined')
+
+    # ✅ FIX [P1]: shared "can the caller touch this user?" guard.
+    # Admins/superadmins may act on anyone (with the superadmin exception
+    # already enforced elsewhere). Everyone else may only act on themselves.
+    # This is used by `profile`, `update_profile`, and any future
+    # self-scoped detail action.
+    def _can_view_or_edit_user(self, request, target_user):
+        requester = request.user
+        if requester.is_staff or requester.is_superuser:
+            return True
+        return requester.id == target_user.id
 
     def create(self, request, *args, **kwargs):
         """
         Create a new user (Admin/Super Admin only)
         """
-        # Check if user has permission
         if not request.user.is_staff and not request.user.is_superuser:
             return Response(
                 {'error': 'You do not have permission to create users'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
             with transaction.atomic():
                 user = serializer.save()
-                
+
                 # Set role based on request
                 role = request.data.get('role', 'user')
                 if role == 'admin' and request.user.is_superuser:
@@ -87,29 +115,35 @@ class UserViewSet(viewsets.ModelViewSet):
                     user.is_superuser = True
                     user.save()
                 elif role == 'organizer':
-                    # Create organizer profile
-                    UserProfile.objects.create(
+                    profile, created = UserProfile.objects.get_or_create(
                         user=user,
-                        email=user.email,
-                        phone=request.data.get('phone', ''),
-                        whatsapp_number=request.data.get('whatsapp_number', ''),
-                        address=request.data.get('address', ''),
-                        city=request.data.get('city', ''),
-                        state=request.data.get('state', ''),
-                        country=request.data.get('country', 'India'),
-                        postal_code=request.data.get('postal_code', ''),
-                        is_organizer=True
+                        defaults={
+                            'email': user.email,
+                            'phone': request.data.get('phone', ''),
+                            'whatsapp_number': request.data.get('whatsapp_number', ''),
+                            'address': request.data.get('address', ''),
+                            'city': request.data.get('city', ''),
+                            'state': request.data.get('state', ''),
+                            'country': request.data.get('country', 'India'),
+                            'postal_code': request.data.get('postal_code', ''),
+                        },
                     )
-                
-                # Send welcome email
+                    profile.is_organizer = True
+                    profile.save()
+
+                # Allow `is_active` to be set on creation
+                if 'is_active' in request.data:
+                    user.is_active = bool(request.data['is_active'])
+                    user.save(update_fields=['is_active'])
+
                 self._send_welcome_email(user)
-                
+
                 return Response({
                     'success': True,
                     'message': f'User {user.username} created successfully',
                     'user': UserSerializer(user).data
                 }, status=status.HTTP_201_CREATED)
-        
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
@@ -121,24 +155,24 @@ class UserViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             with transaction.atomic():
                 user = serializer.save()
-                
-                # Create user profile
-                UserProfile.objects.create(
+
+                UserProfile.objects.get_or_create(
                     user=user,
-                    email=user.email,
-                    phone=request.data.get('phone', ''),
-                    whatsapp_number=request.data.get('whatsapp_number', ''),
-                    address=request.data.get('address', ''),
-                    city=request.data.get('city', ''),
-                    state=request.data.get('state', ''),
-                    country=request.data.get('country', 'India'),
-                    postal_code=request.data.get('postal_code', ''),
-                    is_organizer=False
+                    defaults={
+                        'email': user.email,
+                        'phone': request.data.get('phone', ''),
+                        'whatsapp_number': request.data.get('whatsapp_number', ''),
+                        'address': request.data.get('address', ''),
+                        'city': request.data.get('city', ''),
+                        'state': request.data.get('state', ''),
+                        'country': request.data.get('country', 'India'),
+                        'postal_code': request.data.get('postal_code', ''),
+                        'is_organizer': False,
+                    }
                 )
-                
-                # Send welcome email
+
                 self._send_welcome_email(user)
-                
+
                 return Response({
                     'success': True,
                     'message': 'Registration successful! Please login.',
@@ -149,7 +183,7 @@ class UserViewSet(viewsets.ModelViewSet):
                         'role': 'user'
                     }
                 }, status=status.HTTP_201_CREATED)
-        
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
@@ -158,27 +192,25 @@ class UserViewSet(viewsets.ModelViewSet):
         Update user role (Super Admin only)
         """
         user = self.get_object()
-        
-        # Only super admin can update roles
+
         if not request.user.is_superuser:
             return Response(
                 {'error': 'Only super admin can update user roles'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         role = request.data.get('role')
         if role not in ['user', 'organizer', 'admin', 'super_admin']:
             return Response(
                 {'error': 'Invalid role. Must be: user, organizer, admin, super_admin'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         with transaction.atomic():
-            # Reset user flags
             user.is_staff = False
             user.is_superuser = False
             user.save()
-            
+
             if role == 'admin':
                 user.is_staff = True
                 user.save()
@@ -187,25 +219,21 @@ class UserViewSet(viewsets.ModelViewSet):
                 user.is_superuser = True
                 user.save()
             elif role == 'organizer':
-                # Ensure organizer profile exists
                 profile, created = UserProfile.objects.get_or_create(
                     user=user,
                     defaults={
                         'email': user.email,
                         'phone': request.data.get('phone', ''),
                         'whatsapp_number': request.data.get('whatsapp_number', ''),
-                        'is_organizer': True
                     }
                 )
-                if not created:
-                    profile.is_organizer = True
-                    profile.save()
+                profile.is_organizer = True
+                profile.save()
             elif role == 'user':
-                # Remove organizer status if exists
                 if hasattr(user, 'profile'):
                     user.profile.is_organizer = False
                     user.profile.save()
-        
+
         return Response({
             'success': True,
             'message': f'User role updated to {role}',
@@ -218,23 +246,22 @@ class UserViewSet(viewsets.ModelViewSet):
         Toggle user active status (Admin+ only)
         """
         user = self.get_object()
-        
-        # Super admin can toggle anyone, admin can toggle non-super-admins
+
         if not request.user.is_staff and not request.user.is_superuser:
             return Response(
                 {'error': 'You do not have permission to modify users'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         if user.is_superuser and not request.user.is_superuser:
             return Response(
                 {'error': 'Only super admin can modify super admin users'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         user.is_active = not user.is_active
         user.save()
-        
+
         return Response({
             'success': True,
             'message': f'User {user.username} {"activated" if user.is_active else "deactivated"}',
@@ -243,10 +270,17 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def profile(self, request, pk=None):
-        """
-        Get user profile
-        """
+        # ✅ FIX [P1]: a non-staff caller must only be able to read their
+        # own profile. Without this check any authenticated user could
+        # GET /api/users/<someone-elses-id>/profile/ and harvest PII.
         user = self.get_object()
+
+        if not self._can_view_or_edit_user(request, user):
+            return Response(
+                {'error': 'You do not have permission to view this profile.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         profile, created = UserProfile.objects.get_or_create(
             user=user,
             defaults={'email': user.email}
@@ -256,19 +290,26 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def update_profile(self, request, pk=None):
-        """
-        Update user profile
-        """
+        # ✅ FIX [P1]: a non-staff caller may only edit their own profile.
+        # `get_object()` returns *any* user for staff, and for regular
+        # users it already scopes to `id=user.id` — but the guard below
+        # is defensive against a future change to `get_queryset()` that
+        # would widen the base queryset.
         user = self.get_object()
+
+        if not self._can_view_or_edit_user(request, user):
+            return Response(
+                {'error': 'You do not have permission to edit this profile.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         profile, created = UserProfile.objects.get_or_create(
             user=user,
             defaults={'email': user.email}
         )
         data = request.data
-        
-        # Update email in both User and UserProfile
+
         if 'email' in data and data['email'] != user.email:
-            # Check if email is already taken
             if User.objects.exclude(id=user.id).filter(email=data['email']).exists():
                 return Response(
                     {'error': 'Email already in use'},
@@ -277,41 +318,44 @@ class UserViewSet(viewsets.ModelViewSet):
             user.email = data['email']
             user.save()
             profile.email = data['email']
-        
-        # Update profile fields
-        profile_fields = ['phone', 'whatsapp_number', 'address', 'city', 'state', 'country', 'postal_code', 'is_organizer']
+
+        # ✅ FIX [P1]: only staff/superadmins may flip `is_organizer`
+        # through this endpoint. Without this, a regular user could
+        # self-promote to organizer and gain event-management access.
+        profile_fields = [
+            'phone', 'whatsapp_number', 'address', 'city', 'state',
+            'country', 'postal_code',
+        ]
+        if request.user.is_staff or request.user.is_superuser:
+            profile_fields.append('is_organizer')
+
         for field in profile_fields:
             if field in data:
                 setattr(profile, field, data[field])
         profile.save()
-        
+
         serializer = UserProfileSerializer(profile)
         return Response(serializer.data)
 
     @action(detail=True, methods=['delete'])
     def delete_user(self, request, pk=None):
-        """
-        Delete a user (Super Admin only)
-        """
         user = self.get_object()
-        
-        # Only super admin can delete users
+
         if not request.user.is_superuser:
             return Response(
                 {'error': 'Only super admin can delete users'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Prevent self-deletion
+
         if user.id == request.user.id:
             return Response(
                 {'error': 'You cannot delete your own account'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         username = user.username
         user.delete()
-        
+
         return Response({
             'success': True,
             'message': f'User {username} deleted successfully'
@@ -321,7 +365,7 @@ class UserViewSet(viewsets.ModelViewSet):
         """Send welcome email to new user"""
         try:
             subject = f'Welcome to TicketVolt, {user.first_name or user.username}!'
-            
+
             html_content = f"""
             <!DOCTYPE html>
             <html>
@@ -354,9 +398,9 @@ class UserViewSet(viewsets.ModelViewSet):
             </body>
             </html>
             """
-            
+
             text_content = strip_tags(html_content)
-            
+
             send_mail(
                 subject,
                 text_content,
@@ -365,7 +409,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 html_message=html_content,
                 fail_silently=False
             )
-            
+
             logger.info(f"✅ Welcome email sent to {user.email}")
             return True
         except Exception as e:

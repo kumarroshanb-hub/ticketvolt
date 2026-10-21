@@ -13,7 +13,7 @@ const VenuesModule = () => {
             <Route path="create" element={<CreateVenue />} />
             <Route path=":id" element={<VenueDetail />} />
             <Route path="edit/:id" element={<CreateVenue />} />
-            <Route path="*" element={<Navigate to="/venues" replace />} />
+            <Route path="*" element={<Navigate to="/app/venues" replace />} />
         </Routes>
     );
 };

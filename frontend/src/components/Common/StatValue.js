@@ -7,7 +7,7 @@ const StatValue = ({ children, variant = 'h4', sx = {}, ...props }) => (
         variant={variant} 
         sx={{ 
             fontWeight: 700, 
-            color: '#0f172a', 
+            color: 'text.primary', 
             ...sx 
         }}
         {...props}

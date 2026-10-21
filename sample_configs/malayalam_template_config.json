@@ -2,98 +2,105 @@
   "fields": {
     "organizer": {
       "x": 0.5,
-      "y": 0.08,
-      "font_size": 22,
-      "color": "#2D3748",
+      "y": 0.075,
+      "font_size": 34,
+      "color": "#8B1A1A",
       "align": "center"
     },
     "organizer_sub": {
       "x": 0.5,
-      "y": 0.13,
+      "y": 0.115,
       "font_size": 16,
       "color": "#4A5568",
       "align": "center"
     },
     "event_title": {
       "x": 0.5,
-      "y": 0.22,
-      "font_size": 32,
+      "y": 0.175,
+      "font_size": 52,
       "color": "#D69E2E",
       "align": "center"
     },
     "event_date": {
       "x": 0.5,
-      "y": 0.34,
-      "font_size": 34,
+      "y": 0.245,
+      "font_size": 32,
       "color": "#1A202C",
       "align": "center"
     },
     "event_date_secondary": {
       "x": 0.5,
-      "y": 0.42,
-      "font_size": 22,
+      "y": 0.285,
+      "font_size": 20,
       "color": "#4A5568",
       "align": "center"
     },
-    "venue": {
-      "x": 0.35,
-      "y": 0.60,
-      "font_size": 14,
-      "color": "#4A5568",
-      "align": "left"
-    },
-    "qr_code": {
-      "x": 0.78,
-      "y": 0.62,
-      "size": 150
-    },
     "ticket_code_label": {
-      "x": 0.15,
-      "y": 0.60,
-      "font_size": 12,
+      "x": 0.075,
+      "y": 0.345,
+      "font_size": 18,
       "color": "#4A5568",
       "align": "left"
     },
     "ticket_code_value": {
-      "x": 0.35,
-      "y": 0.60,
-      "font_size": 14,
+      "x": 0.245,
+      "y": 0.345,
+      "font_size": 18,
       "color": "#1A202C",
       "align": "left"
     },
     "attendee_label": {
-      "x": 0.15,
-      "y": 0.67,
-      "font_size": 12,
+      "x": 0.075,
+      "y": 0.395,
+      "font_size": 18,
       "color": "#4A5568",
       "align": "left"
     },
     "attendee_value": {
-      "x": 0.35,
-      "y": 0.67,
-      "font_size": 14,
+      "x": 0.245,
+      "y": 0.395,
+      "font_size": 18,
       "color": "#1A202C",
       "align": "left"
     },
     "booking_label": {
-      "x": 0.15,
-      "y": 0.74,
-      "font_size": 12,
+      "x": 0.075,
+      "y": 0.445,
+      "font_size": 18,
       "color": "#4A5568",
       "align": "left"
     },
     "booking_value": {
-      "x": 0.35,
-      "y": 0.74,
-      "font_size": 14,
+      "x": 0.245,
+      "y": 0.445,
+      "font_size": 18,
       "color": "#1A202C",
       "align": "left"
     },
+    "venue_label": {
+      "x": 0.075,
+      "y": 0.515,
+      "font_size": 16,
+      "color": "#4A5568",
+      "align": "left"
+    },
+    "venue_value": {
+      "x": 0.075,
+      "y": 0.565,
+      "font_size": 14,
+      "color": "#2D3748",
+      "align": "left"
+    },
+    "qr_code": {
+      "x": 0.78,
+      "y": 0.45,
+      "size": 280
+    },
     "admit_one": {
       "x": 0.5,
-      "y": 0.92,
-      "font_size": 28,
-      "color": "#E53E3E",
+      "y": 0.93,
+      "font_size": 36,
+      "color": "#FFFFFF",
       "align": "center"
     }
   },

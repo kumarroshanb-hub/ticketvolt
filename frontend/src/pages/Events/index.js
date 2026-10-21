@@ -12,7 +12,7 @@ const EventsModule = () => {
             <Route path="create" element={<CreateEvent />} />
             <Route path=":id" element={<EventDetail />} />
             <Route path=":id/edit" element={<CreateEvent />} />
-            <Route path="*" element={<Navigate to="/events" replace />} />
+            <Route path="*" element={<Navigate to="/app/events" replace />} />
         </Routes>
     );
 };

@@ -1,5 +1,5 @@
 // frontend/src/pages/Venues/Create.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Paper, Typography, TextField, Button, Grid, Alert,
     CircularProgress, MenuItem, Divider, FormControlLabel, Switch,
@@ -18,15 +18,21 @@ import {
 } from '../../components/Common';
 import styled from 'styled-components';
 
-// ✅ Import shared constants
-import { EVENT_STATUS } from '../../constants';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
+const F = theme.fonts;
+
+const COUNTRIES = [
+    'Afghanistan','Albania','Algeria','Andorra','Angola','Antigua and Barbuda','Argentina','Armenia','Australia','Austria','Azerbaijan','Bahamas','Bahrain','Bangladesh','Barbados','Belarus','Belgium','Belize','Benin','Bhutan','Bolivia','Bosnia and Herzegovina','Botswana','Brazil','Brunei','Bulgaria','Burkina Faso','Burundi','Cabo Verde','Cambodia','Cameroon','Canada','Central African Republic','Chad','Chile','China','Colombia','Comoros','Congo (Brazzaville)','Congo (Kinshasa)','Costa Rica','Croatia','Cuba','Cyprus','Czech Republic','Denmark','Djibouti','Dominica','Dominican Republic','Ecuador','Egypt','El Salvador','Equatorial Guinea','Eritrea','Estonia','Eswatini','Ethiopia','Fiji','Finland','France','Gabon','Gambia','Georgia','Germany','Ghana','Greece','Grenada','Guatemala','Guinea','Guinea-Bissau','Guyana','Haiti','Honduras','Hong Kong','Hungary','Iceland','India','Indonesia','Iran','Iraq','Ireland','Israel','Italy','Ivory Coast','Jamaica','Japan','Jordan','Kazakhstan','Kenya','Kiribati','Kosovo','Kuwait','Kyrgyzstan','Laos','Latvia','Lebanon','Lesotho','Liberia','Libya','Liechtenstein','Lithuania','Luxembourg','Macau','Madagascar','Malawi','Malaysia','Maldives','Mali','Malta','Marshall Islands','Mauritania','Mauritius','Mexico','Micronesia','Moldova','Monaco','Mongolia','Montenegro','Morocco','Mozambique','Myanmar','Namibia','Nauru','Nepal','Netherlands','New Zealand','Nicaragua','Niger','Nigeria','North Korea','North Macedonia','Norway','Oman','Pakistan','Palau','Palestine','Panama','Papua New Guinea','Paraguay','Peru','Philippines','Poland','Portugal','Puerto Rico','Qatar','Romania','Russia','Rwanda','Saint Kitts and Nevis','Saint Lucia','Saint Vincent and the Grenadines','Samoa','San Marino','Sao Tome and Principe','Saudi Arabia','Senegal','Serbia','Seychelles','Sierra Leone','Singapore','Slovakia','Slovenia','Solomon Islands','Somalia','South Africa','South Korea','South Sudan','Spain','Sri Lanka','Sudan','Suriname','Sweden','Switzerland','Syria','Taiwan','Tajikistan','Tanzania','Thailand','Timor-Leste','Togo','Tonga','Trinidad and Tobago','Tunisia','Turkey','Turkmenistan','Tuvalu','UAE','Uganda','UK','Ukraine','Uruguay','USA','Uzbekistan','Vanuatu','Vatican City','Venezuela','Vietnam','Yemen','Zambia','Zimbabwe',
+];
 
 const StyledPaper = styled(Paper)`
-    background: ${props => props.theme?.colors?.bgCard || '#ffffff'};
-    border: 1px solid ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+    background: ${props => props.theme?.colors?.bgCard || C.bgCard};
+    border: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
     border-radius: ${props => props.theme?.borderRadius?.lg || '16px'};
     padding: 32px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    box-shadow: ${theme.shadows.card};
 
     @media (max-width: 900px) {
         padding: 16px;
@@ -34,39 +40,40 @@ const StyledPaper = styled(Paper)`
 `;
 
 const SectionTitle = styled(Typography)`
-    color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
+    color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
     font-weight: 600;
     margin-bottom: 16px;
 `;
 
+// ✅ Fixed: fallback indigo → C.primary
 const StyledTextField = styled(TextField)`
     & .MuiOutlinedInput-root {
-        color: ${props => props.theme?.colors?.textPrimary || '#0f172a'};
-        background: ${props => props.theme?.colors?.bgInput || '#f8fafc'};
+        color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
+        background: ${props => props.theme?.colors?.bgInput || C.bgInput};
 
         fieldset {
-            border-color: ${props => props.theme?.colors?.borderLight || '#e2e8f0'};
+            border-color: ${props => props.theme?.colors?.borderLight || C.borderLight};
         }
 
         &:hover fieldset {
-            border-color: ${props => props.theme?.colors?.borderHover || '#c7d2fe'};
+            border-color: ${props => props.theme?.colors?.borderHover || C.borderHover};
         }
 
         &.Mui-focused fieldset {
-            border-color: ${props => props.theme?.colors?.primary || '#4f46e5'};
+            border-color: ${props => props.theme?.colors?.primary || C.primary};
         }
     }
 
     & .MuiInputLabel-root {
-        color: ${props => props.theme?.colors?.textSecondary || '#64748b'};
+        color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
     }
 
     & .MuiInputLabel-root.Mui-focused {
-        color: ${props => props.theme?.colors?.primary || '#4f46e5'};
+        color: ${props => props.theme?.colors?.primary || C.primary};
     }
 
     & .MuiSvgIcon-root {
-        color: ${props => props.theme?.colors?.textMuted || '#94a3b8'};
+        color: ${props => props.theme?.colors?.textMuted || C.textMuted};
     }
 `;
 
@@ -95,6 +102,14 @@ const CreateVenue = () => {
         has_reserved_seating: false,
         is_active: true,
     });
+
+    const countryOptions = useMemo(() => {
+        const current = (formData.country || '').trim();
+        if (current && !COUNTRIES.includes(current)) {
+            return [current, ...COUNTRIES];
+        }
+        return COUNTRIES;
+    }, [formData.country]);
 
     useEffect(() => {
         if (id) {
@@ -126,7 +141,7 @@ const CreateVenue = () => {
         } catch (error) {
             console.error('Failed to load venue:', error);
             toast.error('Failed to load venue details');
-            navigate('/venues');
+            navigate('/app/venues');
         }
         setLoading(false);
     };
@@ -163,11 +178,27 @@ const CreateVenue = () => {
                 await api.post('/venues/', venueData);
                 toast.success('Venue created successfully!');
             }
-            navigate('/venues');
+            navigate('/app/venues');
         } catch (error) {
             console.error('Submit error:', error);
-            setError(error.response?.data?.message || error.message || 'Failed to save venue');
-            toast.error('Failed to save venue');
+
+            const data = error.response?.data;
+            let msg = 'Failed to save venue';
+            if (typeof data === 'string') {
+                msg = data;
+            } else if (data && typeof data === 'object') {
+                const firstKey =
+                    Object.keys(data).find(k => k !== 'non_field_errors') ||
+                    'non_field_errors';
+                const firstVal = data[firstKey];
+                msg = Array.isArray(firstVal)
+                    ? `${firstKey}: ${firstVal[0]}`
+                    : `${firstKey}: ${String(firstVal)}`;
+            } else if (error.message) {
+                msg = error.message;
+            }
+            setError(msg);
+            toast.error(msg);
         }
         setSubmitting(false);
     };
@@ -176,7 +207,7 @@ const CreateVenue = () => {
         return (
             <PageContainer>
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                    <CircularProgress sx={{ color: '#4f46e5' }} />
+                    <CircularProgress sx={{ color: C.primary }} />
                 </Box>
             </PageContainer>
         );
@@ -195,10 +226,9 @@ const CreateVenue = () => {
             <StyledPaper>
                 <form onSubmit={handleSubmit}>
                     <Grid container spacing={isMobile ? 2 : 3}>
-                        {/* Basic Information */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Basic Information</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
@@ -252,10 +282,9 @@ const CreateVenue = () => {
                             />
                         </Grid>
 
-                        {/* Address */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Address</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
@@ -322,23 +351,25 @@ const CreateVenue = () => {
                                 name="country"
                                 value={formData.country}
                                 onChange={handleChange}
+                                SelectProps={{
+                                    MenuProps: {
+                                        PaperProps: {
+                                            sx: { maxHeight: 400 },
+                                        },
+                                    },
+                                }}
                             >
-                                <MenuItem value="India">India</MenuItem>
-                                <MenuItem value="USA">United States</MenuItem>
-                                <MenuItem value="UK">United Kingdom</MenuItem>
-                                <MenuItem value="Australia">Australia</MenuItem>
-                                <MenuItem value="Canada">Canada</MenuItem>
-                                <MenuItem value="Singapore">Singapore</MenuItem>
-                                <MenuItem value="Malaysia">Malaysia</MenuItem>
-                                <MenuItem value="UAE">UAE</MenuItem>
-                                <MenuItem value="Other">Other</MenuItem>
+                                {countryOptions.map((country) => (
+                                    <MenuItem key={country} value={country}>
+                                        {country}
+                                    </MenuItem>
+                                ))}
                             </StyledTextField>
                         </Grid>
 
-                        {/* Contact Information */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Contact Information</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
@@ -365,12 +396,12 @@ const CreateVenue = () => {
                             />
                         </Grid>
 
-                        {/* Settings */}
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Settings</SectionTitle>
-                            <Divider sx={{ borderColor: '#e2e8f0' }} />
+                            <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
+                        {/* ✅ Fixed: switch track uses C.primary */}
                         <Grid item xs={12} sm={6}>
                             <FormControlLabel
                                 control={
@@ -379,16 +410,17 @@ const CreateVenue = () => {
                                         onChange={handleChange}
                                         name="has_reserved_seating"
                                         sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
-                                            '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
+                                            '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
+                                            '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: C.primary },
                                         }}
                                     />
                                 }
                                 label="Has Reserved Seating"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
 
+                        {/* ✅ Fixed: switch track uses C.primary */}
                         <Grid item xs={12} sm={6}>
                             <FormControlLabel
                                 control={
@@ -397,17 +429,16 @@ const CreateVenue = () => {
                                         onChange={handleChange}
                                         name="is_active"
                                         sx={{
-                                            '& .MuiSwitch-switchBase.Mui-checked': { color: '#4f46e5' },
-                                            '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4f46e5' }
+                                            '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
+                                            '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: C.primary },
                                         }}
                                     />
                                 }
                                 label="Active"
-                                sx={{ color: '#475569' }}
+                                sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
 
-                        {/* Submit */}
                         <Grid item xs={12}>
                             <Box
                                 sx={{
@@ -424,11 +455,11 @@ const CreateVenue = () => {
                                     size="large"
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
-                                    {submitting ? <CircularProgress size={24} sx={{ color: 'white' }} /> : (id ? 'Update Venue' : 'Create Venue')}
+                                    {submitting ? <CircularProgress size={24} sx={{ color: C.textInverse }} /> : (id ? 'Update Venue' : 'Create Venue')}
                                 </PrimaryButton>
                                 <OutlineButton
                                     variant="outlined"
-                                    onClick={() => navigate('/venues')}
+                                    onClick={() => navigate('/app/venues')}
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
                                     Cancel

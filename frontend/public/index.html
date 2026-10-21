@@ -3,13 +3,53 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
-    <meta name="theme-color" content="#4f46e5" />
+
+    <!-- Brand: Charcoal Gray (matches tokens.js --tv-primary) -->
+    <meta name="theme-color" content="#333333" />
+
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="TicketVolt" />
+    <meta name="apple-mobile-web-app-title" content="TiKetVault" />
     <meta name="format-detection" content="telephone=no" />
-    <title>TicketVolt - Admin</title>
+
+    <!-- ============================================================
+         FAVICONS
+         These files must exist in frontend/public/:
+           • favicon-16.png
+           • favicon-32.png
+           • favicon-48.png
+           • apple-touch-icon.png   (180×180)
+
+         Generate them from QRScannerApp/assets/icon.png via:
+           cd frontend/public
+           sips -Z 16   ../../QRScannerApp/assets/icon.png --out favicon-16.png
+           sips -Z 32   ../../QRScannerApp/assets/icon.png --out favicon-32.png
+           sips -Z 48   ../../QRScannerApp/assets/icon.png --out favicon-48.png
+           sips -Z 180  ../../QRScannerApp/assets/icon.png --out apple-touch-icon.png
+         ============================================================ -->
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="%PUBLIC_URL%/favicon-48.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="%PUBLIC_URL%/apple-touch-icon.png" />
+
+    <!-- Fallback for very old browsers -->
+    <link rel="shortcut icon" href="%PUBLIC_URL%/favicon-32.png" />
+
+    <!-- ============================================================
+         FONTS — the ONLY place fonts are loaded from.
+         Every component and SVG references Montserrat by name and
+         inherits from these loaded webfonts.
+         ============================================================ -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet"
+    >
+
+    <title>TiKetVault - Admin</title>
+    <meta name="description" content="TiKetVault — event ticketing management admin panel" />
 </head>
 <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

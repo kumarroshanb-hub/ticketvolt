@@ -65,7 +65,9 @@ const LogoWrap = styled.div`
     position: relative;
 `;
 
-// ✅ Clicking the logo returns to the app dashboard
+// ✅ FIX [GUEST-SIDEBAR]: clicking the logo goes to the dashboard for
+// authenticated users, and to the public landing page for guests.
+// (The `to` prop is passed in at the call site.)
 const LogoLink = styled(NavLink)`
     display: inline-flex;
     align-items: center;
@@ -401,14 +403,27 @@ const SECTION_LABELS = {
 
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const { role, isSuperAdmin } = useRole();
-    const { logout } = useAuth();
+
+    // ✅ FIX [GUEST-SIDEBAR]: pull `isAuthenticated` from AuthContext so
+    // the sidebar can distinguish a real logged-in user from a guest.
+    // RoleContext defaults guests to ROLES.USER, so `role` alone is NOT
+    // enough to tell them apart.
+    const { logout, isAuthenticated } = useAuth();
 
     const isDrawer = Boolean(onNavigate);
     const effectiveCollapsed = isDrawer ? false : collapsed;
+    const isGuest = !isAuthenticated;
 
     const getVisibleItems = () => {
         return Object.entries(MENU_ITEMS)
             .filter(([key, item]) => {
+                // ✅ FIX [GUEST-SIDEBAR]: guests get an empty menu.
+                // Every item in MENU_ITEMS is an authenticated feature
+                // (dashboard, bookings, events, etc.) — none of them are
+                // safe for a guest to click. If you later add a public
+                // "Browse Events" link, whitelist it here on `isGuest`.
+                if (isGuest) return false;
+
                 if (isSuperAdmin) return true;
                 return item.roles.includes(role);
             })
@@ -433,7 +448,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     return (
         <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
             <LogoWrap>
-                <LogoLink to="/app/dashboard" onClick={() => onNavigate && onNavigate()}>
+                {/* ✅ FIX [GUEST-SIDEBAR]: guests land on `/`, not the
+                    authenticated dashboard (which would 302 them to
+                    /login and lose their booking context). */}
+                <LogoLink
+                    to={isGuest ? '/' : '/app/dashboard'}
+                    onClick={() => onNavigate && onNavigate()}
+                >
                     <Logo
                         variant="both"
                         height={44}
@@ -447,12 +468,16 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 )}
             </LogoWrap>
 
-            <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                <span className="role-dot" />
-                {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
-                 role === ROLES.ADMIN ? 'Admin' :
-                 role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
-            </RoleBadge>
+            {/* ✅ FIX [GUEST-SIDEBAR]: guests have no role — hide the
+                badge. Showing "User" would falsely imply an account. */}
+            {!isGuest && (
+                <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+                    <span className="role-dot" />
+                    {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
+                     role === ROLES.ADMIN ? 'Admin' :
+                     role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
+                </RoleBadge>
+            )}
 
             <NavItems>
                 {Object.entries(groupedItems).map(([section, items]) => (
@@ -482,16 +507,23 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 ))}
             </NavItems>
 
-            <LogoutSection>
-                <LogoutButton
-                    onClick={handleLogout}
-                    collapsed={effectiveCollapsed}
-                    $drawer={isDrawer}
-                >
-                    <span className="icon"><LogoutIcon fontSize="small" /></span>
-                    <span className="label">Logout</span>
-                </LogoutButton>
-            </LogoutSection>
+            {/* ✅ FIX [GUEST-SIDEBAR]: a guest cannot log out — hide the
+                Logout button. Previously, clicking it triggered
+                AuthContext.logout() which cleared storage (a no-op) and
+                hard-redirected to '/', discarding the guest's in-progress
+                booking. */}
+            {!isGuest && (
+                <LogoutSection>
+                    <LogoutButton
+                        onClick={handleLogout}
+                        collapsed={effectiveCollapsed}
+                        $drawer={isDrawer}
+                    >
+                        <span className="icon"><LogoutIcon fontSize="small" /></span>
+                        <span className="label">Logout</span>
+                    </LogoutButton>
+                </LogoutSection>
+            )}
 
             <ToggleButton
                 onClick={onToggle}

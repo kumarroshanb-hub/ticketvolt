@@ -198,6 +198,10 @@ const PriceRow = styled.div`
             color: ${C.textSecondary};
             margin-right: 2px;
         }
+
+        .free-label {
+            color: ${C.success};
+        }
     }
 
     .slots {
@@ -321,24 +325,54 @@ const pickAnnouncementImage = (event) => {
 };
 
 // ---------------------------------------------------------------------------
-// CTA copy + icon resolver
+// ✅ FIX [EVT-CARD-FLOW-LOUD]: flow resolution
 // ---------------------------------------------------------------------------
-// The single source of truth for "what does the button say and which
-// icon does it use?" given an event. Keeping this in one function means
-// the label, icon, and navigation decision can never disagree with
-// each other — which is exactly the bug we're fixing.
+// The previous version defaulted missing event_flow to 'ticketed' silently.
+// That hid the real bug (backend dropping event_flow on create). This
+// version:
+//   • Accepts ONLY the three values the backend emits.
+//   • Warns in dev if the flow is missing or unknown — so a future
+//     regression is visible in the console instead of silently
+//     rendering the wrong CTA.
+//   • Returns the resolved flow alongside the label/icon so the two
+//     can never disagree.
+// ---------------------------------------------------------------------------
+const VALID_FLOWS = ['ticketed', 'free_registration', 'paid_registration'];
+
+const resolveFlow = (event) => {
+    const raw = event?.event_flow;
+
+    if (VALID_FLOWS.includes(raw)) return raw;
+
+    if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.warn(
+            `[EventCard] event ${event?.id ?? '?'} has unknown event_flow ` +
+            `${JSON.stringify(raw)}. Falling back to 'ticketed'. ` +
+            `This usually means the API dropped event_flow — check ` +
+            `EventViewSet.create.`
+        );
+    }
+    return 'ticketed';
+};
+
+const isRegistrationFlow = (flow) =>
+    flow === 'free_registration' || flow === 'paid_registration';
+
+// ---------------------------------------------------------------------------
+// CTA copy + icon resolver.
 // ---------------------------------------------------------------------------
 const resolveCta = (event, isActuallySoldOut) => {
+    const flow = resolveFlow(event);
+
     if (isActuallySoldOut) {
         return {
             label: 'Sold Out',
             icon: <ShoppingCart />,
             disabled: true,
-            flow: event?.event_flow || 'ticketed',
+            flow,
         };
     }
-
-    const flow = event?.event_flow || 'ticketed';
 
     switch (flow) {
         case 'free_registration':
@@ -366,6 +400,27 @@ const resolveCta = (event, isActuallySoldOut) => {
     }
 };
 
+// ---------------------------------------------------------------------------
+// ✅ FIX [EVT-CARD-PRICE]: price display for registration events
+// ---------------------------------------------------------------------------
+// Free-registration events have a zero-price General tier. Showing "From ₹0"
+// is misleading; "Free" is the honest label. Paid registrations show the
+// registration fee, which IS the price.
+// ---------------------------------------------------------------------------
+const resolvePriceDisplay = (flow, minPrice, tiers) => {
+    if (flow === 'free_registration') {
+        return { kind: 'free' };
+    }
+    if (minPrice !== null && !Number.isNaN(minPrice)) {
+        return { kind: 'number', value: minPrice };
+    }
+    // No tiers loaded yet.
+    if (tiers.length === 0) {
+        return { kind: 'dash' };
+    }
+    return { kind: 'dash' };
+};
+
 const EventCard = ({ event: initialEvent }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
@@ -385,7 +440,13 @@ const EventCard = ({ event: initialEvent }) => {
             try {
                 const fullDetails = await eventService.getPublicEventDetails(initialEvent.id);
                 if (isMounted) {
-                    setEvent((prev) => ({ ...prev, ...fullDetails }));
+                    // ✅ FIX: preserve event_flow if the detail response
+                    // happens to omit it, without overriding a real value.
+                    setEvent((prev) => ({
+                        ...prev,
+                        ...fullDetails,
+                        event_flow: fullDetails.event_flow ?? prev.event_flow,
+                    }));
                 }
             } catch (err) {
                 console.error('Failed to load event details:', err);
@@ -402,20 +463,21 @@ const EventCard = ({ event: initialEvent }) => {
         (sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)),
         0
     );
-    const prices = tiers.map((t) => parseFloat(t.price)).filter((p) => !isNaN(p));
+    const prices = tiers
+        .map((t) => parseFloat(t.price))
+        .filter((p) => !isNaN(p) && p > 0);
     const minPrice = prices.length ? Math.min(...prices) : null;
     const lowStock = availableSlots > 0 && availableSlots <= 10;
 
-    // A ticketed event is "sold out" when it has tiers and all are exhausted.
-    // A registration event is *never* sold out from the button's point of view;
-    // capacity is enforced server-side at booking time.
-    const isRegistrationFlow =
-        event.event_flow === 'free_registration' ||
-        event.event_flow === 'paid_registration';
+    const flow = resolveFlow(event);
+    const registrationFlow = isRegistrationFlow(flow);
 
+    // A ticketed event is "sold out" when it has tiers and all are exhausted.
+    // A registration event is *never* sold out from the button's point of
+    // view; capacity is enforced server-side at booking time.
     const isActuallySoldOut =
         event.status === 'sold_out' ||
-        (!isRegistrationFlow && tiers.length > 0 && availableSlots === 0);
+        (!registrationFlow && tiers.length > 0 && availableSlots === 0);
 
     const sessions = event.sessions || [];
     const displaySessions = sessions.length > 0
@@ -428,6 +490,7 @@ const EventCard = ({ event: initialEvent }) => {
     const announcementImage = pickAnnouncementImage(event);
 
     const cta = resolveCta(event, isActuallySoldOut);
+    const priceDisplay = resolvePriceDisplay(flow, minPrice, tiers);
 
     // ---------------------------------------------------------------------
     // Navigation strategy
@@ -452,6 +515,8 @@ const EventCard = ({ event: initialEvent }) => {
         }
 
         // Unauthenticated — route to the gate.
+        // ✅ FIX: `flow` is always one of the three canonical values,
+        // so the gate's flowCopy lookup can never miss.
         navigate(`/gate?event=${event.id}`, {
             state: {
                 eventTitle: event.title,
@@ -524,14 +589,23 @@ const EventCard = ({ event: initialEvent }) => {
 
                 <PriceRow $low={lowStock}>
                     <div>
-                        <div className="from-label">From</div>
+                        <div className="from-label">
+                            {priceDisplay.kind === 'free' ? 'Admission' : 'From'}
+                        </div>
                         <div className="price">
                             {loadingDetails ? (
                                 <CircularProgress size={16} sx={{ color: C.textMuted }} />
+                            ) : priceDisplay.kind === 'free' ? (
+                                <span className="free-label">Free</span>
+                            ) : priceDisplay.kind === 'number' ? (
+                                <>
+                                    <span className="currency">₹</span>
+                                    {priceDisplay.value.toLocaleString()}
+                                </>
                             ) : (
                                 <>
                                     <span className="currency">₹</span>
-                                    {minPrice !== null ? minPrice.toLocaleString() : '—'}
+                                    —
                                 </>
                             )}
                         </div>
@@ -547,7 +621,9 @@ const EventCard = ({ event: initialEvent }) => {
                     ) : (
                         !loadingDetails && (
                             <span className="slots" style={{ color: C.textMuted }}>
-                                Check availability
+                                {flow === 'free_registration'
+                                    ? 'Registration open'
+                                    : 'Check availability'}
                             </span>
                         )
                     )}
@@ -570,11 +646,16 @@ const EventCard = ({ event: initialEvent }) => {
                                     tiers.map((tier, idx) => {
                                         const available = (tier.quantity_total || 0) - (tier.quantity_sold || 0);
                                         const isTierSoldOut = available <= 0;
+                                        const tierPrice = parseFloat(tier.price);
                                         return (
                                             <TierItem key={tier.id || idx}>
                                                 <span className="name">{tier.name}</span>
                                                 <Box textAlign="right">
-                                                    <div className="price">₹{parseFloat(tier.price).toFixed(2)}</div>
+                                                    <div className="price">
+                                                        {tierPrice > 0
+                                                            ? `₹${tierPrice.toFixed(2)}`
+                                                            : 'Free'}
+                                                    </div>
                                                     {isTierSoldOut && <div className="sold-out">Sold out</div>}
                                                 </Box>
                                             </TierItem>

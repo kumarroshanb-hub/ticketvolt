@@ -30,6 +30,29 @@ from ..managers import (
 )
 
 
+# ---------------------------------------------------------------------------
+# ✅ FIX: shared flow-validation helper.
+# ---------------------------------------------------------------------------
+VALID_EVENT_FLOWS = {c[0] for c in Event.EventFlow.choices}
+
+
+def _normalise_event_flow(raw):
+    """
+    Return a valid `Event.EventFlow` value or None if invalid.
+    `None` means "the client did not send one" (caller should use the
+    model default). Any other non-None return means "the client sent
+    this value and it's valid".
+    """
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if not value:
+        return None
+    if value not in VALID_EVENT_FLOWS:
+        return False  # sentinel: invalid
+    return value
+
+
 def _is_organizer(user):
     return (
         (hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False))
@@ -193,6 +216,33 @@ class EventViewSet(viewsets.ModelViewSet):
 
     # ---------------- CREATE ----------------
     def create(self, request, *args, **kwargs):
+        """
+        POST /api/events/
+
+        ✅ FIX [EVT-CREATE-FLOW]:
+        The previous implementation built `Event.objects.create(...)` from
+        an explicit list of fields and forgot `event_flow`. Because the
+        model declares `default=Event.EventFlow.TICKETED`, every event
+        created via the API — including events the organizer explicitly
+        marked as "Free Registration" — was persisted as `ticketed`.
+
+        That in turn meant:
+          • No General Registration tier was auto-created.
+          • Every read endpoint faithfully reported `event_flow: 'ticketed'`.
+          • EventCard rendered "Book Tickets" instead of "Register Free".
+          • CreateBooking rendered the Choose Tickets step, found zero
+            tiers, and blocked Next with "Please select at least one ticket".
+
+        This method now:
+          1. Validates `event_flow` against Event.EventFlow.choices.
+          2. Persists it (falling back to the model default only when the
+             client did not send it at all).
+          3. Wraps event + tier creation in one transaction.atomic() so a
+             mid-flight failure cannot leave a free-registration event
+             without its auto-created General Registration tier.
+          4. Rejects free-registration events that try to carry priced
+             tiers — the two concepts are mutually exclusive.
+        """
         user = request.user
         if not _is_manager(user):
             return Response(
@@ -202,6 +252,53 @@ class EventViewSet(viewsets.ModelViewSet):
 
         data = request.data
 
+        # ---------- Validate event_flow (✅ FIX [EVT-CREATE-FLOW]) ----------
+        # _normalise_event_flow returns:
+        #   None  → client didn't send it → use model default
+        #   False → client sent an INVALID value → 400
+        #   str   → client sent a valid value → persist it
+        raw_flow = data.get('event_flow')
+        normalised_flow = _normalise_event_flow(raw_flow)
+        if normalised_flow is False:
+            return Response(
+                {
+                    'event_flow': (
+                        f'Invalid event_flow: {raw_flow!r}. '
+                        f'Valid values: {sorted(VALID_EVENT_FLOWS)}.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Default for the "not sent" case is the model default.
+        event_flow_to_save = (
+            normalised_flow
+            if normalised_flow is not None
+            else Event.EventFlow.TICKETED
+        )
+
+        # ---------- Reject priced tiers on free-registration events ----------
+        if event_flow_to_save == Event.EventFlow.FREE_REGISTRATION:
+            incoming_tiers = data.get('tiers') or []
+            for i, tier in enumerate(incoming_tiers):
+                if not isinstance(tier, dict):
+                    continue
+                try:
+                    price = float(tier.get('price', 0) or 0)
+                except (TypeError, ValueError):
+                    price = 0
+                if price > 0:
+                    return Response(
+                        {
+                            'tiers': (
+                                f'Free registration events cannot have priced '
+                                f'tiers. Tier #{i + 1} has price {price}.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+        # ---------- Venue ----------
         venue = None
         venue_id = data.get('venue_id')
         if venue_id:
@@ -213,12 +310,14 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # ---------- Cancellation policy ----------
         cancellation_policy, err = self._resolve_cancellation_policy(
             user, data.get('cancellation_policy_id')
         )
         if err is not None:
             return err
 
+        # ---------- Dates ----------
         start_date = self._parse_dt(data.get('start_date'))
         end_date = self._parse_dt(data.get('end_date'))
 
@@ -228,94 +327,102 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ---------- Atomic create (event + auto-tier) ----------
+        # ✅ FIX [EVT-CREATE-FLOW]: event + its auto-created General
+        # Registration tier must land together, or not at all.
         try:
-            event = Event.objects.create(
-                organizer=user,
-                title=data.get('title', 'Untitled'),
-                description=data.get('description', ''),
-                short_description=data.get('short_description', ''),
-                event_type=data.get('event_type', 'single'),
-                category=data.get('category', 'other'),
-                start_date=start_date,
-                end_date=end_date,
-                timezone=data.get('timezone', 'Asia/Kolkata'),
-                venue=venue,
-                metadata=data.get('metadata', {}) or {},
-                status=data.get('status', 'draft'),
-                is_public=data.get('is_public', True),
-                ticket_format=data.get('ticket_format', 'pdf'),
-                combine_tickets=data.get('combine_tickets', False),
-                tickets_per_page=data.get('tickets_per_page', 4),
-                cancellation_policy=cancellation_policy,
-                cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
-            )
+            with transaction.atomic():
+                event = Event.objects.create(
+                    organizer=user,
+                    title=data.get('title', 'Untitled'),
+                    description=data.get('description', ''),
+                    short_description=data.get('short_description', ''),
+                    event_type=data.get('event_type', 'single'),
+                    category=data.get('category', 'other'),
+                    # ✅ THE FIX — persist the client-supplied flow.
+                    event_flow=event_flow_to_save,
+                    start_date=start_date,
+                    end_date=end_date,
+                    timezone=data.get('timezone', 'Asia/Kolkata'),
+                    venue=venue,
+                    metadata=data.get('metadata', {}) or {},
+                    status=data.get('status', 'draft'),
+                    is_public=data.get('is_public', True),
+                    ticket_format=data.get('ticket_format', 'pdf'),
+                    combine_tickets=bool(data.get('combine_tickets', False)),
+                    tickets_per_page=max(1, int(data.get('tickets_per_page', 4) or 4)),
+                    cancellation_policy=cancellation_policy,
+                    cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
+                )
+
+                # ----- Free registrations: auto-create a General tier -----
+                tiers_created = 0
+                if event.event_flow == Event.EventFlow.FREE_REGISTRATION:
+                    TicketTier.objects.create(
+                        event=event,
+                        name='General Registration',
+                        price=0,
+                        quantity_total=int(
+                            data.get('capacity')
+                            or event.max_tickets_per_order
+                            or 1000
+                        ),
+                        ticket_type='ga',
+                    )
+                    tiers_created = 1
+                    logger.info(
+                        '✅ Free-registration event %s: auto-created General tier',
+                        event.id,
+                    )
+
+                # ----- Sessions -----
+                sessions_created = 0
+                for session_data in data.get('sessions', []) or []:
+                    s_start = self._parse_dt(session_data.get('start_time'))
+                    s_end = self._parse_dt(session_data.get('end_time'))
+                    if not s_start or not s_end:
+                        continue
+                    Session.objects.create(
+                        event=event,
+                        start_time=s_start,
+                        end_time=s_end,
+                        capacity=int(session_data.get('capacity', 100) or 100),
+                    )
+                    sessions_created += 1
+
+                # ----- Tiers (ticketed / paid_registration only) -----
+                if event.event_flow != Event.EventFlow.FREE_REGISTRATION:
+                    for tier_data in data.get('tiers', []) or []:
+                        try:
+                            TicketTier.objects.create(
+                                event=event,
+                                name=tier_data.get('name', 'General'),
+                                price=tier_data.get('price', 0) or 0,
+                                quantity_total=int(
+                                    tier_data.get('quantity_total', 100) or 100
+                                ),
+                                ticket_type=tier_data.get('ticket_type', 'ga'),
+                            )
+                            tiers_created += 1
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to create tier for event %s: %s",
+                                event.id, exc,
+                            )
+
+                logger.info(
+                    "✅ Event %s created (flow=%s, sessions=%d, tiers=%d)",
+                    event.id, event.event_flow, sessions_created, tiers_created,
+                )
+
         except Exception as exc:
+            logger.exception("Event creation failed; transaction rolled back")
             return Response(
                 {'error': f'Could not create event: {exc}'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ----- Free registrations: auto-create a General Registration tier -----
-        from ..models import TicketTier
-        event_flow = event.event_flow
-        tiers_created = 0
-
-        if event_flow == Event.EventFlow.FREE_REGISTRATION:
-            TicketTier.objects.create(
-                event=event,
-                name='General Registration',
-                price=0,
-                quantity_total=int(
-                    data.get('capacity')
-                    or event.max_tickets_per_order
-                    or 1000
-                ),
-                ticket_type='ga',
-            )
-            tiers_created = 1
-            logger.info(
-                '✅ Free-registration event %s: auto-created General tier',
-                event.id,
-            )
-
-        sessions_created = 0
-        for session_data in data.get('sessions', []) or []:
-            s_start = self._parse_dt(session_data.get('start_time'))
-            s_end = self._parse_dt(session_data.get('end_time'))
-            if not s_start or not s_end:
-                continue
-            Session.objects.create(
-                event=event,
-                start_time=s_start,
-                end_time=s_end,
-                capacity=int(session_data.get('capacity', 100) or 100),
-            )
-            sessions_created += 1
-
-        if event_flow != Event.EventFlow.FREE_REGISTRATION:
-            for tier_data in data.get('tiers', []) or []:
-                try:
-                    TicketTier.objects.create(
-                        event=event,
-                        name=tier_data.get('name', 'General'),
-                        price=tier_data.get('price', 0) or 0,
-                        quantity_total=int(
-                            tier_data.get('quantity_total', 100) or 100
-                        ),
-                        ticket_type=tier_data.get('ticket_type', 'ga'),
-                    )
-                    tiers_created += 1
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to create tier for event %s: %s",
-                        event.id, exc,
-                    )
-
-        logger.info(
-            "✅ Event %s created (sessions=%d, tiers=%d)",
-            event.id, sessions_created, tiers_created,
-        )
-
+        # ---------- Serialize ----------
         try:
             serialized = EventDetailSerializer(event).data
             serialized = _apply_effective_status(serialized, event)
@@ -416,8 +523,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 ~Q(status__in=EXCLUDED_TICKET_STATUSES),
                 booking__status__in=SOLD_BOOKING_STATUSES,
             ).count()
-            # ✅ FIX [P10]: canonical revenue helper — same filter used by
-            # dashboard and analytics.
             actual_revenue = canonical_revenue(instance.bookings.all())
             active_bookings_count = instance.bookings.exclude(
                 status__in=EXCLUDED_BOOKING_STATUSES
@@ -454,10 +559,29 @@ class EventViewSet(viewsets.ModelViewSet):
         The same reconciliation pattern is applied to sessions, since
         `Ticket.session` is `SET_NULL` (data isn't lost, but the
         assignment silently blanks).
+
+        ✅ FIX [EVT-UPDATE-FLOW]: `event_flow` is now validated against
+        Event.EventFlow.choices before being written to the model, so a
+        typo from the frontend is a 400 instead of an IntegrityError at
+        save time.
         """
         instance = self.get_object()
         data = request.data
         user = request.user
+
+        # ✅ FIX [EVT-UPDATE-FLOW]: validate event_flow if provided.
+        if 'event_flow' in data:
+            normalised_flow = _normalise_event_flow(data.get('event_flow'))
+            if normalised_flow is False:
+                return Response(
+                    {
+                        'event_flow': (
+                            f'Invalid event_flow: {data.get("event_flow")!r}. '
+                            f'Valid values: {sorted(VALID_EVENT_FLOWS)}.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Guard: switching event_flow is destructive on bookings.
         new_flow = data.get('event_flow') if hasattr(data, 'get') else None

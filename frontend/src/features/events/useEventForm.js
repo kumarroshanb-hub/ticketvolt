@@ -11,6 +11,7 @@ const DEFAULT_FORM = {
     short_description: '',
     event_type: EVENT_TYPE.SINGLE,
     category: EVENT_CATEGORY.OTHER,
+    event_flow: 'ticketed',
     venue_id: '',
     start_date: '',
     end_date: '',
@@ -30,7 +31,6 @@ export const useEventForm = (id) => {
     const [sessions, setSessions] = useState([]);
     const [tiers, setTiers] = useState([]);
 
-    // ---- Field change handler ----
     const handleChange = useCallback((e) => {
         const { name, value, type, checked } = e.target;
         setFormData((prev) => ({
@@ -39,7 +39,6 @@ export const useEventForm = (id) => {
         }));
     }, []);
 
-    // ---- Sessions ----
     const addSession = useCallback(
         () => setSessions((prev) => [...prev, { start_time: '', end_time: '', capacity: 100 }]),
         []
@@ -56,7 +55,6 @@ export const useEventForm = (id) => {
         });
     }, []);
 
-    // ---- Tiers ----
     const addTier = useCallback(
         () =>
             setTiers((prev) => [
@@ -77,7 +75,6 @@ export const useEventForm = (id) => {
         });
     }, []);
 
-    // ---- Load existing event ----
     useEffect(() => {
         if (!id) return;
         (async () => {
@@ -90,6 +87,7 @@ export const useEventForm = (id) => {
                     short_description: data.short_description || '',
                     event_type: data.event_type || EVENT_TYPE.SINGLE,
                     category: data.category || EVENT_CATEGORY.OTHER,
+                    event_flow: data.event_flow || 'ticketed',
                     venue_id: data.venue?.id || '',
                     start_date: formatDateForInput(data.start_date),
                     end_date: formatDateForInput(data.end_date),
@@ -112,7 +110,6 @@ export const useEventForm = (id) => {
                 setTiers(data.tiers || []);
             } catch (err) {
                 toast.error('Failed to load event');
-                // eslint-disable-next-line no-console
                 console.error('Load error:', err);
             } finally {
                 setLoading(false);

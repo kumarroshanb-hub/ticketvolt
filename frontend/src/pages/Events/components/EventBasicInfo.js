@@ -1,7 +1,10 @@
 // frontend/src/pages/Events/components/EventBasicInfo.js
 import React from 'react';
-import { Grid, FormControl, InputLabel, Select, MenuItem, Divider } from '@mui/material';
+import {
+    Grid, FormControl, InputLabel, Select, MenuItem, Divider,
+} from '@mui/material';
 import { StyledTextField, SectionTitle } from './styled';
+import { EventFlowSelector } from './EventFlowSelector';
 import {
     EVENT_TYPE,
     EVENT_TYPE_LABELS,
@@ -14,6 +17,13 @@ const C = theme.colors;
 
 export const EventBasicInfo = ({ formData, onChange, venues }) => (
     <>
+        <EventFlowSelector
+            value={formData.event_flow || 'ticketed'}
+            onChange={(val) =>
+                onChange({ target: { name: 'event_flow', value: val } })
+            }
+        />
+
         <Grid item xs={12}>
             <SectionTitle variant="h6">Basic Information</SectionTitle>
             <Divider sx={{ borderColor: C.borderLight }} />

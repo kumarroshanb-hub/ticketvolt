@@ -1,4 +1,4 @@
-// admin-frontend/src/services/api.js
+// frontend/src/services/api.js
 import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
@@ -43,6 +43,18 @@ api.interceptors.request.use(
 //      reject immediately. No further refresh attempts.
 //   3. We never redirect if we're already on `/login` — that was the
 //      source of the redirect loop.
+//
+// ✅ FIX [GUEST-BOOKING]: config.skipAuthRedirect honours callers
+// that expect a request may be unauthenticated (e.g. a guest
+// submitting a booking). Without this flag, any 401 on such a
+// request triggered a hard redirect to /login — wiping the guest's
+// in-progress booking. Passing `skipAuthRedirect: true` on the
+// request means:
+//   • The refresh flow is skipped (there's nothing to refresh if
+//     the caller is a guest).
+//   • No hard redirect happens.
+//   • The 401 (or whatever error) is rejected to the caller so the
+//     component can surface an inline error message.
 // ============================================================
 let isRefreshing = false;
 let refreshPromise = null;
@@ -72,7 +84,16 @@ api.interceptors.response.use(
 
         // Only handle 401 for non-login requests.
         const isLogin = originalRequest.url?.includes('/auth/login/');
-        if (error.response?.status !== 401 || isLogin) {
+
+        // ✅ FIX [GUEST-BOOKING]: some requests are *expected* to be
+        // unauthenticated — e.g. a guest submitting a booking. If the
+        // caller set `skipAuthRedirect` on the request config, we must
+        // NOT attempt a token refresh and MUST NOT hard-redirect to
+        // /login when the response is 401. We just reject and let the
+        // calling component show the error inline.
+        const skipAuthRedirect = originalRequest.skipAuthRedirect === true;
+
+        if (error.response?.status !== 401 || isLogin || skipAuthRedirect) {
             return Promise.reject(error);
         }
 

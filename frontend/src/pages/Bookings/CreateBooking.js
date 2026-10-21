@@ -108,7 +108,10 @@ const formatVenueAddress = (venue) => {
 const CreateBooking = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { user } = useAuth();
+    // ✅ FIX [GUEST-BOOKING]: need isAuthenticated to know whether this
+    // submission is being made as a guest. Guests must NOT be
+    // hard-redirected to /login on a 401 (see CreateBooking.handleSubmit).
+    const { user, isAuthenticated } = useAuth();
     const { role } = useRole();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -607,11 +610,30 @@ const CreateBooking = () => {
 
             console.log('📝 Full booking data:', JSON.stringify(payload, null, 2));
 
-            const response = await api.post('/bookings/', payload);
+            // ✅ FIX [GUEST-BOOKING]: pass skipAuthRedirect for guests so the
+            // axios interceptor doesn't bounce them to /login if the create
+            // request ever 401s. The backend now permits anonymous create, so a
+            // 401 here would indicate a real misconfiguration — we want to
+            // surface that as an inline toast, not a page reload.
+            const response = await api.post('/bookings/', payload, {
+                skipAuthRedirect: !isAuthenticated,
+            });
             const result = response.data;
 
             toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
-            navigate('/app/bookings');
+
+            // ✅ FIX [GUEST-BOOKING]: a guest cannot view /app/bookings (it's a
+            // ProtectedRoute), so send them to the public gate with their booking
+            // reference instead of bouncing through /login.
+            navigate(
+                isAuthenticated ? '/app/bookings' : '/gate',
+                isAuthenticated ? undefined : {
+                    state: {
+                        bookingReference: result.booking_reference,
+                        customerEmail: result.customer_email,
+                    },
+                }
+            );
         } catch (error) {
             let errorMsg = 'Failed to create booking';
             const data = error.response?.data;

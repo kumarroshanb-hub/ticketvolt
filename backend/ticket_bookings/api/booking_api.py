@@ -168,6 +168,28 @@ class BookingViewSet(viewsets.ModelViewSet):
         return super().get_throttles()
 
     def get_permissions(self):
+        """
+        ✅ FIX [GUEST-BOOKING]: allow anonymous POSTs to `create`.
+
+        The guest booking flow ("Continue as Guest" on the gate page)
+        goes through `GuestAllowedRoute` in App.js and posts directly to
+        `/api/bookings/` without a JWT. Before this change, that request
+        was rejected with 401 Unauthorized — which then triggered the
+        frontend's axios interceptor to hard-redirect to `/login`,
+        wiping the in-progress booking.
+
+        The serializer (`BookingSerializer.create`) already supports
+        anonymous submissions: `_resolve_or_create_user_for_booking`
+        creates (or reuses) a `User` row for the customer's email before
+        the `Booking.user` FK is set, so `user` is never NULL in the DB.
+        `_create_free_registration` (the free-registration fast path)
+        is likewise safe for anonymous callers.
+
+        Everything except `create` still requires auth — list, retrieve,
+        cancel, refund, admin actions. Only the create endpoint becomes
+        public, and only after the event is confirmed to exist and be
+        bookable.
+        """
         admin_actions = [
             'bulk_action', 'confirm_payment_and_issue_tickets',
             'mark_payment_received', 'issue_tickets',
@@ -175,12 +197,22 @@ class BookingViewSet(viewsets.ModelViewSet):
             'for_confirm_payment', 'for_mark_payment', 'for_issue_tickets',
             'bulk_action_counts', 'confirm_payment', 'refund', 'apply_discount'
         ]
+
         # validate_discount is intentionally public — the cart calls it
         # before the user has booked anything.
         if self.action == 'validate_discount':
             return [permissions.AllowAny()]
+
+        # ✅ FIX [GUEST-BOOKING]: guests (unauthenticated visitors who
+        # came through /gate → "Continue as Guest") must be able to POST
+        # a booking. See the method docstring above for the full
+        # rationale and the safety guarantees.
+        if self.action == 'create':
+            return [permissions.AllowAny()]
+
         if self.action in admin_actions:
             return [IsAdminOrOrganizer()]
+
         return [permissions.IsAuthenticated()]
 
     # ============================================================
@@ -547,6 +579,11 @@ class BookingViewSet(viewsets.ModelViewSet):
         object has no setter`. We now build the serializer directly with
         our normalised `data` and never touch `request.data`.
 
+        ✅ FIX [GUEST-BOOKING]: this method is now reachable by anonymous
+        users (see `get_permissions`). The auth-dependent branches below
+        are all guarded by `request.user.is_authenticated` or
+        `request.user.is_staff`, so an AnonymousUser never crashes them.
+
         All other behaviour (session lock, capacity reservation, undo on
         downstream failure) is preserved verbatim.
         """
@@ -582,9 +619,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                         {'error': 'This event has already ended'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                if not event_obj.is_public and not (
-                    request.user.is_staff or request.user.is_superuser
-                ):
+                # ✅ FIX [GUEST-BOOKING]: safe attribute access — an
+                # AnonymousUser is never staff/superuser.
+                is_staff_or_super = (
+                    request.user.is_authenticated
+                    and (
+                        request.user.is_staff
+                        or request.user.is_superuser
+                    )
+                )
+                if not event_obj.is_public and not is_staff_or_super:
                     return Response(
                         {'error': 'This event is not available for public booking'},
                         status=status.HTTP_400_BAD_REQUEST,
@@ -1150,7 +1194,28 @@ class BookingViewSet(viewsets.ModelViewSet):
         return BookingSerializer
 
     def get_queryset(self):
+        """
+        ✅ FIX [GUEST-BOOKING]: an anonymous caller has no `Booking.user`
+        to filter by, so `Booking.objects.filter(user=request.user)`
+        would raise `TypeError: Field 'id' expected a number but got
+        AnonymousUser` (or, on older Django, `.filter(user=AnonymousUser)`
+        would just quietly return nothing — but it's fragile). Return an
+        empty queryset explicitly so list/detail endpoints behave
+        predictably for guests: they get 403s from `get_permissions` for
+        every action except `create`, and if they somehow reach the
+        queryset they get an empty result rather than a crash.
+
+        Note: `create` does not use `get_queryset()` — it constructs the
+        serializer directly. So this change has no effect on the guest
+        booking path itself.
+        """
         user = self.request.user
+
+        # ✅ FIX [GUEST-BOOKING]: anonymous callers get an empty
+        # queryset, not a crash and not other users' data.
+        if not user or not user.is_authenticated:
+            return Booking.objects.none()
+
         if user.is_superuser or user.is_staff:
             return Booking.objects.all().order_by('-created_at')
 
@@ -1937,9 +2002,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'attendee_name': booking.customer_name,
                     })
 
-        return tickets_data
-
-    def _distribute_net_paid_across_tickets(self, booking):
+        return tickets_data    def _distribute_net_paid_across_tickets(self, booking):
         """
         Prorate the booking-level discount across each ticket and persist
         `net_paid_amount` on each row. This is the base for refund calc.

@@ -7,6 +7,7 @@ import {
 import {
     LocationOn, CalendarMonth, ShoppingCart,
     CheckCircle as CheckCircleIcon,
+    HowToReg as HowToRegIcon,
     KeyboardArrowDown as ArrowDownIcon, KeyboardArrowUp as ArrowUpIcon,
 } from '@mui/icons-material';
 import styled from 'styled-components';
@@ -301,7 +302,7 @@ const getCategoryIcon = (category) => {
     return icons[(category || 'other').toLowerCase()] || '📌';
 };
 
-// ✅ Picks the best template image regardless of which type was uploaded.
+// Picks the best template image regardless of which type was uploaded.
 const pickAnnouncementImage = (event) => {
     const images = event.template_images || {};
 
@@ -317,6 +318,52 @@ const pickAnnouncementImage = (event) => {
         event.cover_image ||
         null
     );
+};
+
+// ---------------------------------------------------------------------------
+// CTA copy + icon resolver
+// ---------------------------------------------------------------------------
+// The single source of truth for "what does the button say and which
+// icon does it use?" given an event. Keeping this in one function means
+// the label, icon, and navigation decision can never disagree with
+// each other — which is exactly the bug we're fixing.
+// ---------------------------------------------------------------------------
+const resolveCta = (event, isActuallySoldOut) => {
+    if (isActuallySoldOut) {
+        return {
+            label: 'Sold Out',
+            icon: <ShoppingCart />,
+            disabled: true,
+            flow: event?.event_flow || 'ticketed',
+        };
+    }
+
+    const flow = event?.event_flow || 'ticketed';
+
+    switch (flow) {
+        case 'free_registration':
+            return {
+                label: 'Register Free',
+                icon: <CheckCircleIcon />,
+                disabled: false,
+                flow,
+            };
+        case 'paid_registration':
+            return {
+                label: 'Register',
+                icon: <HowToRegIcon />,
+                disabled: false,
+                flow,
+            };
+        case 'ticketed':
+        default:
+            return {
+                label: 'Book Tickets',
+                icon: <ShoppingCart />,
+                disabled: false,
+                flow: 'ticketed',
+            };
+    }
 };
 
 const EventCard = ({ event: initialEvent }) => {
@@ -350,11 +397,6 @@ const EventCard = ({ event: initialEvent }) => {
         return () => { isMounted = false; };
     }, [initialEvent.id, initialEvent.tiers]);
 
-    const isSoldOut = event.status === 'sold_out';
-    const isFreeRegistration = event.event_flow === 'free_registration';
-    const isRegistrationOnly = ['free_registration', 'paid_registration']
-        .includes(event.event_flow);
-
     const tiers = event.tiers || [];
     const availableSlots = tiers.reduce(
         (sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)),
@@ -363,7 +405,17 @@ const EventCard = ({ event: initialEvent }) => {
     const prices = tiers.map((t) => parseFloat(t.price)).filter((p) => !isNaN(p));
     const minPrice = prices.length ? Math.min(...prices) : null;
     const lowStock = availableSlots > 0 && availableSlots <= 10;
-    const isActuallySoldOut = isSoldOut || (tiers.length > 0 && availableSlots === 0);
+
+    // A ticketed event is "sold out" when it has tiers and all are exhausted.
+    // A registration event is *never* sold out from the button's point of view;
+    // capacity is enforced server-side at booking time.
+    const isRegistrationFlow =
+        event.event_flow === 'free_registration' ||
+        event.event_flow === 'paid_registration';
+
+    const isActuallySoldOut =
+        event.status === 'sold_out' ||
+        (!isRegistrationFlow && tiers.length > 0 && availableSlots === 0);
 
     const sessions = event.sessions || [];
     const displaySessions = sessions.length > 0
@@ -375,14 +427,38 @@ const EventCard = ({ event: initialEvent }) => {
 
     const announcementImage = pickAnnouncementImage(event);
 
-    const handleBookNow = () => {
-        const target = `/app/bookings/create?event=${event.id}`;
-        if (!isAuthenticated) {
-            toast.info('Please log in to book tickets.');
-            navigate('/login', { state: { from: target } });
-        } else {
-            navigate(target);
+    const cta = resolveCta(event, isActuallySoldOut);
+
+    // ---------------------------------------------------------------------
+    // Navigation strategy
+    // ---------------------------------------------------------------------
+    // The gate page exists to ask un-authenticated users whether they
+    // want to register or continue as a guest. Logged-in users already
+    // have an account, so the gate is pointless — send them straight
+    // to the wizard.
+    //
+    // The `?event=<id>` intent is preserved through the gate so the
+    // wizard can auto-select the event after the user makes their
+    // choice.
+    // ---------------------------------------------------------------------
+    const handleCtaClick = () => {
+        if (isActuallySoldOut) return;
+
+        const wizardUrl = `/app/bookings/create?event=${event.id}`;
+
+        if (isAuthenticated) {
+            navigate(wizardUrl);
+            return;
         }
+
+        // Unauthenticated — route to the gate.
+        navigate(`/gate?event=${event.id}`, {
+            state: {
+                eventTitle: event.title,
+                eventId: event.id,
+                flow: cta.flow,
+            },
+        });
     };
 
     const showImage = announcementImage && !imageFailed;
@@ -477,56 +553,52 @@ const EventCard = ({ event: initialEvent }) => {
                     )}
                 </PriceRow>
 
-                <Box sx={{ mt: 1 }}>
-                    <TiersToggle onClick={() => setTiersExpanded(!tiersExpanded)}>
-                        {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
-                        {tiersExpanded ? 'Hide Ticket Tiers' : 'View Ticket Tiers'}
-                    </TiersToggle>
+                {tiers.length > 0 && (
+                    <Box sx={{ mt: 1 }}>
+                        <TiersToggle onClick={() => setTiersExpanded(!tiersExpanded)}>
+                            {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
+                            {tiersExpanded ? 'Hide Ticket Tiers' : 'View Ticket Tiers'}
+                        </TiersToggle>
 
-                    <Collapse in={tiersExpanded}>
-                        <Box sx={{ mt: 1, p: 1.5, bgcolor: C.bgPrimary, borderRadius: 2 }}>
-                            {loadingDetails ? (
-                                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                                    <CircularProgress size={20} sx={{ color: C.primary }} />
-                                </Box>
-                            ) : tiers.length > 0 ? (
-                                tiers.map((tier, idx) => {
-                                    const available = (tier.quantity_total || 0) - (tier.quantity_sold || 0);
-                                    const isTierSoldOut = available <= 0;
-                                    return (
-                                        <TierItem key={tier.id || idx}>
-                                            <span className="name">{tier.name}</span>
-                                            <Box textAlign="right">
-                                                <div className="price">₹{parseFloat(tier.price).toFixed(2)}</div>
-                                                {isTierSoldOut && <div className="sold-out">Sold out</div>}
-                                            </Box>
-                                        </TierItem>
-                                    );
-                                })
-                            ) : (
-                                <Typography variant="body2" sx={{ color: C.textSecondary, textAlign: 'center', fontSize: '12px' }}>
-                                    No tiers configured.
-                                </Typography>
-                            )}
-                        </Box>
-                    </Collapse>
-                </Box>
+                        <Collapse in={tiersExpanded}>
+                            <Box sx={{ mt: 1, p: 1.5, bgcolor: C.bgPrimary, borderRadius: 2 }}>
+                                {loadingDetails ? (
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                                        <CircularProgress size={20} sx={{ color: C.primary }} />
+                                    </Box>
+                                ) : tiers.length > 0 ? (
+                                    tiers.map((tier, idx) => {
+                                        const available = (tier.quantity_total || 0) - (tier.quantity_sold || 0);
+                                        const isTierSoldOut = available <= 0;
+                                        return (
+                                            <TierItem key={tier.id || idx}>
+                                                <span className="name">{tier.name}</span>
+                                                <Box textAlign="right">
+                                                    <div className="price">₹{parseFloat(tier.price).toFixed(2)}</div>
+                                                    {isTierSoldOut && <div className="sold-out">Sold out</div>}
+                                                </Box>
+                                            </TierItem>
+                                        );
+                                    })
+                                ) : (
+                                    <Typography variant="body2" sx={{ color: C.textSecondary, textAlign: 'center', fontSize: '12px' }}>
+                                        No tiers configured.
+                                    </Typography>
+                                )}
+                            </Box>
+                        </Collapse>
+                    </Box>
+                )}
             </CardBody>
 
             <StyledActions>
                 <BookButton
                     variant="contained"
-                    onClick={handleBookNow}
-                    disabled={isActuallySoldOut}
-                    startIcon={isFreeRegistration ? <CheckCircleIcon /> : <ShoppingCart />}
+                    onClick={handleCtaClick}
+                    disabled={cta.disabled}
+                    startIcon={cta.icon}
                 >
-                    {isActuallySoldOut
-                        ? 'Sold Out'
-                        : isFreeRegistration
-                        ? 'Register Free'
-                        : isRegistrationOnly
-                        ? `Register — ₹${minPrice ?? 0}`
-                        : 'Book Tickets'}
+                    {cta.label}
                 </BookButton>
             </StyledActions>
         </StyledCard>

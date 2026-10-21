@@ -1,6 +1,6 @@
 // frontend/src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from 'styled-components';
 import { ThemeProvider as MuiThemeProvider, CssBaseline } from '@mui/material';
 import { ToastContainer } from 'react-toastify';
@@ -17,6 +17,7 @@ import Layout from './components/Layout';
 
 // Public pages
 import Landing from './pages/Landing/Landing';
+import GuestOrRegisterGate from './pages/Gate/GuestOrRegisterGate';
 
 // Authenticated app pages
 import Dashboard from './pages/Dashboard/Dashboard';
@@ -69,16 +70,53 @@ const LoadingSpinner = () => {
     );
 };
 
+// ---------------------------------------------------------------------------
+// AuthGuard for public-only pages (/login, /register).
+//
+// If the user is already authenticated, we do NOT want them to see the
+// login/register page. But we also don't want to nuke the redirect
+// intent they may be carrying (`location.state.from`). Preserving it
+// means that if a user came from `/gate?event=X` → `/login`, and they
+// were somehow already authenticated, the post-login destination is
+// still correct.
+// ---------------------------------------------------------------------------
+const PublicOnlyRoute = ({ children }) => {
+    const { isAuthenticated, loading } = useAuth();
+    const location = useLocation();
+
+    if (loading) return <LoadingSpinner />;
+
+    if (isAuthenticated) {
+        // Honour the carried intent if there is one; otherwise dashboard.
+        const target = location.state?.from || '/app/dashboard';
+        return <Navigate to={target} replace />;
+    }
+
+    return children;
+};
+
 const ProtectedRoute = ({ children }) => {
     const { isAuthenticated, loading } = useAuth();
+    const location = useLocation();
     if (loading) return <LoadingSpinner />;
-    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (!isAuthenticated) {
+        // Preserve the current path so we can send the user back here
+        // after they log in. This is what makes deep links work.
+        return (
+            <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname + location.search }}
+            />
+        );
+    }
     return children;
 };
 
 const RoleBasedRoute = ({ children, allowedRoles }) => {
-    const { user } = useAuth();
+    const { user, loading } = useAuth();
     const { role } = useRole();
+    if (loading) return <LoadingSpinner />;
     if (!user) return <Navigate to="/login" replace />;
     if (!allowedRoles || allowedRoles.includes(role)) return children;
     return <Navigate to="/app/unauthorized" replace />;
@@ -97,12 +135,32 @@ const AppRoutes = () => {
             {/* Landing page — visible to everyone (logged in or not) */}
             <Route path="/" element={<Landing />} />
 
-            <Route path="/login" element={
-                isAuthenticated ? <Navigate to="/app/dashboard" replace /> : <Login />
-            } />
-            <Route path="/register" element={
-                isAuthenticated ? <Navigate to="/app/dashboard" replace /> : <Register />
-            } />
+            {/* ✅ Guest-or-Register gate.
+                Deliberately PUBLIC — the whole point is to be reachable
+                by visitors who don't have an account yet. If a logged-in
+                user navigates here, the component short-circuits to the
+                booking wizard via `navigate(..., { replace: true })`. */}
+            <Route path="/gate" element={<GuestOrRegisterGate />} />
+
+            {/* Login & Register — skipped if already authenticated,
+                but the redirect intent carried in `location.state.from`
+                is preserved. */}
+            <Route
+                path="/login"
+                element={
+                    <PublicOnlyRoute>
+                        <Login />
+                    </PublicOnlyRoute>
+                }
+            />
+            <Route
+                path="/register"
+                element={
+                    <PublicOnlyRoute>
+                        <Register />
+                    </PublicOnlyRoute>
+                }
+            />
             <Route path="/unauthorized" element={<Unauthorized />} />
 
             {/* ============================================

@@ -326,6 +326,14 @@ class BookingViewSet(viewsets.ModelViewSet):
         """
         from decimal import Decimal
 
+        # Reject early when every slot is full.
+        sessions = list(event.sessions.filter(is_active=True))
+        if sessions and all((s.capacity or 0) - (s.booked or 0) <= 0 for s in sessions):
+            return Response(
+                {'error': 'Registration is closed — all slots are full.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 

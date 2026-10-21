@@ -2002,7 +2002,9 @@ class BookingViewSet(viewsets.ModelViewSet):
                         'attendee_name': booking.customer_name,
                     })
 
-        return tickets_data    def _distribute_net_paid_across_tickets(self, booking):
+        return tickets_data    
+    
+    def _distribute_net_paid_across_tickets(self, booking):
         """
         Prorate the booking-level discount across each ticket and persist
         `net_paid_amount` on each row. This is the base for refund calc.

@@ -32,6 +32,23 @@ MAX_QR_PAYLOAD_LENGTH = 2048
 
 
 # ============================================================
+# Event-level capacity helper
+# ------------------------------------------------------------
+# Sum of tier quantities is the right answer for ticketed events.
+# For registration-style events the organizer thinks in *slot*
+# capacity, so if the event has any sessions we sum those instead.
+# ============================================================
+def _event_total_capacity(obj):
+    """Event-level capacity: sum of slot capacities when slots exist,
+    otherwise sum of tier quantities."""
+    sessions = list(obj.sessions.all())
+    if sessions:
+        return sum(max(0, (s.capacity or 0)) for s in sessions)
+    from django.db.models import Sum
+    return obj.tiers.aggregate(total=Sum('quantity_total')).get('total') or 0
+
+
+# ============================================================
 # WhatsApp service-account helper
 # ============================================================
 def get_or_create_whatsapp_bot_user():
@@ -226,10 +243,12 @@ class PublicEventSerializer(serializers.ModelSerializer):
         return {
             'id': str(obj.venue.id),
             'name': obj.venue.name,
+            'address_line1': obj.venue.address_line1,
+            'address_line2': obj.venue.address_line2,
             'city': obj.venue.city,
             'state': obj.venue.state,
+            'postal_code': obj.venue.postal_code,
             'country': obj.venue.country,
-            'address_line1': obj.venue.address_line1,
         }
 
     def get_tier_count(self, obj):
@@ -239,9 +258,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        from django.db.models import Sum
-        result = obj.tiers.aggregate(total=Sum('quantity_total'))
-        return result.get('total') or 0
+        return _event_total_capacity(obj)
 
     def get_template_images(self, obj):
         images = {}
@@ -411,8 +428,11 @@ class EventSerializer(serializers.ModelSerializer):
         return {
             'id': str(obj.venue.id),
             'name': obj.venue.name,
+            'address_line1': obj.venue.address_line1,
+            'address_line2': obj.venue.address_line2,
             'city': obj.venue.city,
             'state': obj.venue.state,
+            'postal_code': obj.venue.postal_code,
             'country': obj.venue.country,
         }
 
@@ -423,9 +443,7 @@ class EventSerializer(serializers.ModelSerializer):
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        from django.db.models import Sum
-        result = obj.tiers.aggregate(total=Sum('quantity_total'))
-        return result.get('total') or 0
+        return _event_total_capacity(obj)
 
     def validate_cancellation_policy(self, value):
         if value is None:
@@ -526,8 +544,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
             return {
                 'id': str(obj.venue.id),
                 'name': obj.venue.name,
+                'address_line1': obj.venue.address_line1,
+                'address_line2': obj.venue.address_line2,
                 'city': obj.venue.city,
                 'state': obj.venue.state,
+                'postal_code': obj.venue.postal_code,
                 'country': obj.venue.country,
             }
         return None
@@ -539,9 +560,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        from django.db.models import Sum
-        result = obj.tiers.aggregate(total=Sum('quantity_total'))
-        return result.get('total') or 0
+        return _event_total_capacity(obj)
 
     def validate_event_flow(self, value):
         valid = {c[0] for c in Event.EventFlow.choices}

@@ -27,49 +27,48 @@
                         </td>
                     </tr>
 
-                    <!-- QR SECTION -->
+                    <!-- PASS DETAILS (no QR block — the pass is attached) -->
                     <tr>
-                        <td style="background-color: #f9f9f9; padding: 24px 28px; border-bottom: 2px dashed #e5e5e5;">
+                        <td style="padding: 24px 28px; border-bottom: 2px dashed #e5e5e5;">
+                            <div style="font-size: 11px; color: #555555; font-weight: 700; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px;">
+                                Your Registration Pass
+                            </div>
+
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
-                                    <td width="120" valign="top">
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e5e5;">
-                                            <tr>
-                                                <td align="center" style="padding: 12px;">
-                                                    {% if first_qr_base64 %}
-                                                        <img src="{{ first_qr_base64 }}" alt="Registration Pass QR" width="110" height="110" style="display: block; border: 0;" />
-                                                    {% else %}
-                                                        <div style="width: 110px; height: 110px; background-color: #f4f4f4; color: #999; font-size: 10px; line-height: 110px; text-align: center;">No QR</div>
-                                                    {% endif %}
-                                                </td>
-                                            </tr>
-                                        </table>
+                                    <td style="padding-bottom: 12px;">
+                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Registrant</div>
+                                        <div style="font-size: 16px; font-weight: 700; color: #333333; margin-top: 2px;">
+                                            {{ booking.customer_name|default:"Guest" }}
+                                        </div>
                                     </td>
-                                    <td valign="top" style="padding-left: 20px;">
-                                        <div style="font-size: 11px; color: #555555; font-weight: 700; text-transform: uppercase; margin-bottom: 4px;">Your Registration Pass</div>
-                                        <div style="font-size: 13px; color: #888888; margin-bottom: 16px;">Show this QR at the entrance</div>
-
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                            <tr>
-                                                <td style="padding-bottom: 8px;">
-                                                    <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Registrant</div>
-                                                    <div style="font-size: 16px; font-weight: 700; color: #333333; margin-top: 2px;">
-                                                        {{ booking.customer_name|default:"Guest" }}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td>
-                                                    <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Pass Code</div>
-                                                    <div style="font-size: 14px; font-family: monospace; font-weight: 700; color: #333333; margin-top: 2px;">
-                                                        {{ ticket.unique_code }}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        </table>
+                                </tr>
+                                <tr>
+                                    <td style="padding-bottom: 12px;">
+                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Pass Code</div>
+                                        <div style="font-size: 15px; font-family: monospace; font-weight: 700; color: #333333; margin-top: 2px;">
+                                            {{ ticket.unique_code }}
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Booking Reference</div>
+                                        <div style="font-size: 14px; font-family: monospace; font-weight: 600; color: #333333; margin-top: 2px;">
+                                            {{ booking.booking_reference }}
+                                        </div>
                                     </td>
                                 </tr>
                             </table>
+
+                            <div style="margin-top: 16px; padding: 10px 14px; background-color: #f0f7ff; border-left: 4px solid #333333; border-radius: 6px;">
+                                <div style="font-size: 12px; color: #333333; font-weight: 600;">
+                                    📎 Your printable pass is attached to this email.
+                                </div>
+                                <div style="font-size: 11px; color: #555555; margin-top: 3px;">
+                                    Open the attached PDF/PNG and scan the QR code at the entrance.
+                                </div>
+                            </div>
                         </td>
                     </tr>
 
@@ -108,16 +107,6 @@
                                     </td>
                                 </tr>
                             </table>
-
-                            {% if not is_free %}
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px;">
-                                <tr>
-                                    <td style="font-size: 13px; color: #555555;">
-                                        <strong>Fee paid:</strong> ₹{{ booking.total_amount }}
-                                    </td>
-                                </tr>
-                            </table>
-                            {% endif %}
                         </td>
                     </tr>
 
@@ -129,8 +118,8 @@
                                     <td style="padding: 16px 20px;">
                                         <strong style="color: #333333; font-size: 14px; display: block; margin-bottom: 8px;">💡 Instructions:</strong>
                                         <ul style="margin: 0; padding-left: 20px; color: #555555; font-size: 13px; line-height: 1.6;">
-                                            <li>Show your QR pass on your mobile device or print it</li>
-                                            <li>Scan the QR code at the entrance for entry</li>
+                                            <li>Open the attached pass on your mobile device or print it</li>
+                                            <li>Show the QR code at the entrance for entry</li>
                                             <li>Your pass is valid for one person only</li>
                                         </ul>
                                     </td>

@@ -340,7 +340,7 @@ class EventViewSet(viewsets.ModelViewSet):
                     event_type=data.get('event_type', 'single'),
                     category=data.get('category', 'other'),
                     # ✅ THE FIX — persist the client-supplied flow.
-                    event_flow=event_flow_to_save,
+                    event_flow=data.get('event_flow', Event.EventFlow.TICKETED),  # ← ADD THIS LINE
                     start_date=start_date,
                     end_date=end_date,
                     timezone=data.get('timezone', 'Asia/Kolkata'),

@@ -343,22 +343,45 @@ class BookingViewSet(viewsets.ModelViewSet):
     # FREE REGISTRATION — bypass the payment pipeline entirely
     # ============================================================
 
+    # ============================================================
+    # FREE REGISTRATION — bypass the payment pipeline entirely
+    # ============================================================
+
     def _create_free_registration(self, request, event, data):
         """
-        Free registrations bypass the entire payment pipeline. We still
-        lock the Session row (if the event has sessions) so concurrent
-        registrations on the last seat don't oversell.
+        Free registrations bypass the entire payment pipeline.
+
+        ✅ FIX [FREE-REG-TICKET]: the pass used to be created
+        opportunistically — `_issue_registration_pass` was called inside
+        the transaction but its return value was ignored, and the
+        confirmation email silently no-op'd when there was no ticket.
+        The net effect was: booking saved, no ticket created, no
+        confirmation email with a QR.
+
+        This method now guarantees the invariant:
+
+            A `free_registration` booking either:
+              (a) exists AND has exactly one `REG…` Ticket (status='active'), OR
+              (b) does not exist at all (transaction rolled back).
+
+        The pass is created *inside* the transaction, its return value
+        is captured, and — if it comes back empty for any reason — we
+        raise so the transaction rolls back. The API response echoes the
+        pass back to the caller so the frontend can show the customer
+        their ticket reference immediately.
 
         Steps:
-          1. Validate via serializer (required fields, one-per-email).
-          2. Create booking as `confirmed`, total=0, paid_at=now.
-          3. Reserve a session seat (locked).
-          4. Issue ONE registration pass (Ticket with REG prefix).
-          5. Send confirmation email (best-effort).
+          1. Reject if every slot is full.
+          2. Validate via serializer (required fields, one-per-email).
+          3. Create booking as `confirmed`, total=0, paid_at=now.
+          4. Reserve a session seat (locked).
+          5. Issue ONE registration pass (Ticket with REG prefix).
+          6. Send confirmation email with QR (best-effort, does NOT
+             roll back the booking if SMTP fails).
         """
         from decimal import Decimal
 
-        # Reject early when every slot is full.
+        # ---------- 1. Slot exhaustion check ----------
         sessions = list(event.sessions.filter(is_active=True))
         if sessions and all((s.capacity or 0) - (s.booked or 0) <= 0 for s in sessions):
             return Response(
@@ -366,6 +389,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ---------- 2. Serializer validation ----------
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 
@@ -375,56 +399,115 @@ class BookingViewSet(viewsets.ModelViewSet):
             or (data.get('metadata') or {}).get('slot_id')
         )
 
-        with transaction.atomic():
-            booking = serializer.save()
-            booking.status = BookingStatus.CONFIRMED
-            booking.paid_at = timezone.now()
-            booking.total_amount = Decimal('0.00')
-            booking.discount_applied = Decimal('0.00')
-            booking.discount_code = ''
+        # ---------- 3. Atomic create: booking + pass ----------
+        # ✅ FIX [FREE-REG-TICKET]: wrap booking + pass creation in the
+        # same transaction and check the pass was actually created.
+        # If `_issue_registration_pass` returns None (no tiers, FK
+        # error, anything), we raise inside the transaction and the
+        # whole booking rolls back. The caller gets a 400 rather than
+        # a "successful" booking that has no ticket.
+        registration_pass = None
+        try:
+            with transaction.atomic():
+                booking = serializer.save()
+                booking.status = BookingStatus.CONFIRMED
+                booking.paid_at = timezone.now()
+                booking.total_amount = Decimal('0.00')
+                booking.discount_applied = Decimal('0.00')
+                booking.discount_code = ''
 
-            if session_id:
-                locked_session, err = reserve_session_seats(
-                    session_id, 1, event=event,
-                )
-                if err:
-                    raise ValidationError({'session': [err]})
-                if locked_session is not None:
-                    booking.session = locked_session
+                if session_id:
+                    locked_session, err = reserve_session_seats(
+                        session_id, 1, event=event,
+                    )
+                    if err:
+                        raise ValidationError({'session': [err]})
+                    if locked_session is not None:
+                        booking.session = locked_session
 
-            update_fields = [
-                'status', 'paid_at', 'total_amount',
-                'discount_applied', 'discount_code', 'updated_at',
-            ]
-            if booking.session_id:
-                update_fields.append('session')
-            booking.save(update_fields=update_fields)
+                update_fields = [
+                    'status', 'paid_at', 'total_amount',
+                    'discount_applied', 'discount_code', 'updated_at',
+                ]
+                if booking.session_id:
+                    update_fields.append('session')
+                booking.save(update_fields=update_fields)
 
-            self._issue_registration_pass(booking, event)
+                # ✅ FIX [FREE-REG-TICKET]: capture the return value.
+                registration_pass = self._issue_registration_pass(booking, event)
 
+                if registration_pass is None:
+                    raise ValidationError(
+                        'Could not issue a registration pass for this '
+                        'booking. Please contact support.'
+                    )
+
+        except ValidationError as exc:
+            # DRF-friendly 400 with the specific reason.
+            detail = exc.detail if hasattr(exc, 'detail') else str(exc)
+            return Response(
+                {'error': detail if isinstance(detail, str) else detail},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            logger.exception(
+                'Free registration failed for %s (event=%s): %s',
+                getattr(booking, 'booking_reference', '<unknown>'),
+                event.id, exc,
+            )
+            return Response(
+                {
+                    'error': (
+                        'Registration could not be completed. '
+                        'Please try again or contact support.'
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # ---------- 4. Confirmation email (best-effort) ----------
+        # ✅ FIX [FREE-REG-TICKET]: `_send_registration_confirmation`
+        # now raises if there's no ticket, so an email failure can
+        # never mask a missing pass. It runs AFTER commit so an SMTP
+        # hiccup doesn't roll back the booking.
         try:
             self._send_registration_confirmation(booking)
         except Exception:
             logger.exception(
-                'Free registration confirmation failed for %s',
+                'Free registration confirmation email failed for %s '
+                '(booking saved, pass exists: %s)',
                 booking.booking_reference,
+                registration_pass.unique_code,
             )
 
+        # ---------- 5. Response echoes the pass ----------
         response_serializer = self.get_serializer(booking)
-        return Response(
-            response_serializer.data,
-            status=status.HTTP_201_CREATED,
-        )
+        payload = dict(response_serializer.data)
+        payload['registration_pass'] = {
+            'id': str(registration_pass.id),
+            'unique_code': registration_pass.unique_code,
+            'status': registration_pass.status,
+            'email_sent': bool(booking.customer_email),
+        }
+        return Response(payload, status=status.HTTP_201_CREATED)
 
     def _issue_registration_pass(self, booking, event):
         """
-        Create a SINGLE registration pass (Ticket row) for a registration-only
-        event. Ensures at least one TicketTier exists so the FK is valid.
+        Create a SINGLE registration pass (Ticket row) for a free-
+        registration booking. Ensures at least one TicketTier exists so
+        the FK is valid.
+
+        ✅ FIX [FREE-REG-TICKET]: previously this method could return
+        `None` in several edge cases (event had zero tiers and the
+        auto-create failed, QR generation threw, the caller ignored the
+        return value) and the caller happily proceeded. It now always
+        either returns a saved, active Ticket or raises — never None.
         """
         existing = booking.tickets.filter(status='active').first()
         if existing:
             return existing
 
+        # ---------- Ensure at least one tier exists ----------
         tier = event.tiers.first()
         if tier is None:
             tier = TicketTier.objects.create(
@@ -434,7 +517,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                 quantity_total=event.max_tickets_per_order or 1000,
                 ticket_type='ga',
             )
+            logger.info(
+                '✅ Auto-created General Registration tier for event %s',
+                event.id,
+            )
 
+        # ---------- Create the pass ----------
         ticket = Ticket(
             booking=booking,
             tier=tier,
@@ -447,44 +535,72 @@ class BookingViewSet(viewsets.ModelViewSet):
         )
         ticket.save()
 
-        self._generate_qr_code(ticket)
+        # ---------- Generate QR ----------
+        # If QR generation fails we do NOT want a ticket without a QR
+        # — the whole point of the registration pass is that it can be
+        # scanned. Raise so the outer transaction rolls back.
+        qr_ok = self._generate_qr_code(ticket)
+        if not qr_ok:
+            raise RuntimeError(
+                f'QR generation failed for registration pass '
+                f'{ticket.unique_code} (booking={booking.booking_reference}). '
+                f'Refusing to save a pass without a scannable QR.'
+            )
 
+        # ---------- Update denormalized counters ----------
         tier.quantity_sold += 1
         tier.save(update_fields=['quantity_sold'])
         event.total_tickets_sold += 1
         event.save(update_fields=['total_tickets_sold'])
 
+        # ---------- Record the pass id in metadata ----------
         if not booking.metadata:
             booking.metadata = {}
         booking.metadata['registration_pass_id'] = str(ticket.id)
+        booking.metadata['registration_pass_code'] = ticket.unique_code
         booking.metadata['ticket_created'] = True
         booking.save(update_fields=['metadata'])
 
         logger.info(
-            '✅ Issued registration pass %s for booking %s',
+            '✅ Issued registration pass %s for booking %s '
+            '(event=%s, tier=%s)',
             ticket.unique_code, booking.booking_reference,
+            event.id, tier.name,
         )
         return ticket
 
     def _send_registration_confirmation(self, booking):
-        """
-        Email the registration pass. Uses the registration_confirmation
-        template when available, falls back to the ticket email otherwise.
-        """
+        """..."""
         from django.template.loader import render_to_string
         from django.core.mail import EmailMultiAlternatives
         from django.utils.html import strip_tags
 
         if not booking.customer_email:
+            logger.info(
+                'No customer email on %s — skipping confirmation.',
+                booking.booking_reference,
+            )
             return
 
+        # ✅ FIX [FREE-REG-TICKET]: a free-registration booking MUST
+        # have a ticket at this point. If it doesn't, that's a bug —
+        # log loudly instead of silently no-op'ing.
         ticket = booking.tickets.filter(status='active').first()
         if not ticket:
-            return
+            logger.error(
+                '❌ Cannot send confirmation for %s: no active ticket '
+                'exists. This should be impossible — '
+                '_issue_registration_pass guarantees a pass. Check '
+                'booking.metadata and the ticket table.',
+                booking.booking_reference,
+            )
+            raise RuntimeError(
+                f'No active ticket for booking {booking.booking_reference}'
+            )
 
         is_free = booking.event.event_flow == 'free_registration'
 
-        # Generate a small inline QR for the email header.
+        # ---------- inline QR ----------
         try:
             import base64
             import qrcode
@@ -508,7 +624,11 @@ class BookingViewSet(viewsets.ModelViewSet):
                 + base64.b64encode(buf.getvalue()).decode()
             )
         except Exception:
-            logger.exception('Could not generate inline QR for registration email')
+            logger.exception(
+                'Could not generate inline QR for registration email '
+                '(booking=%s, ticket=%s)',
+                booking.booking_reference, ticket.unique_code,
+            )
             first_qr_base64 = None
 
         display_date = (
@@ -536,7 +656,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'emails/registration_confirmation.html', context,
             )
         except Exception:
-            # Template missing — fall back to the ticket email template.
             logger.warning(
                 'registration_confirmation.html missing; '
                 'falling back to ticket_email.html',

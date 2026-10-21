@@ -6,19 +6,28 @@ Every QR code rendered for a Ticket MUST go through
 `serialise_ticket_qr_payload` so that all scanners (Expo app, admin web UI,
 future integrations) see the same signed JSON envelope.
 
-Contract (must match the mobile scanner and the server-side verifier):
+Contract (v2 — current):
+
+    {
+      "v": 2,
+      "type": "ticket" | "registration",
+      "code": "TIX...|REG...",
+      "sig": "<hex HMAC-SHA256>"
+    }
+
+Legacy (v1 — accepted on read only):
 
     {
       "v": 1,
       "type": "ticket",
-      "code": "TIX<8-32 uppercase alnum>",
-      "sig": "<hex HMAC-SHA256>"
+      "code": "TIX...",
+      "sig": "<hex>"
     }
 
 Rules:
-  - Exactly these four keys. No extras. No None values.
+  - Exactly four keys. No extras. No None values.
   - `sig` = HMAC-SHA256 over the canonical byte string of
-    {"v": 1, "type": "ticket", "code": "<code>"} using
+    {"v": <version>, "type": <type>, "code": "<code>"} using
     TICKET_SIGNING_SECRET, rendered as lowercase hex.
   - Canonicalization is `json.dumps(..., separators=(",", ":"), sort_keys=True)`
     — the exact same call the server-side verifier uses. Any deviation
@@ -32,8 +41,13 @@ import os
 from django.conf import settings
 
 # Bump this when the payload shape changes in a backwards-incompatible way.
-QR_PAYLOAD_VERSION = 1
-QR_PAYLOAD_TYPE = 'ticket'
+QR_PAYLOAD_VERSION = 2
+QR_PAYLOAD_VERSION_V1 = 1
+
+QR_PAYLOAD_TYPE_TICKET = 'ticket'
+QR_PAYLOAD_TYPE_REGISTRATION = 'registration'
+
+VALID_PAYLOAD_TYPES = (QR_PAYLOAD_TYPE_TICKET, QR_PAYLOAD_TYPE_REGISTRATION)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +75,7 @@ def _resolve_signing_secret() -> str:
     return secret
 
 
-def _canonical_message(code: str) -> bytes:
+def _canonical_message(code: str, payload_type: str, version: int) -> bytes:
     """
     Rebuild the exact byte string the server verifies against.
 
@@ -70,8 +84,8 @@ def _canonical_message(code: str) -> bytes:
     """
     return json.dumps(
         {
-            'v': QR_PAYLOAD_VERSION,
-            'type': QR_PAYLOAD_TYPE,
+            'v': version,
+            'type': payload_type,
             'code': code,
         },
         separators=(',', ':'),
@@ -79,11 +93,15 @@ def _canonical_message(code: str) -> bytes:
     ).encode('utf-8')
 
 
-def sign_ticket_code(code: str) -> str:
-    """Return the lowercase-hex HMAC-SHA256 for a ticket code."""
+def sign_ticket_code(
+    code: str,
+    payload_type: str = QR_PAYLOAD_TYPE_TICKET,
+    version: int = QR_PAYLOAD_VERSION,
+) -> str:
+    """Return the lowercase-hex HMAC-SHA256 for a ticket code + type."""
     return hmac.new(
         _resolve_signing_secret().encode('utf-8'),
-        _canonical_message(code),
+        _canonical_message(code, payload_type, version),
         hashlib.sha256,
     ).hexdigest()
 
@@ -99,26 +117,28 @@ def build_ticket_qr_payload(ticket, *, include_ids: bool = False) -> dict:
     Args:
         ticket: a Ticket instance (must have `unique_code`).
         include_ids: retained for backwards compatibility with existing
-            callers, but IGNORED. The scanner and server expect exactly
-            four keys; adding extras causes the scan to be rejected.
+            callers, but IGNORED.
 
     Returns:
         A JSON-serialisable dict with exactly:
-            {"v": 1, "type": "ticket", "code": "<code>", "sig": "<hex>"}
-
-    Serialize with `json.dumps(payload, separators=(",", ":"))` — NOT
-    `str(payload)` — when embedding into a QR code.
+            {"v": 2, "type": "<ticket|registration>", "code": "<code>", "sig": "<hex>"}
     """
     if not ticket or not getattr(ticket, 'unique_code', None):
         raise ValueError("Ticket must have a unique_code to build a QR payload.")
 
     code = ticket.unique_code
 
+    payload_type = (
+        QR_PAYLOAD_TYPE_REGISTRATION
+        if code.startswith('REG')
+        else QR_PAYLOAD_TYPE_TICKET
+    )
+
     return {
         'v': QR_PAYLOAD_VERSION,
-        'type': QR_PAYLOAD_TYPE,
+        'type': payload_type,
         'code': code,
-        'sig': sign_ticket_code(code),
+        'sig': sign_ticket_code(code, payload_type, QR_PAYLOAD_VERSION),
     }
 
 
@@ -126,6 +146,6 @@ def serialise_ticket_qr_payload(ticket, *, include_ids: bool = False) -> str:
     """Return the JSON string to embed in a QR code."""
     return json.dumps(
         build_ticket_qr_payload(ticket, include_ids=include_ids),
-        separators=(',', ':'),   # compact — QR capacity is finite
-        ensure_ascii=False,      # codes are ASCII anyway; harmless either way
+        separators=(',', ':'),
+        ensure_ascii=False,
     )

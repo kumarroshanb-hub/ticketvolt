@@ -46,6 +46,10 @@ from ..services.qr_payload import serialise_ticket_qr_payload
 
 from ..managers import SOLD_BOOKING_STATUSES
 from ..services.ticket_cancellation import cancel_tickets, CancellationError
+from ..services.session_capacity import (
+    release_session_seats,
+    reserve_session_seats,
+)
 # ✅ FIX [P9]: single canonical reconciler.
 from ..services.booking_status import reconcile_completed_booking
 from ..constants import BookingStatus, TicketStatus
@@ -235,48 +239,6 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         return 0
 
-    def _release_session_seats(self, booking, count):
-        """
-        Return `count` seats to the booking's session.
-
-        Called from every cancellation / refund path AFTER the relevant
-        tickets have been marked cancelled/refunded. Locked so two
-        concurrent releases on the same session can't race — this matters
-        because an admin cancelling one booking and a customer cancelling
-        another could otherwise both read the same `booked` value and
-        both write the same decremented result, losing one release.
-
-        Clamped at 0 so a bug that double-releases doesn't leave `booked`
-        negative. A negative `booked` would make the session look like
-        it has more capacity than it started with.
-        """
-        if not booking.session_id or count <= 0:
-            return
-
-        with transaction.atomic():
-            session = (
-                Session.objects
-                .select_for_update()
-                .filter(id=booking.session_id)
-                .first()
-            )
-            if session is None:
-                logger.warning(
-                    "Cannot release %d seat(s) for booking %s — session %s "
-                    "no longer exists.",
-                    count, booking.booking_reference, booking.session_id,
-                )
-                return
-
-            session.booked = max(0, session.booked - count)
-            session.save(update_fields=['booked'])
-            logger.info(
-                "✅ Released %d seat(s) from session %s "
-                "(booking=%s, booked=%d, capacity=%d)",
-                count, session.id, booking.booking_reference,
-                session.booked, session.capacity,
-            )
-
     # ============================================================
     # ✅ NEW HELPER — normalize a metadata ticket entry's tier_id and
     # resolve it to a TicketTier. Never returns None unless the event
@@ -346,6 +308,220 @@ class BookingViewSet(viewsets.ModelViewSet):
         return None, 'no-tiers-available'
 
     # ============================================================
+    # FREE REGISTRATION — bypass the payment pipeline entirely
+    # ============================================================
+
+    def _create_free_registration(self, request, event, data):
+        """
+        Free registrations bypass the entire payment pipeline. We still
+        lock the Session row (if the event has sessions) so concurrent
+        registrations on the last seat don't oversell.
+
+        Steps:
+          1. Validate via serializer (required fields, one-per-email).
+          2. Create booking as `confirmed`, total=0, paid_at=now.
+          3. Reserve a session seat (locked).
+          4. Issue ONE registration pass (Ticket with REG prefix).
+          5. Send confirmation email (best-effort).
+        """
+        from decimal import Decimal
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+
+        session_id = (
+            data.get('session')
+            or data.get('session_id')
+            or (data.get('metadata') or {}).get('slot_id')
+        )
+
+        with transaction.atomic():
+            booking = serializer.save()
+            booking.status = BookingStatus.CONFIRMED
+            booking.paid_at = timezone.now()
+            booking.total_amount = Decimal('0.00')
+            booking.discount_applied = Decimal('0.00')
+            booking.discount_code = ''
+
+            if session_id:
+                locked_session, err = reserve_session_seats(
+                    session_id, 1, event=event,
+                )
+                if err:
+                    raise ValidationError({'session': [err]})
+                if locked_session is not None:
+                    booking.session = locked_session
+
+            update_fields = [
+                'status', 'paid_at', 'total_amount',
+                'discount_applied', 'discount_code', 'updated_at',
+            ]
+            if booking.session_id:
+                update_fields.append('session')
+            booking.save(update_fields=update_fields)
+
+            self._issue_registration_pass(booking, event)
+
+        try:
+            self._send_registration_confirmation(booking)
+        except Exception:
+            logger.exception(
+                'Free registration confirmation failed for %s',
+                booking.booking_reference,
+            )
+
+        response_serializer = self.get_serializer(booking)
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _issue_registration_pass(self, booking, event):
+        """
+        Create a SINGLE registration pass (Ticket row) for a registration-only
+        event. Ensures at least one TicketTier exists so the FK is valid.
+        """
+        existing = booking.tickets.filter(status='active').first()
+        if existing:
+            return existing
+
+        tier = event.tiers.first()
+        if tier is None:
+            tier = TicketTier.objects.create(
+                event=event,
+                name='General Registration',
+                price=0,
+                quantity_total=event.max_tickets_per_order or 1000,
+                ticket_type='ga',
+            )
+
+        ticket = Ticket(
+            booking=booking,
+            tier=tier,
+            event=event,
+            session=booking.session,
+            status='active',
+            attendee_name=booking.customer_name,
+            attendee_email=booking.customer_email,
+            attendee_phone=booking.customer_phone,
+        )
+        ticket.save()
+
+        self._generate_qr_code(ticket)
+
+        tier.quantity_sold += 1
+        tier.save(update_fields=['quantity_sold'])
+        event.total_tickets_sold += 1
+        event.save(update_fields=['total_tickets_sold'])
+
+        if not booking.metadata:
+            booking.metadata = {}
+        booking.metadata['registration_pass_id'] = str(ticket.id)
+        booking.metadata['ticket_created'] = True
+        booking.save(update_fields=['metadata'])
+
+        logger.info(
+            '✅ Issued registration pass %s for booking %s',
+            ticket.unique_code, booking.booking_reference,
+        )
+        return ticket
+
+    def _send_registration_confirmation(self, booking):
+        """
+        Email the registration pass. Uses the registration_confirmation
+        template when available, falls back to the ticket email otherwise.
+        """
+        from django.template.loader import render_to_string
+        from django.core.mail import EmailMultiAlternatives
+        from django.utils.html import strip_tags
+
+        if not booking.customer_email:
+            return
+
+        ticket = booking.tickets.filter(status='active').first()
+        if not ticket:
+            return
+
+        is_free = booking.event.event_flow == 'free_registration'
+
+        # Generate a small inline QR for the email header.
+        try:
+            import base64
+            import qrcode
+            from io import BytesIO
+            from ..services.qr_payload import serialise_ticket_qr_payload
+
+            payload = serialise_ticket_qr_payload(ticket)
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=3,
+                border=1,
+            )
+            qr.add_data(payload)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color='black', back_color='white')
+            buf = BytesIO()
+            img.save(buf, format='PNG', optimize=True)
+            first_qr_base64 = (
+                'data:image/png;base64,'
+                + base64.b64encode(buf.getvalue()).decode()
+            )
+        except Exception:
+            logger.exception('Could not generate inline QR for registration email')
+            first_qr_base64 = None
+
+        display_date = (
+            booking.session.start_time if booking.session
+            else booking.event.start_date
+        )
+
+        context = {
+            'booking': booking,
+            'event': booking.event,
+            'ticket': ticket,
+            'first_qr_base64': first_qr_base64,
+            'display_date': display_date,
+            'is_free': is_free,
+        }
+
+        subject = (
+            f'✅ You\'re registered for {booking.event.title}'
+            if is_free
+            else f'✅ Registration confirmed for {booking.event.title}'
+        )
+
+        try:
+            html_content = render_to_string(
+                'emails/registration_confirmation.html', context,
+            )
+        except Exception:
+            # Template missing — fall back to the ticket email template.
+            logger.warning(
+                'registration_confirmation.html missing; '
+                'falling back to ticket_email.html',
+            )
+            html_content = render_to_string('emails/ticket_email.html', {
+                'booking': booking,
+                'event': booking.event,
+                'tickets': [ticket],
+                'first_qr_base64': first_qr_base64,
+                'display_date': display_date,
+            })
+
+        text_content = strip_tags(html_content)
+
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[booking.customer_email],
+        )
+        email.attach_alternative(html_content, 'text/html')
+
+        _safe_send_email(email, context_label='registration_confirmation')
+
+    # ============================================================
     # CREATE — atomic, row-locked, capacity-reserving
     # ============================================================
     def create(self, request, *args, **kwargs):
@@ -410,6 +586,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                     {'error': 'Event not found'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+        # ---------- Free-registration fast-path ----------
+        if event_obj and event_obj.event_flow == 'free_registration':
+            return self._create_free_registration(request, event_obj, data)
 
         # ---------- Fallback total_amount if client sent nothing ----------
         if 'total_amount' not in data or data['total_amount'] is None:
@@ -619,7 +799,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         #    one place.
         released_count = len(result.get('cancelled_ticket_ids', []))
         if released_count > 0:
-            self._release_session_seats(booking, released_count)
+            release_session_seats(booking, released_count)
 
         # ✅ Reconcile booking status. If the remaining tickets are all
         #    `used`, this flips the booking to `completed`. If they are
@@ -2373,7 +2553,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.tickets.filter(status='active').update(status='cancelled')
 
         # ✅ Release reserved seats back to the session.
-        self._release_session_seats(booking, seats_to_release)
+        release_session_seats(booking, seats_to_release)
 
         # ✅ Keep the denormalized event counters consistent.
         self._update_event_counts(booking.event)
@@ -2408,7 +2588,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.tickets.filter(status='active').update(status='refunded')
 
         # ✅ Release reserved seats back to the session.
-        self._release_session_seats(booking, seats_to_release)
+        release_session_seats(booking, seats_to_release)
 
         # ✅ Keep the denormalized event counters consistent.
         self._update_event_counts(booking.event)
@@ -3051,7 +3231,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.tickets.filter(status='active').update(status='cancelled')
 
         # ✅ Release reserved seats.
-        self._release_session_seats(booking, seats_to_release)
+        release_session_seats(booking, seats_to_release)
 
         self._update_event_counts(event)
 
@@ -3098,7 +3278,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.tickets.filter(status='active').update(status='refunded')
 
         # ✅ Release reserved seats.
-        self._release_session_seats(booking, seats_to_release)
+        release_session_seats(booking, seats_to_release)
 
         self._update_event_counts(event)
 

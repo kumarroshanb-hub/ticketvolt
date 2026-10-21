@@ -6,6 +6,7 @@ import {
 } from '@mui/material';
 import {
     LocationOn, CalendarMonth, ShoppingCart,
+    CheckCircle as CheckCircleIcon,
     KeyboardArrowDown as ArrowDownIcon, KeyboardArrowUp as ArrowUpIcon,
 } from '@mui/icons-material';
 import styled from 'styled-components';
@@ -350,6 +351,9 @@ const EventCard = ({ event: initialEvent }) => {
     }, [initialEvent.id, initialEvent.tiers]);
 
     const isSoldOut = event.status === 'sold_out';
+    const isFreeRegistration = event.event_flow === 'free_registration';
+    const isRegistrationOnly = ['free_registration', 'paid_registration']
+        .includes(event.event_flow);
 
     const tiers = event.tiers || [];
     const availableSlots = tiers.reduce(
@@ -514,9 +518,15 @@ const EventCard = ({ event: initialEvent }) => {
                     variant="contained"
                     onClick={handleBookNow}
                     disabled={isActuallySoldOut}
-                    startIcon={<ShoppingCart />}
+                    startIcon={isFreeRegistration ? <CheckCircleIcon /> : <ShoppingCart />}
                 >
-                    {isActuallySoldOut ? 'Sold Out' : 'Book Tickets'}
+                    {isActuallySoldOut
+                        ? 'Sold Out'
+                        : isFreeRegistration
+                        ? 'Register Free'
+                        : isRegistrationOnly
+                        ? `Register — ₹${minPrice ?? 0}`
+                        : 'Book Tickets'}
                 </BookButton>
             </StyledActions>
         </StyledCard>

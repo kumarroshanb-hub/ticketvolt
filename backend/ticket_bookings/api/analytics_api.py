@@ -261,6 +261,15 @@ class AnalyticsView(APIView):
             # ============================================================
             # 8. Response — field names match Analytics.js exactly.
             # ============================================================
+                        # Free vs paid split (canonical — uses managers.py status groups)
+            free_registrations = bookings_qs.filter(
+                event__event_flow=Event.EventFlow.FREE_REGISTRATION,
+            ).total_count()
+
+            paid_bookings = bookings_qs.exclude(
+                event__event_flow=Event.EventFlow.FREE_REGISTRATION,
+            ).total_count()
+
             return Response({
                 'timeframe': timeframe,
                 'granularity': granularity,
@@ -279,6 +288,8 @@ class AnalyticsView(APIView):
                     'windowed_revenue': windowed_revenue,
                     'total_venues': Venue.objects.filter(is_active=True).count(),
                     'total_discounts': Discount.objects.filter(is_active=True).count(),
+                    'free_registrations': free_registrations,
+                    'paid_bookings': paid_bookings,
                 },
                 # Root aliases (some callers read these directly)
                 'total_events': total_events,

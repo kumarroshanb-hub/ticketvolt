@@ -249,6 +249,43 @@ class Event(models.Model):
         help_text="Number of tickets per page (for combined tickets)",
     )
 
+    # ============================================================
+    # EVENT FLOW — the single knob the rest of the system reads
+    # ============================================================
+    class EventFlow(models.TextChoices):
+        TICKETED = 'ticketed', 'Ticketed Event'
+        FREE_REGISTRATION = 'free_registration', 'Free Registration'
+        PAID_REGISTRATION = 'paid_registration', 'Paid Registration'
+
+    event_flow = models.CharField(
+        max_length=32,
+        choices=EventFlow.choices,
+        default=EventFlow.TICKETED,
+        help_text=(
+            'Controls the booking pipeline for this event:\n'
+            '  • ticketed          — pay per seat, per-attendee tickets\n'
+            '  • free_registration — RSVP, auto-confirmed, no payment\n'
+            '  • paid_registration — flat fee, single pass, no per-attendee tickets'
+        ),
+    )
+
+    @property
+    def is_registration_only(self) -> bool:
+        return self.event_flow in (
+            Event.EventFlow.FREE_REGISTRATION,
+            Event.EventFlow.PAID_REGISTRATION,
+        )
+
+    @property
+    def requires_payment(self) -> bool:
+        """Free registrations are the ONLY flow that skips payment."""
+        return self.event_flow != Event.EventFlow.FREE_REGISTRATION
+
+    @property
+    def requires_tier(self) -> bool:
+        """Registration-only events auto-create a General tier."""
+        return self.event_flow != Event.EventFlow.FREE_REGISTRATION
+
     def get_active_tickets_count(self):
         return self.tickets.filter(
             ~Q(status__in=EXCLUDED_TICKET_STATUSES),
@@ -256,9 +293,6 @@ class Event(models.Model):
         ).count()
 
     def get_active_revenue(self):
-        # ✅ FIX [P10]: use canonical revenue helper so every consumer
-        # agrees. `canonical_revenue` is imported lazily to avoid a
-        # circular import with managers.py.
         from .managers import canonical_revenue
         return canonical_revenue(self.bookings.all())
 
@@ -287,13 +321,6 @@ class Event(models.Model):
           3. If `end_date` has passed and the event is not terminal,
              return 'completed'.
           4. Otherwise return the stored status.
-
-        ✅ FIX [P26] note: the naive/aware guard below is load-bearing.
-        Removing it will re-introduce
-          TypeError: can't compare offset-naive and offset-aware datetimes
-        in `EventViewSet.create()` because the view assigns a naive
-        `end_date` from `_parse_dt()` before the DB round-trip. Do not
-        remove the `is_naive(end)` branch.
         """
         from django.utils import timezone as _tz
 
@@ -306,8 +333,6 @@ class Event(models.Model):
         if end is None:
             return self.status
 
-        # Defensive: a freshly-assigned naive end_date would blow up on
-        # comparison. Attach the project's current timezone.
         if _tz.is_naive(end):
             end = _tz.make_aware(end, _tz.get_current_timezone())
 
@@ -333,19 +358,9 @@ class Session(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def remaining_capacity(self):
-        """
-        Seats still available in this session. Clamped at 0 so a bad
-        data state never returns a negative number.
-        """
         return max(0, self.capacity - self.booked)
 
     def check_capacity(self, requested):
-        """
-        Return (ok: bool, reason: str | None) for a request to reserve
-        `requested` seats.
-
-        Single source of truth for the capacity rule.
-        """
         if requested <= 0:
             return True, None
 
@@ -382,10 +397,6 @@ class TicketTier(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def available_tickets(self):
-        # ✅ FIX [P14]: clamp at 0. If `quantity_sold` exceeds
-        # `quantity_total` due to a race or legacy data, the old code
-        # returned a negative number and the UI rendered "-2 available".
-        # Matches Session.remaining_capacity() which already clamps.
         return max(0, self.quantity_total - self.quantity_sold)
 
     def __str__(self):
@@ -509,8 +520,16 @@ class Ticket(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.unique_code:
+            # Registration passes get 'REG' prefix; ticketed events keep 'TIX'.
+            event_flow = getattr(self.event, 'event_flow', 'ticketed')
+            is_registration = event_flow in (
+                'free_registration',
+                'paid_registration',
+            )
+            prefix = 'REG' if is_registration else 'TIX'
+
             for _ in range(5):
-                candidate = _generate_code('TIX', 12)
+                candidate = _generate_code(prefix, 12)
                 if not Ticket.objects.filter(unique_code=candidate).exists():
                     self.unique_code = candidate
                     break

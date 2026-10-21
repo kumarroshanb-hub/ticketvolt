@@ -7,22 +7,38 @@ import { theme } from '../../../theme/tokens';
 
 const C = theme.colors;
 
-export const TiersEditor = ({ tiers, onAdd, onRemove, onUpdate }) => (
+export const TiersEditor = ({
+    tiers, onAdd, onRemove, onUpdate, label = 'Ticket Tiers',
+}) => (
     <>
         <Grid item xs={12}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2, flexWrap: 'wrap', gap: 1 }}>
-                <SectionTitle variant="h6" sx={{ mb: 0 }}>Ticket Tiers</SectionTitle>
+            <Box
+                sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    mt: 2,
+                    flexWrap: 'wrap',
+                    gap: 1,
+                }}
+            >
+                <SectionTitle variant="h6" sx={{ mb: 0 }}>{label}</SectionTitle>
                 <Button
-                    startIcon={<AddIcon />} variant="outlined" onClick={onAdd} size="small"
+                    startIcon={<AddIcon />}
+                    variant="outlined"
+                    onClick={onAdd}
+                    size="small"
                     sx={{
-                        borderColor: C.borderLight, color: C.textSecondary,
+                        borderColor: C.borderLight,
+                        color: C.textSecondary,
                         '&:hover': {
-                            borderColor: C.primary, color: C.primary,
+                            borderColor: C.primary,
+                            color: C.primary,
                             backgroundColor: `${C.primary}0A`,
                         },
                     }}
                 >
-                    Add Tier
+                    Add {label === 'Registration Fees' ? 'Fee' : 'Tier'}
                 </Button>
             </Box>
             <Divider sx={{ mt: 1, borderColor: C.borderLight }} />
@@ -33,7 +49,7 @@ export const TiersEditor = ({ tiers, onAdd, onRemove, onUpdate }) => (
                 <TierPaper>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Typography variant="subtitle1" sx={{ color: C.textPrimary, fontWeight: 600 }}>
-                            Tier #{index + 1}
+                            {label === 'Registration Fees' ? 'Fee' : 'Tier'} #{index + 1}
                         </Typography>
                         <IconButton size="small" onClick={() => onRemove(index)} sx={{ color: C.error }}>
                             <DeleteIcon />

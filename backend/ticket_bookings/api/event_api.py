@@ -255,6 +255,29 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ----- Free registrations: auto-create a General Registration tier -----
+        from ..models import TicketTier
+        event_flow = event.event_flow
+        tiers_created = 0
+
+        if event_flow == Event.EventFlow.FREE_REGISTRATION:
+            TicketTier.objects.create(
+                event=event,
+                name='General Registration',
+                price=0,
+                quantity_total=int(
+                    data.get('capacity')
+                    or event.max_tickets_per_order
+                    or 1000
+                ),
+                ticket_type='ga',
+            )
+            tiers_created = 1
+            logger.info(
+                '✅ Free-registration event %s: auto-created General tier',
+                event.id,
+            )
+
         sessions_created = 0
         for session_data in data.get('sessions', []) or []:
             s_start = self._parse_dt(session_data.get('start_time'))
@@ -269,21 +292,24 @@ class EventViewSet(viewsets.ModelViewSet):
             )
             sessions_created += 1
 
-        tiers_created = 0
-        for tier_data in data.get('tiers', []) or []:
-            try:
-                TicketTier.objects.create(
-                    event=event,
-                    name=tier_data.get('name', 'General'),
-                    price=tier_data.get('price', 0) or 0,
-                    quantity_total=int(tier_data.get('quantity_total', 100) or 100),
-                    ticket_type=tier_data.get('ticket_type', 'ga'),
-                )
-                tiers_created += 1
-            except Exception as exc:
-                logger.warning(
-                    "Failed to create tier for event %s: %s", event.id, exc,
-                )
+        if event_flow != Event.EventFlow.FREE_REGISTRATION:
+            for tier_data in data.get('tiers', []) or []:
+                try:
+                    TicketTier.objects.create(
+                        event=event,
+                        name=tier_data.get('name', 'General'),
+                        price=tier_data.get('price', 0) or 0,
+                        quantity_total=int(
+                            tier_data.get('quantity_total', 100) or 100
+                        ),
+                        ticket_type=tier_data.get('ticket_type', 'ga'),
+                    )
+                    tiers_created += 1
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to create tier for event %s: %s",
+                        event.id, exc,
+                    )
 
         logger.info(
             "✅ Event %s created (sessions=%d, tiers=%d)",
@@ -433,6 +459,23 @@ class EventViewSet(viewsets.ModelViewSet):
         data = request.data
         user = request.user
 
+        # Guard: switching event_flow is destructive on bookings.
+        new_flow = data.get('event_flow') if hasattr(data, 'get') else None
+        if new_flow and new_flow != instance.event_flow:
+            active_bookings = instance.bookings.exclude(
+                status__in=['cancelled', 'refunded'],
+            ).count()
+            if active_bookings > 0:
+                return Response(
+                    {
+                        'error': (
+                            f'Cannot change event flow: {active_bookings} '
+                            f'active booking(s) exist. Cancel them first.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         if not user.is_staff and not user.is_superuser:
             if not _is_organizer(user) or instance.organizer_id != user.id:
                 return Response(
@@ -469,7 +512,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 instance.cancellation_policy = policy
 
         fields = [
-            'title', 'description', 'short_description', 'event_type', 'category',
+            'title', 'description', 'short_description', 'event_type', 'category', 'event_flow',
             'start_date', 'end_date', 'timezone', 'status', 'metadata', 'is_public',
             'is_featured', 'cover_image', 'gallery_images', 'venue_metadata',
             'booking_start_date', 'booking_end_date',

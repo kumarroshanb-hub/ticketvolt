@@ -19,9 +19,15 @@ const { width, height } = Dimensions.get('window');
 // ---------------------------------------------------------------------------
 // Canonical ticket payload contract
 // ---------------------------------------------------------------------------
-const TICKET_SCHEMA_VERSION = 1;
+const TICKET_SCHEMA_VERSION_V1 = 1;
+const TICKET_SCHEMA_VERSION_V2 = 2;
+const SUPPORTED_SCHEMA_VERSIONS = [TICKET_SCHEMA_VERSION_V1, TICKET_SCHEMA_VERSION_V2];
+
 const TICKET_TYPE = 'ticket';
-const TICKET_CODE_REGEX = /^TIX[A-Z0-9]{8,32}$/;
+const REGISTRATION_TYPE = 'registration';
+const VALID_PAYLOAD_TYPES = [TICKET_TYPE, REGISTRATION_TYPE];
+
+const TICKET_CODE_REGEX = /^(TIX|REG)[A-Z0-9]{8,32}$/;
 const MAX_QR_PAYLOAD_LENGTH = 2048;
 
 // ---------------------------------------------------------------------------
@@ -53,12 +59,18 @@ export function extractTicketPayloadWithReason(raw) {
     return { payload: null, reason: 'not-object' };
   }
 
-  if (parsed.v !== TICKET_SCHEMA_VERSION) {
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(parsed.v)) {
     return { payload: null, reason: `bad-v:${parsed.v}` };
   }
-  if (parsed.type !== TICKET_TYPE) {
+  if (!VALID_PAYLOAD_TYPES.includes(parsed.type)) {
     return { payload: null, reason: `bad-type:${parsed.type}` };
   }
+
+  // v1 only ever issued type='ticket'.
+  if (parsed.v === TICKET_SCHEMA_VERSION_V1 && parsed.type !== TICKET_TYPE) {
+    return { payload: null, reason: 'v1-must-be-ticket' };
+  }
+
   if (typeof parsed.code !== 'string') {
     return { payload: null, reason: 'code-not-string' };
   }
@@ -203,11 +215,16 @@ export default function ScannerScreen({ navigation }) {
         const ticketData = verifyResponse.data;
 
         if (ticketData.valid === true) {
+          const isRegistration = (ticketData.ticket?.payload_type === 'registration')
+            || (ticketData.ticket?.unique_code || '').startsWith('REG');
+          const passLabel = isRegistration ? 'Registration Pass' : 'Ticket';
+          const whoLabel = isRegistration ? 'Registrant' : 'Identity';
+
           if (ticketData.ticket?.is_checked_in === true) {
             setStatusText('⚠️ Already Authenticated');
             Alert.alert(
               '⚠️ Already Authenticated',
-              `This credential was already verified.\n\nIdentity: ${ticketData.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData.ticket?.event || 'N/A'}\nVerified at: ${ticketData.ticket?.checked_in_at ? new Date(ticketData.ticket.checked_in_at).toLocaleString() : 'N/A'}`,
+              `This ${passLabel.toLowerCase()} was already verified.\n\n${whoLabel}: ${ticketData.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData.ticket?.event || 'N/A'}\nVerified at: ${ticketData.ticket?.checked_in_at ? new Date(ticketData.ticket.checked_in_at).toLocaleString() : 'N/A'}`,
               [{ text: 'OK', onPress: () => setScanned(false) }]
             );
             setLoading(false);
@@ -218,10 +235,10 @@ export default function ScannerScreen({ navigation }) {
             return;
           }
 
-          setStatusText('✅ Authentication Successful');
+          setStatusText(`✅ ${passLabel} Verified`);
           Alert.alert(
-            '✅ Authentication Successful',
-            `Credential verified!\n\nIdentity: ${ticketData.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData.ticket?.event || 'N/A'}`,
+            `✅ ${passLabel} Verified`,
+            `${whoLabel}: ${ticketData.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData.ticket?.event || 'N/A'}`,
             [
               {
                 text: '✅ Authenticate',
@@ -284,9 +301,13 @@ export default function ScannerScreen({ navigation }) {
       if (response.data) {
         setScanCount(prev => prev + 1);
         setStatusText('✅ Authentication Complete!');
+        const isRegistration = (ticketData?.ticket?.payload_type === 'registration')
+          || (ticketData?.ticket?.unique_code || '').startsWith('REG');
+        const passLabel = isRegistration ? 'Registration Pass' : 'Ticket';
+        const whoLabel = isRegistration ? 'Registrant' : 'Identity';
         Alert.alert(
           '✅ Authentication Complete',
-          `Credential has been verified!\n\nIdentity: ${ticketData?.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData?.ticket?.event || 'N/A'}`,
+          `${passLabel} verified!\n\n${whoLabel}: ${ticketData?.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData?.ticket?.event || 'N/A'}`,
           [{ text: 'OK', onPress: () => setScanned(false) }]
         );
       }

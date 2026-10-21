@@ -31,6 +31,16 @@ There are TWO families of scanner endpoints:
   3. History endpoint (shared by both clients):
        GET /checkin/history/   → recent check-in log rows
 
+QR payload versions
+-------------------
+  • v1 (legacy): {"v":1,"type":"ticket","code":"TIX...","sig":"<hex>"}
+                 Signed WITHOUT `type` (implicitly 'ticket').
+  • v2 (current): {"v":2,"type":"ticket"|"registration",
+                   "code":"TIX...|REG...","sig":"<hex>"}
+                  Signed WITH `type`.
+
+Both versions are accepted on read. Only v2 is issued.
+
 The signed-payload endpoints use HMAC-SHA256 over the canonical byte
 string of {"v","type","code"} with TICKET_SIGNING_SECRET.
 """
@@ -41,6 +51,7 @@ import os
 import re
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
@@ -76,11 +87,21 @@ from django.views.decorators.http import require_GET, require_POST
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Ticket signature contract (must match the mobile scanner exactly)
+# Ticket signature contract (v1 and v2 both accepted on read)
 # ---------------------------------------------------------------------------
-TICKET_SCHEMA_VERSION = 1
+TICKET_SCHEMA_VERSION_V1 = 1
+TICKET_SCHEMA_VERSION_V2 = 2
+SUPPORTED_SCHEMA_VERSIONS = (
+    TICKET_SCHEMA_VERSION_V1,
+    TICKET_SCHEMA_VERSION_V2,
+)
+
 TICKET_TYPE = 'ticket'
-TICKET_CODE_RE = re.compile(r'^TIX[A-Z0-9]{8,32}$')
+REGISTRATION_TYPE = 'registration'
+VALID_PAYLOAD_TYPES = (TICKET_TYPE, REGISTRATION_TYPE)
+
+# Accepts both legacy TIX codes and new REG registration passes.
+TICKET_CODE_RE = re.compile(r'^(TIX|REG)[A-Z0-9]{8,32}$')
 MAX_QR_PAYLOAD_LENGTH = 2048
 
 # Slot-window grace periods. Mirrored in the mobile app.
@@ -97,8 +118,17 @@ _SINGLE_SESSION = os.environ.get('SINGLE_SESSION_LOGIN', 'False') == 'True'
 # ===========================================================================
 
 def _get_ticket_signing_secret() -> str:
-    """Resolve TICKET_SIGNING_SECRET. Fails closed if missing/too short."""
+    """
+    Resolve TICKET_SIGNING_SECRET. Fails closed if missing/too short.
+
+    Reads from env first, then Django settings, so it works with both
+    the docker-compose (`os.environ`) and any deployment that injects
+    settings directly.
+    """
     secret = os.environ.get('TICKET_SIGNING_SECRET', '').strip()
+    if not secret:
+        secret = getattr(settings, 'TICKET_SIGNING_SECRET', '') or ''
+        secret = secret.strip()
     if not secret:
         raise RuntimeError(
             "TICKET_SIGNING_SECRET is not set. Signed QR verification "
@@ -112,7 +142,24 @@ def _get_ticket_signing_secret() -> str:
 
 
 def _canonical_ticket_message(payload: dict) -> bytes:
-    """Rebuild the exact byte string that was signed at issue time."""
+    """
+    Rebuild the exact byte string that was signed at issue time.
+
+    v2: `type` IS part of the signed bytes.
+    v1: `type` was not signed (always 'ticket').
+
+    MUST stay in lockstep with
+    ticket_bookings.services.qr_payload._canonical_message().
+    """
+    version = payload.get('v')
+
+    if version == TICKET_SCHEMA_VERSION_V1:
+        return json.dumps(
+            {'v': 1, 'type': TICKET_TYPE, 'code': payload.get('code')},
+            separators=(',', ':'),
+            sort_keys=True,
+        ).encode('utf-8')
+
     return json.dumps(
         {
             'v': payload.get('v'),
@@ -122,27 +169,6 @@ def _canonical_ticket_message(payload: dict) -> bytes:
         separators=(',', ':'),
         sort_keys=True,
     ).encode('utf-8')
-
-
-def verify_ticket_signature(payload: dict) -> bool:
-    """Constant-time HMAC-SHA256 check over (v, type, code)."""
-    if not isinstance(payload, dict):
-        return False
-
-    provided_sig = payload.get('sig')
-    if not isinstance(provided_sig, str) or not provided_sig:
-        return False
-
-    try:
-        expected = hmac.new(
-            _get_ticket_signing_secret().encode('utf-8'),
-            _canonical_ticket_message(payload),
-            hashlib.sha256,
-        ).hexdigest()
-    except RuntimeError:
-        return False
-
-    return hmac.compare_digest(expected, provided_sig)
 
 
 # ✅ FIX [P7]: raise a distinct exception so callers can return 503
@@ -156,10 +182,10 @@ def verify_ticket_signature_or_503(payload: dict) -> tuple[bool, str | None]:
     Verify a signed payload, distinguishing "secret missing" from
     "signature wrong". Returns (ok, error_message).
 
-    - ok=True,  error=None          → valid signature
+    - ok=True,  error=None            → valid signature
     - ok=False, error='misconfigured' → server has no secret → 503
-    - ok=False, error='mismatch'    → sig is wrong → 200 with valid:false
-    - ok=False, error='malformed'   → payload missing sig, etc.
+    - ok=False, error=None            → sig is wrong → 200 valid:false
+    - ok=False, error='malformed'     → payload missing sig, etc.
     """
     if not isinstance(payload, dict):
         return False, 'malformed'
@@ -187,8 +213,19 @@ def verify_ticket_signature_or_503(payload: dict) -> tuple[bool, str | None]:
     return hmac.compare_digest(expected, provided_sig), None
 
 
+def verify_ticket_signature(payload: dict) -> bool:
+    """Legacy boolean helper. Prefer verify_ticket_signature_or_503."""
+    ok, _ = verify_ticket_signature_or_503(payload)
+    return ok
+
+
 def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
-    """Enforce the exact QR schema server-side."""
+    """
+    Enforce the exact QR schema server-side.
+
+    Accepts both v1 (legacy) and v2 (current). v1 only ever carried
+    type='ticket' — reject a v1 payload that claims a different type.
+    """
     if not isinstance(data, dict):
         return None, 'Payload must be a JSON object.'
 
@@ -199,14 +236,29 @@ def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
     if len(serialized) > MAX_QR_PAYLOAD_LENGTH:
         return None, 'Payload too large.'
 
-    if data.get('v') != TICKET_SCHEMA_VERSION:
-        return None, 'Unsupported schema version.'
-    if data.get('type') != TICKET_TYPE:
-        return None, 'Invalid payload type.'
+    version = data.get('v')
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        return None, f'Unsupported schema version: {version!r}.'
+
+    payload_type = data.get('type')
+    if payload_type not in VALID_PAYLOAD_TYPES:
+        return None, f'Invalid payload type: {payload_type!r}.'
+
+    # v1 only ever issued type='ticket'.
+    if version == TICKET_SCHEMA_VERSION_V1 and payload_type != TICKET_TYPE:
+        return None, 'v1 payloads only support type="ticket".'
 
     code = data.get('code')
     if not isinstance(code, str) or not TICKET_CODE_RE.match(code):
         return None, 'Invalid ticket code.'
+
+    # Cross-check prefix ↔ type to prevent downgrade attacks where an
+    # attacker swaps the type without re-signing.
+    is_reg_code = code.startswith('REG')
+    if is_reg_code and payload_type != REGISTRATION_TYPE:
+        return None, 'Registration code must have type="registration".'
+    if not is_reg_code and payload_type != TICKET_TYPE:
+        return None, 'Ticket code must have type="ticket".'
 
     sig = data.get('sig')
     if not isinstance(sig, str) or not sig:
@@ -218,8 +270,8 @@ def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
         return None, f'Unexpected fields: {sorted(extra)}'
 
     return {
-        'v': data['v'],
-        'type': data['type'],
+        'v': version,
+        'type': payload_type,
         'code': code,
         'sig': sig,
     }, None
@@ -273,6 +325,8 @@ def _validate_checkin_window(ticket, now=None):
     Window: [session.start_time - CHECKIN_EARLY_GRACE,
              session.end_time   + CHECKIN_LATE_GRACE]
 
+    Free registrations without a session always pass.
+
     Returns (allowed: bool, reason: str | None).
     """
     now = now or timezone.now()
@@ -309,11 +363,20 @@ def _ticket_to_scan_response(ticket: Ticket) -> dict:
     Both `unique_code` (used by the mobile app) and `code` (used by the
     admin frontend's VerificationResult component) are returned so both
     clients can share the same response shape.
+
+    `payload_type` is included so the scanner app can display
+    "Registration Pass" vs "Ticket".
     """
+    payload_type = (
+        REGISTRATION_TYPE
+        if ticket.unique_code.startswith('REG')
+        else TICKET_TYPE
+    )
     return {
         'id': str(ticket.id),
         'unique_code': ticket.unique_code,
         'code': ticket.unique_code,  # alias for the admin UI
+        'payload_type': payload_type,
         'attendee_name': ticket.attendee_name,
         'attendee_email': ticket.attendee_email,
         'status': ticket.status,
@@ -561,7 +624,8 @@ def checkin_verify(request):
     """
     POST /api/checkin/verify/
 
-    Body: { "v": 1, "type": "ticket", "code": "TIX...", "sig": "<hex>" }
+    Body: { "v": 2, "type": "ticket"|"registration",
+            "code": "TIX...|REG...", "sig": "<hex>" }
 
     Returns:
       200 { "valid": true,  "ticket": {...}, "slot_window": {...} }
@@ -637,7 +701,8 @@ def checkin_perform(request):
     """
     POST /api/checkin/
 
-    Body: { "v": 1, "type": "ticket", "code": "TIX...", "sig": "<hex>" }
+    Body: { "v": 2, "type": "ticket"|"registration",
+            "code": "TIX...|REG...", "sig": "<hex>" }
 
     Re-verifies the signature (never trust a bare code) and performs an
     atomic check-in.
@@ -724,7 +789,7 @@ def checkin_perform(request):
 
 def _extract_bare_code(raw_code: str) -> str:
     """
-    Accept either a bare `TIX...` code or a pasted JSON payload
+    Accept either a bare `TIX...`/`REG...` code or a pasted JSON payload
     containing a `code` field. Returns the extracted code (may be
     empty if nothing usable was found).
     """
@@ -749,7 +814,7 @@ def checkin_manual_verify(request):
     """
     POST /api/checkin/manual-verify/
 
-    Body: { "code": "TIX..." }
+    Body: { "code": "TIX...|REG..." }
 
     Read-only verification for the admin UI's manual-entry form. Same
     response shape as `checkin_verify` so the frontend can share one
@@ -819,7 +884,7 @@ def checkin_manual(request):
     """
     POST /api/checkin/manual/
 
-    Body: { "code": "TIX...", "device_id": "admin-panel" }
+    Body: { "code": "TIX...|REG...", "device_id": "admin-panel" }
 
     Perform an atomic check-in from a bare ticket code. Same core as
     `checkin_perform` but without signature verification — the caller
@@ -963,6 +1028,7 @@ def checkin_history(request):
         })
 
     return Response({'history': data, 'count': len(data)})
+
 
 # ===========================================================================
 # Cron endpoints — for GitHub Actions / external schedulers

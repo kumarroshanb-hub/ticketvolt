@@ -213,10 +213,75 @@ class BookingViewSet(viewsets.ModelViewSet):
     # FREE REGISTRATION
     # ============================================================
 
+    def _resolve_free_registration_entries(self, event, data):
+        """
+        Validate and normalise metadata.entries / metadata.attendees for a
+        free-registration booking.
+
+        Returns (entries: int, attendees: list[dict], error: str | None).
+        `error` is a user-facing string when the payload is invalid.
+        """
+        metadata = data.get('metadata') or {}
+        if not isinstance(metadata, dict):
+            return 0, [], 'metadata must be an object.'
+
+        raw_entries = metadata.get('entries')
+        attendees = metadata.get('attendees') or []
+
+        if not isinstance(attendees, list):
+            return 0, [], 'metadata.attendees must be a list.'
+
+        try:
+            entries = int(raw_entries) if raw_entries is not None else len(attendees) or 1
+        except (TypeError, ValueError):
+            return 0, [], 'metadata.entries must be a positive integer.'
+
+        if entries < 1:
+            return 0, [], 'At least one entry is required.'
+
+        max_per_order = event.max_tickets_per_order or 10
+        if entries > max_per_order:
+            return 0, [], f'Maximum {max_per_order} entries per registration.'
+
+        if attendees and len(attendees) != entries:
+            return 0, [], (
+                f'metadata.attendees must contain exactly {entries} '
+                f'entries (got {len(attendees)}).'
+            )
+
+        normalised = []
+        for i, att in enumerate(attendees):
+            if not isinstance(att, dict):
+                return 0, [], f'Entry {i + 1} must be an object.'
+            name = (att.get('name') or '').strip()
+            email = (att.get('email') or '').strip()
+            phone = (att.get('phone') or '').strip()
+            if not name:
+                return 0, [], f'Entry {i + 1} is missing a name.'
+            if email and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+                return 0, [], f'Entry {i + 1} has an invalid email address.'
+            normalised.append({'name': name, 'email': email, 'phone': phone})
+
+        if not normalised:
+            # Caller didn't send attendees; issue a single pass for the
+            # lead customer.
+            normalised = [{
+                'name': (data.get('customer_name') or '').strip() or 'Guest',
+                'email': (data.get('customer_email') or '').strip(),
+                'phone': (data.get('customer_phone') or '').strip(),
+            }]
+            entries = 1
+
+        return entries, normalised, None
+
     def _create_free_registration(self, request, event, data):
         """
-        ✅ FIX [FREE-REG-TICKET]: capture the pass return value, guarantee
-        it exists before commit, and echo it in the response.
+        Free registration: RSVP, auto-confirmed, no payment.
+
+        Supports N entries per booking. Each entry becomes its own
+        `Ticket` row with a REG-prefixed unique code and its own QR.
+        All passes share the booking's session so slot-capacity
+        accounting stays correct.
         """
         from decimal import Decimal
 
@@ -227,6 +292,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        entries, attendees, entries_error = self._resolve_free_registration_entries(event, data)
+        if entries_error:
+            return Response({'error': entries_error}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 
@@ -236,7 +305,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             or (data.get('metadata') or {}).get('slot_id')
         )
 
-        registration_pass = None
+        registration_passes = []
         booking = None
         try:
             with transaction.atomic():
@@ -248,7 +317,11 @@ class BookingViewSet(viewsets.ModelViewSet):
                 booking.discount_code = ''
 
                 if session_id:
-                    locked_session, err = reserve_session_seats(session_id, 1, event=event)
+                    # Reserve `entries` seats, not 1, so slot capacity
+                    # accounting matches the number of passes issued.
+                    locked_session, err = reserve_session_seats(
+                        session_id, entries, event=event,
+                    )
                     if err:
                         raise ValidationError({'session': [err]})
                     if locked_session is not None:
@@ -262,11 +335,13 @@ class BookingViewSet(viewsets.ModelViewSet):
                     update_fields.append('session')
                 booking.save(update_fields=update_fields)
 
-                registration_pass = self._issue_registration_pass(booking, event)
+                registration_passes = self._issue_registration_passes(
+                    booking, event, attendees,
+                )
 
-                if registration_pass is None:
+                if not registration_passes:
                     raise ValidationError(
-                        'Could not issue a registration pass for this booking. '
+                        'Could not issue registration passes for this booking. '
                         'Please contact support.'
                     )
 
@@ -287,43 +362,53 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # 🆕 Capture and log the email result so a missing attachment is
-        # visible in the Render logs even though the booking succeeded.
         try:
             email_result = self._send_registration_confirmation(booking)
             logger.info(
-                '📧 Registration confirmation for %s: success=%s, attachments=%s, formats=%s',
+                '📧 Registration confirmation for %s: success=%s, attachments=%s, formats=%s, passes=%d',
                 booking.booking_reference,
                 email_result.get('success'),
                 email_result.get('attachments'),
                 email_result.get('formats'),
+                len(registration_passes),
             )
         except Exception:
             logger.exception(
                 'Free registration confirmation email failed for %s '
-                '(booking saved, pass exists: %s)',
-                booking.booking_reference,
-                registration_pass.unique_code,
+                '(booking saved, %d pass(es) exist)',
+                booking.booking_reference, len(registration_passes),
             )
 
         response_serializer = self.get_serializer(booking)
         payload = dict(response_serializer.data)
-        payload['registration_pass'] = {
-            'id': str(registration_pass.id),
-            'unique_code': registration_pass.unique_code,
-            'status': registration_pass.status,
-            'email_sent': bool(booking.customer_email),
-        }
+        payload['registration_passes'] = [
+            {
+                'id': str(t.id),
+                'unique_code': t.unique_code,
+                'attendee_name': t.attendee_name,
+                'attendee_email': t.attendee_email,
+                'status': t.status,
+            }
+            for t in registration_passes
+        ]
+        # Backwards-compatible single-pass field (first pass).
+        payload['registration_pass'] = payload['registration_passes'][0]
         return Response(payload, status=status.HTTP_201_CREATED)
 
-    def _issue_registration_pass(self, booking, event):
+    def _issue_registration_passes(self, booking, event, attendees):
         """
-        ✅ FIX [FREE-REG-TICKET]: always returns a saved active Ticket
-        or raises. Never returns None.
+        Issue one Registration pass per attendee entry.
+
+        Always returns a non-empty list of saved, active Tickets — or raises.
+        Never returns None. If the caller passes an empty list, a single
+        pass for the lead customer is created (defensive fallback).
         """
-        existing = booking.tickets.filter(status='active').first()
-        if existing:
-            return existing
+        if not attendees:
+            attendees = [{
+                'name': booking.customer_name or 'Guest',
+                'email': booking.customer_email or '',
+                'phone': booking.customer_phone or '',
+            }]
 
         tier = event.tiers.first()
         if tier is None:
@@ -336,67 +421,60 @@ class BookingViewSet(viewsets.ModelViewSet):
             )
             logger.info('✅ Auto-created General Registration tier for event %s', event.id)
 
-        ticket = Ticket(
-            booking=booking,
-            tier=tier,
-            event=event,
-            session=booking.session,
-            status='active',
-            attendee_name=booking.customer_name,
-            attendee_email=booking.customer_email,
-            attendee_phone=booking.customer_phone,
-        )
-        ticket.save()
+        passes = []
+        for idx, att in enumerate(attendees):
+            name = (att.get('name') or '').strip() or 'Guest'
+            email = (att.get('email') or '').strip()
+            phone = (att.get('phone') or '').strip()
 
-        qr_ok = self._generate_qr_code(ticket)
-        if not qr_ok:
-            raise RuntimeError(
-                f'QR generation failed for registration pass {ticket.unique_code} '
-                f'(booking={booking.booking_reference}). '
-                f'Refusing to save a pass without a scannable QR.'
+            ticket = Ticket(
+                booking=booking,
+                tier=tier,
+                event=event,
+                session=booking.session,
+                status='active',
+                attendee_name=name,
+                attendee_email=email,
+                attendee_phone=phone,
             )
+            ticket.save()
 
-        tier.quantity_sold += 1
+            if not self._generate_qr_code(ticket):
+                raise RuntimeError(
+                    f'QR generation failed for registration pass {ticket.unique_code} '
+                    f'(booking={booking.booking_reference}, attendee={name!r}). '
+                    f'Refusing to save a pass without a scannable QR.'
+                )
+
+            passes.append(ticket)
+
+        # Update counters once, after all passes succeed.
+        tier.quantity_sold += len(passes)
         tier.save(update_fields=['quantity_sold'])
-        event.total_tickets_sold += 1
+        event.total_tickets_sold += len(passes)
         event.save(update_fields=['total_tickets_sold'])
 
         if not booking.metadata:
             booking.metadata = {}
-        booking.metadata['registration_pass_id'] = str(ticket.id)
-        booking.metadata['registration_pass_code'] = ticket.unique_code
+        booking.metadata['registration_pass_ids'] = [str(t.id) for t in passes]
+        booking.metadata['registration_pass_codes'] = [t.unique_code for t in passes]
         booking.metadata['ticket_created'] = True
+        booking.metadata['tickets_created_count'] = len(passes)
         booking.save(update_fields=['metadata'])
 
         logger.info(
-            '✅ Issued registration pass %s for booking %s (event=%s, tier=%s)',
-            ticket.unique_code, booking.booking_reference, event.id, tier.name,
+            '✅ Issued %d registration pass(es) for booking %s (event=%s, tier=%s)',
+            len(passes), booking.booking_reference, event.id, tier.name,
         )
-        return ticket
+        return passes
 
-    # ============================================================
-    # 🆕 _send_registration_confirmation — attaches the ticket file
-    # ============================================================
     def _send_registration_confirmation(self, booking):
         """
         Send the confirmation email for a free-registration booking.
 
-        ✅ FIX [FREE-REG-ATTACHMENT]: the previous version only rendered
-        HTML — no ticket file was ever generated or attached. This version
-        generates the pass via the SAME `TicketGenerator` used by
-        `_send_tickets_email`, honours the event's `ticket_format`
-        (`pdf` / `png` / `both`), and attaches the resulting file(s).
-
-        ✅ FIX [FREE-REG-QR-BLOCK]: the inline QR data-URL is no longer
-        rendered by the template (data-URL images are unreliable across
-        mail clients). We still compute `first_qr_base64` for backwards
-        compatibility with any template that expects it, but
-        `registration_confirmation.html` ignores it.
-
-        Raises RuntimeError if the booking has no active ticket — that
-        indicates the create transaction failed to issue a pass.
-
-        Returns {success, message, attachments, formats}.
+        Attaches one PDF/PNG per active pass (honouring the event's
+        `ticket_format`). If the event has `combine_tickets=True`, the
+        passes are merged into a single combined file.
         """
         from django.core.mail import EmailMultiAlternatives
         from django.template.loader import render_to_string
@@ -411,18 +489,20 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'formats': '',
             }
 
-        ticket = booking.tickets.filter(status='active').first()
-        if not ticket:
+        passes = list(booking.tickets.filter(status='active'))
+        if not passes:
             logger.error(
                 '❌ Cannot send confirmation for %s: no active ticket exists. '
-                '_issue_registration_pass should guarantee a pass — check the create transaction.',
+                '_issue_registration_passes should guarantee a pass — check the create transaction.',
                 booking.booking_reference,
             )
             raise RuntimeError(f'No active ticket for booking {booking.booking_reference}')
 
         is_free = booking.event.event_flow == 'free_registration'
+        event = booking.event
 
-        # Optional inline QR — template ignores it, but kept for backward compat.
+        # Inline QR — for the first pass only. Template ignores it, but
+        # kept for backwards compatibility.
         first_qr_base64 = None
         try:
             import base64
@@ -430,7 +510,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             from io import BytesIO
             from ..services.qr_payload import serialise_ticket_qr_payload
 
-            payload = serialise_ticket_qr_payload(ticket)
+            payload = serialise_ticket_qr_payload(passes[0])
             qr = qrcode.QRCode(
                 version=None,
                 error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -446,26 +526,30 @@ class BookingViewSet(viewsets.ModelViewSet):
         except Exception:
             logger.warning(
                 'Could not generate inline QR (non-fatal — template does not render it): '
-                'booking=%s ticket=%s',
-                booking.booking_reference, ticket.unique_code,
+                'booking=%s',
+                booking.booking_reference,
             )
 
-        display_date = booking.session.start_time if booking.session else booking.event.start_date
+        display_date = booking.session.start_time if booking.session else event.start_date
 
         context = {
             'booking': booking,
-            'event': booking.event,
-            'ticket': ticket,
+            'event': event,
+            'tickets': passes,
+            'ticket': passes[0],
             'first_qr_base64': first_qr_base64,
             'display_date': display_date,
             'is_free': is_free,
+            'pass_count': len(passes),
         }
 
         subject = (
-            f"✅ You're registered for {booking.event.title}"
+            f"✅ You're registered for {event.title}"
             if is_free else
-            f'✅ Registration confirmed for {booking.event.title}'
+            f'✅ Registration confirmed for {event.title}'
         )
+        if len(passes) > 1:
+            subject = f"✅ {len(passes)} passes confirmed — {event.title}"
 
         try:
             html_content = render_to_string('emails/registration_confirmation.html', context)
@@ -473,19 +557,13 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.warning(
                 'registration_confirmation.html missing; falling back to ticket_email.html',
             )
-            html_content = render_to_string('emails/ticket_email.html', {
-                'booking': booking,
-                'event': booking.event,
-                'tickets': [ticket],
-                'first_qr_base64': first_qr_base64,
-                'display_date': display_date,
-            })
+            html_content = render_to_string('emails/ticket_email.html', context)
 
         text_content = strip_tags(html_content)
 
-        # ---- Generate the pass file(s) ----
-        event = booking.event
         ticket_format = (getattr(event, 'ticket_format', None) or 'pdf').lower()
+        combine = bool(getattr(event, 'combine_tickets', False))
+        per_page = int(getattr(event, 'tickets_per_page', 4) or 4)
         want_pdf = ticket_format in ('pdf', 'both')
         want_png = ticket_format in ('png', 'both')
 
@@ -495,36 +573,107 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         try:
             generator = TicketGenerator()
+            combiner = TicketCombiner()
+
+            # ---- Per-pass buffers ----
+            pass_buffers = []
+            for ticket in passes:
+                if want_pdf:
+                    pdf_buf = generator.generate_ticket_pdf(ticket, booking, event)
+                    if pdf_buf:
+                        opened_buffers.append(pdf_buf)
+                        pass_buffers.append({'ticket': ticket, 'buffer': pdf_buf, 'format': 'pdf'})
+                    else:
+                        logger.warning('TicketGenerator returned no PDF for %s', ticket.unique_code)
+                if want_png:
+                    png_buf = generator.generate_ticket_png(ticket, booking, event)
+                    if png_buf:
+                        opened_buffers.append(png_buf)
+                        pass_buffers.append({'ticket': ticket, 'buffer': png_buf, 'format': 'png'})
+                    else:
+                        logger.warning('TicketGenerator returned no PNG for %s', ticket.unique_code)
 
             if want_pdf:
-                pdf_buf = generator.generate_ticket_pdf(ticket, booking, event)
-                if pdf_buf:
-                    opened_buffers.append(pdf_buf)
-                    raw = self._read_buffer_bytes(pdf_buf)
-                    if raw:
-                        attachments.append((
-                            f'registration_{ticket.unique_code}.pdf',
-                            raw,
-                            'application/pdf',
-                        ))
-                        format_names.append('PDF')
-                else:
-                    logger.warning('TicketGenerator returned no PDF for %s', ticket.unique_code)
-
+                format_names.append('PDF')
             if want_png:
-                png_buf = generator.generate_ticket_png(ticket, booking, event)
-                if png_buf:
-                    opened_buffers.append(png_buf)
-                    raw = self._read_buffer_bytes(png_buf)
-                    if raw:
+                format_names.append('PNG')
+
+            # ---- Combined file (if requested) ----
+            combined_attachments = []
+            combined_failed = False
+            if combine and len(passes) > 1:
+                pdf_entries = [e for e in pass_buffers if e['format'] == 'pdf']
+                png_entries = [e for e in pass_buffers if e['format'] == 'png']
+
+                if pdf_entries:
+                    try:
+                        combine_input = []
+                        for e in pdf_entries:
+                            if not self._seek_buffer(e['buffer']):
+                                raise ValueError('PDF buffer not readable')
+                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
+                        combined_pdf = combiner.combine_to_pdf(
+                            combine_input, booking, tickets_per_page=per_page,
+                        )
+                    except Exception as exc:
+                        logger.error('❌ combine_to_pdf failed: %s', exc)
+                        combined_pdf = None
+                        combined_failed = True
+
+                    if combined_pdf:
+                        opened_buffers.append(combined_pdf)
+                        raw = self._read_buffer_bytes(combined_pdf)
+                        if raw is not None:
+                            combined_attachments.append((
+                                f'passes_{booking.booking_reference}.pdf', raw, 'application/pdf',
+                            ))
+                        else:
+                            combined_failed = True
+
+                if png_entries:
+                    try:
+                        combine_input = []
+                        for e in png_entries:
+                            if not self._seek_buffer(e['buffer']):
+                                raise ValueError('PNG buffer not readable')
+                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
+                        combined_png = combiner.combine_to_paginated_image(
+                            combine_input, booking, tickets_per_page=per_page,
+                            output_format='PNG',
+                        )
+                    except Exception as exc:
+                        logger.error('❌ combine_to_paginated_image failed: %s', exc)
+                        combined_png = None
+                        combined_failed = True
+
+                    if combined_png:
+                        opened_buffers.append(combined_png)
+                        raw = self._read_buffer_bytes(combined_png)
+                        if raw is not None:
+                            combined_attachments.append((
+                                f'passes_{booking.booking_reference}.png', raw, 'image/png',
+                            ))
+                        else:
+                            combined_failed = True
+
+            use_combined = combine and len(passes) > 1 and bool(combined_attachments) and not combined_failed
+
+            if use_combined:
+                attachments.extend(combined_attachments)
+            else:
+                for entry in pass_buffers:
+                    ticket = entry['ticket']
+                    raw = self._read_buffer_bytes(entry['buffer'])
+                    if raw is None:
+                        continue
+                    if entry['format'] == 'pdf':
                         attachments.append((
-                            f'registration_{ticket.unique_code}.png',
-                            raw,
-                            'image/png',
+                            f'pass_{ticket.unique_code}.pdf', raw, 'application/pdf',
                         ))
-                        format_names.append('PNG')
-                else:
-                    logger.warning('TicketGenerator returned no PNG for %s', ticket.unique_code)
+                    else:
+                        attachments.append((
+                            f'pass_{ticket.unique_code}.png', raw, 'image/png',
+                        ))
 
             email = EmailMultiAlternatives(
                 subject=subject,
@@ -540,8 +689,8 @@ class BookingViewSet(viewsets.ModelViewSet):
             if not attachments:
                 logger.warning(
                     'No attachments generated for registration confirmation '
-                    '(booking=%s, format=%s)',
-                    booking.booking_reference, ticket_format,
+                    '(booking=%s, format=%s, passes=%d)',
+                    booking.booking_reference, ticket_format, len(passes),
                 )
 
             sent_ok = _safe_send_email(email, context_label='registration_confirmation')
@@ -549,12 +698,13 @@ class BookingViewSet(viewsets.ModelViewSet):
             return {
                 'success': sent_ok,
                 'message': (
-                    f'Registration pass sent to {booking.customer_email}.'
+                    f'Registration passes sent to {booking.customer_email}.'
                     if sent_ok else
                     'Registration confirmation email failed (see logs).'
                 ),
                 'attachments': len(attachments),
                 'formats': '+'.join(format_names),
+                'passes': len(passes),
             }
 
         finally:
@@ -1172,7 +1322,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     def _validate_bookings_for_action(self, bookings, action):
-        # Unchanged — identical to your existing code.
         valid = []
         invalid = []
         for booking in bookings:
@@ -1438,7 +1587,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         logger.info("Distributed ₹%s net across %d tickets on booking %s", net_total, len(all_tickets), booking.booking_reference)
 
     def _issue_tickets_for_booking(self, booking):
-        # Unchanged — identical to your existing code.
         logger.info(f"🔍 Starting _issue_tickets_for_booking for {booking.booking_reference}")
 
         if not booking.session:
@@ -1589,8 +1737,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'allocation_message': allocation_message,
             },
         }
-
-    # ---- All remaining methods are unchanged from your paste; see your file. ----
 
     @action(detail=True, methods=['get'])
     def debug_metadata(self, request, pk=None):

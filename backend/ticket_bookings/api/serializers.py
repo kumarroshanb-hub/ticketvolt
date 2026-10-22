@@ -970,13 +970,27 @@ class BookingSerializer(serializers.ModelSerializer):
                 .first()
             )
             if existing is not None:
-                raise serializers.ValidationError({
-                    'customer_email': [
+                # ✅ FIX: Distinguish between authenticated users and guests.
+                # If the user is authenticated, provide the booking reference.
+                # If the user is a guest, do not reveal the booking reference.
+                request = self.context.get('request')
+                is_authenticated = request and request.user and request.user.is_authenticated
+
+                if is_authenticated:
+                    error_message = (
                         f'This email is already registered for this event '
                         f'(booking {existing.booking_reference}). '
                         f'Please use a different email address, or '
                         f'look up your existing booking.'
-                    ],
+                    )
+                else:
+                    error_message = (
+                        f'This email is already registered for this event. '
+                        f'Please use a different email address.'
+                    )
+
+                raise serializers.ValidationError({
+                    'customer_email': [error_message],
                 })
 
         # ---- entries / attendees validation ----

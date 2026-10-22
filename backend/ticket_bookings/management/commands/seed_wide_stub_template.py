@@ -16,39 +16,60 @@ from django.core.management.base import BaseCommand
 from ticket_bookings.models import Event, EventTemplate, EventTemplateType
 
 
-DEFAULT_IMAGE = 'media/event_templates/ticket_wide_stub_gold.png'
+DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
+# ==============================================================================
+# CONFIG FOR CUSTOM TICKET TEMPLATE (Left-aligned text, Right-aligned QR)
+# ==============================================================================
 CONFIG = {
     "fields": {
-        "event_title": {"x": 0.44, "y": 0.16, "font_size": 0.040,
-                        "color": "#8B1A1A", "align": "center"},
-        "event_date": {"x": 0.36, "y": 0.36, "font_size": 0.018,
-                       "color": "#1A202C", "align": "center"},
-        "event_date_secondary": {"x": 0.36, "y": 0.42, "font_size": 0.013,
-                                 "color": "#4A5568", "align": "center"},
-        "venue_label": {"x": 0.53, "y": 0.34, "font_size": 0.012,
-                        "color": "#4A5568", "align": "left"},
-        "venue_value": {"x": 0.53, "y": 0.39, "font_size": 0.013,
-                        "color": "#1A202C", "align": "left"},
-        "attendee_label": {"x": 0.235, "y": 0.52, "font_size": 0.011,
-                           "color": "#4A5568", "align": "left"},
-        "attendee_value": {"x": 0.235, "y": 0.57, "font_size": 0.014,
-                           "color": "#1A202C", "align": "left"},
-        "booking_label": {"x": 0.235, "y": 0.63, "font_size": 0.011,
-                          "color": "#4A5568", "align": "left"},
-        "booking_value": {"x": 0.235, "y": 0.68, "font_size": 0.013,
-                          "color": "#1A202C", "align": "left"},
-        "ticket_code_label": {"x": 0.53, "y": 0.63, "font_size": 0.011,
-                              "color": "#4A5568", "align": "left"},
-        "ticket_code_value": {"x": 0.53, "y": 0.68, "font_size": 0.013,
-                              "color": "#1A202C", "align": "left"},
-        "ticket_number": {"x": 0.835, "y": 0.13, "font_size": 0.030,
-                          "color": "#8B1A1A", "align": "center", "enabled": True},
-        "qr_code": {"x": 0.7875, "y": 0.2917, "size": 0.142},
-        "slot_time_label": {"x": 0.835, "y": 0.76, "font_size": 0.011,
-                            "color": "#4A5568", "align": "center"},
-        "slot_time_value": {"x": 0.835, "y": 0.82, "font_size": 0.018,
-                            "color": "#1A202C", "align": "center"},
+        # --- Left Side (Event Details) ---
+        "event_title": {
+            "x": 0.35, "y": 0.25, "font_size": 0.045, 
+            "color": "#1A202C", "align": "center"
+        },
+        "event_date": {
+            "x": 0.35, "y": 0.40, "font_size": 0.025, 
+            "color": "#4A5568", "align": "center"
+        },
+        "venue_value": {
+            "x": 0.35, "y": 0.50, "font_size": 0.018, 
+            "color": "#718096", "align": "center"
+        },
+        
+        # --- Left Side (Attendee Details) ---
+        "attendee_label": {
+            "x": 0.35, "y": 0.65, "font_size": 0.015, 
+            "color": "#718096", "align": "center"
+        },
+        "attendee_value": {
+            "x": 0.35, "y": 0.72, "font_size": 0.030, 
+            "color": "#1A202C", "align": "center"
+        },
+        "ticket_code_value": {
+            "x": 0.35, "y": 0.85, "font_size": 0.018, 
+            "color": "#A0AEC0", "align": "center"
+        },
+        
+        # --- Right Side (QR Code Box) ---
+        # Center of the black box is at roughly 80% width, 50% height.
+        # Size is scaled to fit neatly inside the box.
+        "qr_code": {
+            "x": 0.80, "y": 0.28, "size": 0.45
+        },
+
+        # --- Explicitly Disable Unused Fields ---
+        "organizer": {"enabled": False},
+        "organizer_sub": {"enabled": False},
+        "event_date_secondary": {"enabled": False},
+        "ticket_code_label": {"enabled": False},
+        "booking_label": {"enabled": False},
+        "booking_value": {"enabled": False},
+        "venue_label": {"enabled": False},
+        "admit_one": {"enabled": False},
+        "ticket_number": {"enabled": False},
+        "slot_time_label": {"enabled": False},
+        "slot_time_value": {"enabled": False},
     },
     "template_type": "ticket",
     "orientation": "landscape",
@@ -145,7 +166,7 @@ class Command(BaseCommand):
         else:
             template = EventTemplate(
                 event=event, template_type=ttype, name=name,
-                description='Generic 2.5:1 stub-style ticket',
+                description='Custom 4:1 stub-style ticket',
                 config=CONFIG, is_default=True, is_active=True,
             )
 

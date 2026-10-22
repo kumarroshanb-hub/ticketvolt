@@ -47,31 +47,28 @@ import useBookingDraft from '../../hooks/useBookingDraft';
 // =============================================================================
 // STEP DEFINITIONS
 // -----------------------------------------------------------------------------
-// The wizard has two distinct step sequences:
-//
 //   TICKETED EVENTS (5 steps)
 //     0. Select Event
-//     1. Choose Slot           (skipped automatically if event has no sessions)
+//     1. Choose Slot           (skipped automatically if no sessions)
 //     2. Choose Tickets
 //     3. Attendee Details      (customer + per-attendee name/email/phone)
 //     4. Review & Confirm
 //
-//   FREE REGISTRATION EVENTS (4 steps)
+//   FREE REGISTRATION EVENTS (5 steps)
 //     0. Select Event
-//     1. Choose Slot           (skipped automatically if event has no sessions)
-//     2. Registrant Details    (customer only — no per-attendee forms)
-//     3. Review & Confirm
+//     1. Choose Slot           (skipped automatically if no sessions)
+//     2. Number of Entries     (count only)
+//     3. Attendee Details      (customer + per-entry name/email/phone)
+//     4. Review & Confirm
 //
-// Both arrays use the same logical index for "attendee details" and
-// "review" by NOT renumbering — we simply omit the ticket step. The
-// helpers below translate between the user-visible step index and the
-// actual step key so the Stepper, Back button, Next button, and
-// getStepContent all stay in lockstep.
+//   `activeStep` is a KEY, not an index, so the wizard skips steps
+//   cleanly when the sequence changes.
 // =============================================================================
 
 const STEP_KEYS = {
     EVENT: 'event',
     SLOT: 'slot',
+    ENTRIES: 'entries',   // free-registration only
     TICKETS: 'tickets',
     ATTENDEES: 'attendees',
     REVIEW: 'review',
@@ -80,6 +77,7 @@ const STEP_KEYS = {
 const STEP_LABELS = {
     [STEP_KEYS.EVENT]: 'Select Event',
     [STEP_KEYS.SLOT]: 'Choose Slot',
+    [STEP_KEYS.ENTRIES]: 'Number of Entries',
     [STEP_KEYS.TICKETS]: 'Choose Tickets',
     [STEP_KEYS.ATTENDEES]: 'Attendee Details',
     [STEP_KEYS.REVIEW]: 'Review & Confirm',
@@ -108,9 +106,6 @@ const formatVenueAddress = (venue) => {
 const CreateBooking = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    // ✅ FIX [GUEST-BOOKING]: need isAuthenticated to know whether this
-    // submission is being made as a guest. Guests must NOT be
-    // hard-redirected to /login on a 401 (see CreateBooking.handleSubmit).
     const { user, isAuthenticated } = useAuth();
     const { role } = useRole();
     const theme = useTheme();
@@ -122,10 +117,7 @@ const CreateBooking = () => {
     const canManageEvents = isAdmin || isOrganizer;
     const isRegularUser = role === ROLES.USER;
 
-    // Wizard state — `activeStep` is a KEY, not an index. This is the
-    // single biggest change from the previous version. Using keys
-    // means the same `activeStep` value produces the same rendered
-    // content regardless of whether we're on a 4-step or 5-step flow.
+    // Wizard state
     const [activeStep, setActiveStep] = useState(STEP_KEYS.EVENT);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
@@ -145,19 +137,20 @@ const CreateBooking = () => {
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
 
-    // Free-registration flag: read from the selected event or the loaded
-    // details, whichever is available first.
+    // Free-registration flag
     const isFreeRegistrationFlow =
         (eventDetails && eventDetails.event_flow === 'free_registration') ||
         (selectedEvent && selectedEvent.event_flow === 'free_registration');
 
-    // ✅ All draft state lives in the hook.
+    // ✅ Draft hook — includes free-registration state
     const draft = useBookingDraft({
         tiers,
         selectedEvent,
         selectedSession,
         slotPreferences,
         bookingSource: isRegularUser ? 'user_portal' : 'admin_portal',
+        isFreeRegistration: isFreeRegistrationFlow,
+        maxEntriesPerOrder: eventDetails?.max_tickets_per_order || 10,
     });
 
     const {
@@ -175,6 +168,11 @@ const CreateBooking = () => {
         resetDraft,
         validate,
         buildPayload,
+        // free-registration
+        freeEntries,
+        freeAttendees,
+        updateFreeEntries,
+        updateFreeAttendee,
     } = draft;
 
     // Derived: net total after discount (only when discount is valid).
@@ -183,40 +181,30 @@ const CreateBooking = () => {
 
     // =========================================================================
     // STEP SEQUENCE
-    // -------------------------------------------------------------------------
-    // `visibleSteps` is the array of step keys currently relevant to this
-    // booking. It's the ONLY place that decides which steps exist.
     // =========================================================================
     const visibleSteps = useMemo(() => {
         const hasSessions = sessions && sessions.length > 0;
 
         if (isFreeRegistrationFlow) {
-            // Free registration: no ticket selection step.
             const steps = [STEP_KEYS.EVENT];
             if (hasSessions) steps.push(STEP_KEYS.SLOT);
-            steps.push(STEP_KEYS.ATTENDEES, STEP_KEYS.REVIEW);
+            steps.push(STEP_KEYS.ENTRIES, STEP_KEYS.ATTENDEES, STEP_KEYS.REVIEW);
             return steps;
         }
 
-        // Ticketed: full flow.
         const steps = [STEP_KEYS.EVENT];
         if (hasSessions) steps.push(STEP_KEYS.SLOT);
         steps.push(STEP_KEYS.TICKETS, STEP_KEYS.ATTENDEES, STEP_KEYS.REVIEW);
         return steps;
     }, [sessions, isFreeRegistrationFlow]);
 
-    // Human-readable label for a step key, taking event flow into account.
     const stepLabel = (key) =>
         isFreeRegistrationFlow && key === STEP_KEYS.ATTENDEES
             ? FREE_ATTENDEES_LABEL
             : STEP_LABELS[key];
 
-    // Convert a step key into the numeric index the MUI Stepper wants.
     const stepIndex = (key) => visibleSteps.indexOf(key);
 
-    // `getNextStep(key)` and `getPrevStep(key)` walk `visibleSteps` so
-    // the wizard always lands on a valid screen. If the key isn't in
-    // the sequence (shouldn't happen), we fall back to the first/last.
     const getNextStep = (key) => {
         const idx = visibleSteps.indexOf(key);
         if (idx === -1) return visibleSteps[visibleSteps.length - 1];
@@ -251,13 +239,6 @@ const CreateBooking = () => {
                     loadEventDetails(eventId);
                     setSelectedEvent({ id: eventId });
                     setAutoSelectDone(true);
-                    // After event details load, the flow will settle on
-                    // the SLOT step (or whatever the first non-event step
-                    // is for this event flow). We don't hard-set the
-                    // step here — the user should start from a sensible
-                    // place once the payload arrives. But since we have
-                    // an event id from the URL, jumping straight in is
-                    // the expected UX.
                     setActiveStep(STEP_KEYS.EVENT);
                 }
             }
@@ -310,10 +291,6 @@ const CreateBooking = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [totalAmount, totalTickets, selectedEvent?.id]);
 
-    // =========================================================================
-    // loadEvents — admins/organizers hit /events/ directly; regular
-    // users hit /events/public/.
-    // =========================================================================
     const loadEvents = async () => {
         setLoading(true);
         setEventLoadError(null);
@@ -400,7 +377,6 @@ const CreateBooking = () => {
 
             setSessions(data.sessions || []);
 
-            // Prefer the server's clamped `available` if present.
             const availableTiers = (data.tiers || []).filter((t) => {
                 const available = (typeof t.available === 'number')
                     ? t.available
@@ -409,9 +385,6 @@ const CreateBooking = () => {
             });
             setTiers(availableTiers);
 
-            // Only warn about sold-out / no-tickets if this is NOT a
-            // free-registration event. Free events have no tiers by
-            // design, so the warning would be noise.
             const isFree = data.event_flow === 'free_registration';
             if (!isFree) {
                 if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) {
@@ -445,21 +418,14 @@ const CreateBooking = () => {
 
         loadEventDetails(event.id);
 
-        // Advance to whatever the "next" step is after EVENT for this
-        // event flow. We can't call getNextStep here because `visibleSteps`
-        // hasn't recomputed yet (sessions not loaded). So we compute the
-        // expected next step manually based on what we know from the
-        // list-card payload.
         const hasSessionsPreview =
             (event.session_count ?? event.sessions?.length ?? 0) > 0;
         setActiveStep(hasSessionsPreview ? STEP_KEYS.SLOT : nextNonSlotStep(event));
     };
 
-    // Helper used only during initial event selection: figure out which
-    // step comes after SLOT for this event flow.
     const nextNonSlotStep = (event) => {
         const isFree = event.event_flow === 'free_registration';
-        return isFree ? STEP_KEYS.ATTENDEES : STEP_KEYS.TICKETS;
+        return isFree ? STEP_KEYS.ENTRIES : STEP_KEYS.TICKETS;
     };
 
     // =========================================================================
@@ -578,17 +544,19 @@ const CreateBooking = () => {
     // =========================================================================
 
     const handleSubmit = async () => {
-        // Free registrations don't pick tickets, so skip the "all
-        // attendees have names" check that depends on ticketList.
         if (!isFreeRegistrationFlow) {
             if (!validate()) {
                 toast.error('Please fix all errors before submitting');
                 return;
             }
         } else {
-            // For free registration we only require the customer fields.
+            // Free registration: customer fields + per-entry names.
             if (!customer.name?.trim() || !customer.email?.trim() || !customer.phone?.trim()) {
                 toast.error('Please fill in name, email, and phone');
+                return;
+            }
+            if (freeAttendees.some((a) => !a.name?.trim())) {
+                toast.error('Please enter a name for every entry');
                 return;
             }
         }
@@ -597,10 +565,10 @@ const CreateBooking = () => {
         try {
             const payload = buildPayload();
 
-            // Free registration: the backend's `_create_free_registration`
-            // path ignores tiers/tickets. Send an empty list and no
-            // discount so the payload is unambiguous.
             if (isFreeRegistrationFlow) {
+                // buildPayload already populates metadata.entries /
+                // metadata.attendees. Keep tickets empty and drop any
+                // discount so the payload is unambiguous.
                 payload.tickets = [];
                 payload.total_amount = 0;
                 delete payload.discount_code;
@@ -610,11 +578,6 @@ const CreateBooking = () => {
 
             console.log('📝 Full booking data:', JSON.stringify(payload, null, 2));
 
-            // ✅ FIX [GUEST-BOOKING]: pass skipAuthRedirect for guests so the
-            // axios interceptor doesn't bounce them to /login if the create
-            // request ever 401s. The backend now permits anonymous create, so a
-            // 401 here would indicate a real misconfiguration — we want to
-            // surface that as an inline toast, not a page reload.
             const response = await api.post('/bookings/', payload, {
                 skipAuthRedirect: !isAuthenticated,
             });
@@ -622,18 +585,19 @@ const CreateBooking = () => {
 
             toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
 
-            // ✅ FIX [GUEST-BOOKING]: a guest cannot view /app/bookings (it's a
-            // ProtectedRoute), so send them to the public gate with their booking
-            // reference instead of bouncing through /login.
-            navigate(
-                isAuthenticated ? '/app/bookings' : '/gate',
-                isAuthenticated ? undefined : {
+            // ✅ Guest → Landing. Registered → Bookings listing.
+            if (isAuthenticated) {
+                navigate('/app/bookings', { replace: true });
+            } else {
+                navigate('/', {
+                    replace: true,
                     state: {
                         bookingReference: result.booking_reference,
                         customerEmail: result.customer_email,
+                        justBooked: true,
                     },
-                }
-            );
+                });
+            }
         } catch (error) {
             let errorMsg = 'Failed to create booking';
             const data = error.response?.data;
@@ -653,10 +617,6 @@ const CreateBooking = () => {
 
     // =========================================================================
     // Step navigation
-    // -------------------------------------------------------------------------
-    // Both handleNext and handleBack walk `visibleSteps`. They NEVER
-    // assume a fixed numeric step — this is what makes the free-flow
-    // wizard skip Choose Tickets correctly.
     // =========================================================================
 
     const handleBack = () => {
@@ -665,7 +625,6 @@ const CreateBooking = () => {
     };
 
     const handleNext = () => {
-        // ---- Validate the current step's requirements ----
         if (activeStep === STEP_KEYS.EVENT) {
             if (!selectedEvent) {
                 toast.warning('Please select an event');
@@ -680,6 +639,13 @@ const CreateBooking = () => {
             }
         }
 
+        if (activeStep === STEP_KEYS.ENTRIES) {
+            if (freeEntries < 1) {
+                toast.warning('Please select at least one entry');
+                return;
+            }
+        }
+
         if (activeStep === STEP_KEYS.TICKETS) {
             if (totalTickets === 0) {
                 toast.warning('Please select at least one ticket');
@@ -688,8 +654,19 @@ const CreateBooking = () => {
         }
 
         if (activeStep === STEP_KEYS.ATTENDEES) {
-            // Per-attendee name validation only applies to ticketed events.
-            if (!isFreeRegistrationFlow) {
+            if (isFreeRegistrationFlow) {
+                if (freeAttendees.some((a) => !a.name?.trim())) {
+                    toast.warning('Please enter a name for every entry');
+                    return;
+                }
+                const badEmail = freeAttendees.some(
+                    (a) => a.email?.trim() && !/^\S+@\S+\.\S+$/.test(a.email.trim())
+                );
+                if (badEmail) {
+                    toast.warning('One or more entries have an invalid email');
+                    return;
+                }
+            } else {
                 const allFilled = attendees.every((a) => a.name?.trim());
                 if (!allFilled) {
                     toast.warning('Please enter names for all attendees');
@@ -698,7 +675,6 @@ const CreateBooking = () => {
             }
         }
 
-        // ---- Advance ----
         const next = getNextStep(activeStep);
         setActiveStep(next);
     };
@@ -730,10 +706,6 @@ const CreateBooking = () => {
                         const isPast =
                             event.end_date && new Date(event.end_date) < new Date();
 
-                        // ---- Event flow ----
-                        // Free registrations never sell out in the "tickets" sense. They have
-                        // a seat/slot capacity, and when it's exhausted the correct UX is
-                        // "Registration Closed" — not "Sold Out".
                         const isFreeRegistration = event.event_flow === 'free_registration';
 
                         const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
@@ -741,10 +713,6 @@ const CreateBooking = () => {
                         const totalCapacity = event.total_capacity ?? 0;
                         const totalSold = event.total_tickets_sold ?? 0;
 
-                        // A ticketed event is sold out when capacity is known and exhausted.
-                        // A registration event is *closed* when capacity is known and exhausted.
-                        // If capacity is 0/unknown (tiers not loaded yet), never call it sold out
-                        // — the server is the source of truth when we open the event.
                         const capacityKnown = totalCapacity > 0;
                         const capacityExhausted = capacityKnown && totalSold >= totalCapacity;
 
@@ -957,8 +925,6 @@ const CreateBooking = () => {
         const hasSessions = sessions && sessions.length > 0;
 
         if (!hasSessions) {
-            // Should never render — the step is omitted from `visibleSteps`
-            // when there are no sessions. Kept as a defensive fallback.
             return (
                 <Box sx={{ py: 2 }}>
                     <Alert severity="info">
@@ -1098,11 +1064,83 @@ const CreateBooking = () => {
     };
 
     // =========================================================================
-    // Step 3 — Ticket selection (ticketed events only)
-    // -------------------------------------------------------------------------
-    // This step is NOT in `visibleSteps` for free-registration events,
-    // so it can never be reached by the user. Kept here for ticketed
-    // events only.
+    // Step 2b — Number of entries (free registration only)
+    // =========================================================================
+
+    const renderFreeEntries = () => {
+        const max = eventDetails?.max_tickets_per_order || 10;
+        return (
+            <Box sx={{ py: 2 }}>
+                <Alert severity="info" sx={{ mb: 3 }}>
+                    How many people are you registering? You'll enter each
+                    person's name and email on the next step.
+                </Alert>
+
+                <Paper
+                    sx={{
+                        p: isMobile ? 2 : 3,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: 2,
+                    }}
+                >
+                    <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            Number of entries
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            Max {max} per registration
+                        </Typography>
+                    </Box>
+
+                    <Box display="flex" alignItems="center" gap={2}>
+                        <IconButton
+                            onClick={() => updateFreeEntries(-1)}
+                            disabled={freeEntries <= 1}
+                            sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }}
+                            aria-label="Decrease entries"
+                        >
+                            <RemoveIcon fontSize="small" />
+                        </IconButton>
+                        <Typography
+                            variant="h5"
+                            sx={{ minWidth: 44, textAlign: 'center', fontWeight: 700 }}
+                        >
+                            {freeEntries}
+                        </Typography>
+                        <IconButton
+                            onClick={() => updateFreeEntries(1)}
+                            disabled={freeEntries >= max}
+                            sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }}
+                            aria-label="Increase entries"
+                        >
+                            <AddIcon fontSize="small" />
+                        </IconButton>
+                    </Box>
+                </Paper>
+
+                <Box
+                    sx={{
+                        mt: 3,
+                        p: 2,
+                        bgcolor: 'background.default',
+                        borderRadius: 2,
+                    }}
+                >
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                        You are registering <strong>{freeEntries}</strong>{' '}
+                        {freeEntries === 1 ? 'person' : 'people'}. Each person
+                        will receive their own registration pass.
+                    </Typography>
+                </Box>
+            </Box>
+        );
+    };
+
+    // =========================================================================
+    // Step 3 — Ticket selection (ticketed only)
     // =========================================================================
 
     const renderTicketSelection = () => (
@@ -1307,14 +1345,18 @@ const CreateBooking = () => {
         <Box sx={{ py: 2 }}>
             <Alert severity="info" sx={{ mb: 3 }}>
                 {isFreeRegistrationFlow
-                    ? 'Enter the registrant details'
+                    ? `Enter the details for ${freeEntries} ${freeEntries === 1 ? 'person' : 'people'}`
                     : `Enter details for ${totalTickets} attendee(s)`}
             </Alert>
 
+            {/* -------- Customer (lead) block -------- */}
             <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
+                <Typography
+                    variant="subtitle1"
+                    sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
+                >
                     <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                    Customer Details
+                    {isFreeRegistrationFlow ? 'Primary Contact' : 'Customer Details'}
                 </Typography>
                 <Grid container spacing={2}>
                     <Grid item xs={12} md={4}>
@@ -1374,12 +1416,114 @@ const CreateBooking = () => {
                 </Grid>
             </Paper>
 
-            {/* Per-attendee form is only rendered for ticketed events.
-                Free registrations have exactly one attendee — the customer —
-                and the backend issues a single registration pass. */}
-            {!isFreeRegistrationFlow && (
+            {/* -------- FREE REGISTRATION: per-entry attendee list -------- */}
+            {isFreeRegistrationFlow ? (
                 <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
+                    <Typography
+                        variant="subtitle1"
+                        sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}
+                    >
+                        <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                        Entry Details ({freeEntries})
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                        Each entry receives its own registration pass. Blank
+                        email/phone will fall back to the primary contact's.
+                    </Typography>
+                    {errors.freeAttendees && (
+                        <Typography
+                            variant="caption"
+                            sx={{ color: 'error.main', display: 'block', mb: 1 }}
+                        >
+                            {errors.freeAttendees}
+                        </Typography>
+                    )}
+
+                    <Box sx={{ maxHeight: 480, overflowY: 'auto' }}>
+                        {freeAttendees.map((att, index) => (
+                            <Paper
+                                key={index}
+                                sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}
+                            >
+                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                    Entry #{index + 1}
+                                    {index === 0 ? ' — primary contact' : ''}
+                                </Typography>
+                                <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                                    <Grid item xs={12} md={4}>
+                                        <TextField
+                                            fullWidth
+                                            placeholder="Full Name *"
+                                            value={att.name}
+                                            onChange={(e) =>
+                                                updateFreeAttendee(index, 'name', e.target.value)
+                                            }
+                                            size="small"
+                                            error={!att.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
+                                        />
+                                    </Grid>
+                                    <Grid item xs={12} md={4}>
+                                        <TextField
+                                            fullWidth
+                                            placeholder={
+                                                index === 0
+                                                    ? 'Email (defaults to primary)'
+                                                    : 'Email (optional)'
+                                            }
+                                            value={att.email}
+                                            onChange={(e) =>
+                                                updateFreeAttendee(index, 'email', e.target.value)
+                                            }
+                                            size="small"
+                                            type="email"
+                                        />
+                                    </Grid>
+                                    <Grid item xs={12} md={4}>
+                                        <TextField
+                                            fullWidth
+                                            placeholder={
+                                                index === 0
+                                                    ? 'Phone (defaults to primary)'
+                                                    : 'Phone (optional)'
+                                            }
+                                            value={att.phone}
+                                            onChange={(e) =>
+                                                updateFreeAttendee(index, 'phone', e.target.value)
+                                            }
+                                            size="small"
+                                        />
+                                    </Grid>
+                                </Grid>
+                            </Paper>
+                        ))}
+                    </Box>
+
+                    <Button
+                        variant="text"
+                        size="small"
+                        onClick={() => {
+                            if (!customer.name?.trim()) {
+                                toast.warning('Enter the primary contact name first');
+                                return;
+                            }
+                            freeAttendees.forEach((att, i) => {
+                                if (i > 0 && !att.name?.trim()) {
+                                    updateFreeAttendee(i, 'name', customer.name);
+                                }
+                            });
+                        }}
+                        sx={{ mt: 1 }}
+                    >
+                        Fill empty names with primary contact
+                    </Button>
+                </Paper>
+            ) : (
+                /* -------- TICKETED: per-ticket attendee list -------- */
+                <Paper sx={{ p: isMobile ? 2 : 3 }}>
+                    <Typography
+                        variant="subtitle1"
+                        sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
+                    >
                         <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                         Attendee Details
                         {errors.attendees && (
@@ -1537,9 +1681,41 @@ const CreateBooking = () => {
                         </Typography>
                         <Box>
                             {isFreeRegistrationFlow ? (
-                                <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-                                    Free registration — 1 pass per person, no payment.
-                                </Typography>
+                                <Box>
+                                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                                        Free registration — <strong>{freeEntries}</strong>{' '}
+                                        {freeEntries === 1 ? 'pass' : 'passes'} will be issued, one per entry.
+                                    </Typography>
+                                    {freeAttendees.map((att, i) => (
+                                        <Box
+                                            key={i}
+                                            sx={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                py: 0.75,
+                                                borderBottom: '1px solid #f1f5f9',
+                                                gap: 1,
+                                            }}
+                                        >
+                                            <Box sx={{ minWidth: 0 }}>
+                                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
+                                                    #{i + 1} {att.name || '(name missing)'}
+                                                </Typography>
+                                                {att.email && (
+                                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
+                                                        {att.email}
+                                                    </Typography>
+                                                )}
+                                            </Box>
+                                            <Chip
+                                                size="small"
+                                                label="REG"
+                                                variant="outlined"
+                                                sx={{ alignSelf: 'center', fontSize: '10px', height: '20px' }}
+                                            />
+                                        </Box>
+                                    ))}
+                                </Box>
                             ) : (
                                 <>
                                     {ticketList.map((ticket, index) => (
@@ -1628,6 +1804,8 @@ const CreateBooking = () => {
                 return renderEventSelection();
             case STEP_KEYS.SLOT:
                 return renderSlotSelection();
+            case STEP_KEYS.ENTRIES:
+                return renderFreeEntries();
             case STEP_KEYS.TICKETS:
                 return renderTicketSelection();
             case STEP_KEYS.ATTENDEES:
@@ -1639,9 +1817,6 @@ const CreateBooking = () => {
         }
     };
 
-    // If `activeStep` isn't in `visibleSteps` (can happen briefly during
-    // event switching, before `visibleSteps` recomputes), fall back to
-    // the first step so the user sees something valid.
     const safeActiveStep = visibleSteps.includes(activeStep)
         ? activeStep
         : visibleSteps[0];

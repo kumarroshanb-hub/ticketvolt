@@ -1,22 +1,16 @@
 // frontend/src/hooks/useBookingDraft.js
 //
 // Encapsulates the multi-step booking wizard's draft state:
-//   - tier quantities
-//   - derived ticket list
-//   - attendee entries (which must stay in sync with ticket list WITHOUT
+//   - tier quantities (ticketed flow)
+//   - derived ticket list (ticketed flow)
+//   - attendee entries (kept in sync with ticket list WITHOUT
 //     destroying user-entered names when quantities change)
+//   - free-registration entry count + per-entry attendee list
 //   - customer fields
 //   - validation
 //   - the final payload builder
-//
-// Extracted from CreateBooking.js so the sync logic is testable and the
-// page component focuses on presentation.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
 
 const EMPTY_CUSTOMER = {
     name: '',
@@ -31,9 +25,7 @@ const isValidEmail = (email) =>
 
 const digitsOnly = (s) => String(s || '').replace(/\D/g, '');
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
+const EMPTY_ATTENDEE = { name: '', email: '', phone: '' };
 
 export default function useBookingDraft({
     tiers = [],
@@ -41,22 +33,27 @@ export default function useBookingDraft({
     selectedSession = null,
     slotPreferences = [],
     bookingSource = 'user_portal',
+    maxEntriesPerOrder = 10,
+    isFreeRegistration = false,
 } = {}) {
-    // ---- Tier quantities ----
+    // ---- Ticketed: tier quantities ----
     const [quantities, setQuantities] = useState({});
+
+    // ---- Free registration: entry count + per-entry attendees ----
+    const [freeEntries, setFreeEntries] = useState(1);
+    const [freeAttendees, setFreeAttendees] = useState([{ ...EMPTY_ATTENDEE }]);
 
     // ---- Customer ----
     const [customer, setCustomer] = useState(EMPTY_CUSTOMER);
 
-    // ---- Attendees ----
-    // Kept in sync with the derived ticket list via the effect below.
+    // ---- Ticketed: attendees (kept in sync with ticketList) ----
     const [attendees, setAttendees] = useState([]);
 
     // ---- Validation errors ----
     const [errors, setErrors] = useState({});
 
     // -----------------------------------------------------------------------
-    // Reset quantities whenever the tier set changes (e.g. new event selected)
+    // Reset quantities whenever the tier set changes
     // -----------------------------------------------------------------------
     useEffect(() => {
         const next = {};
@@ -67,7 +64,7 @@ export default function useBookingDraft({
     }, [tiers]);
 
     // -----------------------------------------------------------------------
-    // Derived ticket list — plain data, no side effects
+    // Derived ticket list (ticketed flow only)
     // -----------------------------------------------------------------------
     const ticketList = useMemo(() => {
         const list = [];
@@ -94,22 +91,10 @@ export default function useBookingDraft({
     );
 
     // -----------------------------------------------------------------------
-    // ✅ THE FIX: merge ticketList into attendees WITHOUT destroying user data.
-    //
-    //   For each new ticket slot, we look for an existing attendee entry
-    //   for the same tier that hasn't already been claimed by an earlier
-    //   slot in this pass. If found, we REUSE it (preserving name/email/phone).
-    //   Otherwise, we create a fresh empty entry.
-    //
-    //   This means:
-    //     • Incrementing a tier's quantity keeps all existing names.
-    //     • Decrementing a tier's quantity drops the tail-end attendee(s)
-    //       for that tier — the earliest entries are kept.
-    //     • Reordering tiers in the UI doesn't scramble names.
+    // Merge ticketList into attendees WITHOUT destroying user data
     // -----------------------------------------------------------------------
     useEffect(() => {
         setAttendees((prev) => {
-            // Map (tier_id -> list of previous entries, in their original order)
             const prevByTier = new Map();
             for (const a of prev) {
                 const tid = a.tier_id;
@@ -117,7 +102,6 @@ export default function useBookingDraft({
                 prevByTier.get(tid).push(a);
             }
 
-            // Track how many of each tier we've consumed while walking ticketList
             const consumed = new Map();
 
             return ticketList.map((ticket, newIndex) => {
@@ -129,8 +113,6 @@ export default function useBookingDraft({
                 const prevEntry = pool[ordinal];
 
                 if (prevEntry) {
-                    // Preserve user-entered fields; only refresh position-
-                    // dependent fields so the entry stays aligned with its slot.
                     return {
                         ...prevEntry,
                         index: newIndex,
@@ -139,7 +121,6 @@ export default function useBookingDraft({
                     };
                 }
 
-                // No reusable entry — make a fresh empty one.
                 return {
                     index: newIndex,
                     tier_id: tid,
@@ -151,6 +132,21 @@ export default function useBookingDraft({
             });
         });
     }, [ticketList]);
+
+    // -----------------------------------------------------------------------
+    // Keep freeAttendees length in sync with freeEntries
+    // -----------------------------------------------------------------------
+    useEffect(() => {
+        setFreeAttendees((prev) => {
+            if (prev.length === freeEntries) return prev;
+            if (prev.length > freeEntries) return prev.slice(0, freeEntries);
+            const extra = Array.from(
+                { length: freeEntries - prev.length },
+                () => ({ ...EMPTY_ATTENDEE })
+            );
+            return [...prev, ...extra];
+        });
+    }, [freeEntries]);
 
     // -----------------------------------------------------------------------
     // Actions
@@ -182,6 +178,37 @@ export default function useBookingDraft({
         });
     }, []);
 
+    const updateFreeEntries = useCallback(
+        (delta) => {
+            setFreeEntries((prev) => {
+                const next = prev + delta;
+                if (next < 1) return 1;
+                if (next > maxEntriesPerOrder) return maxEntriesPerOrder;
+                return next;
+            });
+        },
+        [maxEntriesPerOrder]
+    );
+
+    const setFreeEntriesDirect = useCallback(
+        (value) => {
+            const n = parseInt(value, 10);
+            if (Number.isNaN(n)) return;
+            const clamped = Math.max(1, Math.min(n, maxEntriesPerOrder));
+            setFreeEntries(clamped);
+        },
+        [maxEntriesPerOrder]
+    );
+
+    const updateFreeAttendee = useCallback((index, field, value) => {
+        setFreeAttendees((prev) => {
+            const next = [...prev];
+            if (!next[index]) return prev;
+            next[index] = { ...next[index], [field]: value };
+            return next;
+        });
+    }, []);
+
     const handleCustomerChange = useCallback((field, value) => {
         setCustomer((prev) => ({ ...prev, [field]: value }));
         setErrors((prev) => (prev[field] ? { ...prev, [field]: null } : prev));
@@ -197,6 +224,8 @@ export default function useBookingDraft({
         setQuantities({});
         setCustomer(EMPTY_CUSTOMER);
         setAttendees([]);
+        setFreeEntries(1);
+        setFreeAttendees([{ ...EMPTY_ATTENDEE }]);
         setErrors({});
     }, []);
 
@@ -220,18 +249,68 @@ export default function useBookingDraft({
             next.phone = 'Phone number must be at least 10 digits';
         }
 
-        if (attendees.some((a) => !a.name?.trim())) {
-            next.attendees = 'All attendees must have names';
+        if (isFreeRegistration) {
+            if (freeEntries < 1) {
+                next.entries = 'At least one entry is required';
+            }
+            const missingNames = freeAttendees.some((a) => !a.name?.trim());
+            if (missingNames) {
+                next.freeAttendees = 'Every entry must have a name';
+            }
+            const badEmails = freeAttendees.some(
+                (a) => a.email?.trim() && !isValidEmail(a.email)
+            );
+            if (badEmails) {
+                next.freeAttendees = 'One or more entries have an invalid email';
+            }
+        } else {
+            if (attendees.some((a) => !a.name?.trim())) {
+                next.attendees = 'All attendees must have names';
+            }
         }
 
         setErrors(next);
         return Object.keys(next).length === 0;
-    }, [customer, attendees]);
+    }, [customer, attendees, isFreeRegistration, freeEntries, freeAttendees]);
 
     // -----------------------------------------------------------------------
     // Payload builder
     // -----------------------------------------------------------------------
     const buildPayload = useCallback(() => {
+        if (isFreeRegistration) {
+            const attendeesPayload = freeAttendees.map((a, i) => {
+                const name = (a.name || '').trim()
+                    || (i === 0 ? customer.name : '');
+                const email = (a.email || '').trim()
+                    || (i === 0 ? customer.email : '');
+                const phone = (a.phone || '').trim()
+                    || (i === 0 ? customer.phone : '');
+                return { name, email, phone };
+            });
+
+            return {
+                event: selectedEvent?.id,
+                customer_name: customer.name,
+                customer_email: customer.email,
+                customer_phone: customer.phone,
+                whatsapp_number: customer.whatsapp || customer.phone,
+                total_amount: 0,
+                tickets: [],
+                metadata: {
+                    booking_source: bookingSource,
+                    notes: customer.notes,
+                    slot_id: selectedSession?.id || null,
+                    slot_preferences: slotPreferences,
+                    slot_allocation_message: selectedSession ? 'Slot allocated' : '',
+                    slot_start_time: selectedSession?.start_time || null,
+                    slot_end_time: selectedSession?.end_time || null,
+                    entries: freeEntries,
+                    attendees: attendeesPayload,
+                    total_tickets: freeEntries,
+                },
+            };
+        }
+
         const ticketsWithAttendees = ticketList.map((ticket, index) => ({
             tier_id: ticket.tier_id,
             attendee_name: attendees[index]?.name || customer.name,
@@ -290,6 +369,9 @@ export default function useBookingDraft({
             },
         };
     }, [
+        isFreeRegistration,
+        freeAttendees,
+        freeEntries,
         ticketList,
         attendees,
         customer,
@@ -301,25 +383,30 @@ export default function useBookingDraft({
     ]);
 
     return {
-        // state
-        quantities,
+        // shared
         customer,
-        attendees,
         errors,
 
-        // derived
+        // ticketed
+        quantities,
+        attendees,
         ticketList,
         totalTickets,
         totalAmount,
-
-        // actions
         updateQuantity,
         updateAttendee,
-        handleCustomerChange,
         fillEmptyNamesWithCustomer,
-        resetDraft,
 
-        // flow
+        // free-registration
+        freeEntries,
+        freeAttendees,
+        updateFreeEntries,
+        setFreeEntries: setFreeEntriesDirect,
+        updateFreeAttendee,
+
+        // customer + flow
+        handleCustomerChange,
+        resetDraft,
         validate,
         buildPayload,
     };

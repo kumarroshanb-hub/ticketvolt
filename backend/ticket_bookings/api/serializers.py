@@ -923,8 +923,13 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def _validate_free_registration(self, data):
         """
-        Free registrations: minimum required fields only, no tiers, no
-        payment. Enforces one active registration per email per event.
+        Free registrations: minimum required fields, no tiers, no
+        payment, but 1..N entries.
+
+        Validation mirrors `_resolve_free_registration_entries` in
+        booking_api.py so a bad payload fails here with a field-level
+        error instead of reaching the view and 400-ing with a flat
+        string.
         """
         required = ['customer_name', 'customer_email', 'customer_phone']
         for f in required:
@@ -949,11 +954,85 @@ class BookingSerializer(serializers.ModelSerializer):
                         'You are already registered for this event.'
                 })
 
+        # ---- entries / attendees validation ----
+        md = data.get('metadata')
+        if md is None:
+            md = (self.initial_data.get('metadata')
+                  if isinstance(self.initial_data, dict) else None)
+        md = md or {}
+
+        raw_entries = md.get('entries')
+        attendees = md.get('attendees') or []
+
+        if not isinstance(attendees, list):
+            raise serializers.ValidationError({
+                'metadata': {'attendees': 'Must be a list.'}
+            })
+
+        try:
+            entries = int(raw_entries) if raw_entries is not None else len(attendees) or 1
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({
+                'metadata': {'entries': 'Must be a positive integer.'}
+            })
+
+        if entries < 1:
+            raise serializers.ValidationError({
+                'metadata': {'entries': 'At least one entry is required.'}
+            })
+
+        max_per_order = self._event_obj.max_tickets_per_order or 10
+        if entries > max_per_order:
+            raise serializers.ValidationError({
+                'metadata': {
+                    'entries': f'Maximum {max_per_order} entries per registration.'
+                }
+            })
+
+        if attendees:
+            if len(attendees) != entries:
+                raise serializers.ValidationError({
+                    'metadata': {'attendees': (
+                        f'Expected {entries} attendee(s), got {len(attendees)}.'
+                    )}
+                })
+            for i, att in enumerate(attendees):
+                if not isinstance(att, dict):
+                    raise serializers.ValidationError({
+                        'metadata': {'attendees': f'Entry {i + 1} must be an object.'}
+                    })
+                if not (att.get('name') or '').strip():
+                    raise serializers.ValidationError({
+                        'metadata': {'attendees': f'Entry {i + 1} is missing a name.'}
+                    })
+                att_email = (att.get('email') or '').strip()
+                if att_email and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', att_email):
+                    raise serializers.ValidationError({
+                        'metadata': {
+                            'attendees': f'Entry {i + 1} has an invalid email address.'
+                        }
+                    })
+
         # Force zero amount. Drop any client-supplied tiers / discount.
         data['total_amount'] = Decimal('0.00')
         data['discount_applied'] = Decimal('0.00')
         data['discount_code'] = ''
         data.pop('tickets', None)
+
+        # Persist normalised entries/attendees back into metadata so the
+        # view sees exactly what was validated.
+        normalised_md = dict(md) if isinstance(md, dict) else {}
+        normalised_md['entries'] = entries
+        if attendees:
+            normalised_md['attendees'] = [
+                {
+                    'name': (att.get('name') or '').strip(),
+                    'email': (att.get('email') or '').strip(),
+                    'phone': (att.get('phone') or '').strip(),
+                }
+                for att in attendees
+            ]
+        data['metadata'] = normalised_md
 
         return data
 

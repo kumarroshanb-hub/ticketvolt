@@ -82,7 +82,7 @@
                                     {% if is_free %}FREE REGISTRATION{% else %}CONFIRMED{% endif %}
                                 </span>
                                 <span style="margin: 0 6px;">•</span>
-                                <span>1 pass</span>
+                                <span>{{ pass_count }} pass{{ pass_count|pluralize }}</span>
                             </div>
 
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -99,7 +99,19 @@
                                 <tr>
                                     <td width="50%" valign="top">
                                         <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">📍 Venue</div>
-                                        <div style="font-size: 15px; font-weight: 600; color: #333333;">{{ event.venue.name|default:"TBD" }}</div>
+                                        <div style="font-size: 15px; font-weight: 600; color: #333333;">
+                                            {% if event.venue %}
+                                                {{ event.venue.name }}
+                                                {% if event.venue.address_line1 %}, {{ event.venue.address_line1 }}{% endif %}
+                                                {% if event.venue.address_line2 %}, {{ event.venue.address_line2 }}{% endif %}
+                                                {% if event.venue.city %}, {{ event.venue.city }}{% endif %}
+                                                {% if event.venue.state %}, {{ event.venue.state }}{% endif %}
+                                                {% if event.venue.postal_code %}, {{ event.venue.postal_code }}{% endif %}
+                                                {% if event.venue.country %}, {{ event.venue.country }}{% endif %}
+                                            {% else %}
+                                                TBD
+                                            {% endif %}
+                                        </div>
                                     </td>
                                     <td width="50%" valign="top">
                                         <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">🎫 Booking Ref</div>
@@ -120,7 +132,13 @@
                                         <ul style="margin: 0; padding-left: 20px; color: #555555; font-size: 13px; line-height: 1.6;">
                                             <li>Open the attached pass on your mobile device or print it</li>
                                             <li>Show the QR code at the entrance for entry</li>
-                                            <li>Your pass is valid for one person only</li>
+                                            <li>
+                                                {% if pass_count > 1 %}
+                                                    Each pass is valid for one person. You have {{ pass_count }} passes, one for each attendee.
+                                                {% else %}
+                                                    Your pass is valid for one person only
+                                                {% endif %}
+                                            </li>
                                         </ul>
                                     </td>
                                 </tr>

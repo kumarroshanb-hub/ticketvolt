@@ -550,12 +550,12 @@ class BookingViewSet(viewsets.ModelViewSet):
         }
 
         subject = (
-            f"✅ You're registered for {event.title}"
+            f"You're registered for {event.title}"
             if is_free else
-            f'✅ Registration confirmed for {event.title}'
+            f'Registration confirmed for {event.title}'
         )
         if len(passes) > 1:
-            subject = f"✅ {len(passes)} passes confirmed — {event.title}"
+            subject = f"{len(passes)} passes confirmed — {event.title}"
 
         try:
             html_content = render_to_string('emails/registration_confirmation.html', context)

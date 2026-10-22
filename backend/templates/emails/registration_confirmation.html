@@ -27,35 +27,19 @@
                         </td>
                     </tr>
 
-                    <!-- PASS DETAILS (no inline QR — the pass is attached) -->
+                    <!-- PASS DETAILS -->
                     <tr>
                         <td style="padding: 24px 28px; border-bottom: 2px dashed #e5e5e5;">
                             <div style="font-size: 11px; color: #555555; font-weight: 700; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px;">
-                                Your Registration Pass
+                                Your Registration
                             </div>
 
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td style="padding-bottom: 12px;">
-                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Registrant</div>
+                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Primary Registrant</div>
                                         <div style="font-size: 16px; font-weight: 700; color: #333333; margin-top: 2px;">
                                             {{ booking.customer_name|default:"Guest" }}
-                                        </div>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding-bottom: 12px;">
-                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Pass Code</div>
-                                        <div style="font-size: 15px; font-family: monospace; font-weight: 700; color: #333333; margin-top: 2px;">
-                                            {{ ticket.unique_code }}
-                                        </div>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td>
-                                        <div style="font-size: 11px; color: #888888; text-transform: uppercase; font-weight: 600;">Booking Reference</div>
-                                        <div style="font-size: 14px; font-family: monospace; font-weight: 600; color: #333333; margin-top: 2px;">
-                                            {{ booking.booking_reference }}
                                         </div>
                                     </td>
                                 </tr>
@@ -63,7 +47,7 @@
 
                             <div style="margin-top: 16px; padding: 10px 14px; background-color: #f0f7ff; border-left: 4px solid #333333; border-radius: 6px;">
                                 <div style="font-size: 12px; color: #333333; font-weight: 600;">
-                                    📎 Your printable pass is attached to this email.
+                                    📎 Your printable pass(es) attached to this email.
                                 </div>
                                 <div style="font-size: 11px; color: #555555; margin-top: 3px;">
                                     Open the attached PDF/PNG and scan the QR code at the entrance.

@@ -941,17 +941,42 @@ class BookingSerializer(serializers.ModelSerializer):
         email = (data.get('customer_email')
                  or self.initial_data.get('customer_email', '')).strip().lower()
 
+        # ------------------------------------------------------------
+        # Duplicate-email guard for free registration.
+        #
+        # The only rule enforced here is: same email + same event +
+        # non-cancelled/non-refunded status cannot register twice. A
+        # different event (even under the same email) is allowed —
+        # that's the whole point of letting one person RSVP to many
+        # events.
+        #
+        # The error is keyed on `customer_email` so the frontend can
+        # focus the offending field and show a targeted
+        # "use a different email" prompt, rather than the user seeing
+        # a generic "Failed to create booking" toast.
+        # ------------------------------------------------------------
         if self.instance is None and email:
-            already = Booking.objects.filter(
-                event=self._event_obj,
-                customer_email__iexact=email,
-                status__in=['pending', 'processing', 'paid',
-                            'confirmed', 'completed'],
-            ).exists()
-            if already:
+            existing = (
+                Booking.objects
+                .filter(
+                    event=self._event_obj,
+                    customer_email__iexact=email,
+                    status__in=[
+                        'pending', 'processing', 'paid',
+                        'confirmed', 'completed',
+                    ],
+                )
+                .order_by('-created_at')
+                .first()
+            )
+            if existing is not None:
                 raise serializers.ValidationError({
-                    'customer_email':
-                        'You are already registered for this event.'
+                    'customer_email': [
+                        f'This email is already registered for this event '
+                        f'(booking {existing.booking_reference}). '
+                        f'Please use a different email address, or '
+                        f'look up your existing booking.'
+                    ],
                 })
 
         # ---- entries / attendees validation ----

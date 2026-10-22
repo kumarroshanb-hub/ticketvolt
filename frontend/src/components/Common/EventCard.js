@@ -306,7 +306,6 @@ const getCategoryIcon = (category) => {
     return icons[(category || 'other').toLowerCase()] || '📌';
 };
 
-// Picks the best template image regardless of which type was uploaded.
 const pickAnnouncementImage = (event) => {
     const images = event.template_images || {};
 
@@ -324,19 +323,6 @@ const pickAnnouncementImage = (event) => {
     );
 };
 
-// ---------------------------------------------------------------------------
-// ✅ FIX [EVT-CARD-FLOW-LOUD]: flow resolution
-// ---------------------------------------------------------------------------
-// The previous version defaulted missing event_flow to 'ticketed' silently.
-// That hid the real bug (backend dropping event_flow on create). This
-// version:
-//   • Accepts ONLY the three values the backend emits.
-//   • Warns in dev if the flow is missing or unknown — so a future
-//     regression is visible in the console instead of silently
-//     rendering the wrong CTA.
-//   • Returns the resolved flow alongside the label/icon so the two
-//     can never disagree.
-// ---------------------------------------------------------------------------
 const VALID_FLOWS = ['ticketed', 'free_registration', 'paid_registration'];
 
 const resolveFlow = (event) => {
@@ -359,9 +345,6 @@ const resolveFlow = (event) => {
 const isRegistrationFlow = (flow) =>
     flow === 'free_registration' || flow === 'paid_registration';
 
-// ---------------------------------------------------------------------------
-// CTA copy + icon resolver.
-// ---------------------------------------------------------------------------
 const resolveCta = (event, isActuallySoldOut) => {
     const flow = resolveFlow(event);
 
@@ -400,13 +383,6 @@ const resolveCta = (event, isActuallySoldOut) => {
     }
 };
 
-// ---------------------------------------------------------------------------
-// ✅ FIX [EVT-CARD-PRICE]: price display for registration events
-// ---------------------------------------------------------------------------
-// Free-registration events have a zero-price General tier. Showing "From ₹0"
-// is misleading; "Free" is the honest label. Paid registrations show the
-// registration fee, which IS the price.
-// ---------------------------------------------------------------------------
 const resolvePriceDisplay = (flow, minPrice, tiers) => {
     if (flow === 'free_registration') {
         return { kind: 'free' };
@@ -414,14 +390,13 @@ const resolvePriceDisplay = (flow, minPrice, tiers) => {
     if (minPrice !== null && !Number.isNaN(minPrice)) {
         return { kind: 'number', value: minPrice };
     }
-    // No tiers loaded yet.
     if (tiers.length === 0) {
         return { kind: 'dash' };
     }
     return { kind: 'dash' };
 };
 
-const EventCard = ({ event: initialEvent }) => {
+const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
 
@@ -440,8 +415,6 @@ const EventCard = ({ event: initialEvent }) => {
             try {
                 const fullDetails = await eventService.getPublicEventDetails(initialEvent.id);
                 if (isMounted) {
-                    // ✅ FIX: preserve event_flow if the detail response
-                    // happens to omit it, without overriding a real value.
                     setEvent((prev) => ({
                         ...prev,
                         ...fullDetails,
@@ -472,9 +445,6 @@ const EventCard = ({ event: initialEvent }) => {
     const flow = resolveFlow(event);
     const registrationFlow = isRegistrationFlow(flow);
 
-    // A ticketed event is "sold out" when it has tiers and all are exhausted.
-    // A registration event is *never* sold out from the button's point of
-    // view; capacity is enforced server-side at booking time.
     const isActuallySoldOut =
         event.status === 'sold_out' ||
         (!registrationFlow && tiers.length > 0 && availableSlots === 0);
@@ -492,20 +462,13 @@ const EventCard = ({ event: initialEvent }) => {
     const cta = resolveCta(event, isActuallySoldOut);
     const priceDisplay = resolvePriceDisplay(flow, minPrice, tiers);
 
-    // ---------------------------------------------------------------------
-    // Navigation strategy
-    // ---------------------------------------------------------------------
-    // The gate page exists to ask un-authenticated users whether they
-    // want to register or continue as a guest. Logged-in users already
-    // have an account, so the gate is pointless — send them straight
-    // to the wizard.
-    //
-    // The `?event=<id>` intent is preserved through the gate so the
-    // wizard can auto-select the event after the user makes their
-    // choice.
-    // ---------------------------------------------------------------------
     const handleCtaClick = () => {
         if (isActuallySoldOut) return;
+
+        if (onSelect) {
+            onSelect(event);
+            return;
+        }
 
         const wizardUrl = `/app/bookings/create?event=${event.id}`;
 
@@ -514,9 +477,6 @@ const EventCard = ({ event: initialEvent }) => {
             return;
         }
 
-        // Unauthenticated — route to the gate.
-        // ✅ FIX: `flow` is always one of the three canonical values,
-        // so the gate's flowCopy lookup can never miss.
         navigate(`/gate?event=${event.id}`, {
             state: {
                 eventTitle: event.title,
@@ -529,7 +489,10 @@ const EventCard = ({ event: initialEvent }) => {
     const showImage = announcementImage && !imageFailed;
 
     return (
-        <StyledCard elevation={0}>
+        <StyledCard 
+            elevation={0}
+            sx={selected ? { border: `2px solid ${C.primary}` } : {}}
+        >
             {showImage ? (
                 <CardImageBanner>
                     <img
@@ -678,8 +641,10 @@ const EventCard = ({ event: initialEvent }) => {
                     onClick={handleCtaClick}
                     disabled={cta.disabled}
                     startIcon={cta.icon}
+                    // ✅ FIX: Change button styling if it's currently selected
+                    color={selected ? "success" : "primary"}
                 >
-                    {cta.label}
+                    {selected ? 'Selected' : cta.label}
                 </BookButton>
             </StyledActions>
         </StyledCard>

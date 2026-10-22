@@ -40,8 +40,9 @@ export default function useBookingDraft({
     const [quantities, setQuantities] = useState({});
 
     // ---- Free registration: entry count + per-entry attendees ----
-    const [freeEntries, setFreeEntries] = useState(1);
-    const [freeAttendees, setFreeAttendees] = useState([{ ...EMPTY_ATTENDEE }]);
+    // ✅ FIX: Default to 0 entries.
+    const [freeEntries, setFreeEntries] = useState(0);
+    const [freeAttendees, setFreeAttendees] = useState([]);
 
     // ---- Customer ----
     const [customer, setCustomer] = useState(EMPTY_CUSTOMER);
@@ -182,7 +183,8 @@ export default function useBookingDraft({
         (delta) => {
             setFreeEntries((prev) => {
                 const next = prev + delta;
-                if (next < 1) return 1;
+                // ✅ FIX: Allow 0 minimum
+                if (next < 0) return 0;
                 if (next > maxEntriesPerOrder) return maxEntriesPerOrder;
                 return next;
             });
@@ -194,7 +196,8 @@ export default function useBookingDraft({
         (value) => {
             const n = parseInt(value, 10);
             if (Number.isNaN(n)) return;
-            const clamped = Math.max(1, Math.min(n, maxEntriesPerOrder));
+            // ✅ FIX: Allow 0 minimum
+            const clamped = Math.max(0, Math.min(n, maxEntriesPerOrder));
             setFreeEntries(clamped);
         },
         [maxEntriesPerOrder]
@@ -224,8 +227,8 @@ export default function useBookingDraft({
         setQuantities({});
         setCustomer(EMPTY_CUSTOMER);
         setAttendees([]);
-        setFreeEntries(1);
-        setFreeAttendees([{ ...EMPTY_ATTENDEE }]);
+        setFreeEntries(0);
+        setFreeAttendees([]);
         setErrors({});
     }, []);
 
@@ -250,8 +253,9 @@ export default function useBookingDraft({
         }
 
         if (isFreeRegistration) {
+            // ✅ FIX: Require at least 1 entry
             if (freeEntries < 1) {
-                next.entries = 'At least one entry is required';
+                next.entries = 'Please select at least one entry';
             }
             const missingNames = freeAttendees.some((a) => !a.name?.trim());
             if (missingNames) {

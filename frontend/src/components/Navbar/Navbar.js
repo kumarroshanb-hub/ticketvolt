@@ -297,7 +297,7 @@ const PAGE_TITLES = {
     '/app/cancellation-policies':  'Cancellation Policies',
 };
 
-const getPageTitleFromPath = (pathname) => {
+const getPageTitleFromPath = (pathname, isGuest) => {
     if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
 
     let bestMatch = '';
@@ -314,6 +314,11 @@ const getPageTitleFromPath = (pathname) => {
     if (pathname.startsWith('/app/events/'))    return 'Events';
     if (pathname.startsWith('/app/venues/'))    return 'Venues';
 
+    // Fallback for guests on specific flows
+    if (isGuest && pathname.includes('/bookings/create')) {
+        return 'Register for Event';
+    }
+
     return 'Dashboard';
 };
 
@@ -322,7 +327,7 @@ const getPageTitleFromPath = (pathname) => {
 // ============================================
 
 const Navbar = ({ onMenuToggle, isMobile = false }) => {
-    const { user, logout } = useAuth();
+    const { user, logout, isAuthenticated } = useAuth();
     const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
     const navigate = useNavigate();
     const location = useLocation();
@@ -381,7 +386,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         navigate('/app/profile');
     };
 
-    const pageTitle = getPageTitleFromPath(location.pathname);
+    const pageTitle = getPageTitleFromPath(location.pathname, !isAuthenticated);
 
     return (
         <NavbarContainer $fixed={isMobile}>
@@ -395,51 +400,54 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
             </NavLeft>
 
             <NavRight>
-                <UserMenuWrapper ref={menuRef}>
-                    <UserInfo
-                        onClick={() => setMenuOpen(prev => !prev)}
-                        aria-label="User menu"
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen}
-                    >
-                        <UserAvatar>{getInitial()}</UserAvatar>
-                        <UserDetails>
-                            <UserName>{user?.name || user?.username || 'User'}</UserName>
-                            <UserRole>{getRoleLabel()}</UserRole>
-                        </UserDetails>
-                        <RoleBadge role={role}>
-                            {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : '👤'}
-                        </RoleBadge>
-                        <Chevron $open={menuOpen} />
-                    </UserInfo>
+                {/* ✅ FIX: Only render the User Menu if authenticated */}
+                {isAuthenticated && (
+                    <UserMenuWrapper ref={menuRef}>
+                        <UserInfo
+                            onClick={() => setMenuOpen(prev => !prev)}
+                            aria-label="User menu"
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                        >
+                            <UserAvatar>{getInitial()}</UserAvatar>
+                            <UserDetails>
+                                <UserName>{user?.name || user?.username || 'User'}</UserName>
+                                <UserRole>{getRoleLabel()}</UserRole>
+                            </UserDetails>
+                            <RoleBadge role={role}>
+                                {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : '👤'}
+                            </RoleBadge>
+                            <Chevron $open={menuOpen} />
+                        </UserInfo>
 
-                    {menuOpen && (
-                        <Dropdown role="menu">
-                            <DropdownHeader>
-                                <DropdownName>
-                                    {user?.name || user?.username || 'User'}
-                                </DropdownName>
-                                {user?.email && (
-                                    <DropdownEmail>{user.email}</DropdownEmail>
-                                )}
-                            </DropdownHeader>
+                        {menuOpen && (
+                            <Dropdown role="menu">
+                                <DropdownHeader>
+                                    <DropdownName>
+                                        {user?.name || user?.username || 'User'}
+                                    </DropdownName>
+                                    {user?.email && (
+                                        <DropdownEmail>{user.email}</DropdownEmail>
+                                    )}
+                                </DropdownHeader>
 
-                            <DropdownItem role="menuitem" onClick={handleGoToProfile}>
-                                <PersonIcon />
-                                Profile
-                            </DropdownItem>
+                                <DropdownItem role="menuitem" onClick={handleGoToProfile}>
+                                    <PersonIcon />
+                                    Profile
+                                </DropdownItem>
 
-                            <DropdownItem
-                                role="menuitem"
-                                className="danger"
-                                onClick={handleLogout}
-                            >
-                                <LogoutIcon />
-                                Logout
-                            </DropdownItem>
-                        </Dropdown>
-                    )}
-                </UserMenuWrapper>
+                                <DropdownItem
+                                    role="menuitem"
+                                    className="danger"
+                                    onClick={handleLogout}
+                                >
+                                    <LogoutIcon />
+                                    Logout
+                                </DropdownItem>
+                            </Dropdown>
+                        )}
+                    </UserMenuWrapper>
+                )}
             </NavRight>
         </NavbarContainer>
     );

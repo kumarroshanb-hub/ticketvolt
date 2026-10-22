@@ -65,9 +65,6 @@ const LogoWrap = styled.div`
     position: relative;
 `;
 
-// ✅ FIX [GUEST-SIDEBAR]: clicking the logo goes to the dashboard for
-// authenticated users, and to the public landing page for guests.
-// (The `to` prop is passed in at the call site.)
 const LogoLink = styled(NavLink)`
     display: inline-flex;
     align-items: center;
@@ -315,7 +312,6 @@ const DrawerCloseButton = styled.button`
 // ============================================
 // MENU DEFINITIONS
 // ============================================
-// All paths now live under the /app prefix.
 
 const MENU_ITEMS = {
     dashboard: {
@@ -403,11 +399,6 @@ const SECTION_LABELS = {
 
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const { role, isSuperAdmin } = useRole();
-
-    // ✅ FIX [GUEST-SIDEBAR]: pull `isAuthenticated` from AuthContext so
-    // the sidebar can distinguish a real logged-in user from a guest.
-    // RoleContext defaults guests to ROLES.USER, so `role` alone is NOT
-    // enough to tell them apart.
     const { logout, isAuthenticated } = useAuth();
 
     const isDrawer = Boolean(onNavigate);
@@ -417,13 +408,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const getVisibleItems = () => {
         return Object.entries(MENU_ITEMS)
             .filter(([key, item]) => {
-                // ✅ FIX [GUEST-SIDEBAR]: guests get an empty menu.
-                // Every item in MENU_ITEMS is an authenticated feature
-                // (dashboard, bookings, events, etc.) — none of them are
-                // safe for a guest to click. If you later add a public
-                // "Browse Events" link, whitelist it here on `isGuest`.
                 if (isGuest) return false;
-
                 if (isSuperAdmin) return true;
                 return item.roles.includes(role);
             })
@@ -448,15 +433,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     return (
         <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
             <LogoWrap>
-                {/* ✅ FIX [GUEST-SIDEBAR]: guests land on `/`, not the
-                    authenticated dashboard (which would 302 them to
-                    /login and lose their booking context). */}
                 <LogoLink
                     to={isGuest ? '/' : '/app/dashboard'}
                     onClick={() => onNavigate && onNavigate()}
                 >
+                    {/* ✅ FIX: Render only the full wordmark to save space */}
                     <Logo
-                        variant="both"
+                        variant="full"
                         height={44}
                         hidden={effectiveCollapsed && !isDrawer}
                     />
@@ -468,8 +451,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 )}
             </LogoWrap>
 
-            {/* ✅ FIX [GUEST-SIDEBAR]: guests have no role — hide the
-                badge. Showing "User" would falsely imply an account. */}
             {!isGuest && (
                 <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
                     <span className="role-dot" />
@@ -507,11 +488,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 ))}
             </NavItems>
 
-            {/* ✅ FIX [GUEST-SIDEBAR]: a guest cannot log out — hide the
-                Logout button. Previously, clicking it triggered
-                AuthContext.logout() which cleared storage (a no-op) and
-                hard-redirected to '/', discarding the guest's in-progress
-                booking. */}
             {!isGuest && (
                 <LogoutSection>
                     <LogoutButton

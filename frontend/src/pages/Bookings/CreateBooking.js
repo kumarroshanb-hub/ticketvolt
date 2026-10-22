@@ -43,6 +43,7 @@ import api from '../../services/api';
 import { PageContainer, PageHeader, PageTitle, PrimaryButton, OutlineButton } from '../../components/Common';
 import { ROLES } from '../../constants';
 import useBookingDraft from '../../hooks/useBookingDraft';
+import EventCard from '../../components/Common/EventCard'; // ✅ IMPORTED
 
 // =============================================================================
 // STEP DEFINITIONS
@@ -66,12 +67,8 @@ const STEP_LABELS = {
     [STEP_KEYS.REVIEW]: 'Review & Confirm',
 };
 
-// Free-registration label for the attendee step is slightly different,
-// but the key stays the same so all the helpers work uniformly.
 const FREE_ATTENDEES_LABEL = 'Registrant Details';
 
-// Joins the venue's address parts into a single human-readable line,
-// skipping empty fields so we never render " , , India".
 const formatVenueAddress = (venue) => {
     if (!venue) return '';
     const parts = [
@@ -86,9 +83,6 @@ const formatVenueAddress = (venue) => {
     return parts.join(', ');
 };
 
-// Known field keys in a booking-creation error payload. Used to
-// distinguish field-level validation errors (which we surface inline)
-// from a generic 400 message (which we surface as a toast).
 const BOOKING_ERROR_FIELD_KEYS = [
     'customer_email',
     'customer_name',
@@ -102,9 +96,6 @@ const BOOKING_ERROR_FIELD_KEYS = [
     'entries',
 ];
 
-// Pull the first human-readable message out of a DRF field error,
-// which can be a string, an array of strings, or a nested object of
-// the same. Returns null if nothing usable is found.
 const firstFieldMessage = (value) => {
     if (value === undefined || value === null) return null;
     if (typeof value === 'string') return value;
@@ -133,13 +124,11 @@ const CreateBooking = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Role flags
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
     const isOrganizer = role === ROLES.ORGANIZER;
     const canManageEvents = isAdmin || isOrganizer;
     const isRegularUser = role === ROLES.USER;
 
-    // Wizard state
     const [activeStep, setActiveStep] = useState(STEP_KEYS.EVENT);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
@@ -154,22 +143,16 @@ const CreateBooking = () => {
     const [eventLoadError, setEventLoadError] = useState(null);
     const [autoSelectDone, setAutoSelectDone] = useState(false);
 
-    // ---- Discount state ----
     const [discountInput, setDiscountInput] = useState('');
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
 
-    // ---- Structured submit errors ----
-    // Field-keyed so we can focus the offending input and show a
-    // targeted message instead of a generic "Failed to create booking".
     const [submitError, setSubmitError] = useState(null);
 
-    // Free-registration flag
     const isFreeRegistrationFlow =
         (eventDetails && eventDetails.event_flow === 'free_registration') ||
         (selectedEvent && selectedEvent.event_flow === 'free_registration');
 
-    // ✅ Draft hook — includes free-registration state
     const draft = useBookingDraft({
         tiers,
         selectedEvent,
@@ -195,21 +178,15 @@ const CreateBooking = () => {
         resetDraft,
         validate,
         buildPayload,
-        // free-registration
         freeEntries,
         freeAttendees,
         updateFreeEntries,
         updateFreeAttendee,
     } = draft;
 
-    // Derived: net total after discount (only when discount is valid).
     const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
     const netAmount = Math.max(0, totalAmount - discountAmount);
 
-    // Clear the email field error as soon as the user edits the email.
-    // Other field errors clear when their own field changes (handled by
-    // the draft hook for name/phone). We do email here because the
-    // submit-error is owned by this component, not the hook.
     const handleEmailChange = (value) => {
         handleCustomerChange('email', value);
         if (submitError?.customer_email) {
@@ -288,7 +265,6 @@ const CreateBooking = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [events, location.search, autoSelectDone]);
 
-    // Re-validate the discount whenever the ticket composition changes.
     useEffect(() => {
         if (!appliedDiscount?.valid) return;
 
@@ -612,9 +588,6 @@ const CreateBooking = () => {
             const payload = buildPayload();
 
             if (isFreeRegistrationFlow) {
-                // buildPayload already populates metadata.entries /
-                // metadata.attendees. Keep tickets empty and drop any
-                // discount so the payload is unambiguous.
                 payload.tickets = [];
                 payload.total_amount = 0;
                 delete payload.discount_code;
@@ -631,7 +604,6 @@ const CreateBooking = () => {
 
             toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
 
-            // ✅ Guest → Landing. Registered → Bookings listing.
             if (isAuthenticated) {
                 navigate('/app/bookings', { replace: true });
             } else {
@@ -648,24 +620,6 @@ const CreateBooking = () => {
             const status = error.response?.status;
             const data = error.response?.data;
 
-            // ------------------------------------------------------------
-            // Normalise the DRF error payload.
-            //
-            // DRF returns field errors as `{field: [messages]}`, but a
-            // custom view or a ValidationError raised outside a
-            // serializer can return `{error: "..."}` or `{detail: "..."}`
-            // or a bare string. We:
-            //   • Collect field-keyed errors (email, metadata, etc.) so
-            //     we can render them inline and focus the input.
-            //   • Surface everything else as a toast.
-            //
-            // The specific bug this fixes: a duplicate email on a free
-            // registration produced `{customer_email: ["..."]}`, which
-            // the old code silently ignored and replaced with a
-            // generic "Failed to create booking" toast. Now the email
-            // field gets a red banner and the user is told to use a
-            // different address.
-            // ------------------------------------------------------------
             let fieldErrors = null;
             let toastMsg = null;
 
@@ -689,21 +643,13 @@ const CreateBooking = () => {
             if (fieldErrors) {
                 setSubmitError(fieldErrors);
 
-                // If there's a specific email error, surface its message
-                // as a toast too and jump the user back to the attendee
-                // step so the inline banner is visible.
                 const emailMessage = firstFieldMessage(fieldErrors.customer_email);
                 if (emailMessage) {
                     toast.error(emailMessage);
-                    // Jump back to the attendee step (where the email
-                    // field lives) so the user can actually see the
-                    // banner and fix the problem.
                     setActiveStep(STEP_KEYS.ATTENDEES);
                     return;
                 }
 
-                // Some other field error. Show its message as a toast
-                // and stay where the user is (they can inspect the step).
                 const anyFieldMessage = firstFieldMessage(fieldErrors);
                 if (anyFieldMessage) {
                     toast.error(anyFieldMessage);
@@ -811,219 +757,16 @@ const CreateBooking = () => {
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3}>
-                    {events.map((event) => {
-                        const isActive =
-                            event.status === 'active' || event.status === 'published';
-                        const isDraft = event.status === 'draft';
-                        const isPast =
-                            event.end_date && new Date(event.end_date) < new Date();
-
-                        const isFreeRegistration = event.event_flow === 'free_registration';
-
-                        const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
-                        const sessionCount = event.session_count ?? event.sessions?.length ?? 0;
-                        const totalCapacity = event.total_capacity ?? 0;
-                        const totalSold = event.total_tickets_sold ?? 0;
-
-                        const capacityKnown = totalCapacity > 0;
-                        const capacityExhausted = capacityKnown && totalSold >= totalCapacity;
-
-                        const isSoldOut = isActive && !isFreeRegistration && capacityExhausted;
-                        const isRegistrationClosed =
-                            isActive && isFreeRegistration && capacityExhausted;
-
-                        const isSelectable = canManageEvents
-                            ? true
-                            : isActive && !isSoldOut && !isRegistrationClosed;
-
-                        const venueAddress = formatVenueAddress(event.venue);
-
-                        const formattedDate = event.start_date
-                            ? new Date(event.start_date).toLocaleDateString('en-IN', {
-                                  day: '2-digit',
-                                  month: 'short',
-                                  year: 'numeric',
-                              })
-                            : 'TBD';
-
-                        return (
-                            <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                <Card
-                                    sx={{
-                                        cursor: isSelectable ? 'pointer' : 'not-allowed',
-                                        border:
-                                            selectedEvent?.id === event.id
-                                                ? '2px solid rgba(51, 51, 51, 1)'
-                                                : isDraft
-                                                ? '1px dashed rgba(255,200,0,0.5)'
-                                                : '1px solid #e2e8f0',
-                                        bgcolor: isDraft ? 'rgba(255,200,0,0.03)' : 'background.paper',
-                                        opacity: isSelectable ? 1 : 0.7,
-                                        height: '100%',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        borderRadius: 2,
-                                        transition: 'all 0.2s ease',
-                                        '&:hover': isSelectable
-                                            ? {
-                                                  borderColor: 'primary.main',
-                                                  transform: 'translateY(-2px)',
-                                                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                              }
-                                            : {},
-                                        '&:active': isSelectable
-                                            ? { transform: 'scale(0.99)' }
-                                            : {},
-                                    }}
-                                    onClick={() => {
-                                        if (isSelectable) handleSelectEvent(event);
-                                        else if (isSoldOut)
-                                            toast.warning('This event is sold out');
-                                        else if (isRegistrationClosed)
-                                            toast.warning('Registration for this event is closed');
-                                        else
-                                            toast.warning(
-                                                'This event is not available for booking'
-                                            );
-                                    }}
-                                >
-                                    <CardContent
-                                        sx={{
-                                            flexGrow: 1,
-                                            p: isMobile ? 1.5 : 2,
-                                            '&:last-child': { pb: isMobile ? 1.5 : 2 },
-                                        }}
-                                    >
-                                        <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
-                                            <Typography
-                                                variant="h6"
-                                                sx={{
-                                                    color: isDraft ? '#b45309' : '#0f172a',
-                                                    fontWeight: 600,
-                                                    flex: 1,
-                                                    minWidth: 0,
-                                                    fontSize: isMobile ? '1rem' : '1.1rem',
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                            >
-                                                {event.title}
-                                            </Typography>
-                                            <Chip
-                                                label={
-                                                    isSoldOut
-                                                        ? 'SOLD OUT'
-                                                        : isRegistrationClosed
-                                                        ? 'REGISTRATION CLOSED'
-                                                        : isDraft
-                                                        ? 'DRAFT'
-                                                        : event.status?.toUpperCase() || 'ACTIVE'
-                                                }
-                                                size="small"
-                                                color={
-                                                    isSoldOut || isRegistrationClosed
-                                                        ? 'error'
-                                                        : isDraft
-                                                        ? 'default'
-                                                        : isActive
-                                                        ? 'success'
-                                                        : 'default'
-                                                }
-                                                sx={{ fontSize: '10px', height: '22px', flexShrink: 0 }}
-                                            />
-                                        </Box>
-
-                                        {event.short_description && (
-                                            <Typography
-                                                variant="body2"
-                                                sx={{
-                                                    color: 'text.secondary',
-                                                    mt: 1,
-                                                    display: '-webkit-box',
-                                                    WebkitLineClamp: 2,
-                                                    WebkitBoxOrient: 'vertical',
-                                                    overflow: 'hidden',
-                                                }}
-                                            >
-                                                {event.short_description}
-                                            </Typography>
-                                        )}
-
-                                        <Box mt={2} display="flex" flexDirection="column" gap={0.75}>
-                                            <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <CalendarIcon fontSize="small" />
-                                                {formattedDate}
-                                            </Typography>
-
-                                            {venueAddress ? (
-                                                <Typography
-                                                    variant="body2"
-                                                    sx={{
-                                                        color: 'text.secondary',
-                                                        display: 'flex',
-                                                        alignItems: 'flex-start',
-                                                        gap: 1,
-                                                        whiteSpace: 'normal',
-                                                    }}
-                                                >
-                                                    <LocationIcon fontSize="small" sx={{ mt: '2px', flexShrink: 0 }} />
-                                                    {venueAddress}
-                                                </Typography>
-                                            ) : (
-                                                <Typography
-                                                    variant="body2"
-                                                    sx={{
-                                                        color: 'text.disabled',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: 1,
-                                                        fontStyle: 'italic',
-                                                    }}
-                                                >
-                                                    <LocationIcon fontSize="small" />
-                                                    No venue assigned
-                                                </Typography>
-                                            )}
-
-                                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                                                {tierCount > 0 && (
-                                                    <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                        <TicketIcon fontSize="small" />
-                                                        {tierCount} tier{tierCount === 1 ? '' : 's'}
-                                                    </Typography>
-                                                )}
-                                                <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <ScheduleIcon fontSize="small" />
-                                                    {sessionCount} session{sessionCount === 1 ? '' : 's'}
-                                                </Typography>
-                                            </Box>
-
-                                            {totalCapacity > 0 && (
-                                                <Typography variant="caption" sx={{ color: 'text.disabled', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <PeopleIcon sx={{ fontSize: 14 }} />
-                                                    {totalCapacity} total capacity
-                                                    {totalSold > 0 && ` • ${totalSold} sold`}
-                                                </Typography>
-                                            )}
-                                        </Box>
-
-                                        {isPast && canManageEvents && (
-                                            <Chip
-                                                label="PAST EVENT"
-                                                size="small"
-                                                sx={{
-                                                    mt: 1,
-                                                    bgcolor: 'rgba(100,116,139,0.1)',
-                                                    color: 'text.secondary',
-                                                }}
-                                            />
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            </Grid>
-                        );
-                    })}
+                    {events.map((event) => (
+                        <Grid item xs={12} sm={6} md={4} key={event.id}>
+                            {/* ✅ FIX: Used the reusable EventCard for consistency */}
+                            <EventCard
+                                event={event}
+                                selected={selectedEvent?.id === event.id}
+                                onSelect={handleSelectEvent}
+                            />
+                        </Grid>
+                    ))}
                 </Grid>
             )}
         </Box>
@@ -1181,6 +924,7 @@ const CreateBooking = () => {
 
     const renderFreeEntries = () => {
         const max = eventDetails?.max_tickets_per_order || 10;
+
         return (
             <Box sx={{ py: 2 }}>
                 <Alert severity="info" sx={{ mb: 3 }}>
@@ -1210,7 +954,8 @@ const CreateBooking = () => {
                     <Box display="flex" alignItems="center" gap={2}>
                         <IconButton
                             onClick={() => updateFreeEntries(-1)}
-                            disabled={freeEntries <= 1}
+                            // ✅ FIX: Disable at 0
+                            disabled={freeEntries <= 0}
                             sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }}
                             aria-label="Decrease entries"
                         >
@@ -1973,15 +1718,33 @@ const CreateBooking = () => {
         <PageContainer>
             <PageHeader>
                 <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-                    <IconButton onClick={() => navigate('/app/bookings')}>
-                        <ArrowBackIcon />
-                    </IconButton>
+                    {/* ✅ FIX: Hide back arrow for guests */}
+                    {isAuthenticated && (
+                        <IconButton onClick={() => navigate('/app/bookings')}>
+                            <ArrowBackIcon />
+                        </IconButton>
+                    )}
                     <PageTitle variant="h4">
-                        {isRegularUser ? 'Book Tickets' : 'New Booking'}
+                        {/* ✅ FIX: Change title for guests */}
+                        {isAuthenticated 
+                            ? (isRegularUser ? 'Book Tickets' : 'New Booking') 
+                            : 'Register for Event'}
                     </PageTitle>
                 </Box>
                 <Box display="flex" gap={1}>
-                    <OutlineButton onClick={() => navigate('/app/bookings')}>Cancel</OutlineButton>
+                    {/* ✅ FIX: Change button text and behavior for guests */}
+                    <OutlineButton 
+                        onClick={() => {
+                            if (isAuthenticated) {
+                                navigate('/app/bookings');
+                            } else {
+                                // Clear history by replacing the current entry
+                                navigate('/', { replace: true });
+                            }
+                        }}
+                    >
+                        {isAuthenticated ? 'Cancel' : 'Back to Home'}
+                    </OutlineButton>
                 </Box>
             </PageHeader>
 
@@ -2047,6 +1810,8 @@ const CreateBooking = () => {
                                 variant="contained"
                                 onClick={handleNext}
                                 endIcon={<ArrowForwardIcon />}
+                                // ✅ FIX: Disable Next if on Entries step and 0 selected
+                                disabled={safeActiveStep === STEP_KEYS.ENTRIES && freeEntries === 0}
                                 sx={isMobile ? { width: '100%' } : undefined}
                             >
                                 Next

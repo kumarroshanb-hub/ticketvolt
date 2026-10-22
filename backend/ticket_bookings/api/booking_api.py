@@ -346,11 +346,17 @@ class BookingViewSet(viewsets.ModelViewSet):
                     )
 
         except ValidationError as exc:
+            # ✅ FIX [DUP-EMAIL]: return the field-keyed shape
+            # ({'customer_email': ['...']}, {'metadata': {...}}, …) at
+            # the TOP LEVEL of the response body, so the frontend can
+            # read `error.response.data.customer_email` and focus the
+            # offending field. Only plain-string details get wrapped
+            # under 'error' — those are not field-addressable.
             detail = exc.detail if hasattr(exc, 'detail') else str(exc)
-            return Response(
-                {'error': detail if isinstance(detail, str) else detail},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if isinstance(detail, dict):
+                return Response(detail, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': str(detail)}, status=status.HTTP_400_BAD_REQUEST)
+
         except Exception as exc:
             logger.exception(
                 'Free registration failed for %s (event=%s): %s',
@@ -544,12 +550,12 @@ class BookingViewSet(viewsets.ModelViewSet):
         }
 
         subject = (
-            f"✅ You're registered for {event.title}"
+            f"You're registered for {event.title}"
             if is_free else
-            f'✅ Registration confirmed for {event.title}'
+            f'Registration confirmed for {event.title}'
         )
         if len(passes) > 1:
-            subject = f"✅ {len(passes)} passes confirmed — {event.title}"
+            subject = f"{len(passes)} passes confirmed — {event.title}"
 
         try:
             html_content = render_to_string('emails/registration_confirmation.html', context)

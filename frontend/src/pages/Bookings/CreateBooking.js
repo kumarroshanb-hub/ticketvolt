@@ -46,23 +46,6 @@ import useBookingDraft from '../../hooks/useBookingDraft';
 
 // =============================================================================
 // STEP DEFINITIONS
-// -----------------------------------------------------------------------------
-//   TICKETED EVENTS (5 steps)
-//     0. Select Event
-//     1. Choose Slot           (skipped automatically if no sessions)
-//     2. Choose Tickets
-//     3. Attendee Details      (customer + per-attendee name/email/phone)
-//     4. Review & Confirm
-//
-//   FREE REGISTRATION EVENTS (5 steps)
-//     0. Select Event
-//     1. Choose Slot           (skipped automatically if no sessions)
-//     2. Number of Entries     (count only)
-//     3. Attendee Details      (customer + per-entry name/email/phone)
-//     4. Review & Confirm
-//
-//   `activeStep` is a KEY, not an index, so the wizard skips steps
-//   cleanly when the sequence changes.
 // =============================================================================
 
 const STEP_KEYS = {
@@ -103,6 +86,45 @@ const formatVenueAddress = (venue) => {
     return parts.join(', ');
 };
 
+// Known field keys in a booking-creation error payload. Used to
+// distinguish field-level validation errors (which we surface inline)
+// from a generic 400 message (which we surface as a toast).
+const BOOKING_ERROR_FIELD_KEYS = [
+    'customer_email',
+    'customer_name',
+    'customer_phone',
+    'whatsapp_number',
+    'session',
+    'tickets',
+    'discount_code',
+    'event',
+    'metadata',
+    'entries',
+];
+
+// Pull the first human-readable message out of a DRF field error,
+// which can be a string, an array of strings, or a nested object of
+// the same. Returns null if nothing usable is found.
+const firstFieldMessage = (value) => {
+    if (value === undefined || value === null) return null;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const inner = firstFieldMessage(item);
+            if (inner) return inner;
+        }
+        return null;
+    }
+    if (typeof value === 'object') {
+        for (const key of Object.keys(value)) {
+            const inner = firstFieldMessage(value[key]);
+            if (inner) return inner;
+        }
+        return null;
+    }
+    return String(value);
+};
+
 const CreateBooking = () => {
     const navigate = useNavigate();
     const location = useLocation();
@@ -136,6 +158,11 @@ const CreateBooking = () => {
     const [discountInput, setDiscountInput] = useState('');
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
+
+    // ---- Structured submit errors ----
+    // Field-keyed so we can focus the offending input and show a
+    // targeted message instead of a generic "Failed to create booking".
+    const [submitError, setSubmitError] = useState(null);
 
     // Free-registration flag
     const isFreeRegistrationFlow =
@@ -178,6 +205,21 @@ const CreateBooking = () => {
     // Derived: net total after discount (only when discount is valid).
     const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
     const netAmount = Math.max(0, totalAmount - discountAmount);
+
+    // Clear the email field error as soon as the user edits the email.
+    // Other field errors clear when their own field changes (handled by
+    // the draft hook for name/phone). We do email here because the
+    // submit-error is owned by this component, not the hook.
+    const handleEmailChange = (value) => {
+        handleCustomerChange('email', value);
+        if (submitError?.customer_email) {
+            setSubmitError((prev) => {
+                if (!prev) return prev;
+                const { customer_email, ...rest } = prev;
+                return Object.keys(rest).length ? rest : null;
+            });
+        }
+    };
 
     // =========================================================================
     // STEP SEQUENCE
@@ -407,6 +449,7 @@ const CreateBooking = () => {
 
     const handleSelectEvent = (event) => {
         resetDraft();
+        setSubmitError(null);   // clear any stale error from a previous event
         setSelectedEvent(event);
         setSelectedSession(null);
         setSlotPreferences([]);
@@ -544,6 +587,9 @@ const CreateBooking = () => {
     // =========================================================================
 
     const handleSubmit = async () => {
+        // Clear any stale submit error so a retry starts clean.
+        setSubmitError(null);
+
         if (!isFreeRegistrationFlow) {
             if (!validate()) {
                 toast.error('Please fix all errors before submitting');
@@ -599,17 +645,83 @@ const CreateBooking = () => {
                 });
             }
         } catch (error) {
-            let errorMsg = 'Failed to create booking';
+            const status = error.response?.status;
             const data = error.response?.data;
-            if (data?.discount_code) {
-                errorMsg = Array.isArray(data.discount_code)
-                    ? data.discount_code[0]
-                    : data.discount_code;
-            } else if (data?.detail) errorMsg = data.detail;
-            else if (data?.error) errorMsg = data.error;
-            else if (data?.message) errorMsg = data.message;
-            else if (error.message) errorMsg = error.message;
-            toast.error(errorMsg);
+
+            // ------------------------------------------------------------
+            // Normalise the DRF error payload.
+            //
+            // DRF returns field errors as `{field: [messages]}`, but a
+            // custom view or a ValidationError raised outside a
+            // serializer can return `{error: "..."}` or `{detail: "..."}`
+            // or a bare string. We:
+            //   • Collect field-keyed errors (email, metadata, etc.) so
+            //     we can render them inline and focus the input.
+            //   • Surface everything else as a toast.
+            //
+            // The specific bug this fixes: a duplicate email on a free
+            // registration produced `{customer_email: ["..."]}`, which
+            // the old code silently ignored and replaced with a
+            // generic "Failed to create booking" toast. Now the email
+            // field gets a red banner and the user is told to use a
+            // different address.
+            // ------------------------------------------------------------
+            let fieldErrors = null;
+            let toastMsg = null;
+
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+                const collected = {};
+                for (const key of BOOKING_ERROR_FIELD_KEYS) {
+                    if (data[key] !== undefined) {
+                        collected[key] = data[key];
+                    }
+                }
+                if (Object.keys(collected).length > 0) {
+                    fieldErrors = collected;
+                }
+                toastMsg = data.error || data.detail || data.message || null;
+            } else if (typeof data === 'string') {
+                toastMsg = data;
+            } else if (error.message) {
+                toastMsg = error.message;
+            }
+
+            if (fieldErrors) {
+                setSubmitError(fieldErrors);
+
+                // If there's a specific email error, surface its message
+                // as a toast too and jump the user back to the attendee
+                // step so the inline banner is visible.
+                const emailMessage = firstFieldMessage(fieldErrors.customer_email);
+                if (emailMessage) {
+                    toast.error(emailMessage);
+                    // Jump back to the attendee step (where the email
+                    // field lives) so the user can actually see the
+                    // banner and fix the problem.
+                    setActiveStep(STEP_KEYS.ATTENDEES);
+                    return;
+                }
+
+                // Some other field error. Show its message as a toast
+                // and stay where the user is (they can inspect the step).
+                const anyFieldMessage = firstFieldMessage(fieldErrors);
+                if (anyFieldMessage) {
+                    toast.error(anyFieldMessage);
+                    return;
+                }
+            }
+
+            if (toastMsg) {
+                toast.error(toastMsg);
+            } else {
+                toast.error('Failed to create booking');
+            }
+
+            if (status === 401) {
+                toast.error(
+                    'Your session expired. Please refresh the page and try again.'
+                );
+            }
         } finally {
             setLoading(false);
         }
@@ -1341,250 +1453,286 @@ const CreateBooking = () => {
     // Step 4 — Attendee / Registrant details
     // =========================================================================
 
-    const renderAttendeeDetails = () => (
-        <Box sx={{ py: 2 }}>
-            <Alert severity="info" sx={{ mb: 3 }}>
-                {isFreeRegistrationFlow
-                    ? `Enter the details for ${freeEntries} ${freeEntries === 1 ? 'person' : 'people'}`
-                    : `Enter details for ${totalTickets} attendee(s)`}
-            </Alert>
+    const renderAttendeeDetails = () => {
+        const emailFieldError =
+            submitError?.customer_email
+                ? firstFieldMessage(submitError.customer_email)
+                : null;
 
-            {/* -------- Customer (lead) block -------- */}
-            <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
-                <Typography
-                    variant="subtitle1"
-                    sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
-                >
-                    <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                    {isFreeRegistrationFlow ? 'Primary Contact' : 'Customer Details'}
-                </Typography>
-                <Grid container spacing={2}>
-                    <Grid item xs={12} md={4}>
-                        <TextField
-                            fullWidth
-                            label="Full Name *"
-                            value={customer.name}
-                            onChange={(e) => handleCustomerChange('name', e.target.value)}
-                            error={!!errors.name}
-                            helperText={errors.name}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                        <TextField
-                            fullWidth
-                            label="Email *"
-                            type="email"
-                            value={customer.email}
-                            onChange={(e) => handleCustomerChange('email', e.target.value)}
-                            error={!!errors.email}
-                            helperText={errors.email}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                        <TextField
-                            fullWidth
-                            label="Phone *"
-                            value={customer.phone}
-                            onChange={(e) => handleCustomerChange('phone', e.target.value)}
-                            error={!!errors.phone}
-                            helperText={errors.phone}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                        <TextField
-                            fullWidth
-                            label="WhatsApp Number (if different)"
-                            value={customer.whatsapp}
-                            onChange={(e) => handleCustomerChange('whatsapp', e.target.value)}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                        <TextField
-                            fullWidth
-                            label="Notes / Special Requests"
-                            value={customer.notes}
-                            onChange={(e) => handleCustomerChange('notes', e.target.value)}
-                            size="small"
-                            multiline
-                            rows={1}
-                        />
-                    </Grid>
-                </Grid>
-            </Paper>
+        return (
+            <Box sx={{ py: 2 }}>
+                <Alert severity="info" sx={{ mb: 3 }}>
+                    {isFreeRegistrationFlow
+                        ? `Enter the details for ${freeEntries} ${freeEntries === 1 ? 'person' : 'people'}`
+                        : `Enter details for ${totalTickets} attendee(s)`}
+                </Alert>
 
-            {/* -------- FREE REGISTRATION: per-entry attendee list -------- */}
-            {isFreeRegistrationFlow ? (
-                <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                    <Typography
-                        variant="subtitle1"
-                        sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}
-                    >
-                        <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                        Entry Details ({freeEntries})
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-                        Each entry receives its own registration pass. Blank
-                        email/phone will fall back to the primary contact's.
-                    </Typography>
-                    {errors.freeAttendees && (
-                        <Typography
-                            variant="caption"
-                            sx={{ color: 'error.main', display: 'block', mb: 1 }}
-                        >
-                            {errors.freeAttendees}
-                        </Typography>
-                    )}
-
-                    <Box sx={{ maxHeight: 480, overflowY: 'auto' }}>
-                        {freeAttendees.map((att, index) => (
-                            <Paper
-                                key={index}
-                                sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}
-                            >
-                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                    Entry #{index + 1}
-                                    {index === 0 ? ' — primary contact' : ''}
-                                </Typography>
-                                <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                    <Grid item xs={12} md={4}>
-                                        <TextField
-                                            fullWidth
-                                            placeholder="Full Name *"
-                                            value={att.name}
-                                            onChange={(e) =>
-                                                updateFreeAttendee(index, 'name', e.target.value)
-                                            }
-                                            size="small"
-                                            error={!att.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
-                                        />
-                                    </Grid>
-                                    <Grid item xs={12} md={4}>
-                                        <TextField
-                                            fullWidth
-                                            placeholder={
-                                                index === 0
-                                                    ? 'Email (defaults to primary)'
-                                                    : 'Email (optional)'
-                                            }
-                                            value={att.email}
-                                            onChange={(e) =>
-                                                updateFreeAttendee(index, 'email', e.target.value)
-                                            }
-                                            size="small"
-                                            type="email"
-                                        />
-                                    </Grid>
-                                    <Grid item xs={12} md={4}>
-                                        <TextField
-                                            fullWidth
-                                            placeholder={
-                                                index === 0
-                                                    ? 'Phone (defaults to primary)'
-                                                    : 'Phone (optional)'
-                                            }
-                                            value={att.phone}
-                                            onChange={(e) =>
-                                                updateFreeAttendee(index, 'phone', e.target.value)
-                                            }
-                                            size="small"
-                                        />
-                                    </Grid>
-                                </Grid>
-                            </Paper>
-                        ))}
-                    </Box>
-
-                    <Button
-                        variant="text"
-                        size="small"
-                        onClick={() => {
-                            if (!customer.name?.trim()) {
-                                toast.warning('Enter the primary contact name first');
-                                return;
-                            }
-                            freeAttendees.forEach((att, i) => {
-                                if (i > 0 && !att.name?.trim()) {
-                                    updateFreeAttendee(i, 'name', customer.name);
-                                }
+                {/* -------- Inline email-in-use banner (free registration) -------- */}
+                {emailFieldError && (
+                    <Alert
+                        severity="error"
+                        sx={{ mb: 3 }}
+                        onClose={() => {
+                            setSubmitError((prev) => {
+                                if (!prev) return prev;
+                                const { customer_email, ...rest } = prev;
+                                return Object.keys(rest).length ? rest : null;
                             });
                         }}
-                        sx={{ mt: 1 }}
                     >
-                        Fill empty names with primary contact
-                    </Button>
-                </Paper>
-            ) : (
-                /* -------- TICKETED: per-ticket attendee list -------- */
-                <Paper sx={{ p: isMobile ? 2 : 3 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                            This email address is already in use
+                        </Typography>
+                        <Typography variant="body2">{emailFieldError}</Typography>
+                        <Typography
+                            variant="caption"
+                            component="div"
+                            sx={{ mt: 1, color: 'text.secondary' }}
+                        >
+                            Tip: use a different email, or if you already have a
+                            booking under this email, open the booking from
+                            “My Bookings” instead of registering again.
+                        </Typography>
+                    </Alert>
+                )}
+
+                {/* -------- Customer (lead) block -------- */}
+                <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
                     <Typography
                         variant="subtitle1"
                         sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
                     >
-                        <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                        Attendee Details
-                        {errors.attendees && (
-                            <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>
-                                {errors.attendees}
+                        <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                        {isFreeRegistrationFlow ? 'Primary Contact' : 'Customer Details'}
+                    </Typography>
+                    <Grid container spacing={2}>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                fullWidth
+                                label="Full Name *"
+                                value={customer.name}
+                                onChange={(e) => handleCustomerChange('name', e.target.value)}
+                                error={!!errors.name}
+                                helperText={errors.name}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                fullWidth
+                                label="Email *"
+                                type="email"
+                                value={customer.email}
+                                onChange={(e) => handleEmailChange(e.target.value)}
+                                error={!!errors.email || !!emailFieldError}
+                                helperText={errors.email || emailFieldError || ''}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                fullWidth
+                                label="Phone *"
+                                value={customer.phone}
+                                onChange={(e) => handleCustomerChange('phone', e.target.value)}
+                                error={!!errors.phone}
+                                helperText={errors.phone}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                            <TextField
+                                fullWidth
+                                label="WhatsApp Number (if different)"
+                                value={customer.whatsapp}
+                                onChange={(e) => handleCustomerChange('whatsapp', e.target.value)}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                            <TextField
+                                fullWidth
+                                label="Notes / Special Requests"
+                                value={customer.notes}
+                                onChange={(e) => handleCustomerChange('notes', e.target.value)}
+                                size="small"
+                                multiline
+                                rows={1}
+                            />
+                        </Grid>
+                    </Grid>
+                </Paper>
+
+                {/* -------- FREE REGISTRATION: per-entry attendee list -------- */}
+                {isFreeRegistrationFlow ? (
+                    <Paper sx={{ p: isMobile ? 2 : 3 }}>
+                        <Typography
+                            variant="subtitle1"
+                            sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}
+                        >
+                            <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                            Entry Details ({freeEntries})
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                            Each entry receives its own registration pass. Blank
+                            email/phone will fall back to the primary contact's.
+                        </Typography>
+                        {errors.freeAttendees && (
+                            <Typography
+                                variant="caption"
+                                sx={{ color: 'error.main', display: 'block', mb: 1 }}
+                            >
+                                {errors.freeAttendees}
                             </Typography>
                         )}
-                    </Typography>
 
-                    <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
-                        {attendees.map((attendee, index) => (
-                            <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
-                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                    #{index + 1} • {attendee.tier_name}
+                        <Box sx={{ maxHeight: 480, overflowY: 'auto' }}>
+                            {freeAttendees.map((att, index) => (
+                                <Paper
+                                    key={index}
+                                    sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}
+                                >
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                        Entry #{index + 1}
+                                        {index === 0 ? ' — primary contact' : ''}
+                                    </Typography>
+                                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                                        <Grid item xs={12} md={4}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Full Name *"
+                                                value={att.name}
+                                                onChange={(e) =>
+                                                    updateFreeAttendee(index, 'name', e.target.value)
+                                                }
+                                                size="small"
+                                                error={!att.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={4}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder={
+                                                    index === 0
+                                                        ? 'Email (defaults to primary)'
+                                                        : 'Email (optional)'
+                                                }
+                                                value={att.email}
+                                                onChange={(e) =>
+                                                    updateFreeAttendee(index, 'email', e.target.value)
+                                                }
+                                                size="small"
+                                                type="email"
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={4}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder={
+                                                    index === 0
+                                                        ? 'Phone (defaults to primary)'
+                                                        : 'Phone (optional)'
+                                                }
+                                                value={att.phone}
+                                                onChange={(e) =>
+                                                    updateFreeAttendee(index, 'phone', e.target.value)
+                                                }
+                                                size="small"
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Paper>
+                            ))}
+                        </Box>
+
+                        <Button
+                            variant="text"
+                            size="small"
+                            onClick={() => {
+                                if (!customer.name?.trim()) {
+                                    toast.warning('Enter the primary contact name first');
+                                    return;
+                                }
+                                freeAttendees.forEach((att, i) => {
+                                    if (i > 0 && !att.name?.trim()) {
+                                        updateFreeAttendee(i, 'name', customer.name);
+                                    }
+                                });
+                            }}
+                            sx={{ mt: 1 }}
+                        >
+                            Fill empty names with primary contact
+                        </Button>
+                    </Paper>
+                ) : (
+                    /* -------- TICKETED: per-ticket attendee list -------- */
+                    <Paper sx={{ p: isMobile ? 2 : 3 }}>
+                        <Typography
+                            variant="subtitle1"
+                            sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
+                        >
+                            <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                            Attendee Details
+                            {errors.attendees && (
+                                <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>
+                                    {errors.attendees}
                                 </Typography>
-                                <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                    <Grid item xs={12} md={6}>
-                                        <TextField
-                                            fullWidth
-                                            placeholder="Full Name *"
-                                            value={attendee.name}
-                                            onChange={(e) => updateAttendee(index, 'name', e.target.value)}
-                                            size="small"
-                                            error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
-                                        />
-                                    </Grid>
-                                    <Grid item xs={12} md={3}>
-                                        <TextField
-                                            fullWidth
-                                            placeholder="Email"
-                                            value={attendee.email}
-                                            onChange={(e) => updateAttendee(index, 'email', e.target.value)}
-                                            size="small"
-                                        />
-                                    </Grid>
-                                    <Grid item xs={12} md={3}>
-                                        <TextField
-                                            fullWidth
-                                            placeholder="Phone"
-                                            value={attendee.phone}
-                                            onChange={(e) => updateAttendee(index, 'phone', e.target.value)}
-                                            size="small"
-                                        />
-                                    </Grid>
-                                </Grid>
-                            </Paper>
-                        ))}
-                    </Box>
+                            )}
+                        </Typography>
 
-                    <Button
-                        variant="text"
-                        size="small"
-                        onClick={fillEmptyNamesWithCustomer}
-                        sx={{ mt: 1 }}
-                    >
-                        Fill empty names with customer name
-                    </Button>
-                </Paper>
-            )}
-        </Box>
-    );
+                        <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+                            {attendees.map((attendee, index) => (
+                                <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                        #{index + 1} • {attendee.tier_name}
+                                    </Typography>
+                                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                                        <Grid item xs={12} md={6}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Full Name *"
+                                                value={attendee.name}
+                                                onChange={(e) => updateAttendee(index, 'name', e.target.value)}
+                                                size="small"
+                                                error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={3}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Email"
+                                                value={attendee.email}
+                                                onChange={(e) => updateAttendee(index, 'email', e.target.value)}
+                                                size="small"
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={3}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Phone"
+                                                value={attendee.phone}
+                                                onChange={(e) => updateAttendee(index, 'phone', e.target.value)}
+                                                size="small"
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Paper>
+                            ))}
+                        </Box>
+
+                        <Button
+                            variant="text"
+                            size="small"
+                            onClick={fillEmptyNamesWithCustomer}
+                            sx={{ mt: 1 }}
+                        >
+                            Fill empty names with customer name
+                        </Button>
+                    </Paper>
+                )}
+            </Box>
+        );
+    };
 
     // =========================================================================
     // Step 5 — Review

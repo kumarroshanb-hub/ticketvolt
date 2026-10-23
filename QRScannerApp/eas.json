@@ -9,7 +9,7 @@
       "distribution": "internal",
       "android": { "buildType": "apk" },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.31.233:8000/api"
+        "EXPO_PUBLIC_API_URL": "http://192.168.31.19:8000/api"
       }
     },
     "preview": {

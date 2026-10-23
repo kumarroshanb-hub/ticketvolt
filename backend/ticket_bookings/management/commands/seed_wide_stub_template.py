@@ -1,93 +1,47 @@
 # backend/ticket_bookings/management/commands/seed_wide_stub_template.py
-"""
-Seed a wide-stub ticket template for an event.
-
-Usage:
-    python manage.py seed_wide_stub_template --event <uuid> --overwrite
-"""
 from pathlib import Path
-
 from django.conf import settings
 from django.core.files import File
 from django.core.management.base import BaseCommand
-
 from ticket_bookings.models import Event, EventTemplate, EventTemplateType
-
 
 DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
 CONFIG = {
     "fields": {
         # =====================================================================
-        # TOP ROW (Y: ~0.32)
+        # ROW 1: EVENT, DATE, TIME
         # =====================================================================
-        "event_title": {
-            "x": 0.10, "y": 0.30, "font_size": 24, 
-            "color": "#1A202C", "align": "left"
-        },
-        "event_date": {
-            "x": 0.36, "y": 0.30, "font_size": 24, 
-            "color": "#1A202C", "align": "left"
-        },
-        "slot_time_value": {
-            "x": 0.60, "y": 0.30, "font_size": 24, 
-            "color": "#1A202C", "align": "left", "enabled": True
-        },
+        # Labels
+        "ticket_code_label": {"x": 0.085, "y": 0.40, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "booking_label":     {"x": 0.275, "y": 0.40, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "organizer":         {"x": 0.465, "y": 0.40, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        
+        # Values (Moved up to y: 0.455 to sit closer to labels)
+        "event_title":       {"x": 0.085, "y": 0.455, "font_size": 36, "color": "#1A202C", "align": "left"},
+        "event_date":        {"x": 0.275, "y": 0.455, "font_size": 32, "color": "#1A202C", "align": "left"},
+        "slot_time_value":   {"x": 0.465, "y": 0.455, "font_size": 32, "color": "#1A202C", "align": "left", "enabled": True},
 
         # =====================================================================
-        # BOTTOM ROW (Y: ~0.55)
+        # ROW 2: VENUE, TICKET NO., TICKET TYPE
         # =====================================================================
-        "venue_value": {
-            "x": 0.10, "y": 0.55, "font_size": 20, 
-            "color": "#1A202C", "align": "left"
-        },
-        "ticket_number": {
-            "x": 0.36, "y": 0.55, "font_size": 20, 
-            "color": "#1A202C", "align": "left", "enabled": True
-        },
-        "attendee_value": {
-            "x": 0.60, "y": 0.55, "font_size": 20, 
-            "color": "#1A202C", "align": "left"
-        },
+        # Labels
+        "venue_label":       {"x": 0.085, "y": 0.64, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "attendee_label":    {"x": 0.275, "y": 0.64, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "slot_time_label":   {"x": 0.465, "y": 0.64, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        
+        # Values (Moved up to y: 0.695 to sit closer to labels)
+        "venue_value":       {"x": 0.085, "y": 0.695, "font_size": 20, "color": "#1A202C", "align": "left"},
+        "ticket_number":     {"x": 0.275, "y": 0.695, "font_size": 32, "color": "#1A202C", "align": "left", "enabled": True},
+        "attendee_value":    {"x": 0.465, "y": 0.695, "font_size": 32, "color": "#1A202C", "align": "left"},
 
         # =====================================================================
-        # LABELS (Small text above the values)
+        # RIGHT SIDE: QR CODE
         # =====================================================================
-        "ticket_code_label": {
-            "x": 0.10, "y": 0.22, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "booking_label": {
-            "x": 0.36, "y": 0.22, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "organizer": {
-            "x": 0.60, "y": 0.22, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "venue_label": {
-            "x": 0.10, "y": 0.47, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "attendee_label": {
-            "x": 0.36, "y": 0.47, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "slot_time_label": {
-            "x": 0.60, "y": 0.47, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
+        # Centered in the right black square
+        "qr_code": {"x": 0.825, "y": 0.50, "size": 270},
 
-        # =====================================================================
-        # QR CODE (Right Box)
-        # =====================================================================
-        "qr_code": {
-            "x": 0.82, "y": 0.20, "size": 380
-        },
-
-        # =====================================================================
-        # HIDDEN FIELDS
-        # =====================================================================
+        # Hide unused fields
         "organizer_sub": {"enabled": False},
         "event_date_secondary": {"enabled": False},
         "booking_value": {"enabled": False},
@@ -155,7 +109,7 @@ class Command(BaseCommand):
     def _seed(self, *, event, image_path, name, overwrite):
         ttype, _ = EventTemplateType.objects.get_or_create(slug='ticket', defaults={'name': 'Ticket', 'is_active': True})
         existing = EventTemplate.objects.filter(event=event, name=name).first()
-        
+
         if existing and not overwrite:
             self.stdout.write(self.style.WARNING(f'⚠️  Template "{name}" already exists. Pass --overwrite to replace.'))
             return

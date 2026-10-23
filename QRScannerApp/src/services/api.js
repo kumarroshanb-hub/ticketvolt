@@ -647,6 +647,13 @@ export const scannerApi = {
             return response;
         } catch (error) {
             if (__DEV__) console.error('❌ Verify failed:', error.response?.data || error.message);
+            
+            // ✅ FIX: If it's a 400 and we know the ticket is valid:false, 
+            // return the response instead of throwing so the UI can handle the alert.
+            if (error.response?.status === 400 && error.response?.data?.valid === false) {
+                return error.response;
+            }
+            
             throw error;
         }
     },

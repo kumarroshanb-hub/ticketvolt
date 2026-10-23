@@ -4,8 +4,11 @@ import { toast } from 'react-toastify';
 import api from '../../services/api';
 import { EVENT_TYPE, EVENT_CATEGORY, EVENT_STATUS } from '../../constants';
 import { formatDateForInput } from '../../utils/datetime';
+import { resolveTimezoneDefault } from '../../utils/localeDefaults';
 
-const DEFAULT_FORM = {
+// ✅ No hardcoded timezone. Resolved from device locale → env
+// override → product default at form-creation time.
+const makeDefaultForm = () => ({
     title: '',
     description: '',
     short_description: '',
@@ -15,7 +18,7 @@ const DEFAULT_FORM = {
     venue_id: '',
     start_date: '',
     end_date: '',
-    timezone: 'Asia/Kolkata',
+    timezone: resolveTimezoneDefault(),
     status: EVENT_STATUS.DRAFT,
     is_public: true,
     ticket_format: 'pdf',
@@ -23,11 +26,11 @@ const DEFAULT_FORM = {
     tickets_per_page: 4,
     cancellation_policy_id: '',
     cancellation_policy_text: '',
-};
+});
 
 export const useEventForm = (id) => {
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState(DEFAULT_FORM);
+    const [formData, setFormData] = useState(makeDefaultForm);
     const [sessions, setSessions] = useState([]);
     const [tiers, setTiers] = useState([]);
 
@@ -91,7 +94,10 @@ export const useEventForm = (id) => {
                     venue_id: data.venue?.id || '',
                     start_date: formatDateForInput(data.start_date),
                     end_date: formatDateForInput(data.end_date),
-                    timezone: data.timezone || 'Asia/Kolkata',
+                    // ✅ If the API returns a timezone, honor it. If not,
+                    // resolve a sensible default (device → env → fallback)
+                    // instead of forcing a hardcoded one.
+                    timezone: data.timezone || resolveTimezoneDefault(),
                     status: data.status || EVENT_STATUS.DRAFT,
                     is_public: data.is_public !== undefined ? data.is_public : true,
                     ticket_format: data.ticket_format || 'pdf',

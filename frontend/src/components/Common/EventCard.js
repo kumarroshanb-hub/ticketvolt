@@ -323,6 +323,19 @@ const pickAnnouncementImage = (event) => {
     );
 };
 
+const getFullVenueAddress = (venue) => {
+    if (!venue) return 'Online Event';
+
+    const parts = [
+        venue.name,
+        venue.address_line1,
+        venue.city,
+        venue.state,
+    ].filter((p) => p && String(p).trim().length > 0);
+
+    return parts.length > 0 ? parts.join(', ') : 'Online Event';
+};
+
 const VALID_FLOWS = ['ticketed', 'free_registration', 'paid_registration'];
 
 const resolveFlow = (event) => {
@@ -334,9 +347,7 @@ const resolveFlow = (event) => {
         // eslint-disable-next-line no-console
         console.warn(
             `[EventCard] event ${event?.id ?? '?'} has unknown event_flow ` +
-            `${JSON.stringify(raw)}. Falling back to 'ticketed'. ` +
-            `This usually means the API dropped event_flow — check ` +
-            `EventViewSet.create.`
+            `${JSON.stringify(raw)}. Falling back to 'ticketed'.`
         );
     }
     return 'ticketed';
@@ -432,10 +443,23 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
     }, [initialEvent.id, initialEvent.tiers]);
 
     const tiers = event.tiers || [];
-    const availableSlots = tiers.reduce(
-        (sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)),
-        0
-    );
+    const sessions = event.sessions || [];
+
+    let availableSlots = 0;
+    if (sessions.length > 0) {
+        availableSlots = sessions.reduce(
+            (sum, session) => sum + Math.max(0, (session.capacity || 0) - (session.booked || 0)),
+            0
+        );
+    } else if (typeof event.total_capacity === 'number') {
+        availableSlots = Math.max(0, event.total_capacity - (event.total_tickets_sold || 0));
+    } else {
+        availableSlots = tiers.reduce(
+            (sum, tier) => sum + Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0)),
+            0
+        );
+    }
+
     const prices = tiers
         .map((t) => parseFloat(t.price))
         .filter((p) => !isNaN(p) && p > 0);
@@ -447,9 +471,8 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
 
     const isActuallySoldOut =
         event.status === 'sold_out' ||
-        (!registrationFlow && tiers.length > 0 && availableSlots === 0);
+        (!registrationFlow && availableSlots === 0);
 
-    const sessions = event.sessions || [];
     const displaySessions = sessions.length > 0
         ? sessions
         : [{ start_time: event.start_date, end_time: event.end_date }];
@@ -489,7 +512,7 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
     const showImage = announcementImage && !imageFailed;
 
     return (
-        <StyledCard 
+        <StyledCard
             elevation={0}
             sx={selected ? { border: `2px solid ${C.primary}` } : {}}
         >
@@ -545,8 +568,7 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
                 <InfoRow>
                     <LocationOn />
                     <span className="text">
-                        {event.venue?.name || 'Online Event'}
-                        {event.venue?.city ? ` · ${event.venue.city}` : ''}
+                        {getFullVenueAddress(event.venue)}
                     </span>
                 </InfoRow>
 
@@ -641,7 +663,6 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
                     onClick={handleCtaClick}
                     disabled={cta.disabled}
                     startIcon={cta.icon}
-                    // ✅ FIX: Change button styling if it's currently selected
                     color={selected ? "success" : "primary"}
                 >
                     {selected ? 'Selected' : cta.label}

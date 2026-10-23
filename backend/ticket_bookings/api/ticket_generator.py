@@ -418,24 +418,21 @@ class TicketGenerator:
                     event.venue.postal_code,
                     event.venue.country,
                 ]
-                # Filter out None or empty strings, then join with comma
                 venue_text = ', '.join([str(p).strip() for p in parts if p and str(p).strip()])
 
             if venue_text:
-                # If it's a wide stub ticket, we want the text to wrap if it's too long
                 venue_cfg = layout['venue_value']
                 if venue_cfg.get('enabled', True):
                     width, height = img.size
                     vx, vy = self._resolve_field_position(venue_cfg, width, height)
-                    v_size = self._resolve_font_size(venue_cfg, width, 16)
-                    v_color = venue_cfg.get('color', '#4A5568')
+                    v_size = self._resolve_font_size(venue_cfg, width, 20)
+                    v_color = venue_cfg.get('color', '#718096')
                     v_align = venue_cfg.get('align', 'center')
 
-                    # Estimate chars per line based on available width
+                    # Estimate chars per line based on available width in the left box
                     estimated_char_width = max(1, int(v_size * 0.6))
-                    # Keep it within the bounds (e.g., don't span across the QR code area)
-                    # For wide stub, assume left half is roughly 50% width
-                    available_px = (width * 0.5) - vx - 40
+                    # Restrict width to roughly the left 50% of the image
+                    available_px = (width * 0.5) - 40 
                     max_chars = max(20, int(available_px // estimated_char_width))
 
                     venue_lines = self._wrap_text(venue_text, max_chars)
@@ -462,13 +459,13 @@ class TicketGenerator:
                 draw, img, layout['attendee_label'],
                 'ATTENDEE',
                 default_color='#718096', default_align='center',
-                default_font_size=14,
+                default_font_size=18,
             )
             self._draw_field(
                 draw, img, layout['attendee_value'],
                 attendee_name,
                 default_color='#1A202C', default_align='center',
-                default_font_size=24,
+                default_font_size=32,
             )
 
             # ---------------- Ticket code ----------------
@@ -476,7 +473,7 @@ class TicketGenerator:
                 draw, img, layout['ticket_code_value'],
                 ticket.unique_code,
                 default_color='#A0AEC0', default_align='center',
-                default_font_size=16,
+                default_font_size=20,
             )
 
             # ---------------- Output ----------------

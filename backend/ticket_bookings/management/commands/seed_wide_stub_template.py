@@ -19,43 +19,44 @@ from ticket_bookings.models import Event, EventTemplate, EventTemplateType
 DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
 # ==============================================================================
-# CONFIG FOR CUSTOM TICKET TEMPLATE (Left-aligned text, Right-aligned QR)
+# CONFIG FOR CUSTOM TICKET TEMPLATE
+# Using absolute pixels for font_size and QR size to ensure readability.
 # ==============================================================================
 CONFIG = {
     "fields": {
         # --- Left Side (Event Details) ---
         "event_title": {
-            "x": 0.35, "y": 0.25, "font_size": 0.045, 
+            "x": 0.35, "y": 0.20, "font_size": 42, 
             "color": "#1A202C", "align": "center"
         },
         "event_date": {
-            "x": 0.35, "y": 0.40, "font_size": 0.025, 
+            "x": 0.35, "y": 0.35, "font_size": 28, 
             "color": "#4A5568", "align": "center"
         },
         "venue_value": {
-            "x": 0.35, "y": 0.50, "font_size": 0.018, 
+            "x": 0.35, "y": 0.45, "font_size": 20, 
             "color": "#718096", "align": "center"
         },
         
         # --- Left Side (Attendee Details) ---
         "attendee_label": {
-            "x": 0.35, "y": 0.65, "font_size": 0.015, 
+            "x": 0.35, "y": 0.62, "font_size": 18, 
             "color": "#718096", "align": "center"
         },
         "attendee_value": {
-            "x": 0.35, "y": 0.72, "font_size": 0.030, 
+            "x": 0.35, "y": 0.68, "font_size": 32, 
             "color": "#1A202C", "align": "center"
         },
         "ticket_code_value": {
-            "x": 0.35, "y": 0.85, "font_size": 0.018, 
+            "x": 0.35, "y": 0.82, "font_size": 20, 
             "color": "#A0AEC0", "align": "center"
         },
         
         # --- Right Side (QR Code Box) ---
-        # Center of the black box is at roughly 80% width, 50% height.
-        # Size is scaled to fit neatly inside the box.
+        # x: 0.80 (center of right box), y: 0.25 (top padding)
+        # size: 350 (absolute pixels - ensures it fits perfectly)
         "qr_code": {
-            "x": 0.80, "y": 0.28, "size": 0.45
+            "x": 0.80, "y": 0.25, "size": 350
         },
 
         # --- Explicitly Disable Unused Fields ---

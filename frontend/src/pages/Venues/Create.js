@@ -19,6 +19,7 @@ import {
 import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
+import { resolveCountryDefault } from '../../utils/localeDefaults';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -45,7 +46,6 @@ const SectionTitle = styled(Typography)`
     margin-bottom: 16px;
 `;
 
-// ✅ Fixed: fallback indigo → C.primary
 const StyledTextField = styled(TextField)`
     & .MuiOutlinedInput-root {
         color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
@@ -86,7 +86,7 @@ const CreateVenue = () => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState(() => ({
         name: '',
         description: '',
         venue_type: 'indoor',
@@ -95,13 +95,14 @@ const CreateVenue = () => {
         city: '',
         state: '',
         postal_code: '',
-        country: 'India',
+        // ✅ Resolved from device locale → env override → product default.
+        country: resolveCountryDefault(),
         capacity: '',
         contact_phone: '',
         contact_email: '',
         has_reserved_seating: false,
         is_active: true,
-    });
+    }));
 
     const countryOptions = useMemo(() => {
         const current = (formData.country || '').trim();
@@ -131,7 +132,7 @@ const CreateVenue = () => {
                 city: data.city || '',
                 state: data.state || '',
                 postal_code: data.postal_code || '',
-                country: data.country || 'India',
+                country: data.country || resolveCountryDefault(),
                 capacity: data.capacity || '',
                 contact_phone: data.contact_phone || '',
                 contact_email: data.contact_email || '',
@@ -233,36 +234,24 @@ const CreateVenue = () => {
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth
-                                label="Venue Name"
-                                name="name"
-                                value={formData.name}
-                                onChange={handleChange}
-                                required
-                                autoComplete="organization"
+                                fullWidth label="Venue Name" name="name"
+                                value={formData.name} onChange={handleChange}
+                                required autoComplete="organization"
                             />
                         </Grid>
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth
-                                label="Description"
-                                name="description"
-                                value={formData.description}
-                                onChange={handleChange}
-                                multiline
-                                rows={3}
+                                fullWidth label="Description" name="description"
+                                value={formData.description} onChange={handleChange}
+                                multiline rows={3}
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                select
-                                label="Venue Type"
-                                name="venue_type"
-                                value={formData.venue_type}
-                                onChange={handleChange}
+                                fullWidth select label="Venue Type" name="venue_type"
+                                value={formData.venue_type} onChange={handleChange}
                             >
                                 <MenuItem value="indoor">Indoor</MenuItem>
                                 <MenuItem value="outdoor">Outdoor</MenuItem>
@@ -272,13 +261,9 @@ const CreateVenue = () => {
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                label="Capacity"
-                                name="capacity"
-                                type="number"
+                                fullWidth label="Capacity" name="capacity" type="number"
                                 inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
-                                value={formData.capacity}
-                                onChange={handleChange}
+                                value={formData.capacity} onChange={handleChange}
                             />
                         </Grid>
 
@@ -289,73 +274,52 @@ const CreateVenue = () => {
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth
-                                label="Address Line 1"
-                                name="address_line1"
-                                value={formData.address_line1}
-                                onChange={handleChange}
+                                fullWidth label="Address Line 1" name="address_line1"
+                                value={formData.address_line1} onChange={handleChange}
                                 autoComplete="address-line1"
                             />
                         </Grid>
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth
-                                label="Address Line 2"
-                                name="address_line2"
-                                value={formData.address_line2}
-                                onChange={handleChange}
+                                fullWidth label="Address Line 2" name="address_line2"
+                                value={formData.address_line2} onChange={handleChange}
                                 autoComplete="address-line2"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                label="City"
-                                name="city"
-                                value={formData.city}
-                                onChange={handleChange}
+                                fullWidth label="City" name="city"
+                                value={formData.city} onChange={handleChange}
                                 autoComplete="address-level2"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                label="State"
-                                name="state"
-                                value={formData.state}
-                                onChange={handleChange}
+                                fullWidth label="State" name="state"
+                                value={formData.state} onChange={handleChange}
                                 autoComplete="address-level1"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                label="Postal Code"
-                                name="postal_code"
+                                fullWidth label="Postal Code" name="postal_code"
                                 inputProps={{ inputMode: 'numeric' }}
-                                value={formData.postal_code}
-                                onChange={handleChange}
+                                value={formData.postal_code} onChange={handleChange}
                                 autoComplete="postal-code"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                select
-                                label="Country"
-                                name="country"
-                                value={formData.country}
-                                onChange={handleChange}
+                                fullWidth select label="Country" name="country"
+                                value={formData.country} onChange={handleChange}
                                 SelectProps={{
                                     MenuProps: {
-                                        PaperProps: {
-                                            sx: { maxHeight: 400 },
-                                        },
+                                        PaperProps: { sx: { maxHeight: 400 } },
                                     },
                                 }}
                             >
@@ -374,25 +338,17 @@ const CreateVenue = () => {
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                label="Contact Phone"
-                                name="contact_phone"
-                                type="tel"
+                                fullWidth label="Contact Phone" name="contact_phone" type="tel"
                                 inputProps={{ inputMode: 'tel', autoComplete: 'tel' }}
-                                value={formData.contact_phone}
-                                onChange={handleChange}
+                                value={formData.contact_phone} onChange={handleChange}
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth
-                                label="Contact Email"
-                                name="contact_email"
-                                type="email"
+                                fullWidth label="Contact Email" name="contact_email" type="email"
                                 inputProps={{ inputMode: 'email', autoComplete: 'email' }}
-                                value={formData.contact_email}
-                                onChange={handleChange}
+                                value={formData.contact_email} onChange={handleChange}
                             />
                         </Grid>
 
@@ -401,7 +357,6 @@ const CreateVenue = () => {
                             <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
-                        {/* ✅ Fixed: switch track uses C.primary */}
                         <Grid item xs={12} sm={6}>
                             <FormControlLabel
                                 control={
@@ -420,7 +375,6 @@ const CreateVenue = () => {
                             />
                         </Grid>
 
-                        {/* ✅ Fixed: switch track uses C.primary */}
                         <Grid item xs={12} sm={6}>
                             <FormControlLabel
                                 control={
@@ -449,10 +403,8 @@ const CreateVenue = () => {
                                 }}
                             >
                                 <PrimaryButton
-                                    variant="contained"
-                                    type="submit"
-                                    disabled={submitting}
-                                    size="large"
+                                    variant="contained" type="submit"
+                                    disabled={submitting} size="large"
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
                                     {submitting ? <CircularProgress size={24} sx={{ color: C.textInverse }} /> : (id ? 'Update Venue' : 'Create Venue')}

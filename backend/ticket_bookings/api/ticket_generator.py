@@ -14,32 +14,27 @@ logger = logging.getLogger(__name__)
 
 # ===========================================================================
 # DEFAULT FIELD LAYOUT
-# These are fallbacks if an event doesn't have a custom template applied.
-# They assume a 2000x650 landscape canvas.
 # ===========================================================================
 DEFAULT_FIELD_CONFIG = {
-    # Labels
-    'ticket_code_label': {'x': 150, 'y': 160, 'font_size': 24, 'color': '#718096', 'align': 'left', 'enabled': True}, # EVENT
-    'booking_label':     {'x': 700, 'y': 160, 'font_size': 24, 'color': '#718096', 'align': 'left', 'enabled': True}, # DATE
-    'organizer':         {'x': 1200, 'y': 160, 'font_size': 24, 'color': '#718096', 'align': 'left', 'enabled': True}, # TIME
-    
-    'venue_label':       {'x': 150, 'y': 360, 'font_size': 24, 'color': '#718096', 'align': 'left', 'enabled': True}, # VENUE
-    'attendee_label':    {'x': 700, 'y': 360, 'font_size': 24, 'color': '#718096', 'align': 'left', 'enabled': True}, # TICKET NO.
-    'slot_time_label':   {'x': 1200, 'y': 360, 'font_size': 24, 'color': '#718096', 'align': 'left', 'enabled': True}, # TICKET TYPE
-
-    # Values
-    'event_title':       {'x': 150, 'y': 210, 'font_size': 40, 'color': '#1A202C', 'align': 'left'},
-    'event_date':        {'x': 700, 'y': 210, 'font_size': 36, 'color': '#1A202C', 'align': 'left'},
-    'slot_time_value':   {'x': 1200, 'y': 210, 'font_size': 36, 'color': '#1A202C', 'align': 'left', 'enabled': True},
-    
-    'venue_value':       {'x': 150, 'y': 410, 'font_size': 28, 'color': '#1A202C', 'align': 'left'},
-    'ticket_number':     {'x': 700, 'y': 410, 'font_size': 32, 'color': '#1A202C', 'align': 'left', 'enabled': True},
-    'attendee_value':    {'x': 1200, 'y': 410, 'font_size': 32, 'color': '#1A202C', 'align': 'left'},
-
-    # QR Code
-    'qr_code': {'x': 1700, 'y': 220, 'size': 340},
-
-    # Unused
+    # Row 1 labels
+    'ticket_code_label': {'x': 0.085, 'y': 0.40, 'font_size': 22, 'color': '#4A5568', 'align': 'left', 'enabled': True},
+    'booking_label':     {'x': 0.275, 'y': 0.40, 'font_size': 22, 'color': '#4A5568', 'align': 'left', 'enabled': True},
+    'organizer':         {'x': 0.465, 'y': 0.40, 'font_size': 22, 'color': '#4A5568', 'align': 'left', 'enabled': True},
+    # Row 2 labels
+    'venue_label':       {'x': 0.085, 'y': 0.64, 'font_size': 22, 'color': '#4A5568', 'align': 'left', 'enabled': True},
+    'attendee_label':    {'x': 0.275, 'y': 0.64, 'font_size': 22, 'color': '#4A5568', 'align': 'left', 'enabled': True},
+    'slot_time_label':   {'x': 0.465, 'y': 0.64, 'font_size': 22, 'color': '#4A5568', 'align': 'left', 'enabled': True},
+    # Row 1 values
+    'event_title':       {'x': 0.085, 'y': 0.455, 'font_size': 36, 'color': '#1A202C', 'align': 'left'},
+    'event_date':        {'x': 0.275, 'y': 0.455, 'font_size': 32, 'color': '#1A202C', 'align': 'left'},
+    'slot_time_value':   {'x': 0.465, 'y': 0.455, 'font_size': 32, 'color': '#1A202C', 'align': 'left', 'enabled': True},
+    # Row 2 values
+    'venue_value':       {'x': 0.085, 'y': 0.695, 'font_size': 20, 'color': '#1A202C', 'align': 'left'},
+    'ticket_number':     {'x': 0.275, 'y': 0.695, 'font_size': 32, 'color': '#1A202C', 'align': 'left', 'enabled': True},
+    'attendee_value':    {'x': 0.465, 'y': 0.695, 'font_size': 32, 'color': '#1A202C', 'align': 'left'},
+    # QR — x/y are the CENTER of the QR box
+    'qr_code': {'x': 0.825, 'y': 0.50, 'size': 270},
+    # Hidden / unused
     'organizer_sub': {'enabled': False},
     'event_date_secondary': {'enabled': False},
     'booking_value': {'enabled': False},
@@ -49,6 +44,7 @@ DEFAULT_FIELD_CONFIG = {
 
 _ALLOWED_FIELD_KEYS = ('x', 'y', 'font_size', 'size', 'color', 'align', 'enabled')
 
+
 def _resolve_dimension(value, canvas_dimension, default):
     if value is None:
         value = default
@@ -56,11 +52,10 @@ def _resolve_dimension(value, canvas_dimension, default):
         numeric = float(value)
     except (TypeError, ValueError):
         numeric = float(default)
-    # If the value is a fraction (0-1), multiply by canvas dimension.
-    # Otherwise, treat it as an absolute pixel value.
     if 0 <= numeric <= 1:
         return int(canvas_dimension * numeric)
     return int(numeric)
+
 
 def resolve_template_config(template):
     merged = {k: dict(v) for k, v in DEFAULT_FIELD_CONFIG.items()}
@@ -96,6 +91,7 @@ def resolve_template_config(template):
                 continue
     return merged
 
+
 class TicketGenerator:
     def __init__(self, template=None, format_type='png'):
         self.template = template
@@ -103,6 +99,7 @@ class TicketGenerator:
         self.font_path = self._get_font_path()
         self._font_cache = {}
 
+    # ------------------------------------------------------------------ fonts
     def _get_font_path(self):
         font_paths = [
             '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
@@ -123,7 +120,14 @@ class TicketGenerator:
         font = None
         if self.font_path and os.path.exists(self.font_path):
             try:
-                font = ImageFont.truetype(self.font_path, int(size))
+                if bold:
+                    bold_path = self.font_path.replace('.ttf', '-Bold.ttf')
+                    if os.path.exists(bold_path):
+                        font = ImageFont.truetype(bold_path, int(size))
+                    else:
+                        font = ImageFont.truetype(self.font_path, int(size))
+                else:
+                    font = ImageFont.truetype(self.font_path, int(size))
             except Exception:
                 font = None
         if font is None:
@@ -142,13 +146,21 @@ class TicketGenerator:
             except Exception:
                 return 0, 0
 
+    # ------------------------------------------------------------- template io
     def _get_event_template(self, event, template_type='ticket'):
         from ..models import EventTemplate
         try:
-            template = EventTemplate.objects.get(event=event, template_type__slug=template_type, is_default=True, is_active=True)
+            template = EventTemplate.objects.get(
+                event=event,
+                template_type__slug=template_type,
+                is_default=True,
+                is_active=True,
+            )
             return template
         except EventTemplate.DoesNotExist:
-            return EventTemplate.objects.filter(event=event, template_type__slug=template_type, is_active=True).first()
+            return EventTemplate.objects.filter(
+                event=event, template_type__slug=template_type, is_active=True
+            ).first()
         except Exception:
             logger.exception('Error getting event template for event %s', event.pk)
             return None
@@ -168,6 +180,7 @@ class TicketGenerator:
             except Exception:
                 pass
 
+    # ---------------------------------------------------------------- helpers
     def _format_date_for_ticket(self, start_date, end_date):
         if not start_date:
             return ''
@@ -176,7 +189,6 @@ class TicketGenerator:
         else:
             start_date = timezone.localtime(start_date)
 
-        # Format as "1 November 2026"
         day = start_date.day
         if 4 <= day <= 20 or 24 <= day <= 30:
             suffix = 'th'
@@ -193,7 +205,8 @@ class TicketGenerator:
         raw = field_cfg.get('font_size', default_font_size)
         return _resolve_dimension(raw, width, default=default_font_size)
 
-    def _draw_field(self, draw, img, field_cfg, text, default_color='#1A202C', default_align='left', default_font_size=16):
+    def _draw_field(self, draw, img, field_cfg, text, default_color='#1A202C',
+                    default_align='left', default_font_size=16, bold=False):
         if not field_cfg.get('enabled', True) or not text:
             return
         width, height = img.size
@@ -201,9 +214,12 @@ class TicketGenerator:
         font_size = self._resolve_font_size(field_cfg, width, default_font_size)
         color = field_cfg.get('color', default_color)
         align = field_cfg.get('align', default_align)
-        self._draw_text_px(draw, img, str(text), x, y, font_size, color, align)
+        self._draw_text_px(draw, img, str(text), x, y, font_size, color, align, bold=bold)
 
     def _draw_qr_field(self, draw, img, field_cfg, qr_img):
+        """
+        Draw the QR code so that (x, y) is the CENTER of the QR image.
+        """
         if qr_img is None:
             return
         width, height = img.size
@@ -212,32 +228,38 @@ class TicketGenerator:
         qr_img = qr_img.resize((qr_size, qr_size))
 
         center_x = _resolve_dimension(field_cfg.get('x'), width, default=0.88)
-        top_y = _resolve_dimension(field_cfg.get('y'), height, default=0.55)
+        center_y = _resolve_dimension(field_cfg.get('y'), height, default=0.50)
 
         qr_x = center_x - qr_size // 2
-        qr_y = top_y
+        qr_y = center_y - qr_size // 2
 
+        # Clamp inside the image
         qr_x = max(0, min(qr_x, width - qr_size))
         qr_y = max(0, min(qr_y, height - qr_size))
 
         pad = 8
-        draw.rectangle([qr_x - pad, qr_y - pad, qr_x + qr_size + pad, qr_y + qr_size + pad], fill='white')
+        draw.rectangle(
+            [qr_x - pad, qr_y - pad, qr_x + qr_size + pad, qr_y + qr_size + pad],
+            fill='white',
+        )
         img.paste(qr_img, (qr_x, qr_y))
 
+    # ------------------------------------------------------------ main render
     def generate_ticket_image(self, ticket, booking, event, custom_config=None):
         try:
             template = self._get_event_template(event, 'ticket')
-            
-            # ✅ FIX: Always use a standardized 2000x650 canvas if no template is found
+
             if not template or not template.image:
-                logger.warning('No template found for event %s, using 2000x650 blank canvas', event.id)
+                logger.warning(
+                    'No template found for event %s, using 2000x650 blank canvas',
+                    event.id,
+                )
                 img = Image.new('RGB', (2000, 650), 'white')
-                draw = ImageDraw.Draw(img)
             else:
                 img = self._open_template_image(template)
                 if img is None:
                     img = Image.new('RGB', (2000, 650), 'white')
-                draw = ImageDraw.Draw(img)
+            draw = ImageDraw.Draw(img)
 
             layout = resolve_template_config(template)
             if isinstance(custom_config, dict):
@@ -245,34 +267,87 @@ class TicketGenerator:
                     if key in layout and isinstance(overrides, dict):
                         layout[key].update(overrides)
 
-            # ---------------- Row 1 Labels ----------------
-            self._draw_field(draw, img, layout['ticket_code_label'], 'EVENT', default_color='#718096', default_align='left', default_font_size=24)
-            self._draw_field(draw, img, layout['booking_label'], 'DATE', default_color='#718096', default_align='left', default_font_size=24)
-            self._draw_field(draw, img, layout['organizer'], 'TIME', default_color='#718096', default_align='left', default_font_size=24)
+            # ---------------- Row 1 Labels (Bolded) ----------------
+            self._draw_field(draw, img, layout['ticket_code_label'], 'EVENT',
+                             default_color='#4A5568', default_align='left',
+                             default_font_size=22, bold=True)
+            self._draw_field(draw, img, layout['booking_label'], 'DATE',
+                             default_color='#4A5568', default_align='left',
+                             default_font_size=22, bold=True)
+            self._draw_field(draw, img, layout['organizer'], 'TIME',
+                             default_color='#4A5568', default_align='left',
+                             default_font_size=22, bold=True)
 
             # ---------------- Row 1 Values ----------------
-            self._draw_field(draw, img, layout['event_title'], (event.title or '').upper(), default_color='#1A202C', default_align='left', default_font_size=40)
-            self._draw_field(draw, img, layout['event_date'], self._format_date_for_ticket(event.start_date, event.end_date), default_color='#1A202C', default_align='left', default_font_size=36)
-            
-            time_text = timezone.localtime(event.start_date).strftime('%I:%M %p').lstrip('0') if event.start_date else ''
-            self._draw_field(draw, img, layout['slot_time_value'], time_text, default_color='#1A202C', default_align='left', default_font_size=36)
+            self._draw_field(draw, img, layout['event_title'],
+                             (event.title or '').upper(),
+                             default_color='#1A202C', default_align='left',
+                             default_font_size=36)
+            self._draw_field(draw, img, layout['event_date'],
+                             self._format_date_for_ticket(event.start_date, event.end_date),
+                             default_color='#1A202C', default_align='left',
+                             default_font_size=32)
 
-            # ---------------- Row 2 Labels ----------------
-            self._draw_field(draw, img, layout['venue_label'], 'VENUE', default_color='#718096', default_align='left', default_font_size=24)
-            self._draw_field(draw, img, layout['attendee_label'], 'TICKET NO.', default_color='#718096', default_align='left', default_font_size=24)
-            self._draw_field(draw, img, layout['slot_time_label'], 'TICKET TYPE', default_color='#718096', default_align='left', default_font_size=24)
+            time_text = ''
+            if event.start_date:
+                time_text = timezone.localtime(event.start_date).strftime('%I:%M %p').lstrip('0')
+            self._draw_field(draw, img, layout['slot_time_value'], time_text,
+                             default_color='#1A202C', default_align='left',
+                             default_font_size=32)
+
+            # ---------------- Row 2 Labels (Bolded) ----------------
+            self._draw_field(draw, img, layout['venue_label'], 'VENUE',
+                             default_color='#4A5568', default_align='left',
+                             default_font_size=22, bold=True)
+            self._draw_field(draw, img, layout['attendee_label'], 'TICKET NO.',
+                             default_color='#4A5568', default_align='left',
+                             default_font_size=22, bold=True)
+            self._draw_field(draw, img, layout['slot_time_label'], 'TICKET TYPE',
+                             default_color='#4A5568', default_align='left',
+                             default_font_size=22, bold=True)
 
             # ---------------- Row 2 Values ----------------
-            venue_text = ''
-            if event.venue:
-                parts = [event.venue.name, event.venue.address_line1, event.venue.city]
-                venue_text = ', '.join([str(p).strip() for p in parts if p and str(p).strip()])
-            self._draw_field(draw, img, layout['venue_value'], venue_text, default_color='#1A202C', default_align='left', default_font_size=28)
-            
-            self._draw_field(draw, img, layout['ticket_number'], ticket.unique_code, default_color='#1A202C', default_align='left', default_font_size=32)
-            
+            venue_cfg = layout['venue_value']
+            if venue_cfg.get('enabled', True) and event.venue:
+                width, height = img.size
+                vx, vy = self._resolve_field_position(venue_cfg, width, height)
+                v_size = self._resolve_font_size(venue_cfg, width, 20)
+                v_color = venue_cfg.get('color', '#1A202C')
+                v_align = venue_cfg.get('align', 'left')
+
+                # Format strictly into 2 lines: Name on line 1, Address on line 2
+                venue_lines = []
+                if event.venue.name:
+                    venue_lines.append(str(event.venue.name).strip())
+                
+                address_parts = [
+                    event.venue.address_line1, 
+                    event.venue.city, 
+                    event.venue.state
+                ]
+                address_str = ', '.join([str(p).strip() for p in address_parts if p and str(p).strip()])
+                if address_str:
+                    venue_lines.append(address_str)
+
+                # Tighter line spacing (1.05) to guarantee it fits within the white box
+                line_height = int(v_size * 1.05)
+                for i, line in enumerate(venue_lines):
+                    self._draw_text_px(
+                        draw, img, line,
+                        vx, vy + (i * line_height),
+                        v_size, v_color, v_align,
+                    )
+
+            # Ticket Number
+            self._draw_field(draw, img, layout['ticket_number'], ticket.unique_code,
+                             default_color='#1A202C', default_align='left',
+                             default_font_size=32)
+
+            # Ticket Type
             tier_name = ticket.tier.name if ticket.tier else 'General Admission'
-            self._draw_field(draw, img, layout['attendee_value'], tier_name, default_color='#1A202C', default_align='left', default_font_size=32)
+            self._draw_field(draw, img, layout['attendee_value'], tier_name,
+                             default_color='#1A202C', default_align='left',
+                             default_font_size=32)
 
             # ---------------- QR code ----------------
             qr_img = self._generate_qr_code(ticket)
@@ -288,6 +363,7 @@ class TicketGenerator:
             logger.exception('Error generating ticket image')
             return self._generate_fallback_ticket(ticket, booking, event)
 
+    # -------------------------------------------------------------- fallback
     def _generate_fallback_ticket(self, ticket, booking, event):
         try:
             width, height = 800, 1000
@@ -295,15 +371,24 @@ class TicketGenerator:
             draw = ImageDraw.Draw(img)
 
             event_title = event.title if event else 'EVENT'
-            self._draw_text_px(draw, img, event_title.upper(), width // 2, 150, 36, '#1A202C', 'center')
+            self._draw_text_px(draw, img, event_title.upper(), width // 2, 150,
+                               36, '#1A202C', 'center')
 
-            date_display = self._format_date_for_ticket(event.start_date, event.end_date)
-            self._draw_text_px(draw, img, date_display, width // 2, 230, 20, '#4A5568', 'center')
-            
+            date_display = self._format_date_for_ticket(
+                event.start_date if event else None,
+                event.end_date if event else None,
+            )
+            self._draw_text_px(draw, img, date_display, width // 2, 230,
+                               20, '#4A5568', 'center')
+
             if event and event.venue:
-                parts = [event.venue.name, event.venue.address_line1, event.venue.city, event.venue.state, event.venue.country]
-                venue_text = ', '.join([str(p).strip() for p in parts if p and str(p).strip()])
-                self._draw_text_px(draw, img, venue_text, width // 2, 280, 16, '#4A5568', 'center')
+                parts = [event.venue.name, event.venue.address_line1,
+                         event.venue.city, event.venue.state, event.venue.country]
+                venue_text = ', '.join(
+                    [str(p).strip() for p in parts if p and str(p).strip()]
+                )
+                self._draw_text_px(draw, img, venue_text, width // 2, 280,
+                                   16, '#4A5568', 'center')
 
             qr_img = self._generate_qr_code(ticket)
             if qr_img:
@@ -311,7 +396,10 @@ class TicketGenerator:
                 qr_img = qr_img.resize((qr_size, qr_size))
                 qr_x = (width - qr_size) // 2
                 qr_y = 380
-                draw.rectangle([qr_x - 20, qr_y - 20, qr_x + qr_size + 20, qr_y + qr_size + 20], fill='white')
+                draw.rectangle(
+                    [qr_x - 20, qr_y - 20, qr_x + qr_size + 20, qr_y + qr_size + 20],
+                    fill='white',
+                )
                 img.paste(qr_img, (qr_x, qr_y))
 
             attendee_name = ticket.attendee_name or booking.customer_name or 'Guest'
@@ -327,11 +415,29 @@ class TicketGenerator:
             logger.exception('Error generating fallback ticket')
             return None
 
-    def _draw_text_px(self, draw, img, text, x, y, font_size, color, align='center'):
+    # --------------------------------------------------------------- utilities
+    def _wrap_text(self, text, max_chars):
+        if not text:
+            return []
+        words = text.split()
+        lines, line = [], ''
+        for word in words:
+            if len(line) + len(word) + 1 <= max_chars:
+                line += word + ' '
+            else:
+                if line:
+                    lines.append(line.strip())
+                line = word + ' '
+        if line:
+            lines.append(line.strip())
+        return lines
+
+    def _draw_text_px(self, draw, img, text, x, y, font_size, color,
+                      align='center', bold=False):
         try:
             if not text:
                 return
-            font = self._get_font(font_size)
+            font = self._get_font(font_size, bold=bold)
             text_width, _ = self._get_text_size(draw, text, font)
             if align == 'center':
                 x = x - text_width // 2
@@ -344,7 +450,12 @@ class TicketGenerator:
     def _generate_qr_code(self, ticket):
         try:
             payload = serialise_ticket_qr_payload(ticket, include_ids=True)
-            qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=6, border=2)
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,
+                box_size=6,
+                border=2,
+            )
             qr.add_data(payload)
             qr.make(fit=True)
             return qr.make_image(fill_color='black', back_color='white')
@@ -352,6 +463,7 @@ class TicketGenerator:
             logger.exception('Error generating QR code')
             return None
 
+    # ------------------------------------------------------------- public API
     def generate_ticket_png(self, ticket, booking, event):
         try:
             buffer = self.generate_ticket_image(ticket, booking, event)
@@ -391,7 +503,8 @@ class TicketGenerator:
             y_pos = (height - new_height) / 2
 
             png_buffer.seek(0)
-            c.drawImage(ImageReader(png_buffer), x_pos, y_pos, width=new_width, height=new_height)
+            c.drawImage(ImageReader(png_buffer), x_pos, y_pos,
+                        width=new_width, height=new_height)
             c.save()
             pdf_buffer.seek(0)
             return pdf_buffer

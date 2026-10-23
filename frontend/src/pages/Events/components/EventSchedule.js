@@ -1,4 +1,4 @@
-// frontend/src/pages/Events/components/EventSchedule.js  (CORRECTED)
+// frontend/src/pages/Events/components/EventSchedule.js
 import React from 'react';
 import {
     Grid, FormControl, InputLabel, Select, MenuItem, FormHelperText, Typography,
@@ -34,7 +34,11 @@ export const EventSchedule = ({ formData, onChange }) => (
                 <InputLabel id="timezone-label">Timezone</InputLabel>
                 <Select
                     labelId="timezone-label" name="timezone"
-                    value={formData.timezone} onChange={onChange} label="Timezone"
+                    // value is always seeded by useEventForm via
+                    // resolveTimezoneDefault() (device → env → fallback).
+                    value={formData.timezone || ''}
+                    onChange={onChange}
+                    label="Timezone"
                     MenuProps={{ PaperProps: { sx: { maxHeight: 400 } } }}
                     renderValue={(selected) => (
                         <Typography variant="body2" sx={{ color: C.textPrimary }}>

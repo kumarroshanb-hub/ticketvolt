@@ -91,12 +91,12 @@ const CreateEvent = () => {
                             policies={policies}
                         />
 
-                        {!isFreeRegistration && (
-                            <EventTicketSettings
-                                formData={formData}
-                                onChange={handleChange}
-                            />
-                        )}
+                        {/* ✅ FIX: Render Ticket Settings for ALL event flows so Free Registration can select PDF/PNG */}
+                        <EventTicketSettings
+                            formData={formData}
+                            onChange={handleChange}
+                            isFreeRegistration={isFreeRegistration}
+                        />
 
                         <SessionsEditor
                             sessions={sessions}

@@ -16,78 +16,38 @@ from ticket_bookings.models import Event, EventTemplate, EventTemplateType
 
 DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
+# backend/ticket_bookings/management/commands/seed_wide_stub_template.py
+
 CONFIG = {
     "fields": {
-        # =====================================================================
-        # TOP ROW (Y: ~0.32)
-        # =====================================================================
-        "event_title": {
-            "x": 0.10, "y": 0.30, "font_size": 24, 
-            "color": "#1A202C", "align": "left"
-        },
-        "event_date": {
-            "x": 0.36, "y": 0.30, "font_size": 24, 
-            "color": "#1A202C", "align": "left"
-        },
-        "slot_time_value": {
-            "x": 0.60, "y": 0.30, "font_size": 24, 
-            "color": "#1A202C", "align": "left", "enabled": True
-        },
+        # ==========================================
+        # LABELS (Small gray text)
+        # ==========================================
+        "ticket_code_label": {"x": 150, "y": 160, "font_size": 24, "color": "#718096", "align": "left", "enabled": True}, # "EVENT"
+        "booking_label":     {"x": 700, "y": 160, "font_size": 24, "color": "#718096", "align": "left", "enabled": True}, # "DATE"
+        "organizer":         {"x": 1200, "y": 160, "font_size": 24, "color": "#718096", "align": "left", "enabled": True}, # "TIME"
+        
+        "venue_label":       {"x": 150, "y": 360, "font_size": 24, "color": "#718096", "align": "left", "enabled": True}, # "VENUE"
+        "attendee_label":    {"x": 700, "y": 360, "font_size": 24, "color": "#718096", "align": "left", "enabled": True}, # "TICKET NO."
+        "slot_time_label":   {"x": 1200, "y": 360, "font_size": 24, "color": "#718096", "align": "left", "enabled": True}, # "TICKET TYPE"
 
-        # =====================================================================
-        # BOTTOM ROW (Y: ~0.55)
-        # =====================================================================
-        "venue_value": {
-            "x": 0.10, "y": 0.55, "font_size": 20, 
-            "color": "#1A202C", "align": "left"
-        },
-        "ticket_number": {
-            "x": 0.36, "y": 0.55, "font_size": 20, 
-            "color": "#1A202C", "align": "left", "enabled": True
-        },
-        "attendee_value": {
-            "x": 0.60, "y": 0.55, "font_size": 20, 
-            "color": "#1A202C", "align": "left"
-        },
+        # ==========================================
+        # VALUES (Large black text)
+        # ==========================================
+        "event_title":       {"x": 150, "y": 210, "font_size": 40, "color": "#1A202C", "align": "left"},
+        "event_date":        {"x": 700, "y": 210, "font_size": 36, "color": "#1A202C", "align": "left"},
+        "slot_time_value":   {"x": 1200, "y": 210, "font_size": 36, "color": "#1A202C", "align": "left", "enabled": True},
+        
+        "venue_value":       {"x": 150, "y": 410, "font_size": 28, "color": "#1A202C", "align": "left"},
+        "ticket_number":     {"x": 700, "y": 410, "font_size": 32, "color": "#1A202C", "align": "left", "enabled": True},
+        "attendee_value":    {"x": 1200, "y": 410, "font_size": 32, "color": "#1A202C", "align": "left"},
 
-        # =====================================================================
-        # LABELS (Small text above the values)
-        # =====================================================================
-        "ticket_code_label": {
-            "x": 0.10, "y": 0.22, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "booking_label": {
-            "x": 0.36, "y": 0.22, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "organizer": {
-            "x": 0.60, "y": 0.22, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "venue_label": {
-            "x": 0.10, "y": 0.47, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "attendee_label": {
-            "x": 0.36, "y": 0.47, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
-        "slot_time_label": {
-            "x": 0.60, "y": 0.47, "font_size": 12, 
-            "color": "#718096", "align": "left", "enabled": True
-        },
+        # ==========================================
+        # QR CODE
+        # ==========================================
+        "qr_code": {"x": 1700, "y": 220, "size": 340},
 
-        # =====================================================================
-        # QR CODE (Right Box)
-        # =====================================================================
-        "qr_code": {
-            "x": 0.82, "y": 0.20, "size": 380
-        },
-
-        # =====================================================================
-        # HIDDEN FIELDS
-        # =====================================================================
+        # Hide unused fields
         "organizer_sub": {"enabled": False},
         "event_date_secondary": {"enabled": False},
         "booking_value": {"enabled": False},

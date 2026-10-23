@@ -1,11 +1,6 @@
 # backend/ticket_bookings/management/commands/seed_wide_stub_template.py
 """
 Seed a wide-stub ticket template for an event.
-
-Usage:
-    python manage.py seed_wide_stub_template --list-events
-    python manage.py seed_wide_stub_template --event <event-uuid>
-    python manage.py seed_wide_stub_template --event <event-uuid> --overwrite
 """
 from pathlib import Path
 
@@ -20,43 +15,42 @@ DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
 # ==============================================================================
 # CONFIG FOR CUSTOM TICKET TEMPLATE
-# Using absolute pixels for font_size and QR size to ensure readability.
 # ==============================================================================
 CONFIG = {
     "fields": {
         # --- Left Side (Event Details) ---
         "event_title": {
-            "x": 0.35, "y": 0.20, "font_size": 42, 
+            "x": 0.35, "y": 0.25, "font_size": 48, 
             "color": "#1A202C", "align": "center"
         },
         "event_date": {
-            "x": 0.35, "y": 0.35, "font_size": 28, 
+            "x": 0.35, "y": 0.40, "font_size": 24, 
             "color": "#4A5568", "align": "center"
         },
         "venue_value": {
-            "x": 0.35, "y": 0.45, "font_size": 20, 
+            "x": 0.35, "y": 0.50, "font_size": 18, 
             "color": "#718096", "align": "center"
         },
         
         # --- Left Side (Attendee Details) ---
         "attendee_label": {
-            "x": 0.35, "y": 0.62, "font_size": 18, 
+            "x": 0.35, "y": 0.68, "font_size": 16, 
             "color": "#718096", "align": "center"
         },
         "attendee_value": {
-            "x": 0.35, "y": 0.68, "font_size": 32, 
+            "x": 0.35, "y": 0.75, "font_size": 32, 
             "color": "#1A202C", "align": "center"
         },
         "ticket_code_value": {
-            "x": 0.35, "y": 0.82, "font_size": 20, 
+            "x": 0.35, "y": 0.85, "font_size": 20, 
             "color": "#A0AEC0", "align": "center"
         },
         
         # --- Right Side (QR Code Box) ---
-        # x: 0.80 (center of right box), y: 0.25 (top padding)
+        # x: 0.82 (center of right box), y: 0.20 (top padding)
         # size: 350 (absolute pixels - ensures it fits perfectly)
         "qr_code": {
-            "x": 0.80, "y": 0.25, "size": 350
+            "x": 0.82, "y": 0.20, "size": 320
         },
 
         # --- Explicitly Disable Unused Fields ---
@@ -82,16 +76,11 @@ class Command(BaseCommand):
     help = 'Seed a wide-stub ticket template for an event.'
 
     def add_arguments(self, parser):
-        parser.add_argument('--event', '-e',
-                            help='Event UUID to attach the template to.')
-        parser.add_argument('--image', '-i', default=DEFAULT_IMAGE,
-                            help=f'Path to the template PNG (default: {DEFAULT_IMAGE}).')
-        parser.add_argument('--name', default='Wide Stub Ticket',
-                            help='Template name.')
-        parser.add_argument('--overwrite', action='store_true',
-                            help='Overwrite an existing template with the same name.')
-        parser.add_argument('--list-events', action='store_true',
-                            help='List all events and exit.')
+        parser.add_argument('--event', '-e', help='Event UUID to attach the template to.')
+        parser.add_argument('--image', '-i', default=DEFAULT_IMAGE, help='Path to the template PNG.')
+        parser.add_argument('--name', default='Wide Stub Ticket', help='Template name.')
+        parser.add_argument('--overwrite', action='store_true', help='Overwrite an existing template.')
+        parser.add_argument('--list-events', action='store_true', help='List all events and exit.')
 
     def handle(self, *args, **options):
         if options['list_events']:
@@ -99,9 +88,7 @@ class Command(BaseCommand):
 
         event_id = options.get('event')
         if not event_id:
-            self.stderr.write(self.style.ERROR(
-                'Missing --event. Use --list-events to see available events.'
-            ))
+            self.stderr.write(self.style.ERROR('Missing --event.'))
             return
 
         event = self._get_event(event_id)
@@ -113,14 +100,10 @@ class Command(BaseCommand):
             image_path = Path(settings.BASE_DIR) / image_path
 
         if not image_path.exists():
-            self.stderr.write(self.style.ERROR(
-                f'Image not found: {image_path}\n'
-                f'  Pass --image <path> to point at the file.'
-            ))
+            self.stderr.write(self.style.ERROR(f'Image not found: {image_path}'))
             return
 
-        self._seed(event=event, image_path=image_path,
-                   name=options['name'], overwrite=options['overwrite'])
+        self._seed(event=event, image_path=image_path, name=options['name'], overwrite=options['overwrite'])
 
     def _list_events(self):
         events = Event.objects.all().order_by('-created_at')
@@ -142,21 +125,14 @@ class Command(BaseCommand):
         return None
 
     def _seed(self, *, event, image_path, name, overwrite):
-        ttype, _ = EventTemplateType.objects.get_or_create(
-            slug='ticket',
-            defaults={'name': 'Ticket', 'is_active': True},
-        )
-
+        ttype, _ = EventTemplateType.objects.get_or_create(slug='ticket', defaults={'name': 'Ticket', 'is_active': True})
         existing = EventTemplate.objects.filter(event=event, name=name).first()
+        
         if existing and not overwrite:
-            self.stdout.write(self.style.WARNING(
-                f'⚠️  Template "{name}" already exists. Pass --overwrite to replace.'
-            ))
+            self.stdout.write(self.style.WARNING(f'⚠️  Template "{name}" already exists. Pass --overwrite to replace.'))
             return
 
-        EventTemplate.objects.filter(
-            event=event, template_type=ttype, is_default=True,
-        ).update(is_default=False)
+        EventTemplate.objects.filter(event=event, template_type=ttype, is_default=True).update(is_default=False)
 
         if existing:
             template = existing
@@ -175,11 +151,4 @@ class Command(BaseCommand):
             template.image.save(image_path.name, File(fh), save=False)
         template.save()
 
-        action = 'Updated' if existing else 'Created'
-        self.stdout.write(self.style.SUCCESS(
-            f'✅ {action} template "{template.name}"'
-        ))
-        self.stdout.write(f'   Event:    {event.title}')
-        self.stdout.write(f'   Template: {template.id}')
-        self.stdout.write(f'   Image:    {template.image.name}')
-        self.stdout.write(f'   Default:  {template.is_default}')
+        self.stdout.write(self.style.SUCCESS(f'✅ {"Updated" if existing else "Created"} template "{template.name}"'))

@@ -1,6 +1,9 @@
 # backend/ticket_bookings/management/commands/seed_wide_stub_template.py
 """
 Seed a wide-stub ticket template for an event.
+
+Usage:
+    python manage.py seed_wide_stub_template --event <uuid> --overwrite
 """
 from pathlib import Path
 
@@ -13,58 +16,83 @@ from ticket_bookings.models import Event, EventTemplate, EventTemplateType
 
 DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
-# ==============================================================================
-# CONFIG FOR CUSTOM TICKET TEMPLATE
-# ==============================================================================
 CONFIG = {
     "fields": {
-        # --- Left Side (Event Details) ---
+        # =====================================================================
+        # TOP ROW (Y: ~0.32)
+        # =====================================================================
         "event_title": {
-            "x": 0.35, "y": 0.25, "font_size": 48, 
-            "color": "#1A202C", "align": "center"
+            "x": 0.10, "y": 0.30, "font_size": 24, 
+            "color": "#1A202C", "align": "left"
         },
         "event_date": {
-            "x": 0.35, "y": 0.40, "font_size": 24, 
-            "color": "#4A5568", "align": "center"
+            "x": 0.36, "y": 0.30, "font_size": 24, 
+            "color": "#1A202C", "align": "left"
         },
-        "venue_value": {
-            "x": 0.35, "y": 0.50, "font_size": 18, 
-            "color": "#718096", "align": "center"
-        },
-        
-        # --- Left Side (Attendee Details) ---
-        "attendee_label": {
-            "x": 0.35, "y": 0.68, "font_size": 16, 
-            "color": "#718096", "align": "center"
-        },
-        "attendee_value": {
-            "x": 0.35, "y": 0.75, "font_size": 32, 
-            "color": "#1A202C", "align": "center"
-        },
-        "ticket_code_value": {
-            "x": 0.35, "y": 0.85, "font_size": 20, 
-            "color": "#A0AEC0", "align": "center"
-        },
-        
-        # --- Right Side (QR Code Box) ---
-        # x: 0.82 (center of right box), y: 0.20 (top padding)
-        # size: 350 (absolute pixels - ensures it fits perfectly)
-        "qr_code": {
-            "x": 0.82, "y": 0.20, "size": 320
+        "slot_time_value": {
+            "x": 0.60, "y": 0.30, "font_size": 24, 
+            "color": "#1A202C", "align": "left", "enabled": True
         },
 
-        # --- Explicitly Disable Unused Fields ---
-        "organizer": {"enabled": False},
+        # =====================================================================
+        # BOTTOM ROW (Y: ~0.55)
+        # =====================================================================
+        "venue_value": {
+            "x": 0.10, "y": 0.55, "font_size": 20, 
+            "color": "#1A202C", "align": "left"
+        },
+        "ticket_number": {
+            "x": 0.36, "y": 0.55, "font_size": 20, 
+            "color": "#1A202C", "align": "left", "enabled": True
+        },
+        "attendee_value": {
+            "x": 0.60, "y": 0.55, "font_size": 20, 
+            "color": "#1A202C", "align": "left"
+        },
+
+        # =====================================================================
+        # LABELS (Small text above the values)
+        # =====================================================================
+        "ticket_code_label": {
+            "x": 0.10, "y": 0.22, "font_size": 12, 
+            "color": "#718096", "align": "left", "enabled": True
+        },
+        "booking_label": {
+            "x": 0.36, "y": 0.22, "font_size": 12, 
+            "color": "#718096", "align": "left", "enabled": True
+        },
+        "organizer": {
+            "x": 0.60, "y": 0.22, "font_size": 12, 
+            "color": "#718096", "align": "left", "enabled": True
+        },
+        "venue_label": {
+            "x": 0.10, "y": 0.47, "font_size": 12, 
+            "color": "#718096", "align": "left", "enabled": True
+        },
+        "attendee_label": {
+            "x": 0.36, "y": 0.47, "font_size": 12, 
+            "color": "#718096", "align": "left", "enabled": True
+        },
+        "slot_time_label": {
+            "x": 0.60, "y": 0.47, "font_size": 12, 
+            "color": "#718096", "align": "left", "enabled": True
+        },
+
+        # =====================================================================
+        # QR CODE (Right Box)
+        # =====================================================================
+        "qr_code": {
+            "x": 0.82, "y": 0.20, "size": 380
+        },
+
+        # =====================================================================
+        # HIDDEN FIELDS
+        # =====================================================================
         "organizer_sub": {"enabled": False},
         "event_date_secondary": {"enabled": False},
-        "ticket_code_label": {"enabled": False},
-        "booking_label": {"enabled": False},
         "booking_value": {"enabled": False},
-        "venue_label": {"enabled": False},
         "admit_one": {"enabled": False},
-        "ticket_number": {"enabled": False},
-        "slot_time_label": {"enabled": False},
-        "slot_time_value": {"enabled": False},
+        "ticket_code_value": {"enabled": False},
     },
     "template_type": "ticket",
     "orientation": "landscape",

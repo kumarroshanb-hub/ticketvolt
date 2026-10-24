@@ -42,7 +42,7 @@ const StyledCard = styled(Card)`
 
 const CardImageBanner = styled.div`
     width: 100%;
-    height: 160px;
+    height: 100%;
     position: relative;
     background-color: ${C.bgInput};
 

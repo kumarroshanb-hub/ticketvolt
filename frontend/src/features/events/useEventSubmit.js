@@ -44,13 +44,6 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                 } else {
                     const response = await api.post('/events/', payload);
 
-                    // ✅ FIX [P29]: a 2xx response with no `id` almost
-                    // always means the server-side serialisation failed
-                    // AFTER the row was committed (see EventViewSet.create
-                    // returning 500 with `event_id`). Previously we
-                    // navigated to a non-existent edit URL and the page
-                    // 500'd. Now we surface the error and route the user
-                    // to the list instead of a broken detail page.
                     if (!response.data || !response.data.id) {
                         const detail =
                             response.data?.error ||
@@ -59,10 +52,6 @@ export const useEventSubmit = ({ id, formData, sessions, tiers }) => {
                         setError(detail);
                         toast.error(detail);
 
-                        // If the server DID persist the event, it will
-                        // have returned `event_id`. Send the user there
-                        // so they can retry the save instead of losing
-                        // the record.
                         const persistedId =
                             response.data?.event_id ||
                             response.data?.eventId ||

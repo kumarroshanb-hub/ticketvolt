@@ -56,6 +56,9 @@ const CreateEvent = () => {
     const isRegistrationOnly = ['free_registration', 'paid_registration']
         .includes(formData.event_flow);
 
+    // ✅ FIX: Determine if any tier has sold tickets
+    const hasSoldTiers = tiers.some((t) => (t.quantity_sold || 0) > 0);
+
     if (loading) {
         return (
             <LoadingWrapper>
@@ -104,17 +107,19 @@ const CreateEvent = () => {
                             onUpdate={updateSession}
                         />
 
-                        {!isFreeRegistration && (
+                        {/* ✅ FIX: Render TiersEditor if NOT a free event, OR if it is free but has sold tickets */}
+                        {(!isFreeRegistration || hasSoldTiers) && (
                             <TiersEditor
                                 tiers={tiers}
                                 onAdd={addTier}
                                 onRemove={removeTier}
                                 onUpdate={updateTier}
                                 label={isRegistrationOnly ? 'Registration Fees' : 'Ticket Tiers'}
+                                hideActions={isFreeRegistration} // Lock it down if it's a free event
                             />
                         )}
 
-                        {isFreeRegistration && (
+                        {isFreeRegistration && !hasSoldTiers && (
                             <Grid item xs={12}>
                                 <Box sx={{ p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}>
                                     <Typography variant="body2" sx={{ color: C.textSecondary }}>
@@ -131,7 +136,7 @@ const CreateEvent = () => {
                             templates={templates.templates}
                             templateTypes={templates.templateTypes}
                             onOpenUpload={templates.openUpload}
-                            onDeleteTemplate={templates.deleteTemplate} // ✅ FIX: Pass the delete handler
+                            onDeleteTemplate={templates.deleteTemplate}
                         />
 
                         <EventFormActions

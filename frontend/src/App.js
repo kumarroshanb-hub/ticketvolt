@@ -18,6 +18,8 @@ import Layout from './components/Layout';
 // Public pages
 import Landing from './pages/Landing/Landing';
 import GuestOrRegisterGate from './pages/Gate/GuestOrRegisterGate';
+import ForgotPassword from './pages/ForgotPassword/ForgotPassword'; // ✅ ADDED
+import ResetPassword from './pages/ResetPassword/ResetPassword';     // ✅ ADDED
 
 // Authenticated app pages
 import Dashboard from './pages/Dashboard/Dashboard';
@@ -74,8 +76,6 @@ const LoadingSpinner = () => {
 // Route wrappers
 // ---------------------------------------------------------------------------
 
-// Skipped-by-authenticated-users route (Login / Register). Preserves
-// the `state.from` intent even when the user is already logged in.
 const PublicOnlyRoute = ({ children }) => {
     const { isAuthenticated, loading } = useAuth();
     const location = useLocation();
@@ -90,8 +90,6 @@ const PublicOnlyRoute = ({ children }) => {
     return children;
 };
 
-// Requires an authenticated session. Preserves the intended
-// destination in `location.state.from` so post-login redirect works.
 const ProtectedRoute = ({ children }) => {
     const { isAuthenticated, loading } = useAuth();
     const location = useLocation();
@@ -108,7 +106,6 @@ const ProtectedRoute = ({ children }) => {
     return children;
 };
 
-// Requires an authenticated session AND a specific role.
 const RoleBasedRoute = ({ children, allowedRoles }) => {
     const { user, loading } = useAuth();
     const { role } = useRole();
@@ -118,16 +115,7 @@ const RoleBasedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/app/unauthorized" replace />;
 };
 
-// ✅ NEW: Route that authenticated users normally reach, but that is
-// ALSO reachable by guests. Used for the booking wizard so a guest can
-// complete a booking without an account.
-//
-// Guests still get the layout shell (header/sidebar mount, then the
-// sidebar suppresses role-restricted links when `useRole().role` is
-// `user`). This keeps the page visually consistent for everyone.
 const GuestAllowedRoute = ({ children }) => {
-    // Deliberately does NOT call useAuth() — that's the whole point.
-    // We don't gate on auth at all.
     return children;
 };
 
@@ -147,7 +135,6 @@ const AppRoutes = () => {
 
             <Route path="/" element={<Landing />} />
 
-            {/* Guest-or-register gate. Public by design. */}
             <Route path="/gate" element={<GuestOrRegisterGate />} />
 
             <Route
@@ -166,18 +153,19 @@ const AppRoutes = () => {
                     </PublicOnlyRoute>
                 }
             />
+            
+            {/* ✅ ADDED: Password Reset Routes (Public) */}
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
+
             <Route path="/unauthorized" element={<Unauthorized />} />
 
             {/* ============================================
                 APP SHELL (under /app/*)
-                - Individual routes decide their own auth.
                ============================================ */}
             <Route path="/app" element={<Layout />}>
                 <Route index element={<Navigate to="/app/dashboard" replace />} />
 
-                {/* ✅ Guest reachable: the booking wizard. Guard is a
-                    pass-through — the wizard itself handles both guest
-                    and authenticated submissions. */}
                 <Route
                     path="bookings/create"
                     element={
@@ -187,7 +175,6 @@ const AppRoutes = () => {
                     }
                 />
 
-                {/* -------- Authenticated-only routes -------- */}
                 <Route
                     path="dashboard"
                     element={

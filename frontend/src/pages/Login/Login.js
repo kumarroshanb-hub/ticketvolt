@@ -17,6 +17,7 @@ import {
     useMediaQuery,
     useTheme,
 } from '@mui/material';
+import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
 import Logo from '../../components/Logo';
 
@@ -26,7 +27,6 @@ const F = appTheme.fonts;
 const SHOW_DEMO_CREDS = process.env.REACT_APP_SHOW_DEMO_CREDS === 'true';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-// Fail fast if demo creds are enabled in a production build.
 if (IS_PRODUCTION && SHOW_DEMO_CREDS) {
     throw new Error(
         '🚨 SECURITY: REACT_APP_SHOW_DEMO_CREDS must NOT be "true" in production builds.'
@@ -58,8 +58,6 @@ const DEMO_CREDS = SHOW_DEMO_CREDS
       ].filter((c) => c.email && c.password)
     : [];
 
-// Default landing spot after a successful login when no
-// explicit `from` intent was recorded.
 const DEFAULT_POST_LOGIN_PATH = '/app/dashboard';
 
 const Login = () => {
@@ -74,17 +72,6 @@ const Login = () => {
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // ------------------------------------------------------------
-    // Where to send the user after a successful login.
-    //
-    //   • If they were redirected here from a protected page (e.g. the
-    //     "Book Tickets" button on the landing page), `location.state.from`
-    //     will contain the destination path and we honor it.
-    //   • Otherwise we fall back to the app dashboard.
-    //
-    // We also guard against an accidental redirect back to /login
-    // (which would loop).
-    // ------------------------------------------------------------
     const rawFrom = location.state?.from;
     const redirectTo =
         rawFrom && typeof rawFrom === 'string' && !rawFrom.startsWith('/login')
@@ -113,7 +100,6 @@ const Login = () => {
 
             if (result.success === true) {
                 toast.success('Login successful!');
-                // ✅ Honor the redirect intent captured at the top.
                 navigate(redirectTo, { replace: true });
             } else {
                 const errorMsg = result.error || 'Login failed. Please try again.';
@@ -152,14 +138,6 @@ const Login = () => {
         );
     }
 
-    // ------------------------------------------------------------
-    // Shared dark-mode input styles.
-    //
-    // Layout decision:
-    //   We use `FormControl` + a plain `<InputLabel>` sitting ABOVE the
-    //   input (position: static), NOT MUI's floating `InputLabel`.
-    //   This is the fix for the "labels overlapping inputs" bug.
-    // ------------------------------------------------------------
     const labelSx = {
         color: 'rgba(255, 255, 255, 0.85)',
         fontSize: '12px',
@@ -209,8 +187,30 @@ const Login = () => {
                 pl: isMobile ? 'max(12px, env(safe-area-inset-left))' : 2,
                 pr: isMobile ? 'max(12px, env(safe-area-inset-right))' : 2,
                 fontFamily: F.family,
+                position: 'relative',
             }}
         >
+            {/* Floating Back to Home Button */}
+            <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10 }}>
+                <Button
+                    component={RouterLink}
+                    to="/"
+                    startIcon={<ArrowBackIcon />}
+                    sx={{
+                        color: 'rgba(255, 255, 255, 0.6)',
+                        textTransform: 'none',
+                        fontWeight: 600,
+                        fontFamily: F.family,
+                        '&:hover': {
+                            color: 'rgba(255, 255, 255, 0.95)',
+                            bgcolor: 'rgba(255, 255, 255, 0.08)',
+                        },
+                    }}
+                >
+                    {!isMobile && 'Back to Home'}
+                </Button>
+            </Box>
+
             <Paper
                 sx={{
                     p: isMobile ? 3 : 4,
@@ -223,9 +223,6 @@ const Login = () => {
                     my: isMobile ? 1 : 0,
                 }}
             >
-                {/* ==================================================
-                    HEADER — logo image + subtitle
-                   ================================================== */}
                 <Box
                     sx={{
                         display: 'flex',
@@ -234,12 +231,6 @@ const Login = () => {
                         mb: 4,
                     }}
                 >
-                    {/*
-                      Wordmark: 80px height reads with the same visual
-                      weight as the subtitle below it without dominating
-                      the card. The native aspect ratio renders this at
-                      roughly 190px wide inside the 440px card.
-                    */}
                     <Logo variant="full" height={80} inverse />
                     <Typography
                         variant="body2"
@@ -285,11 +276,7 @@ const Login = () => {
                     </Alert>
                 )}
 
-                {/* ==================================================
-                    FORM
-                   ================================================== */}
                 <form onSubmit={handleSubmit} noValidate>
-                    {/* Email field */}
                     <FormControl fullWidth sx={{ mb: 2.5 }}>
                         <InputLabel
                             htmlFor="login-email"
@@ -306,7 +293,6 @@ const Login = () => {
                             onChange={(e) => setEmail(e.target.value)}
                             required
                             autoComplete="email"
-                            // ✅ FIX: neutral watermark — never a real account email
                             placeholder="Enter your email"
                             inputProps={{ inputMode: 'email' }}
                             sx={fieldSx}
@@ -314,8 +300,7 @@ const Login = () => {
                         />
                     </FormControl>
 
-                    {/* Password field */}
-                    <FormControl fullWidth sx={{ mb: 3 }}>
+                    <FormControl fullWidth sx={{ mb: 1 }}>
                         <InputLabel
                             htmlFor="login-password"
                             shrink
@@ -337,7 +322,26 @@ const Login = () => {
                         />
                     </FormControl>
 
-                    {/* Submit */}
+                    {/* ✅ ADDED: Forgot Password Link */}
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2.5 }}>
+                        <Link
+                            component={RouterLink}
+                            to="/forgot-password"
+                            sx={{
+                                color: 'rgba(255, 255, 255, 0.65)',
+                                fontSize: '13px',
+                                fontFamily: F.family,
+                                textDecoration: 'none',
+                                '&:hover': {
+                                    color: C.secondary,
+                                    textDecoration: 'underline',
+                                },
+                            }}
+                        >
+                            Forgot Password?
+                        </Link>
+                    </Box>
+
                     <Button
                         type="submit"
                         fullWidth
@@ -346,7 +350,7 @@ const Login = () => {
                         sx={{
                             py: 1.5,
                             minHeight: 48,
-                            background: C.secondary,        // #FF2A2A
+                            background: C.secondary,
                             color: C.textInverse,
                             borderRadius: 2,
                             '&:hover': {
@@ -374,9 +378,6 @@ const Login = () => {
                     </Button>
                 </form>
 
-                {/* ==================================================
-                    DEMO CREDENTIALS (dev only)
-                   ================================================== */}
                 {DEMO_CREDS.length > 0 && (
                     <Box
                         sx={{
@@ -434,13 +435,6 @@ const Login = () => {
                     </Box>
                 )}
 
-                {/* ==================================================
-                    FOOTER — register link.
-                    The `state` prop carries the same `from` intent
-                    forward, so a new user who came here to book a
-                    ticket lands back on that booking flow after
-                    registering.
-                   ================================================== */}
                 <Box textAlign="center" mt={3}>
                     <Typography
                         variant="body2"

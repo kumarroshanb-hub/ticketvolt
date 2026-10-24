@@ -101,13 +101,7 @@ if _cors_env:
 else:
     CORS_ALLOWED_ORIGINS = _cors_defaults
 
-# ✅ Explicit allowlist only. No wildcard, even locally.
-CORS_ALLOW_ALL_ORIGINS = False
-_cors_env = os.environ.get('CORS_ALLOWED_ORIGINS', '').strip()
-CORS_ALLOWED_ORIGINS = (
-    [o.strip() for o in _cors_env.split(',') if o.strip()]
-    or ['http://localhost:3000', 'http://127.0.0.1:3000']
-)
+CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'False') == 'True'
 CORS_ALLOW_CREDENTIALS = True
 
 

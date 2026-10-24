@@ -285,8 +285,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ============================================
 # CELERY
 # ============================================
-CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+CELERY_BROKER_URL = os.environ.get('REDIS_URL')
+CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL')
+if IS_PRODUCTION and (not CELERY_BROKER_URL or not CELERY_BROKER_URL.startswith('rediss://')):
+    raise ImproperlyConfigured(
+        "REDIS_URL is required in production and must use rediss:// (TLS)."
+    )
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -352,7 +356,9 @@ if IS_PRODUCTION and _ADMIN_URL_RAW == 'admin':
 # ============================================
 # AXES — BRUTE-FORCE PROTECTION
 # ============================================
-AXES_FAILURE_LIMIT = 5
+# ✅ Raise the threshold so a single bad actor cannot lock out a known user
+#    by hammering their username, and lock out per IP + username.
+AXES_FAILURE_LIMIT = 10
 AXES_COOLOFF_TIME = 1
 AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address'], ['ip_address']]
 AXES_ENABLE_ACCESS_FAILURE_LOG = True

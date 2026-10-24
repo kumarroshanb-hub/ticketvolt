@@ -1067,14 +1067,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_superuser or user.is_staff:
             return obj
-        is_organizer = False
-        if _is_organizer(user):
-            is_organizer = True
-        if hasattr(user, 'organizer'):
-            is_organizer = True
-        if is_organizer and obj.event.organizer_id == user.id:
-            return obj
+        # ✅ Object-level check: owner OR organizer of THIS event only.
         if obj.user_id == user.id:
+            return obj
+        if obj.event and obj.event.organizer_id == user.id:
             return obj
         from rest_framework.exceptions import PermissionDenied
         raise PermissionDenied("You do not have permission to access this booking.")

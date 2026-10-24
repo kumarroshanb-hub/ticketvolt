@@ -46,10 +46,12 @@ export const useEventForm = (id) => {
         () => setSessions((prev) => [...prev, { start_time: '', end_time: '', capacity: 100 }]),
         []
     );
+    
     const removeSession = useCallback(
         (index) => setSessions((prev) => prev.filter((_, i) => i !== index)),
         []
     );
+    
     const updateSession = useCallback((index, field, value) => {
         setSessions((prev) => {
             const next = [...prev];
@@ -66,10 +68,12 @@ export const useEventForm = (id) => {
             ]),
         []
     );
+    
     const removeTier = useCallback(
         (index) => setTiers((prev) => prev.filter((_, i) => i !== index)),
         []
     );
+    
     const updateTier = useCallback((index, field, value) => {
         setTiers((prev) => {
             const next = [...prev];
@@ -106,13 +110,19 @@ export const useEventForm = (id) => {
                     cancellation_policy_id: data.cancellation_policy?.id || '',
                     cancellation_policy_text: data.cancellation_policy_text || '',
                 });
+
+                // ✅ FIX: Explicitly preserve the session ID to prevent the backend
+                // from assuming it was deleted and attempting a deletion.
                 setSessions(
                     (data.sessions || []).map((s) => ({
-                        ...s,
+                        id: s.id,
                         start_time: formatDateForInput(s.start_time),
                         end_time: formatDateForInput(s.end_time),
+                        capacity: s.capacity,
+                        is_active: s.is_active !== false,
                     }))
                 );
+                
                 setTiers(data.tiers || []);
             } catch (err) {
                 toast.error('Failed to load event');

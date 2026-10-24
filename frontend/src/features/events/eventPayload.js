@@ -6,6 +6,12 @@ export const buildEventPayload = (formData, sessions, tiers) => {
     const flow = formData.event_flow || 'ticketed';
     const isFree = flow === 'free_registration';
 
+    // ✅ FIX: Check if any tiers have sold tickets.
+    // If they do, we CANNOT send an empty array to the backend, or it will
+    // attempt to delete the tier and hit the 409 Conflict safety check.
+    const hasSoldTiers = (tiers || []).some((t) => (t.quantity_sold || 0) > 0);
+    const shouldDropTiers = isFree && !hasSoldTiers;
+
     return {
         title: formData.title,
         description: formData.description || '',
@@ -25,15 +31,18 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         cancellation_policy_id: formData.cancellation_policy_id || null,
         cancellation_policy_text: formData.cancellation_policy_text || '',
         sessions: (sessions || []).map((s) => ({
+            // ✅ Pass the ID if it exists so the backend knows this is an update.
+            ...(s.id ? { id: s.id } : {}),
             start_time: inputToIso(s.start_time),
             end_time: inputToIso(s.end_time),
             capacity: parseInt(s.capacity, 10) || 100,
         })),
-        // For free registrations, drop the tiers array entirely so the
-        // backend auto-creates a General tier.
-        tiers: isFree
+        // For free registrations, only drop tiers if none are sold.
+        tiers: shouldDropTiers
             ? []
             : (tiers || []).map((t) => ({
+                // ✅ Pass the ID if it exists for tiers as well.
+                ...(t.id ? { id: t.id } : {}),
                 name: t.name || 'General',
                 price: parseFloat(t.price) || 0,
                 quantity_total: parseInt(t.quantity_total, 10) || 100,

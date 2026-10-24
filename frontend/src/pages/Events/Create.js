@@ -91,7 +91,6 @@ const CreateEvent = () => {
                             policies={policies}
                         />
 
-                        {/* ✅ FIX: Render Ticket Settings for ALL event flows so Free Registration can select PDF/PNG */}
                         <EventTicketSettings
                             formData={formData}
                             onChange={handleChange}
@@ -132,6 +131,7 @@ const CreateEvent = () => {
                             templates={templates.templates}
                             templateTypes={templates.templateTypes}
                             onOpenUpload={templates.openUpload}
+                            onDeleteTemplate={templates.deleteTemplate} // ✅ FIX: Pass the delete handler
                         />
 
                         <EventFormActions

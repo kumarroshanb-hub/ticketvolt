@@ -25,6 +25,9 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         cancellation_policy_id: formData.cancellation_policy_id || null,
         cancellation_policy_text: formData.cancellation_policy_text || '',
         sessions: (sessions || []).map((s) => ({
+            // ✅ FIX: Pass the ID if it exists so the backend knows this is an update.
+            // If it's a new session, this spreads nothing.
+            ...(s.id ? { id: s.id } : {}),
             start_time: inputToIso(s.start_time),
             end_time: inputToIso(s.end_time),
             capacity: parseInt(s.capacity, 10) || 100,
@@ -34,6 +37,8 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         tiers: isFree
             ? []
             : (tiers || []).map((t) => ({
+                // ✅ FIX: Pass the ID if it exists for tiers as well.
+                ...(t.id ? { id: t.id } : {}),
                 name: t.name || 'General',
                 price: parseFloat(t.price) || 0,
                 quantity_total: parseInt(t.quantity_total, 10) || 100,

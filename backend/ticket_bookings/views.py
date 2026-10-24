@@ -74,7 +74,7 @@ from axes.handlers.proxy import AxesProxyHandler
 from axes.helpers import get_client_ip_address
 
 from .constants import BookingStatus, TicketStatus
-from .models import Ticket, CheckInLog
+from .models import Ticket, CheckInLog, UserProfile
 # ✅ FIX [P9]: single canonical completed-booking reconciler.
 from .services.booking_status import reconcile_completed_booking
 
@@ -286,6 +286,52 @@ def get_user_role(user):
     if hasattr(user, 'profile') and user.profile.is_organizer:
         return 'organizer'
     return 'user'
+
+
+# ===========================================================================
+# ✅ NEW: UserProfile summary helper for form-prefilling
+# ---------------------------------------------------------------------------
+# Returns the subset of UserProfile the frontend needs to prefill the
+# CreateBooking primary-contact form (and anything else that wants
+# phone/whatsapp without a second round-trip).
+#
+# Never raises: if the profile doesn't exist (rare — get_or_create is
+# called on registration), returns blanks. Only the *specific* "no
+# related profile" exception is swallowed; any other error (DB down,
+# attribute error) propagates so we don't silently mask real bugs.
+# ===========================================================================
+
+def _user_profile_summary(user):
+    """
+    Return the subset of UserProfile the frontend needs for form
+    prefilling. Never raises on a missing profile.
+
+    Included keys:
+      • phone            — UserProfile.phone or ''
+      • whatsapp_number  — UserProfile.whatsapp_number or ''
+      • is_organizer     — bool(UserProfile.is_organizer)
+    """
+    try:
+        profile = user.profile
+    except UserProfile.DoesNotExist:
+        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False}
+    except Exception:
+        # RelatedObjectDoesNotExist is a subclass of ObjectDoesNotExist and
+        # usually what `user.profile` raises when there's no row; Django
+        # sometimes wraps it. Fall back to a safe empty summary but log
+        # so a genuinely broken state is visible.
+        logger.warning(
+            "Could not load UserProfile for user %r in _user_profile_summary",
+            getattr(user, 'id', None),
+            exc_info=True,
+        )
+        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False}
+
+    return {
+        'phone': getattr(profile, 'phone', '') or '',
+        'whatsapp_number': getattr(profile, 'whatsapp_number', '') or '',
+        'is_organizer': bool(getattr(profile, 'is_organizer', False)),
+    }
 
 
 def _get_user_by_email(email):
@@ -570,6 +616,11 @@ class LoginView(APIView):
         refresh['role'] = role
         refresh['email'] = user.email
 
+        # ✅ NEW: include UserProfile summary (phone/whatsapp/is_organizer)
+        # so the frontend can prefill the CreateBooking primary-contact
+        # form immediately after login without an extra /me/ call.
+        profile_summary = _user_profile_summary(user)
+
         return Response({
             'access': str(refresh.access_token),
             'refresh': str(refresh),
@@ -583,6 +634,7 @@ class LoginView(APIView):
                 'role': role,
                 'is_superuser': user.is_superuser,
                 'is_staff': user.is_staff,
+                **profile_summary,
             },
         })
 
@@ -600,6 +652,10 @@ class MeView(APIView):
         user = request.user
         role = get_user_role(user)
 
+        # ✅ NEW: include UserProfile summary so the CreateBooking
+        # prefill effect has phone/whatsapp without a second call.
+        profile_summary = _user_profile_summary(user)
+
         return Response({
             'id': user.id,
             'username': user.username,
@@ -611,6 +667,7 @@ class MeView(APIView):
             'is_superuser': user.is_superuser,
             'is_staff': user.is_staff,
             'is_active': user.is_active,
+            **profile_summary,
         })
 
 

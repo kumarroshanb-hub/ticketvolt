@@ -306,7 +306,8 @@ const Login = () => {
                             onChange={(e) => setEmail(e.target.value)}
                             required
                             autoComplete="email"
-                            placeholder="admin@ticketvolt.com"
+                            // ✅ FIX: neutral watermark — never a real account email
+                            placeholder="Enter your email"
                             inputProps={{ inputMode: 'email' }}
                             sx={fieldSx}
                             disabled={isSubmitting}

@@ -25,7 +25,7 @@ class Command(BaseCommand):
     ENV_ORGANIZER_EMAIL  = 'DJANGO_ORGANIZER_EMAIL'
     ENV_USER_EMAIL       = 'DJANGO_USER_EMAIL'
 
-    MIN_PASSWORD_LENGTH = 12
+    MIN_PASSWORD_LENGTH = 10
 
     def add_arguments(self, parser):
         parser.add_argument('--superadmin', action='store_true', help='Create super admin')

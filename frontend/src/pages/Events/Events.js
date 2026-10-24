@@ -60,7 +60,10 @@ const EventCardWithAdminActions = ({
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
         >
-            <EventCard event={event} onSelect={onView} />
+            {/* ✅ ENHANCEMENT: `context="management"` makes the CTA
+                read "View Details" and route to the event detail page.
+                Keeps the management page consistent with the dashboard. */}
+            <EventCard event={event} onSelect={onView} context="management" />
 
             {canManageEvents && (
                 <Box

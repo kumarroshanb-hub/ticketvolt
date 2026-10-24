@@ -233,7 +233,7 @@ const Register = () => {
                         onChange={handleChange}
                         required
                         autoComplete="new-password"
-                        helperText="Minimum 12 characters."
+                        helperText="Minimum 10 characters."
                         sx={{
                             mb: 2,
                             '& .MuiInputBase-input': { fontSize: 16 },

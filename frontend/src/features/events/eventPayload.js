@@ -12,7 +12,7 @@ export const buildEventPayload = (formData, sessions, tiers) => {
     const hasSoldTiers = (tiers || []).some((t) => (t.quantity_sold || 0) > 0);
     const shouldDropTiers = isFree && !hasSoldTiers;
 
-    return {
+    const payload = {
         title: formData.title,
         description: formData.description || '',
         short_description: formData.short_description || '',
@@ -49,4 +49,15 @@ export const buildEventPayload = (formData, sessions, tiers) => {
                 ticket_type: t.ticket_type || 'ga',
             })),
     };
+
+    // ✅ NEW: admins may explicitly tag/reassign the organizer.
+    // Organizers never send this (the picker is hidden for them), and
+    // even if they did, the backend rejects any value other than
+    // their own ID. Only include the key when a real value is set so
+    // we don't accidentally try to clear the organizer on update.
+    if (formData.organizer_id) {
+        payload.organizer_id = formData.organizer_id;
+    }
+
+    return payload;
 };

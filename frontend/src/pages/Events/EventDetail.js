@@ -13,6 +13,7 @@ import {
     CalendarToday as CalendarIcon,
     ConfirmationNumber as TicketIcon,
     AccessTime as AccessTimeIcon,
+    Person as PersonIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
@@ -120,6 +121,18 @@ const EventDetail = () => {
     const tiers = event.tiers || [];
     const sessionCount = sessions.length;
     const tierCount = tiers.length;
+
+    // ✅ NEW: organize the summary rows so the organizer row can be
+    // rendered consistently with the rest.
+    const summaryRows = [
+        ['Tickets Sold', event.total_tickets_sold || 0],
+        ['Total Revenue', `₹${(event.total_revenue || 0).toLocaleString()}`],
+    ];
+    const detailRows = [
+        ['Bookings', event.total_bookings || 0],
+        ['Sessions', sessionCount],
+        ['Ticket Tiers', tierCount],
+    ];
 
     return (
         <PageContainer>
@@ -313,21 +326,35 @@ const EventDetail = () => {
                                 Summary
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                {[
-                                    ['Tickets Sold', event.total_tickets_sold || 0],
-                                    ['Total Revenue', `₹${(event.total_revenue || 0).toLocaleString()}`],
-                                ].map(([label, value]) => (
+                                {summaryRows.map(([label, value]) => (
                                     <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography variant="body2" sx={{ color: C.textSecondary }}>{label}</Typography>
                                         <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>{value}</Typography>
                                     </Box>
                                 ))}
+
+                                {/* ✅ NEW: organizer row */}
+                                {(event.organizer_username || event.organizer_email) && (
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
+                                        <Typography variant="body2" sx={{ color: C.textSecondary }}>
+                                            Organizer
+                                        </Typography>
+                                        <Box sx={{ textAlign: 'right', minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary, display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end' }}>
+                                                <PersonIcon sx={{ fontSize: 14, color: C.textSecondary }} />
+                                                {event.organizer_username || '—'}
+                                            </Typography>
+                                            {event.organizer_email && (
+                                                <Typography variant="caption" sx={{ color: C.textLight, wordBreak: 'break-all' }}>
+                                                    {event.organizer_email}
+                                                </Typography>
+                                            )}
+                                        </Box>
+                                    </Box>
+                                )}
+
                                 <Divider />
-                                {[
-                                    ['Bookings', event.total_bookings || 0],
-                                    ['Sessions', sessionCount],
-                                    ['Ticket Tiers', tierCount],
-                                ].map(([label, value]) => (
+                                {detailRows.map(([label, value]) => (
                                     <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography variant="body2" sx={{ color: C.textSecondary }}>{label}</Typography>
                                         <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>{value}</Typography>

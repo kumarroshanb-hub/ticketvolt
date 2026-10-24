@@ -26,6 +26,8 @@ const makeDefaultForm = () => ({
     tickets_per_page: 4,
     cancellation_policy_id: '',
     cancellation_policy_text: '',
+    // ✅ NEW: organizer assignment (admin-only; organizers leave blank)
+    organizer_id: '',
 });
 
 export const useEventForm = (id) => {
@@ -109,6 +111,9 @@ export const useEventForm = (id) => {
                     tickets_per_page: data.tickets_per_page || 4,
                     cancellation_policy_id: data.cancellation_policy?.id || '',
                     cancellation_policy_text: data.cancellation_policy_text || '',
+                    // ✅ NEW: seed the current owner so the admin picker
+                    // shows who currently owns the event.
+                    organizer_id: data.organizer || '',
                 });
 
                 // ✅ FIX: Explicitly preserve the session ID to prevent the backend

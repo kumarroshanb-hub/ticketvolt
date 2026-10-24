@@ -32,6 +32,11 @@ import {
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { theme } from '../../theme/tokens';
+import {
+    COUNTRY_OPTIONS,
+    DEFAULT_COUNTRY,
+    normaliseCountryName,
+} from '../../config/countries';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -1186,18 +1191,24 @@ const UserFormModal = ({
                                 />
                             </FormGroup>
 
+                            {/*
+                            ✅ FIX: full ISO-3166 country list (249 entries). The previous
+                            hardcoded 6-item dropdown could not represent any country outside
+                            {India, USA, UK, Australia, Canada, Other}, so an admin editing a
+                            user whose profile had e.g. "Germany" saw a blank select and could
+                            silently overwrite it. Now every country is selectable, and the
+                            value stored is the display name (matching what the backend and
+                            existing rows already hold).
+                            */}
                             <FormGroup>
                                 <FormLabel>Country</FormLabel>
                                 <FormSelect
-                                    value={formData.country}
+                                    value={normaliseCountryName(formData.country) || DEFAULT_COUNTRY}
                                     onChange={(e) => setFormData({ ...formData, country: e.target.value })}
                                 >
-                                    <option value="India">India</option>
-                                    <option value="USA">United States</option>
-                                    <option value="UK">United Kingdom</option>
-                                    <option value="Australia">Australia</option>
-                                    <option value="Canada">Canada</option>
-                                    <option value="Other">Other</option>
+                                    {COUNTRY_OPTIONS.map(({ value, label }) => (
+                                        <option key={value} value={value}>{label}</option>
+                                    ))}
                                 </FormSelect>
                             </FormGroup>
 
@@ -1532,7 +1543,7 @@ const Users = () => {
         whatsapp_number: '',
         city: '',
         state: '',
-        country: 'India',
+        country: DEFAULT_COUNTRY,   // was: 'India'
         role: 'user',
         is_active: true,
     });
@@ -1622,7 +1633,7 @@ const Users = () => {
             whatsapp_number: '',
             city: '',
             state: '',
-            country: 'India',
+            country: DEFAULT_COUNTRY,   // was: 'India'
             role: 'user',
             is_active: true,
         });
@@ -1797,7 +1808,14 @@ const Users = () => {
             whatsapp_number: user.profile?.whatsapp_number || '',
             city: user.profile?.city || '',
             state: user.profile?.state || '',
-            country: user.profile?.country || 'India',
+            // ✅ FIX: normalise whatever the DB has. If the stored value
+            // is "IN" or "IND" or "united states", it becomes "India" /
+            // "United States" so the <select> highlights correctly. If
+            // it's empty or unknown, fall back to DEFAULT_COUNTRY. We do
+            // NOT overwrite the DB here — this is display-only until the
+            // admin saves.
+            country:
+                normaliseCountryName(user.profile?.country) || DEFAULT_COUNTRY,
             role: user.role || 'user',
             is_active: user.is_active !== false,
         });

@@ -32,6 +32,23 @@ MAX_QR_PAYLOAD_LENGTH = 2048
 
 
 # ============================================================
+# ✅ NEW: Organizer eligibility helper
+# ------------------------------------------------------------
+# A user may own events if they are staff, superuser, or flagged
+# as an organizer on their profile. Used by validate_organizer_id
+# on both event serializers.
+# ============================================================
+def _user_can_own_events(user):
+    if user is None:
+        return False
+    if user.is_staff or user.is_superuser:
+        return True
+    return bool(
+        hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False)
+    )
+
+
+# ============================================================
 # Event-level capacity helper
 # ------------------------------------------------------------
 # Sum of tier quantities is the right answer for ticketed events.
@@ -399,10 +416,27 @@ class EventSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
+    # ✅ NEW: writable organizer assignment.
+    # Non-admins may only set themselves; admins may set any eligible
+    # organizer. Enforced in validate_organizer_id below.
+    organizer_id = serializers.PrimaryKeyRelatedField(
+        source='organizer',
+        queryset=User.objects.all(),
+        required=False,
+        write_only=True,
+    )
+    organizer_username = serializers.CharField(
+        source='organizer.username', read_only=True,
+    )
+    organizer_email = serializers.CharField(
+        source='organizer.email', read_only=True,
+    )
+
     class Meta:
         model = Event
         fields = [
-            'id', 'organizer', 'title', 'description', 'short_description',
+            'id', 'organizer', 'organizer_id', 'organizer_username', 'organizer_email',
+            'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
             'start_date', 'end_date', 'timezone',
             'venue', 'metadata', 'venue_metadata',
@@ -445,6 +479,32 @@ class EventSerializer(serializers.ModelSerializer):
     def get_total_capacity(self, obj):
         return _event_total_capacity(obj)
 
+    # ✅ NEW: enforce organizer assignment rules.
+    def validate_organizer_id(self, value):
+        if value is None:
+            return value
+
+        request = self.context.get('request')
+        if request is None or not request.user:
+            return value
+
+        requester = request.user
+
+        # Non-admins may only assign themselves.
+        if not (requester.is_staff or requester.is_superuser):
+            if value.id != requester.id:
+                raise serializers.ValidationError(
+                    'Only administrators can assign an event to another organizer.'
+                )
+            return value
+
+        # Admins: the target must actually be able to own events.
+        if not _user_can_own_events(value):
+            raise serializers.ValidationError(
+                'The selected user is not an organizer.'
+            )
+        return value
+
     def validate_cancellation_policy(self, value):
         if value is None:
             return value
@@ -481,10 +541,25 @@ class EventDetailSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
+    # ✅ NEW: writable organizer assignment (mirrors EventSerializer).
+    organizer_id = serializers.PrimaryKeyRelatedField(
+        source='organizer',
+        queryset=User.objects.all(),
+        required=False,
+        write_only=True,
+    )
+    organizer_username = serializers.CharField(
+        source='organizer.username', read_only=True,
+    )
+    organizer_email = serializers.CharField(
+        source='organizer.email', read_only=True,
+    )
+
     class Meta:
         model = Event
         fields = [
-            'id', 'organizer', 'title', 'description', 'short_description',
+            'id', 'organizer', 'organizer_id', 'organizer_username', 'organizer_email',
+            'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
             'start_date', 'end_date', 'timezone',
             'venue', 'metadata', 'venue_metadata',
@@ -591,6 +666,30 @@ class EventDetailSerializer(serializers.ModelSerializer):
                     })
 
         return attrs
+
+    # ✅ NEW: enforce organizer assignment rules.
+    def validate_organizer_id(self, value):
+        if value is None:
+            return value
+
+        request = self.context.get('request')
+        if request is None or not request.user:
+            return value
+
+        requester = request.user
+
+        if not (requester.is_staff or requester.is_superuser):
+            if value.id != requester.id:
+                raise serializers.ValidationError(
+                    'Only administrators can assign an event to another organizer.'
+                )
+            return value
+
+        if not _user_can_own_events(value):
+            raise serializers.ValidationError(
+                'The selected user is not an organizer.'
+            )
+        return value
 
     def validate_cancellation_policy(self, value):
         if value is None:

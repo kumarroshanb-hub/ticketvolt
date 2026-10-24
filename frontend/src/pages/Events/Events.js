@@ -54,6 +54,11 @@ const EventCardWithAdminActions = ({
 }) => {
     const [hovered, setHovered] = useState(false);
 
+    // ✅ NEW: show the owner chip when the event isn't owned by
+    // nobody useful. Only rendered for managers.
+    const organizerLabel =
+        event.organizer_username || event.organizer || null;
+
     return (
         <Box
             sx={{ position: 'relative', height: '100%' }}
@@ -64,6 +69,31 @@ const EventCardWithAdminActions = ({
                 read "View Details" and route to the event detail page.
                 Keeps the management page consistent with the dashboard. */}
             <EventCard event={event} onSelect={onView} context="management" />
+
+            {/* ✅ NEW: organizer chip so admins can see ownership at a glance. */}
+            {canManageEvents && organizerLabel && (
+                <Box
+                    sx={{
+                        position: 'absolute',
+                        bottom: 12,
+                        left: 12,
+                        zIndex: 2,
+                        backgroundColor: 'rgba(255, 255, 255, 0.92)',
+                        backdropFilter: 'blur(6px)',
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.25,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                    }}
+                >
+                    <Typography
+                        variant="caption"
+                        sx={{ color: C.textSecondary, fontWeight: 600 }}
+                    >
+                        👤 {organizerLabel}
+                    </Typography>
+                </Box>
+            )}
 
             {canManageEvents && (
                 <Box

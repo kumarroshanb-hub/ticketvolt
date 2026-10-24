@@ -77,9 +77,16 @@ class UserViewSet(viewsets.ModelViewSet):
 
         # Role filter
         if role == 'organizer':
+            # ✅ FIX: `is_organizer` is not a User field — it only exists
+            # on UserProfile. The old code did
+            #     Q(profile__is_organizer=True) | Q(is_organizer=True)
+            # which raises FieldError at query time and 500s the whole
+            # endpoint. We now:
+            #   1. Filter users whose profile is flagged as organizer.
+            #   2. ALSO include staff users, since they can own events
+            #      (the event form's organizer picker needs to see them).
             queryset = queryset.filter(
-                Q(profile__is_organizer=True) |
-                Q(is_organizer=True)
+                Q(profile__is_organizer=True) | Q(is_staff=True)
             )
         elif role == 'admin':
             queryset = queryset.filter(is_staff=True, is_superuser=False)

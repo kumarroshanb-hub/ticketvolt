@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import ScopedRateThrottle
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.contrib.auth.models import User
 from datetime import datetime
 from django.db import transaction
 from django.db.models import Sum, Count, Q
@@ -65,6 +66,17 @@ def _is_manager(user):
     if not user or not user.is_authenticated:
         return False
     return user.is_staff or user.is_superuser or _is_organizer(user)
+
+
+# ✅ NEW: eligibility helper for organizer assignment.
+def _user_can_own_events(user):
+    if user is None:
+        return False
+    if user.is_staff or user.is_superuser:
+        return True
+    return bool(
+        hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +226,49 @@ class EventViewSet(viewsets.ModelViewSet):
 
         return policy, None
 
+    # ✅ NEW: resolve the target organizer for a create/update request.
+    # Returns (target_organizer, error_response_or_None).
+    @staticmethod
+    def _resolve_target_organizer(request_user, raw_organizer_id, *, fallback):
+        """
+        Determine which organizer should own the event.
+
+        Rules:
+          • No `organizer_id` supplied → fallback (self for create, current
+            owner for update).
+          • Non-admin supplied a value  → must be self, else 403.
+          • Admin supplied a value      → target must exist and be eligible.
+        """
+        if raw_organizer_id in (None, '', 'null'):
+            return fallback, None
+
+        # Non-admins may only assign themselves.
+        if not (request_user.is_staff or request_user.is_superuser):
+            if str(raw_organizer_id) != str(request_user.id):
+                return None, Response(
+                    {'organizer_id':
+                     'Only administrators can assign an event to another organizer.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return request_user, None
+
+        # Admin path — validate the target.
+        try:
+            candidate = User.objects.get(id=raw_organizer_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            return None, Response(
+                {'organizer_id': 'Organizer not found.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not _user_can_own_events(candidate):
+            return None, Response(
+                {'organizer_id': 'The selected user is not an organizer.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return candidate, None
+
     # ---------------- CREATE ----------------
     def create(self, request, *args, **kwargs):
         """
@@ -242,6 +297,11 @@ class EventViewSet(viewsets.ModelViewSet):
              without its auto-created General Registration tier.
           4. Rejects free-registration events that try to carry priced
              tiers — the two concepts are mutually exclusive.
+
+        ✅ NEW [EVT-ORGANIZER-TAGGING]:
+        Admins may explicitly assign the event to another organizer via
+        `organizer_id`. Organizers always own the events they create;
+        they cannot assign to anyone else.
         """
         user = request.user
         if not _is_manager(user):
@@ -298,6 +358,13 @@ class EventViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
+        # ---------- Resolve target organizer (✅ NEW) ----------
+        target_organizer, org_err = self._resolve_target_organizer(
+            user, data.get('organizer_id'), fallback=user,
+        )
+        if org_err is not None:
+            return org_err
+
         # ---------- Venue ----------
         venue = None
         venue_id = data.get('venue_id')
@@ -333,14 +400,14 @@ class EventViewSet(viewsets.ModelViewSet):
         try:
             with transaction.atomic():
                 event = Event.objects.create(
-                    organizer=user,
+                    organizer=target_organizer,  # ✅ FIX: may be another organizer
                     title=data.get('title', 'Untitled'),
                     description=data.get('description', ''),
                     short_description=data.get('short_description', ''),
                     event_type=data.get('event_type', 'single'),
                     category=data.get('category', 'other'),
                     # ✅ THE FIX — persist the client-supplied flow.
-                    event_flow=data.get('event_flow', Event.EventFlow.TICKETED),  # ← ADD THIS LINE
+                    event_flow=data.get('event_flow', Event.EventFlow.TICKETED),
                     start_date=start_date,
                     end_date=end_date,
                     timezone=data.get('timezone', 'Asia/Kolkata'),
@@ -411,8 +478,9 @@ class EventViewSet(viewsets.ModelViewSet):
                             )
 
                 logger.info(
-                    "✅ Event %s created (flow=%s, sessions=%d, tiers=%d)",
-                    event.id, event.event_flow, sessions_created, tiers_created,
+                    "✅ Event %s created (organizer=%s, flow=%s, sessions=%d, tiers=%d)",
+                    event.id, target_organizer.id, event.event_flow,
+                    sessions_created, tiers_created,
                 )
 
         except Exception as exc:
@@ -424,7 +492,9 @@ class EventViewSet(viewsets.ModelViewSet):
 
         # ---------- Serialize ----------
         try:
-            serialized = EventDetailSerializer(event).data
+            serialized = EventDetailSerializer(
+                event, context={'request': request},
+            ).data
             serialized = _apply_effective_status(serialized, event)
             return Response(serialized, status=status.HTTP_201_CREATED)
         except Exception as exc:
@@ -447,7 +517,7 @@ class EventViewSet(viewsets.ModelViewSet):
 
         queryset = (
             queryset
-            .select_related('venue', 'cancellation_policy')
+            .select_related('venue', 'cancellation_policy', 'organizer')
             .prefetch_related('tiers', 'sessions', 'templates__template_type')
         )
 
@@ -515,7 +585,7 @@ class EventViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_404_NOT_FOUND,
                     )
 
-        serializer = self.get_serializer(instance)
+        serializer = self.get_serializer(instance, context={'request': request})
         data = serializer.data
 
         if _is_manager(user):
@@ -564,6 +634,12 @@ class EventViewSet(viewsets.ModelViewSet):
         Event.EventFlow.choices before being written to the model, so a
         typo from the frontend is a 400 instead of an IntegrityError at
         save time.
+
+        ✅ NEW [EVT-ORGANIZER-TAGGING]: admins may reassign the event to
+        another organizer via `organizer_id`. The reassignment is
+        blocked if the event has any non-cancelled bookings, so that
+        historical revenue and analytics do not silently migrate
+        between tenants.
         """
         instance = self.get_object()
         data = request.data
@@ -610,6 +686,38 @@ class EventViewSet(viewsets.ModelViewSet):
                 return Response(
                     {'error': 'Cannot edit past events'},
                     status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # ✅ NEW [EVT-ORGANIZER-TAGGING]: resolve a new organizer if sent.
+        if 'organizer_id' in data:
+            target_organizer, org_err = self._resolve_target_organizer(
+                user, data.get('organizer_id'), fallback=instance.organizer,
+            )
+            if org_err is not None:
+                return org_err
+
+            if target_organizer.id != instance.organizer_id:
+                # Refuse reassignment once bookings exist, so historical
+                # revenue/analytics don't silently migrate between tenants.
+                active_bookings = instance.bookings.exclude(
+                    status__in=['cancelled', 'refunded'],
+                ).count()
+                if active_bookings > 0:
+                    return Response(
+                        {
+                            'organizer_id': (
+                                f'Cannot reassign an event that has '
+                                f'{active_bookings} active booking(s). '
+                                f'Cancel or refund them first.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                instance.organizer = target_organizer
+                instance.save(update_fields=['organizer'])
+                logger.info(
+                    "Event %s reassigned from user=%s to user=%s by=%s",
+                    instance.id, instance.organizer_id, target_organizer.id, user.id,
                 )
 
         if data.get('venue_id'):
@@ -778,7 +886,9 @@ class EventViewSet(viewsets.ModelViewSet):
         instance.update_ticket_counts()
         instance.refresh_from_db()
 
-        serialized = EventDetailSerializer(instance).data
+        serialized = EventDetailSerializer(
+            instance, context={'request': request},
+        ).data
         serialized = _apply_effective_status(serialized, instance)
         return Response(serialized)
 

@@ -12,9 +12,15 @@ import { useEventSubmit } from '../../features/events/useEventSubmit';
 import { useVenues } from '../../features/events/useVenues';
 import { useCancellationPolicies } from '../../features/events/useCancellationPolicies';
 import { useEventTemplates } from '../../features/events/useEventTemplates';
+import { useOrganizers } from '../../features/events/useOrganizers';
+
+import { useRole } from '../../context/RoleContext';
+import { useAuth } from '../../context/AuthContext';
+import { ROLES } from '../../constants';
 
 import { StyledPaper } from './components/styled';
 import { EventBasicInfo } from './components/EventBasicInfo';
+import { OrganizerSelector } from './components/OrganizerSelector';
 import { EventSchedule } from './components/EventSchedule';
 import { EventCancellationPolicy } from './components/EventCancellationPolicy';
 import { EventTicketSettings } from './components/EventTicketSettings';
@@ -32,8 +38,16 @@ const CreateEvent = () => {
     const navigate = useNavigate();
     const { id } = useParams();
 
+    const { user } = useAuth();
+    const { role } = useRole();
+    const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
+
     const venues = useVenues();
     const policies = useCancellationPolicies();
+
+    // ✅ NEW: organizers list is only fetched for admins. Organizers
+    // never see the picker, so there's no point calling /users/.
+    const { organizers, loading: loadingOrganizers } = useOrganizers(isAdmin);
 
     const {
         loading,
@@ -85,6 +99,23 @@ const CreateEvent = () => {
                             onChange={handleChange}
                             venues={venues}
                         />
+
+                        {/* ✅ NEW: admins may tag the event to an organizer.
+                            Organizers skip this entirely — the backend
+                            auto-links them to the event they create. */}
+                        {isAdmin && (
+                            <OrganizerSelector
+                                value={formData.organizer_id}
+                                onChange={(val) =>
+                                    handleChange({
+                                        target: { name: 'organizer_id', value: val },
+                                    })
+                                }
+                                organizers={organizers}
+                                loading={loadingOrganizers}
+                                currentUserName={user?.name || user?.username}
+                            />
+                        )}
 
                         <EventSchedule formData={formData} onChange={handleChange} />
 

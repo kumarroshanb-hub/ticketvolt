@@ -437,10 +437,10 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                     to={isGuest ? '/' : '/app/dashboard'}
                     onClick={() => onNavigate && onNavigate()}
                 >
-                    {/* ✅ FIX: Render only the full wordmark to save space */}
+                    {/* ✅ FIX: Increased height from 44 to 84 for a larger main logo */}
                     <Logo
                         variant="full"
-                        height={44}
+                        height={84}
                         hidden={effectiveCollapsed && !isDrawer}
                     />
                 </LogoLink>

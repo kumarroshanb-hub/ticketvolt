@@ -8,6 +8,7 @@ import {
     LocationOn, CalendarMonth, ShoppingCart,
     CheckCircle as CheckCircleIcon,
     HowToReg as HowToRegIcon,
+    Visibility as VisibilityIcon,
     KeyboardArrowDown as ArrowDownIcon, KeyboardArrowUp as ArrowUpIcon,
 } from '@mui/icons-material';
 import styled from 'styled-components';
@@ -120,6 +121,31 @@ const CategoryTag = styled.span`
     font-family: ${F.family};
     white-space: nowrap;
     flex-shrink: 0;
+`;
+
+const FlowTag = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    font-family: ${F.family};
+    background: ${(p) =>
+        p.$flow === 'free_registration'
+            ? `${C.success}1A`
+            : p.$flow === 'paid_registration'
+                ? `${C.info}1A`
+                : C.bgInput};
+    color: ${(p) =>
+        p.$flow === 'free_registration'
+            ? C.successDark
+            : p.$flow === 'paid_registration'
+                ? C.infoDark
+                : C.textSecondary};
 `;
 
 const InfoRow = styled.div`
@@ -356,8 +382,25 @@ const resolveFlow = (event) => {
 const isRegistrationFlow = (flow) =>
     flow === 'free_registration' || flow === 'paid_registration';
 
-const resolveCta = (event, isActuallySoldOut) => {
+// ============================================================
+// ✅ ENHANCEMENT: `context` decides what the CTA says and does.
+//
+//   'public'     → Book / Register (existing behaviour)
+//   'management' → View Details (routes to the event detail page)
+// ============================================================
+const resolveCta = (event, isActuallySoldOut, context = 'public') => {
     const flow = resolveFlow(event);
+
+    // Management context wins over the sold-out rule: admins and
+    // organizers still want to view details of a sold-out event.
+    if (context === 'management') {
+        return {
+            label: 'View Details',
+            icon: <VisibilityIcon />,
+            disabled: false,
+            flow,
+        };
+    }
 
     if (isActuallySoldOut) {
         return {
@@ -407,7 +450,12 @@ const resolvePriceDisplay = (flow, minPrice, tiers) => {
     return { kind: 'dash' };
 };
 
-const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) => {
+const EventCard = ({
+    event: initialEvent,
+    onSelect = null,
+    selected = false,
+    context = 'public',       // ✅ ENHANCEMENT: 'public' | 'management'
+}) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
 
@@ -482,10 +530,19 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
 
     const announcementImage = pickAnnouncementImage(event);
 
-    const cta = resolveCta(event, isActuallySoldOut);
+    // ✅ ENHANCEMENT: pass `context` through.
+    const cta = resolveCta(event, isActuallySoldOut, context);
     const priceDisplay = resolvePriceDisplay(flow, minPrice, tiers);
 
     const handleCtaClick = () => {
+        // Management context: always go to the details page via onSelect.
+        // (No sold-out short-circuit — admins still want to inspect it.)
+        if (context === 'management') {
+            if (onSelect) onSelect(event);
+            return;
+        }
+
+        // Public context: honour the existing wizard / gate flow.
         if (isActuallySoldOut) return;
 
         if (onSelect) {
@@ -533,9 +590,17 @@ const EventCard = ({ event: initialEvent, onSelect = null, selected = false }) =
             <CardBody>
                 <TitleRow>
                     <EventTitle>{event.title}</EventTitle>
-                    <CategoryTag>
-                        {getCategoryIcon(event.category)} {event.category || 'Event'}
-                    </CategoryTag>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end', flexShrink: 0 }}>
+                        <CategoryTag>
+                            {getCategoryIcon(event.category)} {event.category || 'Event'}
+                        </CategoryTag>
+                        {/* ✅ ENHANCEMENT: show the event_flow badge */}
+                        {flow !== 'ticketed' && (
+                            <FlowTag $flow={flow}>
+                                {flow === 'free_registration' ? 'Free Reg' : 'Paid Reg'}
+                            </FlowTag>
+                        )}
+                    </Box>
                 </TitleRow>
 
                 <InfoRow>

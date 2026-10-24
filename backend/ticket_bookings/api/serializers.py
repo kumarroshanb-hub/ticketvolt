@@ -1422,14 +1422,20 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
-        write_only=True, required=True, min_length=12,
+        write_only=True, required=True, min_length=10,
         style={'input_type': 'password'},
     )
     password_confirm = serializers.CharField(
         write_only=True, required=True,
         style={'input_type': 'password'},
     )
-    phone = serializers.CharField(required=False, allow_blank=True)
+
+    # ✅ NEW: phone is REQUIRED on create. Blank strings are rejected so
+    # the WhatsApp-based ticket-delivery path always has a target.
+    # (On edit, `UserViewSet.update` uses a different serializer, so
+    # legacy profiles with blank phones can still be saved.)
+    phone = serializers.CharField(required=True, allow_blank=False)
+
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
     address = serializers.CharField(required=False, allow_blank=True)
     city = serializers.CharField(required=False, allow_blank=True)
@@ -1451,6 +1457,12 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'email': {'required': True},
         }
 
+    # ✅ NEW: E.164-ish. Optional leading "+", then 7–15 digits.
+    # We strip spaces, dashes, parens, dots before matching, but keep
+    # the leading "+" if supplied so we don't silently change national
+    # vs international dialling.
+    _PHONE_ALLOWED = re.compile(r'^\+?[0-9]{7,15}$')
+
     def validate_username(self, value):
         if User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError('Username already exists')
@@ -1460,6 +1472,30 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('Email already exists')
         return value
+
+    # ✅ NEW: normalize and validate the mobile number.
+    def validate_phone(self, value):
+        raw = (value or '').strip()
+        digits = re.sub(r'[\s\-\(\)\.]', '', raw)
+        if not self._PHONE_ALLOWED.match(digits):
+            raise serializers.ValidationError(
+                'Enter a valid mobile number (7–15 digits, '
+                'optionally starting with "+").'
+            )
+        return digits
+
+    # ✅ NEW: WhatsApp is optional, but if provided it must be valid.
+    def validate_whatsapp_number(self, value):
+        if value is None or value == '':
+            return ''
+        raw = str(value).strip()
+        digits = re.sub(r'[\s\-\(\)\.]', '', raw)
+        if not self._PHONE_ALLOWED.match(digits):
+            raise serializers.ValidationError(
+                'Enter a valid WhatsApp number (7–15 digits, '
+                'optionally starting with "+").'
+            )
+        return digits
 
     def validate(self, data):
         if data.get('password') != data.get('password_confirm'):
@@ -1473,6 +1509,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             validate_password(data.get('password'))
         except DjangoValidationError as exc:
             raise serializers.ValidationError({'password': list(exc.messages)})
+
+        # ✅ NEW: WhatsApp defaults to the mobile number when not supplied.
+        if not data.get('whatsapp_number'):
+            data['whatsapp_number'] = data.get('phone', '')
+
         return data
 
     def create(self, validated_data):

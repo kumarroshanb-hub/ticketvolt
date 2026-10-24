@@ -26,6 +26,8 @@ import {
   Close,
   Save,
   Cancel,
+  Password,
+  EnhancedEncryption,
 } from '@mui/icons-material';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -86,7 +88,6 @@ const HeaderActions = styled.div`
     }
 `;
 
-// Stats Cards
 const StatsGrid = styled.div`
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -160,7 +161,6 @@ const StatLabel = styled.p`
     }
 `;
 
-// Filter Card
 const FilterCard = styled.div`
     background: ${C.bgCard};
     border-radius: 12px;
@@ -242,7 +242,6 @@ const Select = styled.select`
     }
 `;
 
-// Table Styles
 const TableContainer = styled.div`
     background: ${C.bgCard};
     border-radius: 12px;
@@ -298,7 +297,6 @@ const TableCell = styled.td`
     font-family: ${F.family};
 `;
 
-// Mobile User Card
 const MobileUserCard = styled.div`
     background: ${C.bgCard};
     border: 1px solid ${C.borderLight};
@@ -361,14 +359,15 @@ const MobileUserActions = styled.div`
     gap: 8px;
     padding-top: 12px;
     border-top: 1px solid ${C.bgInput};
+    flex-wrap: wrap;
 
     button {
         flex: 1;
         justify-content: center;
+        min-width: 0;
     }
 `;
 
-// User Cell
 const UserCell = styled.div`
     display: flex;
     align-items: center;
@@ -405,7 +404,6 @@ const UserUsername = styled.div`
     font-family: ${F.family};
 `;
 
-// Badges
 const Badge = styled.span`
     display: inline-flex;
     align-items: center;
@@ -425,6 +423,12 @@ const Badge = styled.span`
     &.inactive {
         background: ${C.error}1A;
         color: ${C.errorDark};
+    }
+
+    &.locked {
+        background: ${C.error}1A;
+        color: ${C.errorDark};
+        margin-left: 6px;
     }
 `;
 
@@ -481,9 +485,18 @@ const ActionButton = styled.button`
         background: ${C.error}1A;
         color: ${C.error};
     }
+
+    &.success:hover {
+        background: ${C.success}1A;
+        color: ${C.success};
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
 `;
 
-// Pagination
 const PaginationContainer = styled.div`
     display: flex;
     justify-content: space-between;
@@ -548,7 +561,6 @@ const PageButton = styled.button`
     }
 `;
 
-// Modal Styles
 const ModalOverlay = styled.div`
     position: fixed;
     top: 0;
@@ -648,7 +660,6 @@ const ModalFooter = styled.div`
     }
 `;
 
-// Form Styles
 const FormGrid = styled.div`
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -683,7 +694,7 @@ const FormInput = styled.input`
     color: ${C.textPrimary};
     background: ${C.bgSecondary};
     outline: none;
-    transition: all 0.2s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
     min-height: 44px;
     box-sizing: border-box;
     font-family: ${F.family};
@@ -724,7 +735,6 @@ const FormError = styled.p`
     font-family: ${F.family};
 `;
 
-// Buttons
 const Button = styled.button`
     display: inline-flex;
     align-items: center;
@@ -908,10 +918,6 @@ const EmptySubtext = styled.p`
 // HELPER FUNCTIONS
 // ============================================
 
-// Avatar palette — all tokens. The two literal slots are
-// intentionally unused extensions; feel free to add
-// `pink`/`cyan`/`lime` tokens to tokens.js and reference
-// them here later.
 const AVATAR_COLORS = [
     C.warning,
     C.info,
@@ -961,16 +967,537 @@ const formatDate = (date) => {
     });
 };
 
-// ============================================
+// ✅ NEW: phone helpers — mirror the backend's UserRegistrationSerializer
+// validator so client and server agree on what "valid" means.
+//   • Optional leading "+"
+//   • 7–15 digits after stripping spaces, dashes, parens, dots
+const PHONE_RE = /^\+?[0-9]{7,15}$/;
+
+const normalisePhone = (raw) =>
+    String(raw || '').replace(/[\s\-\(\)\.]/g, '');
+
+const isValidPhone = (raw) => PHONE_RE.test(normalisePhone(raw));
+
+// ============================================================================
+// MODAL COMPONENTS — HOISTED TO MODULE SCOPE
+// ============================================================================
+// ✅ FIX: these four modals used to be declared *inside* the `Users`
+// component body. React treats an inline-declared function component as
+// a NEW component type on every parent render, so it unmounts and
+// remounts the entire subtree on every keystroke. That destroyed focus
+// (and, with `autoFocus` on the "New Password" field, actively stole
+// focus back from the "Confirm Password" field on the second keystroke).
+//
+// Hoisting them to module scope gives them a stable identity, so a
+// parent re-render just re-renders them in place.
+//
+// We also move the password state *into* ResetPasswordModal so the
+// controlled inputs' owner never changes. This is belt-and-braces:
+// hoisting alone fixes the remount; owning the state in the modal
+// removes an extra reason for the browser to reset the caret.
+// ============================================================================
+
+const UserFormModal = ({
+    mode,
+    formData,
+    setFormData,
+    onClose,
+    onSubmit,
+    currentUser,
+}) => {
+    const isEdit = mode === 'edit';
+
+    // ✅ NEW: inline validation for the mobile field on CREATE only.
+    // Edit mode stays permissive so legacy profiles with blank phones
+    // can still be saved.
+    const phoneInvalid =
+        !isEdit && formData.phone && !isValidPhone(formData.phone);
+
+    return (
+        <ModalOverlay onClick={onClose}>
+            <Modal $width="700px" onClick={(e) => e.stopPropagation()}>
+                <ModalHeader>
+                    <ModalTitle>
+                        {isEdit ? <Edit /> : <PersonAdd />}
+                        {isEdit ? 'Edit User' : 'Create New User'}
+                    </ModalTitle>
+                    <ModalClose onClick={onClose}>
+                        <Close fontSize="small" />
+                    </ModalClose>
+                </ModalHeader>
+
+                <ModalBody>
+                    <form onSubmit={onSubmit}>
+                        <FormGrid>
+                            <FormGroup>
+                                <FormLabel>Username *</FormLabel>
+                                <FormInput
+                                    type="text"
+                                    value={formData.username}
+                                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                                    disabled={isEdit}
+                                    placeholder="username"
+                                    required
+                                />
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>Email *</FormLabel>
+                                <FormInput
+                                    type="email"
+                                    value={formData.email}
+                                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                    placeholder="user@example.com"
+                                    required
+                                />
+                            </FormGroup>
+
+                            {/* ✅ NEW: Mobile Number, moved to sit next to
+                                Email. Required on create; optional on edit.
+                                Inline red border + FormError when invalid. */}
+                            <FormGroup>
+                                <FormLabel>
+                                    Mobile Number {isEdit ? '(optional)' : '*'}
+                                </FormLabel>
+                                <FormInput
+                                    type="tel"
+                                    value={formData.phone}
+                                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                    placeholder="+91 9876543210"
+                                    required={!isEdit}
+                                    style={{
+                                        borderColor: phoneInvalid ? C.error : undefined,
+                                    }}
+                                />
+                                {phoneInvalid && (
+                                    <FormError>Enter a valid mobile number (7–15 digits)</FormError>
+                                )}
+                            </FormGroup>
+
+                            {!isEdit && (
+                                <>
+                                    <FormGroup>
+                                        <FormLabel>Password *</FormLabel>
+                                        <FormInput
+                                            type="password"
+                                            value={formData.password}
+                                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                            placeholder="********"
+                                            required
+                                        />
+                                    </FormGroup>
+
+                                    <FormGroup>
+                                        <FormLabel>Confirm Password *</FormLabel>
+                                        <FormInput
+                                            type="password"
+                                            value={formData.password_confirm}
+                                            onChange={(e) => setFormData({ ...formData, password_confirm: e.target.value })}
+                                            placeholder="********"
+                                            required
+                                            style={{
+                                                borderColor: formData.password !== formData.password_confirm ? C.error : undefined
+                                            }}
+                                        />
+                                        {formData.password !== formData.password_confirm && (
+                                            <FormError>Passwords do not match</FormError>
+                                        )}
+                                    </FormGroup>
+                                </>
+                            )}
+
+                            {isEdit && (
+                                <>
+                                    <FormGroup>
+                                        <FormLabel>New Password (optional)</FormLabel>
+                                        <FormInput
+                                            type="password"
+                                            value={formData.password}
+                                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                            placeholder="Leave blank to keep current"
+                                        />
+                                    </FormGroup>
+
+                                    <FormGroup>
+                                        <FormLabel>Confirm New Password</FormLabel>
+                                        <FormInput
+                                            type="password"
+                                            value={formData.password_confirm}
+                                            onChange={(e) => setFormData({ ...formData, password_confirm: e.target.value })}
+                                            placeholder="Leave blank to keep current"
+                                            style={{
+                                                borderColor: formData.password !== formData.password_confirm ? C.error : undefined
+                                            }}
+                                        />
+                                        {formData.password !== formData.password_confirm && (
+                                            <FormError>Passwords do not match</FormError>
+                                        )}
+                                    </FormGroup>
+                                </>
+                            )}
+
+                            <FormGroup>
+                                <FormLabel>First Name</FormLabel>
+                                <FormInput
+                                    type="text"
+                                    value={formData.first_name}
+                                    onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                                    placeholder="John"
+                                />
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>Last Name</FormLabel>
+                                <FormInput
+                                    type="text"
+                                    value={formData.last_name}
+                                    onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                                    placeholder="Doe"
+                                />
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>WhatsApp Number</FormLabel>
+                                <FormInput
+                                    type="tel"
+                                    value={formData.whatsapp_number}
+                                    onChange={(e) => setFormData({ ...formData, whatsapp_number: e.target.value })}
+                                    placeholder="+91 9876543210"
+                                />
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>City</FormLabel>
+                                <FormInput
+                                    type="text"
+                                    value={formData.city}
+                                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                                    placeholder="Mumbai"
+                                />
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>State</FormLabel>
+                                <FormInput
+                                    type="text"
+                                    value={formData.state}
+                                    onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                                    placeholder="Maharashtra"
+                                />
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>Country</FormLabel>
+                                <FormSelect
+                                    value={formData.country}
+                                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                                >
+                                    <option value="India">India</option>
+                                    <option value="USA">United States</option>
+                                    <option value="UK">United Kingdom</option>
+                                    <option value="Australia">Australia</option>
+                                    <option value="Canada">Canada</option>
+                                    <option value="Other">Other</option>
+                                </FormSelect>
+                            </FormGroup>
+
+                            <FormGroup>
+                                <FormLabel>Role</FormLabel>
+                                <FormSelect
+                                    value={formData.role}
+                                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                                    disabled={!currentUser?.is_superuser && ['admin', 'super_admin'].includes(formData.role)}
+                                >
+                                    <option value="user">Regular User</option>
+                                    <option value="organizer">Organizer</option>
+                                    {currentUser?.is_superuser && (
+                                        <>
+                                            <option value="admin">Admin</option>
+                                            <option value="super_admin">Super Admin</option>
+                                        </>
+                                    )}
+                                </FormSelect>
+                            </FormGroup>
+                        </FormGrid>
+
+                        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}` }}>
+                            <FormLabel style={{ marginBottom: '8px', display: 'block' }}>Account Status</FormLabel>
+                            <SwitchRow>
+                                <Switch>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.is_active}
+                                        onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                                    />
+                                    <span className="slider" />
+                                </Switch>
+                                <span className="switch-label">
+                                    {formData.is_active ? <CheckCircle color="success" /> : <Block color="error" />}
+                                    {formData.is_active ? 'Active' : 'Inactive'}
+                                </span>
+                            </SwitchRow>
+                        </div>
+                    </form>
+                </ModalBody>
+
+                <ModalFooter>
+                    <Button className="secondary" onClick={onClose}>
+                        <Cancel fontSize="small" />
+                        Cancel
+                    </Button>
+                    <Button className="primary" type="button" onClick={onSubmit}>
+                        <Save fontSize="small" />
+                        {isEdit ? 'Save Changes' : 'Create User'}
+                    </Button>
+                </ModalFooter>
+            </Modal>
+        </ModalOverlay>
+    );
+};
+
+const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
+    if (!user) return null;
+
+    return (
+        <ModalOverlay onClick={onClose}>
+            <Modal $width="500px" onClick={(e) => e.stopPropagation()}>
+                <ModalHeader>
+                    <ModalTitle>
+                        <Visibility />
+                        User Profile
+                    </ModalTitle>
+                    <ModalClose onClick={onClose}>
+                        <Close fontSize="small" />
+                    </ModalClose>
+                </ModalHeader>
+
+                <ModalBody>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+                        <UserAvatar $bg={getAvatarColor(user.username || 'user')}>
+                            {getInitials(user.username)}
+                        </UserAvatar>
+                        <div style={{ minWidth: 0 }}>
+                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: F.family }}>
+                                {user.first_name} {user.last_name}
+                            </h3>
+                            <p style={{ margin: '4px 0', fontSize: '14px', color: C.textSecondary, fontFamily: F.family }}>
+                                @{user.username}
+                            </p>
+                            <RoleBadge className={user.role}>
+                                {getRoleIcon(user.role)}
+                                {getRoleLabel(user.role)}
+                            </RoleBadge>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
+                        <div>
+                            <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Email</p>
+                            <p style={{ margin: '4px 0', fontSize: '14px', wordBreak: 'break-all', fontFamily: F.family }}>
+                                <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
+                                {user.email}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Phone</p>
+                            <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
+                                <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
+                                {user.profile?.phone || 'N/A'}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Location</p>
+                            <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
+                                <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
+                                {[user.profile?.city, user.profile?.state].filter(Boolean).join(', ') || 'N/A'}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Joined</p>
+                            <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
+                                <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
+                                {formatDate(user.date_joined)}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}`, display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <Badge className={user.is_active !== false ? 'active' : 'inactive'}>
+                            {user.is_active !== false ? <CheckCircle fontSize="small" /> : <Block fontSize="small" />}
+                            {user.is_active !== false ? 'Active' : 'Inactive'}
+                        </Badge>
+                        {user.is_staff && (
+                            <Badge className="active">
+                                <AdminPanelSettings fontSize="small" />
+                                Staff
+                            </Badge>
+                        )}
+                    </div>
+                </ModalBody>
+
+                <ModalFooter>
+                    <Button className="secondary" onClick={onClose}>
+                        Close
+                    </Button>
+                    <Button className="primary" onClick={() => onEdit(user)}>
+                        <Edit fontSize="small" />
+                        Edit
+                    </Button>
+                </ModalFooter>
+            </Modal>
+        </ModalOverlay>
+    );
+};
+
+const DeleteUserModal = ({ user, onClose, onConfirm }) => {
+    if (!user) return null;
+
+    return (
+        <ModalOverlay onClick={onClose}>
+            <Modal $width="400px" onClick={(e) => e.stopPropagation()}>
+                <ModalHeader>
+                    <ModalTitle>
+                        <Delete />
+                        Delete User
+                    </ModalTitle>
+                    <ModalClose onClick={onClose}>
+                        <Close fontSize="small" />
+                    </ModalClose>
+                </ModalHeader>
+
+                <ModalBody>
+                    <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6, fontFamily: F.family }}>
+                        Are you sure you want to delete the user <strong>{user.username}</strong>?
+                    </p>
+                    <p style={{ margin: 0, fontSize: '14px', color: C.error, fontFamily: F.family }}>
+                        This action cannot be undone. All associated data will be permanently deleted.
+                    </p>
+                </ModalBody>
+
+                <ModalFooter>
+                    <Button className="secondary" onClick={onClose}>
+                        <Cancel fontSize="small" />
+                        Cancel
+                    </Button>
+                    <Button className="danger" onClick={onConfirm}>
+                        <Delete fontSize="small" />
+                        Delete User
+                    </Button>
+                </ModalFooter>
+            </Modal>
+        </ModalOverlay>
+    );
+};
+
+// ============================================================================
+// ✅ FIX: ResetPasswordModal now owns its own field state.
+//   - `user` prop is read once for display.
+//   - `newPassword` / `confirmPassword` are local state.
+//   - The "Reset" action calls `onReset(userId, newPassword)`.
+//   - `busy` comes from the parent, which flips to true while the API
+//     call is in flight and back to false when it resolves or rejects.
+//
+// This means: as the user types in either field, no parent state
+// changes, so the parent doesn't re-render, so the input the user is
+// currently typing in is never unmounted. Focus is preserved.
+// ============================================================================
+const ResetPasswordModal = ({ user, onClose, onReset, busy }) => {
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+
+    if (!user) return null;
+
+    const mismatch = newPassword !== confirmPassword && confirmPassword.length > 0;
+    const canSubmit = Boolean(newPassword.trim()) && !mismatch && !busy;
+
+    const handleSubmit = () => {
+        if (!canSubmit) return;
+        onReset(user.id, newPassword);
+    };
+
+    return (
+        <ModalOverlay onClick={busy ? undefined : onClose}>
+            <Modal $width="480px" onClick={(e) => e.stopPropagation()}>
+                <ModalHeader>
+                    <ModalTitle>
+                        <Password />
+                        Reset Password
+                    </ModalTitle>
+                    <ModalClose onClick={busy ? undefined : onClose}>
+                        <Close fontSize="small" />
+                    </ModalClose>
+                </ModalHeader>
+
+                <ModalBody>
+                    <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6, fontFamily: F.family }}>
+                        Set a new password for <strong>{user.username}</strong>.
+                    </p>
+                    <div style={{ padding: '10px 14px', marginBottom: 16, borderRadius: 8, background: `${C.warning}1A`, border: `1px solid ${C.warning}4D` }}>
+                        <p style={{ margin: 0, fontSize: '12px', color: C.warningDark, fontFamily: F.family }}>
+                            ⚠️ The user will be signed out of every session. Any Axes lockout will also be cleared.
+                        </p>
+                    </div>
+
+                    <FormGrid>
+                        <FormGroup>
+                            <FormLabel>New Password *</FormLabel>
+                            <FormInput
+                                type="password"
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                placeholder="Minimum 10 characters"
+                                autoFocus
+                                disabled={busy}
+                                autoComplete="new-password"
+                            />
+                        </FormGroup>
+                        <FormGroup>
+                            <FormLabel>Confirm Password *</FormLabel>
+                            <FormInput
+                                type="password"
+                                value={confirmPassword}
+                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                placeholder="Re-enter password"
+                                disabled={busy}
+                                autoComplete="new-password"
+                                style={{ borderColor: mismatch ? C.error : undefined }}
+                            />
+                            {mismatch && <FormError>Passwords do not match</FormError>}
+                        </FormGroup>
+                    </FormGrid>
+                </ModalBody>
+
+                <ModalFooter>
+                    <Button className="secondary" onClick={onClose} disabled={busy}>
+                        <Cancel fontSize="small" />
+                        Cancel
+                    </Button>
+                    <Button
+                        className="primary"
+                        onClick={handleSubmit}
+                        disabled={!canSubmit}
+                    >
+                        <EnhancedEncryption fontSize="small" />
+                        {busy ? 'Resetting…' : 'Reset Password'}
+                    </Button>
+                </ModalFooter>
+            </Modal>
+        </ModalOverlay>
+    );
+};
+
+// ============================================================================
 // MAIN COMPONENT
-// ============================================
+// ============================================================================
 
 const Users = () => {
     const { user: currentUser } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // State
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -981,14 +1508,19 @@ const Users = () => {
     const [totalPages, setTotalPages] = useState(1);
     const [totalUsers, setTotalUsers] = useState(0);
 
-    // Modal state
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [showViewModal, setShowViewModal] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [selectedUser, setSelectedUser] = useState(null);
 
-    // Form state
+    // ✅ FIX: only user + open live in the parent now.
+    // The password fields live inside ResetPasswordModal.
+    const [resetTarget, setResetTarget] = useState(null);
+    const [actionBusy, setActionBusy] = useState(false);
+
+    const [lockStatus, setLockStatus] = useState({});
+
     const [formData, setFormData] = useState({
         username: '',
         email: '',
@@ -1005,7 +1537,6 @@ const Users = () => {
         is_active: true,
     });
 
-    // Stats
     const [stats, setStats] = useState({
         total: 0,
         active: 0,
@@ -1013,7 +1544,6 @@ const Users = () => {
         admins: 0,
     });
 
-    // Load users
     const loadUsers = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -1053,7 +1583,25 @@ const Users = () => {
         loadUsers();
     }, [loadUsers]);
 
-    // Debounce search
+    useEffect(() => {
+        if (!users?.length) {
+            setLockStatus({});
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            const results = await Promise.all(
+                users.map((u) =>
+                    api.get(`/users/${u.id}/lockout_status/`)
+                        .then((r) => [u.id, r.data])
+                        .catch(() => [u.id, null])
+                )
+            );
+            if (!cancelled) setLockStatus(Object.fromEntries(results));
+        })();
+        return () => { cancelled = true; };
+    }, [users]);
+
     useEffect(() => {
         const timer = setTimeout(() => {
             setPage(1);
@@ -1062,7 +1610,6 @@ const Users = () => {
         return () => clearTimeout(timer);
     }, [search]);
 
-    // Reset form
     const resetForm = () => {
         setFormData({
             username: '',
@@ -1081,7 +1628,6 @@ const Users = () => {
         });
     };
 
-    // Handle create user
     const handleCreateUser = async (e) => {
         if (e?.preventDefault) e.preventDefault();
 
@@ -1095,20 +1641,43 @@ const Users = () => {
             return;
         }
 
+        // ✅ NEW: Mobile number is mandatory on create.
+        if (!formData.phone?.trim()) {
+            toast.error('Mobile number is required');
+            return;
+        }
+        if (!isValidPhone(formData.phone)) {
+            toast.error('Enter a valid mobile number (7–15 digits)');
+            return;
+        }
+
         try {
-            await api.post('/users/', formData);
+            // ✅ NEW: Send a normalised phone so the stored value matches
+            // the format used by the backend validator. WhatsApp defaults
+            // to the phone when the admin left it blank.
+            const payload = {
+                ...formData,
+                phone: normalisePhone(formData.phone),
+                whatsapp_number: formData.whatsapp_number
+                    ? normalisePhone(formData.whatsapp_number)
+                    : normalisePhone(formData.phone),
+            };
+            await api.post('/users/', payload);
             toast.success('User created successfully');
             setShowCreateModal(false);
             resetForm();
             loadUsers();
         } catch (err) {
             const errorData = err.response?.data;
-            const errorMsg = errorData?.detail || Object.values(errorData || {})[0] || 'Failed to create user';
-            toast.error(errorMsg);
+            let errorMsg = 'Failed to create user';
+            if (errorData?.phone) errorMsg = errorData.phone[0];
+            else if (errorData?.whatsapp_number) errorMsg = errorData.whatsapp_number[0];
+            else if (errorData?.detail) errorMsg = errorData.detail;
+            else if (errorData) errorMsg = Object.values(errorData)[0];
+            toast.error(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
         }
     };
 
-    // Handle update user
     const handleUpdateUser = async (e) => {
         if (e?.preventDefault) e.preventDefault();
 
@@ -1139,7 +1708,6 @@ const Users = () => {
         }
     };
 
-    // Handle delete user
     const handleDeleteUser = async () => {
         if (!selectedUser) return;
 
@@ -1154,7 +1722,6 @@ const Users = () => {
         }
     };
 
-    // Toggle active status
     const handleToggleActive = async (user) => {
         try {
             const response = await api.post(`/users/${user.id}/toggle_active/`);
@@ -1165,7 +1732,58 @@ const Users = () => {
         }
     };
 
-    // Handle edit
+    const handleUnlock = async (user) => {
+        setActionBusy(true);
+        try {
+            const { data } = await api.post(`/users/${user.id}/unlock/`);
+            toast.success(data.message || `Unlocked ${user.username}`);
+            setLockStatus((prev) => ({
+                ...prev,
+                [user.id]: {
+                    ...(prev[user.id] || {}),
+                    is_locked: false,
+                    failures_since_start: 0,
+                    is_active: data.is_active,
+                },
+            }));
+            await loadUsers();
+        } catch (err) {
+            toast.error(err.response?.data?.error || 'Failed to unlock user');
+        } finally {
+            setActionBusy(false);
+        }
+    };
+
+    const openResetPassword = (user) => {
+        setResetTarget(user);
+    };
+
+    const closeResetPassword = () => {
+        if (actionBusy) return;
+        setResetTarget(null);
+    };
+
+    // ✅ FIX: the modal calls this with (userId, newPassword).
+    // We never touch the password fields from here — that's the modal's
+    // state — so a keystroke can never re-render `Users` mid-typing.
+    const handleResetPassword = async (userId, newPassword) => {
+        if (!userId) return;
+        setActionBusy(true);
+        try {
+            const { data } = await api.post(
+                `/users/${userId}/reset_password/`,
+                { password: newPassword }
+            );
+            toast.success(data.message || 'Password reset.');
+            setResetTarget(null);
+            await loadUsers();
+        } catch (err) {
+            toast.error(err.response?.data?.error || 'Failed to reset password');
+        } finally {
+            setActionBusy(false);
+        }
+    };
+
     const handleEditUser = (user) => {
         setSelectedUser(user);
         setFormData({
@@ -1186,20 +1804,17 @@ const Users = () => {
         setShowEditModal(true);
     };
 
-    // Handle view
     const handleViewUser = (user) => {
         setSelectedUser(user);
         setShowViewModal(true);
     };
 
-    // Render user avatar
     const renderAvatar = (user) => (
         <UserAvatar $bg={getAvatarColor(user.username || 'user')}>
             {getInitials(user.username)}
         </UserAvatar>
     );
 
-    // Render role badge
     const renderRoleBadge = (role) => (
         <RoleBadge className={role}>
             {getRoleIcon(role)}
@@ -1207,7 +1822,6 @@ const Users = () => {
         </RoleBadge>
     );
 
-    // Render status badge
     const renderStatusBadge = (isActive) => {
         const active = isActive !== false;
         return (
@@ -1218,370 +1832,19 @@ const Users = () => {
         );
     };
 
-    // ============================================
-    // SUB-COMPONENTS
-    // ============================================
-
-    const UserFormModal = ({ mode, onClose, onSubmit }) => {
-        const isEdit = mode === 'edit';
-
+    const renderLockBadge = (userId) => {
+        const info = lockStatus[userId];
+        if (!info?.is_locked) return null;
         return (
-            <ModalOverlay onClick={onClose}>
-                <Modal $width="700px" onClick={(e) => e.stopPropagation()}>
-                    <ModalHeader>
-                        <ModalTitle>
-                            {isEdit ? <Edit /> : <PersonAdd />}
-                            {isEdit ? 'Edit User' : 'Create New User'}
-                        </ModalTitle>
-                        <ModalClose onClick={onClose}>
-                            <Close fontSize="small" />
-                        </ModalClose>
-                    </ModalHeader>
-
-                    <ModalBody>
-                        <form onSubmit={onSubmit}>
-                            <FormGrid>
-                                <FormGroup>
-                                    <FormLabel>Username *</FormLabel>
-                                    <FormInput
-                                        type="text"
-                                        value={formData.username}
-                                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                                        disabled={isEdit}
-                                        placeholder="username"
-                                        required
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>Email *</FormLabel>
-                                    <FormInput
-                                        type="email"
-                                        value={formData.email}
-                                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                        placeholder="user@example.com"
-                                        required
-                                    />
-                                </FormGroup>
-
-                                {!isEdit && (
-                                    <>
-                                        <FormGroup>
-                                            <FormLabel>Password *</FormLabel>
-                                            <FormInput
-                                                type="password"
-                                                value={formData.password}
-                                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                                placeholder="********"
-                                                required
-                                            />
-                                        </FormGroup>
-
-                                        <FormGroup>
-                                            <FormLabel>Confirm Password *</FormLabel>
-                                            <FormInput
-                                                type="password"
-                                                value={formData.password_confirm}
-                                                onChange={(e) => setFormData({ ...formData, password_confirm: e.target.value })}
-                                                placeholder="********"
-                                                required
-                                                style={{
-                                                    borderColor: formData.password !== formData.password_confirm ? C.error : undefined
-                                                }}
-                                            />
-                                            {formData.password !== formData.password_confirm && (
-                                                <FormError>Passwords do not match</FormError>
-                                            )}
-                                        </FormGroup>
-                                    </>
-                                )}
-
-                                {isEdit && (
-                                    <>
-                                        <FormGroup>
-                                            <FormLabel>New Password (optional)</FormLabel>
-                                            <FormInput
-                                                type="password"
-                                                value={formData.password}
-                                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                                placeholder="Leave blank to keep current"
-                                            />
-                                        </FormGroup>
-
-                                        <FormGroup>
-                                            <FormLabel>Confirm New Password</FormLabel>
-                                            <FormInput
-                                                type="password"
-                                                value={formData.password_confirm}
-                                                onChange={(e) => setFormData({ ...formData, password_confirm: e.target.value })}
-                                                placeholder="Leave blank to keep current"
-                                                style={{
-                                                    borderColor: formData.password !== formData.password_confirm ? C.error : undefined
-                                                }}
-                                            />
-                                            {formData.password !== formData.password_confirm && (
-                                                <FormError>Passwords do not match</FormError>
-                                            )}
-                                        </FormGroup>
-                                    </>
-                                )}
-
-                                <FormGroup>
-                                    <FormLabel>First Name</FormLabel>
-                                    <FormInput
-                                        type="text"
-                                        value={formData.first_name}
-                                        onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
-                                        placeholder="John"
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>Last Name</FormLabel>
-                                    <FormInput
-                                        type="text"
-                                        value={formData.last_name}
-                                        onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
-                                        placeholder="Doe"
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>Phone</FormLabel>
-                                    <FormInput
-                                        type="tel"
-                                        value={formData.phone}
-                                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                                        placeholder="+91 9876543210"
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>WhatsApp Number</FormLabel>
-                                    <FormInput
-                                        type="tel"
-                                        value={formData.whatsapp_number}
-                                        onChange={(e) => setFormData({ ...formData, whatsapp_number: e.target.value })}
-                                        placeholder="+91 9876543210"
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>City</FormLabel>
-                                    <FormInput
-                                        type="text"
-                                        value={formData.city}
-                                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                                        placeholder="Mumbai"
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>State</FormLabel>
-                                    <FormInput
-                                        type="text"
-                                        value={formData.state}
-                                        onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                                        placeholder="Maharashtra"
-                                    />
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>Country</FormLabel>
-                                    <FormSelect
-                                        value={formData.country}
-                                        onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                                    >
-                                        <option value="India">India</option>
-                                        <option value="USA">United States</option>
-                                        <option value="UK">United Kingdom</option>
-                                        <option value="Australia">Australia</option>
-                                        <option value="Canada">Canada</option>
-                                        <option value="Other">Other</option>
-                                    </FormSelect>
-                                </FormGroup>
-
-                                <FormGroup>
-                                    <FormLabel>Role</FormLabel>
-                                    <FormSelect
-                                        value={formData.role}
-                                        onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                                        disabled={!currentUser?.is_superuser && ['admin', 'super_admin'].includes(formData.role)}
-                                    >
-                                        <option value="user">Regular User</option>
-                                        <option value="organizer">Organizer</option>
-                                        {currentUser?.is_superuser && (
-                                            <>
-                                                <option value="admin">Admin</option>
-                                                <option value="super_admin">Super Admin</option>
-                                            </>
-                                        )}
-                                    </FormSelect>
-                                </FormGroup>
-                            </FormGrid>
-
-                            <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}` }}>
-                                <FormLabel style={{ marginBottom: '8px', display: 'block' }}>Account Status</FormLabel>
-                                <SwitchRow>
-                                    <Switch>
-                                        <input
-                                            type="checkbox"
-                                            checked={formData.is_active}
-                                            onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                                        />
-                                        <span className="slider" />
-                                    </Switch>
-                                    <span className="switch-label">
-                                        {formData.is_active ? <CheckCircle color="success" /> : <Block color="error" />}
-                                        {formData.is_active ? 'Active' : 'Inactive'}
-                                    </span>
-                                </SwitchRow>
-                            </div>
-                        </form>
-                    </ModalBody>
-
-                    <ModalFooter>
-                        <Button className="secondary" onClick={onClose}>
-                            <Cancel fontSize="small" />
-                            Cancel
-                        </Button>
-                        <Button className="primary" type="button" onClick={onSubmit}>
-                            <Save fontSize="small" />
-                            {isEdit ? 'Save Changes' : 'Create User'}
-                        </Button>
-                    </ModalFooter>
-                </Modal>
-            </ModalOverlay>
+            <Badge className="locked" title={`${info.failures_since_start} failed attempt(s)`}>
+                🔒 Locked
+            </Badge>
         );
     };
 
-    const ViewUserModal = ({ user, onClose, onEdit }) => {
-        if (!user) return null;
-
-        return (
-            <ModalOverlay onClick={onClose}>
-                <Modal $width="500px" onClick={(e) => e.stopPropagation()}>
-                    <ModalHeader>
-                        <ModalTitle>
-                            <Visibility />
-                            User Profile
-                        </ModalTitle>
-                        <ModalClose onClick={onClose}>
-                            <Close fontSize="small" />
-                        </ModalClose>
-                    </ModalHeader>
-
-                    <ModalBody>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
-                            {renderAvatar(user)}
-                            <div style={{ minWidth: 0 }}>
-                                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: F.family }}>
-                                    {user.first_name} {user.last_name}
-                                </h3>
-                                <p style={{ margin: '4px 0', fontSize: '14px', color: C.textSecondary, fontFamily: F.family }}>
-                                    @{user.username}
-                                </p>
-                                {renderRoleBadge(user.role)}
-                            </div>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
-                            <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Email</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px', wordBreak: 'break-all', fontFamily: F.family }}>
-                                    <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
-                                    {user.email}
-                                </p>
-                            </div>
-
-                            <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Phone</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
-                                    <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
-                                    {user.profile?.phone || 'N/A'}
-                                </p>
-                            </div>
-
-                            <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Location</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
-                                    <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
-                                    {[user.profile?.city, user.profile?.state].filter(Boolean).join(', ') || 'N/A'}
-                                </p>
-                            </div>
-
-                            <div>
-                                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Joined</p>
-                                <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
-                                    <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
-                                    {formatDate(user.date_joined)}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}`, display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                            {renderStatusBadge(user.is_active !== false)}
-                            {user.is_staff && (
-                                <Badge className="active">
-                                    <AdminPanelSettings fontSize="small" />
-                                    Staff
-                                </Badge>
-                            )}
-                        </div>
-                    </ModalBody>
-
-                    <ModalFooter>
-                        <Button className="secondary" onClick={onClose}>
-                            Close
-                        </Button>
-                        <Button className="primary" onClick={() => onEdit(user)}>
-                            <Edit fontSize="small" />
-                            Edit
-                        </Button>
-                    </ModalFooter>
-                </Modal>
-            </ModalOverlay>
-        );
-    };
-
-    const DeleteUserModal = ({ user, onClose, onConfirm }) => {
-        if (!user) return null;
-
-        return (
-            <ModalOverlay onClick={onClose}>
-                <Modal $width="400px" onClick={(e) => e.stopPropagation()}>
-                    <ModalHeader>
-                        <ModalTitle>
-                            <Delete />
-                            Delete User
-                        </ModalTitle>
-                        <ModalClose onClick={onClose}>
-                            <Close fontSize="small" />
-                        </ModalClose>
-                    </ModalHeader>
-
-                    <ModalBody>
-                        <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6, fontFamily: F.family }}>
-                            Are you sure you want to delete the user <strong>{user.username}</strong>?
-                        </p>
-                        <p style={{ margin: 0, fontSize: '14px', color: C.error, fontFamily: F.family }}>
-                            This action cannot be undone. All associated data will be permanently deleted.
-                        </p>
-                    </ModalBody>
-
-                    <ModalFooter>
-                        <Button className="secondary" onClick={onClose}>
-                            <Cancel fontSize="small" />
-                            Cancel
-                        </Button>
-                        <Button className="danger" onClick={onConfirm}>
-                            <Delete fontSize="small" />
-                            Delete User
-                        </Button>
-                    </ModalFooter>
-                </Modal>
-            </ModalOverlay>
-        );
+    const needsUnlock = (user) => {
+        const info = lockStatus[user.id];
+        return Boolean(info?.is_locked) || user.is_active === false;
     };
 
     // ============================================
@@ -1590,7 +1853,6 @@ const Users = () => {
 
     return (
         <PageContainer>
-            {/* Page Header */}
             <PageHeader>
                 <div>
                     <PageTitle>User Management</PageTitle>
@@ -1611,7 +1873,6 @@ const Users = () => {
                 </HeaderActions>
             </PageHeader>
 
-            {/* Stats Cards */}
             <StatsGrid>
                 <StatCard>
                     <StatIcon $bg={`${C.primary}1A`} $color={C.primary}>
@@ -1646,7 +1907,6 @@ const Users = () => {
                 </StatCard>
             </StatsGrid>
 
-            {/* Filters */}
             <FilterCard>
                 <FilterGrid>
                     <SearchWrapper>
@@ -1687,7 +1947,6 @@ const Users = () => {
                 </FilterGrid>
             </FilterCard>
 
-            {/* Users Table / Card list */}
             <TableContainer>
                 {loading ? (
                     <LoadingState>
@@ -1710,7 +1969,6 @@ const Users = () => {
                         <EmptySubtext>Try adjusting your search or filters</EmptySubtext>
                     </EmptyState>
                 ) : isMobile ? (
-                    // ==================== MOBILE: CARD LIST ====================
                     <div style={{ padding: 12 }}>
                         {users.map((user) => (
                             <MobileUserCard key={user.id} onClick={() => handleViewUser(user)}>
@@ -1720,7 +1978,10 @@ const Users = () => {
                                         <UserName>{user.first_name} {user.last_name}</UserName>
                                         <UserUsername>@{user.username}</UserUsername>
                                     </div>
-                                    {renderStatusBadge(user.is_active !== false)}
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                        {renderStatusBadge(user.is_active !== false)}
+                                        {renderLockBadge(user.id)}
+                                    </div>
                                 </MobileUserHeader>
 
                                 <MobileUserBody>
@@ -1763,6 +2024,30 @@ const Users = () => {
                                         className="secondary"
                                         onClick={(e) => {
                                             e.stopPropagation();
+                                            openResetPassword(user);
+                                        }}
+                                        disabled={actionBusy}
+                                    >
+                                        <Password fontSize="small" />
+                                        Reset
+                                    </Button>
+                                    {needsUnlock(user) && (
+                                        <Button
+                                            className="success"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleUnlock(user);
+                                            }}
+                                            disabled={actionBusy}
+                                        >
+                                            <LockOpen fontSize="small" />
+                                            Unlock
+                                        </Button>
+                                    )}
+                                    <Button
+                                        className="secondary"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
                                             handleToggleActive(user);
                                         }}
                                         style={{ color: user.is_active !== false ? C.error : C.success }}
@@ -1785,7 +2070,6 @@ const Users = () => {
                         ))}
                     </div>
                 ) : (
-                    // ==================== DESKTOP: TABLE ====================
                     <Table>
                         <TableHead>
                             <tr>
@@ -1811,7 +2095,10 @@ const Users = () => {
                                     </TableCell>
                                     <TableCell>{user.email}</TableCell>
                                     <TableCell>{renderRoleBadge(user.role)}</TableCell>
-                                    <TableCell>{renderStatusBadge(user.is_active !== false)}</TableCell>
+                                    <TableCell>
+                                        {renderStatusBadge(user.is_active !== false)}
+                                        {renderLockBadge(user.id)}
+                                    </TableCell>
                                     <TableCell>{formatDate(user.date_joined)}</TableCell>
                                     <TableCell align="right">
                                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
@@ -1827,6 +2114,29 @@ const Users = () => {
                                             }} title="Edit">
                                                 <Edit fontSize="small" />
                                             </ActionButton>
+                                            <ActionButton
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    openResetPassword(user);
+                                                }}
+                                                title="Reset Password"
+                                                disabled={actionBusy}
+                                            >
+                                                <Password fontSize="small" />
+                                            </ActionButton>
+                                            {needsUnlock(user) && (
+                                                <ActionButton
+                                                    className="success"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleUnlock(user);
+                                                    }}
+                                                    title="Unlock & reactivate"
+                                                    disabled={actionBusy}
+                                                >
+                                                    <LockOpen fontSize="small" />
+                                                </ActionButton>
+                                            )}
                                             <ActionButton
                                                 className="danger"
                                                 onClick={(e) => {
@@ -1856,7 +2166,6 @@ const Users = () => {
                     </Table>
                 )}
 
-                {/* Pagination */}
                 {!loading && !error && users.length > 0 && (
                     <PaginationContainer>
                         <PaginationInfo>
@@ -1900,29 +2209,35 @@ const Users = () => {
                 )}
             </TableContainer>
 
-            {/* Modals */}
             {showCreateModal && (
                 <UserFormModal
                     mode="create"
+                    formData={formData}
+                    setFormData={setFormData}
                     onClose={() => setShowCreateModal(false)}
                     onSubmit={handleCreateUser}
+                    currentUser={currentUser}
                 />
             )}
 
             {showEditModal && selectedUser && (
                 <UserFormModal
                     mode="edit"
+                    formData={formData}
+                    setFormData={setFormData}
                     onClose={() => {
                         setShowEditModal(false);
                         setSelectedUser(null);
                     }}
                     onSubmit={handleUpdateUser}
+                    currentUser={currentUser}
                 />
             )}
 
             {showViewModal && selectedUser && (
                 <ViewUserModal
                     user={selectedUser}
+                    isMobile={isMobile}
                     onClose={() => {
                         setShowViewModal(false);
                         setSelectedUser(null);
@@ -1942,6 +2257,18 @@ const Users = () => {
                         setSelectedUser(null);
                     }}
                     onConfirm={handleDeleteUser}
+                />
+            )}
+
+            {/* ✅ ResetPasswordModal is now a stable, module-scope
+                component. Its password state lives inside it, so typing
+                there never re-renders `Users` and never steals focus. */}
+            {resetTarget && (
+                <ResetPasswordModal
+                    user={resetTarget}
+                    onClose={closeResetPassword}
+                    onReset={handleResetPassword}
+                    busy={actionBusy}
                 />
             )}
         </PageContainer>

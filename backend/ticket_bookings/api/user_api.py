@@ -4,6 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.core.mail import send_mail
@@ -266,6 +268,192 @@ class UserViewSet(viewsets.ModelViewSet):
             'success': True,
             'message': f'User {user.username} {"activated" if user.is_active else "deactivated"}',
             'user': UserSerializer(user).data
+        })
+
+    # ============================================================
+    # ✅ ENHANCEMENT: reset_password
+    # ------------------------------------------------------------
+    # Admin/superadmin may set a new password for any user. A user
+    # may reset their own password. Password is validated against
+    # Django's AUTH_PASSWORD_VALIDATORS. All of the target user's
+    # outstanding JWT sessions are blacklisted so old tokens can't
+    # survive a forced password change.
+    #
+    # The target user's Axes lockout is also cleared on reset — the
+    # whole point of an admin reset is to get a locked-out user back
+    # in. (The dedicated `unlock` action does the same thing, but
+    # doing it here too avoids the admin having to click twice.)
+    # ============================================================
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        from axes.models import AccessAttempt
+
+        target = self.get_object()
+        requester = request.user
+
+        is_self = requester.id == target.id
+        is_admin = requester.is_staff or requester.is_superuser
+
+        if not is_self and not is_admin:
+            return Response(
+                {'error': 'You do not have permission to reset this password.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Admin (non-super) may not touch a superuser.
+        if (
+            not requester.is_superuser
+            and target.is_superuser
+            and not is_self
+        ):
+            return Response(
+                {'error': 'Only a super admin can reset a super admin password.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        new_password = (request.data.get('password') or '').strip()
+        if not new_password:
+            return Response(
+                {'error': 'A new password is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_password(new_password, user=target)
+        except DjangoValidationError as exc:
+            return Response(
+                {'error': ' '.join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target.set_password(new_password)
+        target.save(update_fields=['password'])
+
+        # Rotating a password lifts any Axes lockout for this user.
+        try:
+            AccessAttempt.objects.filter(username=target.username).delete()
+        except Exception:
+            logger.exception(
+                "Failed to clear Axes attempts for user=%s during password reset",
+                target.username,
+            )
+
+        # Blacklist outstanding tokens so old sessions can't survive.
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import (
+                BlacklistedToken, OutstandingToken,
+            )
+            for outstanding in OutstandingToken.objects.filter(user=target):
+                BlacklistedToken.objects.get_or_create(token=outstanding)
+        except Exception:
+            # Token blacklist app may not be installed; never fail the
+            # reset because of it.
+            logger.warning(
+                "Could not blacklist JWT tokens for user=%s after password reset",
+                target.username,
+            )
+
+        logger.info(
+            "🔑 Password reset for user=%s by=%s",
+            target.username, requester.username,
+        )
+
+        return Response({
+            'success': True,
+            'message': f'Password reset for {target.username}.',
+            'username': target.username,
+        })
+
+    # ============================================================
+    # ✅ ENHANCEMENT: unlock
+    # ------------------------------------------------------------
+    # Clears the Axes lockout for the target user AND reactivates
+    # the account if it was deactivated. Both are usually needed
+    # after the user is locked out of login.
+    # ============================================================
+    @action(detail=True, methods=['post'])
+    def unlock(self, request, pk=None):
+        from axes.models import AccessAttempt
+
+        target = self.get_object()
+        requester = request.user
+
+        if not (requester.is_staff or requester.is_superuser):
+            return Response(
+                {'error': 'You do not have permission to unlock users.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if target.is_superuser and not requester.is_superuser:
+            return Response(
+                {'error': 'Only a super admin can unlock a super admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 1. Lift the Axes lock for this username (across all IPs).
+        deleted_attempts, _ = AccessAttempt.objects.filter(
+            username=target.username,
+        ).delete()
+
+        # 2. Reactivate the account if it was off.
+        was_inactive = not target.is_active
+        if was_inactive:
+            target.is_active = True
+            target.save(update_fields=['is_active'])
+
+        logger.info(
+            "🔓 Unlocked user=%s by=%s (attempts_deleted=%s, reactivated=%s)",
+            target.username, requester.username,
+            deleted_attempts, was_inactive,
+        )
+
+        return Response({
+            'success': True,
+            'message': f'{target.username} unlocked.',
+            'username': target.username,
+            'is_active': target.is_active,
+            'attempts_cleared': deleted_attempts,
+            'was_reactivated': was_inactive,
+        })
+
+    # ============================================================
+    # ✅ ENHANCEMENT: lockout_status (read-only)
+    # ------------------------------------------------------------
+    # Returns whether the target user is currently locked out by
+    # Axes, plus the number of failures on record. Used by the
+    # Users page to decide when to show the "Unlock" button.
+    # ============================================================
+    @action(detail=True, methods=['get'])
+    def lockout_status(self, request, pk=None):
+        from axes.models import AccessAttempt
+
+        target = self.get_object()
+        requester = request.user
+
+        if not (requester.is_staff or requester.is_superuser):
+            return Response(
+                {'error': 'Permission denied.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        attempts_qs = AccessAttempt.objects.filter(username=target.username)
+        attempt_count = attempts_qs.count()
+        failures = list(
+            attempts_qs.values_list('failures_since_start', flat=True)
+        )
+        max_failures = max(failures) if failures else 0
+
+        failure_limit = getattr(settings, 'AXES_FAILURE_LIMIT', 5)
+        is_locked = max_failures >= failure_limit or (
+            target.is_active is False
+        )
+
+        return Response({
+            'username': target.username,
+            'is_active': target.is_active,
+            'is_locked': is_locked,
+            'failures_since_start': max_failures,
+            'failure_limit': failure_limit,
+            'attempt_rows': attempt_count,
         })
 
     @action(detail=True, methods=['get'])

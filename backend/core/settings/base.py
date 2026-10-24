@@ -352,7 +352,9 @@ if IS_PRODUCTION and _ADMIN_URL_RAW == 'admin':
 # ============================================
 # AXES — BRUTE-FORCE PROTECTION
 # ============================================
-AXES_FAILURE_LIMIT = 5
+# ✅ Raise the threshold so a single bad actor cannot lock out a known user
+#    by hammering their username, and lock out per IP + username.
+AXES_FAILURE_LIMIT = 10
 AXES_COOLOFF_TIME = 1
 AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address'], ['ip_address']]
 AXES_ENABLE_ACCESS_FAILURE_LOG = True

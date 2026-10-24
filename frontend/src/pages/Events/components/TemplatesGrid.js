@@ -1,14 +1,15 @@
 // frontend/src/pages/Events/components/TemplatesGrid.js
 import React from 'react';
-import { Grid, Box, Button, Alert, Typography, Divider } from '@mui/material';
-import { Upload as UploadIcon } from '@mui/icons-material';
+import { Grid, Box, Button, Alert, Typography, Divider, IconButton, Tooltip } from '@mui/material';
+import { Upload as UploadIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { TemplateCard, SectionTitle } from './styled';
 import { theme } from '../../../theme/tokens';
 
 const C = theme.colors;
 
-export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload }) => {
+// ✅ Added onDeleteTemplate to props
+export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload, onDeleteTemplate }) => {
     const handleCardClick = (typeValue, disabled) => {
         if (disabled) {
             toast.warning('Please save the event first before adding templates');
@@ -35,7 +36,8 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload 
             <Grid item xs={12}>
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
                     {templateTypes.map((type) => {
-                        const typeTemplates = templates[type.label] || [];
+                        // ✅ FIX: Look up by type.value (slug) instead of type.label
+                        const typeTemplates = templates[type.value]?.templates || [];
                         const defaultTemplate = typeTemplates.find((t) => t.is_default);
                         const hasTemplates = typeTemplates.length > 0;
                         const isDisabled = !eventId;
@@ -45,15 +47,14 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload 
                                 key={type.value}
                                 disabled={isDisabled}
                                 sx={{
-                                    flex: '1 1 150px',
-                                    minWidth: 150,
-                                    maxWidth: 200,
+                                    flex: '1 1 200px', // Slightly wider to accommodate the list
+                                    minWidth: 200,
+                                    maxWidth: 250,
                                     p: 2,
                                     position: 'relative',
                                 }}
-                                onClick={() => handleCardClick(type.value, isDisabled)}
                             >
-                                <Box sx={{ textAlign: 'center' }}>
+                                <Box sx={{ textAlign: 'center', mb: hasTemplates ? 2 : 0 }}>
                                     <Typography variant="h2" sx={{ fontSize: 32 }}>
                                         {type.icon || '📄'}
                                     </Typography>
@@ -64,25 +65,60 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload 
                                         {hasTemplates ? `${typeTemplates.length} template(s)` : 'No templates'}
                                         {defaultTemplate && ' ⭐'}
                                     </Typography>
-                                    {isDisabled ? (
-                                        <Button size="small" variant="outlined" disabled sx={{ mt: 1, opacity: 0.5 }}>
-                                            Save Event First
-                                        </Button>
-                                    ) : (
-                                        <Button
-                                            size="small"
-                                            variant="outlined"
-                                            startIcon={<UploadIcon />}
-                                            sx={{ mt: 1 }}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                onOpenUpload(type.value);
-                                            }}
-                                        >
-                                            {hasTemplates ? 'Add More' : 'Upload'}
-                                        </Button>
-                                    )}
                                 </Box>
+
+                                {/* ✅ NEW: Display existing templates and delete buttons */}
+                                {hasTemplates && (
+                                    <Box sx={{ mt: 1, pt: 1, borderTop: `1px dashed ${C.borderLight}` }}>
+                                        {typeTemplates.map((tpl) => (
+                                            <Box 
+                                                key={tpl.id} 
+                                                sx={{ 
+                                                    display: 'flex', 
+                                                    justifyContent: 'space-between', 
+                                                    alignItems: 'center', 
+                                                    mb: 0.5 
+                                                }}
+                                            >
+                                                <Typography 
+                                                    variant="caption" 
+                                                    title={tpl.name}
+                                                    sx={{ 
+                                                        color: C.textPrimary, 
+                                                        whiteSpace: 'nowrap',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        maxWidth: '140px' 
+                                                    }}
+                                                >
+                                                    {tpl.name} {tpl.is_default && '⭐'}
+                                                </Typography>
+                                                <Tooltip title="Delete Template">
+                                                    <IconButton
+                                                        size="small"
+                                                        color="error"
+                                                        onClick={() => onDeleteTemplate(tpl.id, tpl.name)}
+                                                        sx={{ p: 0.5 }}
+                                                    >
+                                                        <DeleteIcon fontSize="small" />
+                                                    </IconButton>
+                                                </Tooltip>
+                                            </Box>
+                                        ))}
+                                    </Box>
+                                )}
+
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    fullWidth
+                                    startIcon={<UploadIcon />}
+                                    disabled={isDisabled}
+                                    sx={{ mt: 2 }}
+                                    onClick={() => handleCardClick(type.value, isDisabled)}
+                                >
+                                    {hasTemplates ? 'Add More' : 'Upload'}
+                                </Button>
                             </TemplateCard>
                         );
                     })}

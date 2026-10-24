@@ -94,7 +94,8 @@ const TicketView = () => {
             await api.post(`/tickets/${ticket.id}/send_email/`, {
                 email: booking.customer_email,
             });
-            toast.success(`Ticket sent to ${booking.customer_email}`);
+            // ✅ FIX: never interpolate user-controlled data into toast messages.
+            toast.success('Ticket email sent successfully.');
         } catch (error) {
             console.error('Email error:', error);
             toast.error('Failed to send ticket');

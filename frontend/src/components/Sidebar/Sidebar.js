@@ -65,7 +65,6 @@ const LogoWrap = styled.div`
     position: relative;
 `;
 
-// ✅ Clicking the logo returns to the app dashboard
 const LogoLink = styled(NavLink)`
     display: inline-flex;
     align-items: center;
@@ -313,7 +312,6 @@ const DrawerCloseButton = styled.button`
 // ============================================
 // MENU DEFINITIONS
 // ============================================
-// All paths now live under the /app prefix.
 
 const MENU_ITEMS = {
     dashboard: {
@@ -401,14 +399,16 @@ const SECTION_LABELS = {
 
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const { role, isSuperAdmin } = useRole();
-    const { logout } = useAuth();
+    const { logout, isAuthenticated } = useAuth();
 
     const isDrawer = Boolean(onNavigate);
     const effectiveCollapsed = isDrawer ? false : collapsed;
+    const isGuest = !isAuthenticated;
 
     const getVisibleItems = () => {
         return Object.entries(MENU_ITEMS)
             .filter(([key, item]) => {
+                if (isGuest) return false;
                 if (isSuperAdmin) return true;
                 return item.roles.includes(role);
             })
@@ -433,9 +433,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     return (
         <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
             <LogoWrap>
-                <LogoLink to="/app/dashboard" onClick={() => onNavigate && onNavigate()}>
+                <LogoLink
+                    to={isGuest ? '/' : '/app/dashboard'}
+                    onClick={() => onNavigate && onNavigate()}
+                >
+                    {/* ✅ FIX: Render only the full wordmark to save space */}
                     <Logo
-                        variant="both"
+                        variant="full"
                         height={44}
                         hidden={effectiveCollapsed && !isDrawer}
                     />
@@ -447,12 +451,14 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 )}
             </LogoWrap>
 
-            <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                <span className="role-dot" />
-                {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
-                 role === ROLES.ADMIN ? 'Admin' :
-                 role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
-            </RoleBadge>
+            {!isGuest && (
+                <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+                    <span className="role-dot" />
+                    {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
+                     role === ROLES.ADMIN ? 'Admin' :
+                     role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
+                </RoleBadge>
+            )}
 
             <NavItems>
                 {Object.entries(groupedItems).map(([section, items]) => (
@@ -482,16 +488,18 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                 ))}
             </NavItems>
 
-            <LogoutSection>
-                <LogoutButton
-                    onClick={handleLogout}
-                    collapsed={effectiveCollapsed}
-                    $drawer={isDrawer}
-                >
-                    <span className="icon"><LogoutIcon fontSize="small" /></span>
-                    <span className="label">Logout</span>
-                </LogoutButton>
-            </LogoutSection>
+            {!isGuest && (
+                <LogoutSection>
+                    <LogoutButton
+                        onClick={handleLogout}
+                        collapsed={effectiveCollapsed}
+                        $drawer={isDrawer}
+                    >
+                        <span className="icon"><LogoutIcon fontSize="small" /></span>
+                        <span className="label">Logout</span>
+                    </LogoutButton>
+                </LogoutSection>
+            )}
 
             <ToggleButton
                 onClick={onToggle}

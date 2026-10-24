@@ -1,54 +1,52 @@
 # backend/ticket_bookings/management/commands/seed_wide_stub_template.py
-"""
-Seed a wide-stub ticket template for an event.
-
-Usage:
-    python manage.py seed_wide_stub_template --list-events
-    python manage.py seed_wide_stub_template --event <event-uuid>
-    python manage.py seed_wide_stub_template --event <event-uuid> --overwrite
-"""
 from pathlib import Path
-
 from django.conf import settings
 from django.core.files import File
 from django.core.management.base import BaseCommand
-
 from ticket_bookings.models import Event, EventTemplate, EventTemplateType
 
-
-DEFAULT_IMAGE = 'media/event_templates/ticket_wide_stub_gold.png'
+DEFAULT_IMAGE = 'media/event_templates/my_custom_ticket.png'
 
 CONFIG = {
     "fields": {
-        "event_title": {"x": 0.44, "y": 0.16, "font_size": 0.040,
-                        "color": "#8B1A1A", "align": "center"},
-        "event_date": {"x": 0.36, "y": 0.36, "font_size": 0.018,
-                       "color": "#1A202C", "align": "center"},
-        "event_date_secondary": {"x": 0.36, "y": 0.42, "font_size": 0.013,
-                                 "color": "#4A5568", "align": "center"},
-        "venue_label": {"x": 0.53, "y": 0.34, "font_size": 0.012,
-                        "color": "#4A5568", "align": "left"},
-        "venue_value": {"x": 0.53, "y": 0.39, "font_size": 0.013,
-                        "color": "#1A202C", "align": "left"},
-        "attendee_label": {"x": 0.235, "y": 0.52, "font_size": 0.011,
-                           "color": "#4A5568", "align": "left"},
-        "attendee_value": {"x": 0.235, "y": 0.57, "font_size": 0.014,
-                           "color": "#1A202C", "align": "left"},
-        "booking_label": {"x": 0.235, "y": 0.63, "font_size": 0.011,
-                          "color": "#4A5568", "align": "left"},
-        "booking_value": {"x": 0.235, "y": 0.68, "font_size": 0.013,
-                          "color": "#1A202C", "align": "left"},
-        "ticket_code_label": {"x": 0.53, "y": 0.63, "font_size": 0.011,
-                              "color": "#4A5568", "align": "left"},
-        "ticket_code_value": {"x": 0.53, "y": 0.68, "font_size": 0.013,
-                              "color": "#1A202C", "align": "left"},
-        "ticket_number": {"x": 0.835, "y": 0.13, "font_size": 0.030,
-                          "color": "#8B1A1A", "align": "center", "enabled": True},
-        "qr_code": {"x": 0.7875, "y": 0.2917, "size": 0.142},
-        "slot_time_label": {"x": 0.835, "y": 0.76, "font_size": 0.011,
-                            "color": "#4A5568", "align": "center"},
-        "slot_time_value": {"x": 0.835, "y": 0.82, "font_size": 0.018,
-                            "color": "#1A202C", "align": "center"},
+        # =====================================================================
+        # ROW 1: EVENT, DATE, TIME
+        # =====================================================================
+        # Labels
+        "ticket_code_label": {"x": 0.085, "y": 0.40, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "booking_label":     {"x": 0.275, "y": 0.40, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "organizer":         {"x": 0.465, "y": 0.40, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        
+        # Values (Moved up to y: 0.455 to sit closer to labels)
+        "event_title":       {"x": 0.085, "y": 0.455, "font_size": 36, "color": "#1A202C", "align": "left"},
+        "event_date":        {"x": 0.275, "y": 0.455, "font_size": 32, "color": "#1A202C", "align": "left"},
+        "slot_time_value":   {"x": 0.465, "y": 0.455, "font_size": 32, "color": "#1A202C", "align": "left", "enabled": True},
+
+        # =====================================================================
+        # ROW 2: VENUE, TICKET NO., TICKET TYPE
+        # =====================================================================
+        # Labels
+        "venue_label":       {"x": 0.085, "y": 0.64, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "attendee_label":    {"x": 0.275, "y": 0.64, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        "slot_time_label":   {"x": 0.465, "y": 0.64, "font_size": 22, "color": "#4A5568", "align": "left", "enabled": True},
+        
+        # Values (Moved up to y: 0.695 to sit closer to labels)
+        "venue_value":       {"x": 0.085, "y": 0.695, "font_size": 20, "color": "#1A202C", "align": "left"},
+        "ticket_number":     {"x": 0.275, "y": 0.695, "font_size": 32, "color": "#1A202C", "align": "left", "enabled": True},
+        "attendee_value":    {"x": 0.465, "y": 0.695, "font_size": 32, "color": "#1A202C", "align": "left"},
+
+        # =====================================================================
+        # RIGHT SIDE: QR CODE
+        # =====================================================================
+        # Centered in the right black square
+        "qr_code": {"x": 0.825, "y": 0.50, "size": 270},
+
+        # Hide unused fields
+        "organizer_sub": {"enabled": False},
+        "event_date_secondary": {"enabled": False},
+        "booking_value": {"enabled": False},
+        "admit_one": {"enabled": False},
+        "ticket_code_value": {"enabled": False},
     },
     "template_type": "ticket",
     "orientation": "landscape",
@@ -60,16 +58,11 @@ class Command(BaseCommand):
     help = 'Seed a wide-stub ticket template for an event.'
 
     def add_arguments(self, parser):
-        parser.add_argument('--event', '-e',
-                            help='Event UUID to attach the template to.')
-        parser.add_argument('--image', '-i', default=DEFAULT_IMAGE,
-                            help=f'Path to the template PNG (default: {DEFAULT_IMAGE}).')
-        parser.add_argument('--name', default='Wide Stub Ticket',
-                            help='Template name.')
-        parser.add_argument('--overwrite', action='store_true',
-                            help='Overwrite an existing template with the same name.')
-        parser.add_argument('--list-events', action='store_true',
-                            help='List all events and exit.')
+        parser.add_argument('--event', '-e', help='Event UUID to attach the template to.')
+        parser.add_argument('--image', '-i', default=DEFAULT_IMAGE, help='Path to the template PNG.')
+        parser.add_argument('--name', default='Wide Stub Ticket', help='Template name.')
+        parser.add_argument('--overwrite', action='store_true', help='Overwrite an existing template.')
+        parser.add_argument('--list-events', action='store_true', help='List all events and exit.')
 
     def handle(self, *args, **options):
         if options['list_events']:
@@ -77,9 +70,7 @@ class Command(BaseCommand):
 
         event_id = options.get('event')
         if not event_id:
-            self.stderr.write(self.style.ERROR(
-                'Missing --event. Use --list-events to see available events.'
-            ))
+            self.stderr.write(self.style.ERROR('Missing --event.'))
             return
 
         event = self._get_event(event_id)
@@ -91,14 +82,10 @@ class Command(BaseCommand):
             image_path = Path(settings.BASE_DIR) / image_path
 
         if not image_path.exists():
-            self.stderr.write(self.style.ERROR(
-                f'Image not found: {image_path}\n'
-                f'  Pass --image <path> to point at the file.'
-            ))
+            self.stderr.write(self.style.ERROR(f'Image not found: {image_path}'))
             return
 
-        self._seed(event=event, image_path=image_path,
-                   name=options['name'], overwrite=options['overwrite'])
+        self._seed(event=event, image_path=image_path, name=options['name'], overwrite=options['overwrite'])
 
     def _list_events(self):
         events = Event.objects.all().order_by('-created_at')
@@ -120,21 +107,14 @@ class Command(BaseCommand):
         return None
 
     def _seed(self, *, event, image_path, name, overwrite):
-        ttype, _ = EventTemplateType.objects.get_or_create(
-            slug='ticket',
-            defaults={'name': 'Ticket', 'is_active': True},
-        )
-
+        ttype, _ = EventTemplateType.objects.get_or_create(slug='ticket', defaults={'name': 'Ticket', 'is_active': True})
         existing = EventTemplate.objects.filter(event=event, name=name).first()
+
         if existing and not overwrite:
-            self.stdout.write(self.style.WARNING(
-                f'⚠️  Template "{name}" already exists. Pass --overwrite to replace.'
-            ))
+            self.stdout.write(self.style.WARNING(f'⚠️  Template "{name}" already exists. Pass --overwrite to replace.'))
             return
 
-        EventTemplate.objects.filter(
-            event=event, template_type=ttype, is_default=True,
-        ).update(is_default=False)
+        EventTemplate.objects.filter(event=event, template_type=ttype, is_default=True).update(is_default=False)
 
         if existing:
             template = existing
@@ -145,7 +125,7 @@ class Command(BaseCommand):
         else:
             template = EventTemplate(
                 event=event, template_type=ttype, name=name,
-                description='Generic 2.5:1 stub-style ticket',
+                description='Custom 4:1 stub-style ticket',
                 config=CONFIG, is_default=True, is_active=True,
             )
 
@@ -153,11 +133,4 @@ class Command(BaseCommand):
             template.image.save(image_path.name, File(fh), save=False)
         template.save()
 
-        action = 'Updated' if existing else 'Created'
-        self.stdout.write(self.style.SUCCESS(
-            f'✅ {action} template "{template.name}"'
-        ))
-        self.stdout.write(f'   Event:    {event.title}')
-        self.stdout.write(f'   Template: {template.id}')
-        self.stdout.write(f'   Image:    {template.image.name}')
-        self.stdout.write(f'   Default:  {template.is_default}')
+        self.stdout.write(self.style.SUCCESS(f'✅ {"Updated" if existing else "Created"} template "{template.name}"'))

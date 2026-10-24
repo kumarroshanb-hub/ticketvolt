@@ -11,8 +11,6 @@ import {
     ConfirmationNumber as TicketIcon,
     AttachMoney as MoneyIcon,
     Refresh as RefreshIcon,
-    Schedule as ScheduleIcon,
-    LocationOn as LocationIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
@@ -24,11 +22,8 @@ import {
     OutlineButton, StatusChip, LoadingWrapper,
 } from '../../components/Common';
 
-import {
-    BOOKING_STATUS,
-    BookingStatusUtils,
-    EventStatusUtils,
-} from '../../constants';
+import EventCard from '../../components/Common/EventCard';
+import { BOOKING_STATUS } from '../../constants';
 
 import { theme as appTheme } from '../../theme/tokens';
 
@@ -288,160 +283,6 @@ const MobileBookingCard = ({ booking, onClick }) => {
 };
 
 // ============================================
-// POPULAR EVENT CARD
-// ============================================
-const PopularEventCard = ({ event, onClick, isMobile }) => {
-    const isActive = EventStatusUtils.isActive(event.status);
-    const isTerminal = EventStatusUtils.isTerminal(event.status);
-
-    const tierCount = event.tier_count ?? 0;
-    const sessionCount = event.session_count ?? 0;
-    const totalCapacity = event.total_capacity ?? 0;
-
-    const venueName = event.venue_name || null;
-    const venueCity = event.venue_city || null;
-
-    const formattedDate = event.start_date
-        ? new Date(event.start_date).toLocaleDateString('en-IN', {
-              day: '2-digit', month: 'short', year: 'numeric',
-          })
-        : 'TBD';
-
-    return (
-        <Card
-            onClick={onClick}
-            sx={{
-                borderRadius: 2,
-                border: `1px solid ${C.borderLight}`,
-                cursor: 'pointer',
-                opacity: isTerminal ? 0.7 : 1,
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                transition: 'all 0.2s ease',
-                '&:hover': {
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                    transform: 'translateY(-2px)',
-                },
-                '&:active': { transform: 'scale(0.99)' },
-            }}
-        >
-            <CardContent
-                sx={{
-                    p: isMobile ? 1.5 : 2,
-                    flexGrow: 1,
-                    '&:last-child': { pb: isMobile ? 1.5 : 2 },
-                }}
-            >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, mb: 1 }}>
-                    <Typography
-                        variant="h6"
-                        sx={{
-                            color: C.textPrimary,
-                            fontWeight: 600,
-                            fontSize: isMobile ? '1rem' : '1.1rem',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            flex: 1,
-                            minWidth: 0,
-                        }}
-                    >
-                        {event.title}
-                    </Typography>
-                    <StatusChip status={event.status} type="event" size="small" showIcon variant="filled" />
-                </Box>
-
-                <Typography
-                    variant="body2"
-                    sx={{
-                        color: C.textSecondary,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1,
-                        mb: 0.75,
-                    }}
-                >
-                    <ScheduleIcon sx={{ fontSize: 16, color: C.textLight }} />
-                    {formattedDate}
-                </Typography>
-
-                {venueName || venueCity ? (
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: C.textSecondary,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 1,
-                            mb: 0.75,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                        }}
-                    >
-                        <LocationIcon sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
-                        {venueName || 'Venue'}
-                        {venueCity ? `, ${venueCity}` : ''}
-                    </Typography>
-                ) : (
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: C.textLight,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 1,
-                            mb: 0.75,
-                            fontStyle: 'italic',
-                        }}
-                    >
-                        <LocationIcon sx={{ fontSize: 16 }} />
-                        No venue assigned
-                    </Typography>
-                )}
-
-                <Divider sx={{ my: 1.5 }} />
-
-                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1.5 }}>
-                    <Typography variant="caption" sx={{ color: C.textSecondary, display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600 }}>
-                        🎫 {tierCount} tier{tierCount === 1 ? '' : 's'}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: C.textSecondary, display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600 }}>
-                        ⏱️ {sessionCount} session{sessionCount === 1 ? '' : 's'}
-                    </Typography>
-                    {totalCapacity > 0 && (
-                        <Typography variant="caption" sx={{ color: C.textLight, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            👥 {totalCapacity} seats
-                        </Typography>
-                    )}
-                </Box>
-
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                    <Typography variant="body2" sx={{ color: C.textSecondary }}>Tickets Sold</Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
-                        {event.total_tickets_sold || 0}
-                    </Typography>
-                </Box>
-
-                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2" sx={{ color: C.textSecondary }}>Revenue</Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
-                        ₹{event.total_revenue?.toLocaleString() || 0}
-                    </Typography>
-                </Box>
-
-                {isActive && (
-                    <Typography variant="caption" sx={{ color: C.success, mt: 1, display: 'block' }}>
-                        🟢 Live
-                    </Typography>
-                )}
-            </CardContent>
-        </Card>
-    );
-};
-
-// ============================================
 // MAIN COMPONENT
 // ============================================
 const Dashboard = () => {
@@ -491,6 +332,7 @@ const Dashboard = () => {
     }
 
     const recentBookings = stats.recent_bookings || [];
+    const popularEvents = stats.popular_events || [];
 
     return (
         <PageContainer>
@@ -647,6 +489,9 @@ const Dashboard = () => {
                 )}
             </Box>
 
+            {/* ==================================================
+                POPULAR EVENTS — now uses the shared EventCard
+               ================================================== */}
             <Box>
                 <Typography
                     variant="h6"
@@ -660,13 +505,12 @@ const Dashboard = () => {
                     Popular Events
                 </Typography>
                 <Grid container spacing={isMobile ? 1.5 : 2}>
-                    {stats.popular_events && stats.popular_events.length > 0 ? (
-                        stats.popular_events.map((event) => (
+                    {popularEvents.length > 0 ? (
+                        popularEvents.map((event) => (
                             <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                <PopularEventCard
+                                <EventCard
                                     event={event}
-                                    onClick={() => navigate(`/app/events/${event.id}`)}
-                                    isMobile={isMobile}
+                                    onSelect={(evt) => navigate(`/app/events/${evt.id}`)}
                                 />
                             </Grid>
                         ))

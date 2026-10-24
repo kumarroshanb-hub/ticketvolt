@@ -155,6 +155,20 @@ def cancel_tickets(
         raise CancellationError('No ticket IDs provided.')
 
     # ------------------------------------------------------------
+    # Free registrations have no refund logic — bypass the policy
+    # check entirely. Handled in a dedicated function so the rest of
+    # this module stays focused on paid flows.
+    # ------------------------------------------------------------
+    event_flow = getattr(getattr(booking, 'event', None), 'event_flow', None)
+    if event_flow == 'free_registration':
+        return _cancel_free_registration(
+            booking=booking,
+            ticket_ids=ticket_ids,
+            actor=actor,
+            reason=reason,
+        )
+
+    # ------------------------------------------------------------
     # Load and validate the policy BEFORE entering the transaction.
     # ------------------------------------------------------------
     policy_rules = _policy_rules_for(booking)
@@ -358,3 +372,100 @@ def _reverse_discount_usages(booking: Booking) -> None:
             'Reversed %d discount usage(s) on cancelled booking %s',
             updated, booking.booking_reference,
         )
+
+# ===========================================================================
+# Free registration cancellation — no refund, no policy check.
+# ===========================================================================
+
+def _cancel_free_registration(*, booking, ticket_ids, actor, reason):
+    """
+    Free registrations cancel instantly with no refund accounting.
+
+    Still transactional and row-locked so a concurrent scan can't
+    race the cancel. Releases the reserved seat (if any) via the
+    shared seat-release helper.
+    """
+    from .session_capacity import release_session_seats
+
+    ticket_ids = [str(t) for t in (ticket_ids or []) if t]
+    if not ticket_ids:
+        raise CancellationError('No ticket IDs provided.')
+
+    unique_ids = sorted(set(ticket_ids))
+
+    with transaction.atomic():
+        locked = list(
+            Ticket.objects
+            .select_for_update()
+            .filter(booking=booking, id__in=unique_ids)
+            .order_by('id')
+        )
+
+        found_ids = {str(t.id) for t in locked}
+        missing = [tid for tid in unique_ids if tid not in found_ids]
+        if missing:
+            raise CancellationError(
+                f'Ticket(s) not found on this booking: {missing}'
+            )
+
+        cancelled_ids = []
+        skipped = []
+        now = timezone.now()
+
+        for ticket in locked:
+            if ticket.status in (
+                TicketStatus.CANCELLED,
+                TicketStatus.REFUNDED,
+            ):
+                skipped.append({
+                    'id': str(ticket.id),
+                    'reason': f'already {ticket.status}',
+                })
+                continue
+
+            ticket.status = TicketStatus.CANCELLED
+            ticket.cancelled_at = now
+            ticket.cancelled_reason = (reason or 'Registration cancelled')[:255]
+            ticket.save(update_fields=[
+                'status', 'cancelled_at', 'cancelled_reason',
+            ])
+            cancelled_ids.append(str(ticket.id))
+
+        if not cancelled_ids:
+            return {
+                'booking_id': str(booking.id),
+                'cancelled_ticket_ids': [],
+                'skipped': skipped,
+                'refund_amount_added': Decimal('0.00'),
+                'cancellation_fee_total': Decimal('0.00'),
+                'booking_status': booking.status,
+                'fully_cancelled': False,
+            }
+
+        remaining = (
+            booking.tickets
+            .exclude(status__in=[TicketStatus.CANCELLED, TicketStatus.REFUNDED])
+            .exists()
+        )
+        fully_cancelled = not remaining
+
+        if fully_cancelled:
+            booking.status = BookingStatus.CANCELLED
+            booking.save(update_fields=['status', 'updated_at'])
+            _reverse_discount_usages(booking)
+
+        # Release the reserved seat(s) via the shared helper.
+        release_session_seats(booking, len(cancelled_ids))
+
+        if getattr(booking, 'event', None) is not None:
+            booking.event.update_ticket_counts()
+
+        return {
+            'booking_id': str(booking.id),
+            'cancelled_ticket_ids': cancelled_ids,
+            'skipped': skipped,
+            'refund_amount_added': Decimal('0.00'),
+            'cancellation_fee_total': Decimal('0.00'),
+            'booking_status': booking.status,
+            'fully_cancelled': fully_cancelled,
+        }

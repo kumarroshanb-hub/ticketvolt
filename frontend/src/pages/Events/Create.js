@@ -1,6 +1,6 @@
 // frontend/src/pages/Events/Create.js
 import React from 'react';
-import { Alert, CircularProgress, Grid } from '@mui/material';
+import { Alert, CircularProgress, Grid, Box, Typography } from '@mui/material';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import {
@@ -52,6 +52,10 @@ const CreateEvent = () => {
     const templates = useEventTemplates(id);
     const { submit, submitting, error } = useEventSubmit({ id, formData, sessions, tiers });
 
+    const isFreeRegistration = formData.event_flow === 'free_registration';
+    const isRegistrationOnly = ['free_registration', 'paid_registration']
+        .includes(formData.event_flow);
+
     if (loading) {
         return (
             <LoadingWrapper>
@@ -87,7 +91,12 @@ const CreateEvent = () => {
                             policies={policies}
                         />
 
-                        <EventTicketSettings formData={formData} onChange={handleChange} />
+                        {/* ✅ FIX: Render Ticket Settings for ALL event flows so Free Registration can select PDF/PNG */}
+                        <EventTicketSettings
+                            formData={formData}
+                            onChange={handleChange}
+                            isFreeRegistration={isFreeRegistration}
+                        />
 
                         <SessionsEditor
                             sessions={sessions}
@@ -96,12 +105,27 @@ const CreateEvent = () => {
                             onUpdate={updateSession}
                         />
 
-                        <TiersEditor
-                            tiers={tiers}
-                            onAdd={addTier}
-                            onRemove={removeTier}
-                            onUpdate={updateTier}
-                        />
+                        {!isFreeRegistration && (
+                            <TiersEditor
+                                tiers={tiers}
+                                onAdd={addTier}
+                                onRemove={removeTier}
+                                onUpdate={updateTier}
+                                label={isRegistrationOnly ? 'Registration Fees' : 'Ticket Tiers'}
+                            />
+                        )}
+
+                        {isFreeRegistration && (
+                            <Grid item xs={12}>
+                                <Box sx={{ p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}>
+                                    <Typography variant="body2" sx={{ color: C.textSecondary }}>
+                                        ✅ <strong>Free registration</strong> — a single
+                                        "General Registration" tier will be created automatically.
+                                        All bookings will be confirmed instantly with no payment.
+                                    </Typography>
+                                </Box>
+                            </Grid>
+                        )}
 
                         <TemplatesGrid
                             eventId={id}

@@ -1,5 +1,5 @@
 // frontend/src/pages/Bookings/CreateBooking.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Box,
@@ -43,25 +43,93 @@ import api from '../../services/api';
 import { PageContainer, PageHeader, PageTitle, PrimaryButton, OutlineButton } from '../../components/Common';
 import { ROLES } from '../../constants';
 import useBookingDraft from '../../hooks/useBookingDraft';
+import EventCard from '../../components/Common/EventCard'; // ✅ IMPORTED
 
-const steps = ['Select Event', 'Choose Slot', 'Choose Tickets', 'Attendee Details', 'Review & Confirm'];
+// =============================================================================
+// STEP DEFINITIONS
+// =============================================================================
+
+const STEP_KEYS = {
+    EVENT: 'event',
+    SLOT: 'slot',
+    ENTRIES: 'entries',   // free-registration only
+    TICKETS: 'tickets',
+    ATTENDEES: 'attendees',
+    REVIEW: 'review',
+};
+
+const STEP_LABELS = {
+    [STEP_KEYS.EVENT]: 'Select Event',
+    [STEP_KEYS.SLOT]: 'Choose Slot',
+    [STEP_KEYS.ENTRIES]: 'Number of Entries',
+    [STEP_KEYS.TICKETS]: 'Choose Tickets',
+    [STEP_KEYS.ATTENDEES]: 'Attendee Details',
+    [STEP_KEYS.REVIEW]: 'Review & Confirm',
+};
+
+const FREE_ATTENDEES_LABEL = 'Registrant Details';
+
+const formatVenueAddress = (venue) => {
+    if (!venue) return '';
+    const parts = [
+        venue.name,
+        venue.address_line1,
+        venue.address_line2,
+        venue.city,
+        venue.state,
+        venue.postal_code,
+        venue.country,
+    ].filter((p) => p && String(p).trim() !== '');
+    return parts.join(', ');
+};
+
+const BOOKING_ERROR_FIELD_KEYS = [
+    'customer_email',
+    'customer_name',
+    'customer_phone',
+    'whatsapp_number',
+    'session',
+    'tickets',
+    'discount_code',
+    'event',
+    'metadata',
+    'entries',
+];
+
+const firstFieldMessage = (value) => {
+    if (value === undefined || value === null) return null;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const inner = firstFieldMessage(item);
+            if (inner) return inner;
+        }
+        return null;
+    }
+    if (typeof value === 'object') {
+        for (const key of Object.keys(value)) {
+            const inner = firstFieldMessage(value[key]);
+            if (inner) return inner;
+        }
+        return null;
+    }
+    return String(value);
+};
 
 const CreateBooking = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { user } = useAuth();
+    const { user, isAuthenticated } = useAuth();
     const { role } = useRole();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Role flags
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
     const isOrganizer = role === ROLES.ORGANIZER;
     const canManageEvents = isAdmin || isOrganizer;
     const isRegularUser = role === ROLES.USER;
 
-    // Wizard state
-    const [activeStep, setActiveStep] = useState(0);
+    const [activeStep, setActiveStep] = useState(STEP_KEYS.EVENT);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
     const [selectedEvent, setSelectedEvent] = useState(null);
@@ -75,18 +143,24 @@ const CreateBooking = () => {
     const [eventLoadError, setEventLoadError] = useState(null);
     const [autoSelectDone, setAutoSelectDone] = useState(false);
 
-    // ---- Discount state ----
     const [discountInput, setDiscountInput] = useState('');
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
 
-    // ✅ All draft state lives in the hook.
+    const [submitError, setSubmitError] = useState(null);
+
+    const isFreeRegistrationFlow =
+        (eventDetails && eventDetails.event_flow === 'free_registration') ||
+        (selectedEvent && selectedEvent.event_flow === 'free_registration');
+
     const draft = useBookingDraft({
         tiers,
         selectedEvent,
         selectedSession,
         slotPreferences,
         bookingSource: isRegularUser ? 'user_portal' : 'admin_portal',
+        isFreeRegistration: isFreeRegistrationFlow,
+        maxEntriesPerOrder: eventDetails?.max_tickets_per_order || 10,
     });
 
     const {
@@ -104,11 +178,63 @@ const CreateBooking = () => {
         resetDraft,
         validate,
         buildPayload,
+        freeEntries,
+        freeAttendees,
+        updateFreeEntries,
+        updateFreeAttendee,
     } = draft;
 
-    // Derived: net total after discount (only when discount is valid).
     const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
     const netAmount = Math.max(0, totalAmount - discountAmount);
+
+    const handleEmailChange = (value) => {
+        handleCustomerChange('email', value);
+        if (submitError?.customer_email) {
+            setSubmitError((prev) => {
+                if (!prev) return prev;
+                const { customer_email, ...rest } = prev;
+                return Object.keys(rest).length ? rest : null;
+            });
+        }
+    };
+
+    // =========================================================================
+    // STEP SEQUENCE
+    // =========================================================================
+    const visibleSteps = useMemo(() => {
+        const hasSessions = sessions && sessions.length > 0;
+
+        if (isFreeRegistrationFlow) {
+            const steps = [STEP_KEYS.EVENT];
+            if (hasSessions) steps.push(STEP_KEYS.SLOT);
+            steps.push(STEP_KEYS.ENTRIES, STEP_KEYS.ATTENDEES, STEP_KEYS.REVIEW);
+            return steps;
+        }
+
+        const steps = [STEP_KEYS.EVENT];
+        if (hasSessions) steps.push(STEP_KEYS.SLOT);
+        steps.push(STEP_KEYS.TICKETS, STEP_KEYS.ATTENDEES, STEP_KEYS.REVIEW);
+        return steps;
+    }, [sessions, isFreeRegistrationFlow]);
+
+    const stepLabel = (key) =>
+        isFreeRegistrationFlow && key === STEP_KEYS.ATTENDEES
+            ? FREE_ATTENDEES_LABEL
+            : STEP_LABELS[key];
+
+    const stepIndex = (key) => visibleSteps.indexOf(key);
+
+    const getNextStep = (key) => {
+        const idx = visibleSteps.indexOf(key);
+        if (idx === -1) return visibleSteps[visibleSteps.length - 1];
+        return visibleSteps[idx + 1] || visibleSteps[visibleSteps.length - 1];
+    };
+
+    const getPrevStep = (key) => {
+        const idx = visibleSteps.indexOf(key);
+        if (idx === -1) return visibleSteps[0];
+        return visibleSteps[idx - 1] || visibleSteps[0];
+    };
 
     // =========================================================================
     // Data loading
@@ -132,14 +258,13 @@ const CreateBooking = () => {
                     loadEventDetails(eventId);
                     setSelectedEvent({ id: eventId });
                     setAutoSelectDone(true);
-                    setActiveStep(1);
+                    setActiveStep(STEP_KEYS.EVENT);
                 }
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [events, location.search, autoSelectDone]);
 
-    // Re-validate the discount whenever the ticket composition changes.
     useEffect(() => {
         if (!appliedDiscount?.valid) return;
 
@@ -184,13 +309,6 @@ const CreateBooking = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [totalAmount, totalTickets, selectedEvent?.id]);
 
-    // =========================================================================
-    // ✅ FIX [P22]: admins/organizers hit /events/ directly; regular
-    // users hit /events/public/. The old code always tried /events/public/
-    // first, then fell back — which meant two round-trips for every admin
-    // page load and a slightly wrong payload (public serializer lacks
-    // some fields the selection cards use).
-    // =========================================================================
     const loadEvents = async () => {
         setLoading(true);
         setEventLoadError(null);
@@ -277,9 +395,6 @@ const CreateBooking = () => {
 
             setSessions(data.sessions || []);
 
-            // ✅ FIX [P14] (frontend side): prefer the server's clamped
-            // `available` if present. Falls back to computing it, and
-            // clamps at 0 so a legacy negative can't reach the UI.
             const availableTiers = (data.tiers || []).filter((t) => {
                 const available = (typeof t.available === 'number')
                     ? t.available
@@ -288,10 +403,13 @@ const CreateBooking = () => {
             });
             setTiers(availableTiers);
 
-            if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) {
-                toast.info('All tickets for this event are sold out');
-            } else if (availableTiers.length === 0) {
-                toast.info('No tickets available for this event');
+            const isFree = data.event_flow === 'free_registration';
+            if (!isFree) {
+                if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) {
+                    toast.info('All tickets for this event are sold out');
+                } else if (availableTiers.length === 0) {
+                    toast.info('No tickets available for this event');
+                }
             }
         } catch (error) {
             let errorMsg = 'Failed to load event details';
@@ -307,6 +425,7 @@ const CreateBooking = () => {
 
     const handleSelectEvent = (event) => {
         resetDraft();
+        setSubmitError(null);   // clear any stale error from a previous event
         setSelectedEvent(event);
         setSelectedSession(null);
         setSlotPreferences([]);
@@ -317,7 +436,15 @@ const CreateBooking = () => {
         setAppliedDiscount(null);
 
         loadEventDetails(event.id);
-        setActiveStep(1);
+
+        const hasSessionsPreview =
+            (event.session_count ?? event.sessions?.length ?? 0) > 0;
+        setActiveStep(hasSessionsPreview ? STEP_KEYS.SLOT : nextNonSlotStep(event));
+    };
+
+    const nextNonSlotStep = (event) => {
+        const isFree = event.event_flow === 'free_registration';
+        return isFree ? STEP_KEYS.ENTRIES : STEP_KEYS.TICKETS;
     };
 
     // =========================================================================
@@ -436,38 +563,111 @@ const CreateBooking = () => {
     // =========================================================================
 
     const handleSubmit = async () => {
-        if (!validate()) {
-            toast.error('Please fix all errors before submitting');
-            return;
+        // Clear any stale submit error so a retry starts clean.
+        setSubmitError(null);
+
+        if (!isFreeRegistrationFlow) {
+            if (!validate()) {
+                toast.error('Please fix all errors before submitting');
+                return;
+            }
+        } else {
+            // Free registration: customer fields + per-entry names.
+            if (!customer.name?.trim() || !customer.email?.trim() || !customer.phone?.trim()) {
+                toast.error('Please fill in name, email, and phone');
+                return;
+            }
+            if (freeAttendees.some((a) => !a.name?.trim())) {
+                toast.error('Please enter a name for every entry');
+                return;
+            }
         }
 
         setLoading(true);
         try {
             const payload = buildPayload();
 
-            if (appliedDiscount?.valid && appliedDiscount?.code) {
+            if (isFreeRegistrationFlow) {
+                payload.tickets = [];
+                payload.total_amount = 0;
+                delete payload.discount_code;
+            } else if (appliedDiscount?.valid && appliedDiscount?.code) {
                 payload.discount_code = appliedDiscount.code;
             }
 
             console.log('📝 Full booking data:', JSON.stringify(payload, null, 2));
 
-            const response = await api.post('/bookings/', payload);
+            const response = await api.post('/bookings/', payload, {
+                skipAuthRedirect: !isAuthenticated,
+            });
             const result = response.data;
 
             toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
-            navigate('/app/bookings');
+
+            if (isAuthenticated) {
+                navigate('/app/bookings', { replace: true });
+            } else {
+                navigate('/', {
+                    replace: true,
+                    state: {
+                        bookingReference: result.booking_reference,
+                        customerEmail: result.customer_email,
+                        justBooked: true,
+                    },
+                });
+            }
         } catch (error) {
-            let errorMsg = 'Failed to create booking';
+            const status = error.response?.status;
             const data = error.response?.data;
-            if (data?.discount_code) {
-                errorMsg = Array.isArray(data.discount_code)
-                    ? data.discount_code[0]
-                    : data.discount_code;
-            } else if (data?.detail) errorMsg = data.detail;
-            else if (data?.error) errorMsg = data.error;
-            else if (data?.message) errorMsg = data.message;
-            else if (error.message) errorMsg = error.message;
-            toast.error(errorMsg);
+
+            let fieldErrors = null;
+            let toastMsg = null;
+
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+                const collected = {};
+                for (const key of BOOKING_ERROR_FIELD_KEYS) {
+                    if (data[key] !== undefined) {
+                        collected[key] = data[key];
+                    }
+                }
+                if (Object.keys(collected).length > 0) {
+                    fieldErrors = collected;
+                }
+                toastMsg = data.error || data.detail || data.message || null;
+            } else if (typeof data === 'string') {
+                toastMsg = data;
+            } else if (error.message) {
+                toastMsg = error.message;
+            }
+
+            if (fieldErrors) {
+                setSubmitError(fieldErrors);
+
+                const emailMessage = firstFieldMessage(fieldErrors.customer_email);
+                if (emailMessage) {
+                    toast.error(emailMessage);
+                    setActiveStep(STEP_KEYS.ATTENDEES);
+                    return;
+                }
+
+                const anyFieldMessage = firstFieldMessage(fieldErrors);
+                if (anyFieldMessage) {
+                    toast.error(anyFieldMessage);
+                    return;
+                }
+            }
+
+            if (toastMsg) {
+                toast.error(toastMsg);
+            } else {
+                toast.error('Failed to create booking');
+            }
+
+            if (status === 401) {
+                toast.error(
+                    'Your session expired. Please refresh the page and try again.'
+                );
+            }
         } finally {
             setLoading(false);
         }
@@ -478,46 +678,63 @@ const CreateBooking = () => {
     // =========================================================================
 
     const handleBack = () => {
-        if (activeStep > 0) setActiveStep(activeStep - 1);
+        const prev = getPrevStep(activeStep);
+        setActiveStep(prev);
     };
 
     const handleNext = () => {
-        if (activeStep === 0) {
+        if (activeStep === STEP_KEYS.EVENT) {
             if (!selectedEvent) {
                 toast.warning('Please select an event');
                 return;
             }
-            setActiveStep(sessions && sessions.length > 0 ? 1 : 2);
-            return;
         }
 
-        if (activeStep === 1) {
-            if (!selectedSession) {
+        if (activeStep === STEP_KEYS.SLOT) {
+            if (!selectedSession && sessions.length > 0) {
                 toast.warning('Please select a slot or use Auto-Allocate');
                 return;
             }
-            setActiveStep(2);
-            return;
         }
 
-        if (activeStep === 2) {
+        if (activeStep === STEP_KEYS.ENTRIES) {
+            if (freeEntries < 1) {
+                toast.warning('Please select at least one entry');
+                return;
+            }
+        }
+
+        if (activeStep === STEP_KEYS.TICKETS) {
             if (totalTickets === 0) {
                 toast.warning('Please select at least one ticket');
                 return;
             }
-            setActiveStep(3);
-            return;
         }
 
-        if (activeStep === 3) {
-            const allFilled = attendees.every((a) => a.name?.trim());
-            if (!allFilled) {
-                toast.warning('Please enter names for all attendees');
-                return;
+        if (activeStep === STEP_KEYS.ATTENDEES) {
+            if (isFreeRegistrationFlow) {
+                if (freeAttendees.some((a) => !a.name?.trim())) {
+                    toast.warning('Please enter a name for every entry');
+                    return;
+                }
+                const badEmail = freeAttendees.some(
+                    (a) => a.email?.trim() && !/^\S+@\S+\.\S+$/.test(a.email.trim())
+                );
+                if (badEmail) {
+                    toast.warning('One or more entries have an invalid email');
+                    return;
+                }
+            } else {
+                const allFilled = attendees.every((a) => a.name?.trim());
+                if (!allFilled) {
+                    toast.warning('Please enter names for all attendees');
+                    return;
+                }
             }
-            setActiveStep(4);
-            return;
         }
+
+        const next = getNextStep(activeStep);
+        setActiveStep(next);
     };
 
     // =========================================================================
@@ -540,209 +757,16 @@ const CreateBooking = () => {
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3}>
-                    {events.map((event) => {
-                        const isActive =
-                            event.status === 'active' || event.status === 'published';
-                        const isDraft = event.status === 'draft';
-                        const isPast =
-                            event.end_date && new Date(event.end_date) < new Date();
-
-                        const tierCount = event.tier_count ?? event.tiers?.length ?? 0;
-                        const sessionCount = event.session_count ?? event.sessions?.length ?? 0;
-                        const totalCapacity = event.total_capacity ?? 0;
-                        const totalSold = event.total_tickets_sold ?? 0;
-
-                        const isSoldOut =
-                            isActive && (totalCapacity === 0 || totalSold >= totalCapacity);
-
-                        const canSelect = canManageEvents ? true : isActive && !isSoldOut;
-
-                        const venueName = event.venue?.name || null;
-                        const venueCity = event.venue?.city || null;
-
-                        const formattedDate = event.start_date
-                            ? new Date(event.start_date).toLocaleDateString('en-IN', {
-                                  day: '2-digit',
-                                  month: 'short',
-                                  year: 'numeric',
-                              })
-                            : 'TBD';
-
-                        return (
-                            <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                <Card
-                                    sx={{
-                                        cursor: canSelect ? 'pointer' : 'not-allowed',
-                                        border:
-                                            selectedEvent?.id === event.id
-                                                ? '2px solid rgba(51, 51, 51, 1)'
-                                                : isDraft
-                                                ? '1px dashed rgba(255,200,0,0.5)'
-                                                : '1px solid #e2e8f0',
-                                        bgcolor: isDraft ? 'rgba(255,200,0,0.03)' : 'background.paper',
-                                        opacity: canSelect ? 1 : 0.7,
-                                        height: '100%',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        borderRadius: 2,
-                                        transition: 'all 0.2s ease',
-                                        '&:hover': canSelect
-                                            ? {
-                                                  borderColor: 'primary.main',
-                                                  transform: 'translateY(-2px)',
-                                                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                              }
-                                            : {},
-                                        '&:active': canSelect
-                                            ? { transform: 'scale(0.99)' }
-                                            : {},
-                                    }}
-                                    onClick={() => {
-                                        if (canSelect) handleSelectEvent(event);
-                                        else if (isSoldOut)
-                                            toast.warning('This event is sold out');
-                                        else
-                                            toast.warning(
-                                                'This event is not available for booking'
-                                            );
-                                    }}
-                                >
-                                    <CardContent
-                                        sx={{
-                                            flexGrow: 1,
-                                            p: isMobile ? 1.5 : 2,
-                                            '&:last-child': { pb: isMobile ? 1.5 : 2 },
-                                        }}
-                                    >
-                                        <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
-                                            <Typography
-                                                variant="h6"
-                                                sx={{
-                                                    color: isDraft ? '#b45309' : '#0f172a',
-                                                    fontWeight: 600,
-                                                    flex: 1,
-                                                    minWidth: 0,
-                                                    fontSize: isMobile ? '1rem' : '1.1rem',
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                            >
-                                                {event.title}
-                                            </Typography>
-                                            <Chip
-                                                label={
-                                                    isSoldOut
-                                                        ? 'SOLD OUT'
-                                                        : isDraft
-                                                        ? 'DRAFT'
-                                                        : event.status?.toUpperCase() || 'ACTIVE'
-                                                }
-                                                size="small"
-                                                color={
-                                                    isSoldOut
-                                                        ? 'error'
-                                                        : isDraft
-                                                        ? 'default'
-                                                        : isActive
-                                                        ? 'success'
-                                                        : 'default'
-                                                }
-                                                sx={{ fontSize: '10px', height: '22px', flexShrink: 0 }}
-                                            />
-                                        </Box>
-
-                                        {event.short_description && (
-                                            <Typography
-                                                variant="body2"
-                                                sx={{
-                                                    color: 'text.secondary',
-                                                    mt: 1,
-                                                    display: '-webkit-box',
-                                                    WebkitLineClamp: 2,
-                                                    WebkitBoxOrient: 'vertical',
-                                                    overflow: 'hidden',
-                                                }}
-                                            >
-                                                {event.short_description}
-                                            </Typography>
-                                        )}
-
-                                        <Box mt={2} display="flex" flexDirection="column" gap={0.75}>
-                                            <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <CalendarIcon fontSize="small" />
-                                                {formattedDate}
-                                            </Typography>
-
-                                            {venueName || venueCity ? (
-                                                <Typography
-                                                    variant="body2"
-                                                    sx={{
-                                                        color: 'text.secondary',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: 1,
-                                                        overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap',
-                                                    }}
-                                                >
-                                                    <LocationIcon fontSize="small" />
-                                                    {venueName || 'Venue'}
-                                                    {venueCity ? `, ${venueCity}` : ''}
-                                                </Typography>
-                                            ) : (
-                                                <Typography
-                                                    variant="body2"
-                                                    sx={{
-                                                        color: 'text.disabled',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: 1,
-                                                        fontStyle: 'italic',
-                                                    }}
-                                                >
-                                                    <LocationIcon fontSize="small" />
-                                                    No venue assigned
-                                                </Typography>
-                                            )}
-
-                                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                                                <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <TicketIcon fontSize="small" />
-                                                    {tierCount} tier{tierCount === 1 ? '' : 's'}
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <ScheduleIcon fontSize="small" />
-                                                    {sessionCount} session{sessionCount === 1 ? '' : 's'}
-                                                </Typography>
-                                            </Box>
-
-                                            {totalCapacity > 0 && (
-                                                <Typography variant="caption" sx={{ color: 'text.disabled', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <PeopleIcon sx={{ fontSize: 14 }} />
-                                                    {totalCapacity} total capacity
-                                                    {totalSold > 0 && ` • ${totalSold} sold`}
-                                                </Typography>
-                                            )}
-                                        </Box>
-
-                                        {isPast && canManageEvents && (
-                                            <Chip
-                                                label="PAST EVENT"
-                                                size="small"
-                                                sx={{
-                                                    mt: 1,
-                                                    bgcolor: 'rgba(100,116,139,0.1)',
-                                                    color: 'text.secondary',
-                                                }}
-                                            />
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            </Grid>
-                        );
-                    })}
+                    {events.map((event) => (
+                        <Grid item xs={12} sm={6} md={4} key={event.id}>
+                            {/* ✅ FIX: Used the reusable EventCard for consistency */}
+                            <EventCard
+                                event={event}
+                                selected={selectedEvent?.id === event.id}
+                                onSelect={handleSelectEvent}
+                            />
+                        </Grid>
+                    ))}
                 </Grid>
             )}
         </Box>
@@ -759,7 +783,7 @@ const CreateBooking = () => {
             return (
                 <Box sx={{ py: 2 }}>
                     <Alert severity="info">
-                        This event does not have time slots. Click Next to proceed to ticket selection.
+                        This event does not have time slots. Click Next to continue.
                     </Alert>
                 </Box>
             );
@@ -895,7 +919,85 @@ const CreateBooking = () => {
     };
 
     // =========================================================================
-    // Step 3 — Ticket selection (with discount box)
+    // Step 2b — Number of entries (free registration only)
+    // =========================================================================
+
+    const renderFreeEntries = () => {
+        const max = eventDetails?.max_tickets_per_order || 10;
+
+        return (
+            <Box sx={{ py: 2 }}>
+                <Alert severity="info" sx={{ mb: 3 }}>
+                    How many people are you registering? You'll enter each
+                    person's name and email on the next step.
+                </Alert>
+
+                <Paper
+                    sx={{
+                        p: isMobile ? 2 : 3,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: 2,
+                    }}
+                >
+                    <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            Number of entries
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            Max {max} per registration
+                        </Typography>
+                    </Box>
+
+                    <Box display="flex" alignItems="center" gap={2}>
+                        <IconButton
+                            onClick={() => updateFreeEntries(-1)}
+                            // ✅ FIX: Disable at 0
+                            disabled={freeEntries <= 0}
+                            sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }}
+                            aria-label="Decrease entries"
+                        >
+                            <RemoveIcon fontSize="small" />
+                        </IconButton>
+                        <Typography
+                            variant="h5"
+                            sx={{ minWidth: 44, textAlign: 'center', fontWeight: 700 }}
+                        >
+                            {freeEntries}
+                        </Typography>
+                        <IconButton
+                            onClick={() => updateFreeEntries(1)}
+                            disabled={freeEntries >= max}
+                            sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }}
+                            aria-label="Increase entries"
+                        >
+                            <AddIcon fontSize="small" />
+                        </IconButton>
+                    </Box>
+                </Paper>
+
+                <Box
+                    sx={{
+                        mt: 3,
+                        p: 2,
+                        bgcolor: 'background.default',
+                        borderRadius: 2,
+                    }}
+                >
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                        You are registering <strong>{freeEntries}</strong>{' '}
+                        {freeEntries === 1 ? 'person' : 'people'}. Each person
+                        will receive their own registration pass.
+                    </Typography>
+                </Box>
+            </Box>
+        );
+    };
+
+    // =========================================================================
+    // Step 3 — Ticket selection (ticketed only)
     // =========================================================================
 
     const renderTicketSelection = () => (
@@ -929,8 +1031,6 @@ const CreateBooking = () => {
             ) : (
                 <Box>
                     {tiers.map((tier) => {
-                        // ✅ FIX [P14] (frontend side): prefer server
-                        // `available` (clamped). Falls back with a clamp.
                         const available = (typeof tier.available === 'number')
                             ? tier.available
                             : Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0));
@@ -1095,143 +1195,292 @@ const CreateBooking = () => {
     );
 
     // =========================================================================
-    // Step 4 — Attendee details
+    // Step 4 — Attendee / Registrant details
     // =========================================================================
 
-    const renderAttendeeDetails = () => (
-        <Box sx={{ py: 2 }}>
-            <Alert severity="info" sx={{ mb: 3 }}>
-                Enter details for {totalTickets} attendee(s)
-            </Alert>
+    const renderAttendeeDetails = () => {
+        const emailFieldError =
+            submitError?.customer_email
+                ? firstFieldMessage(submitError.customer_email)
+                : null;
 
-            <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
-                    <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                    Customer Details
-                </Typography>
-                <Grid container spacing={2}>
-                    <Grid item xs={12} md={4}>
-                        <TextField
-                            fullWidth
-                            label="Full Name *"
-                            value={customer.name}
-                            onChange={(e) => handleCustomerChange('name', e.target.value)}
-                            error={!!errors.name}
-                            helperText={errors.name}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                        <TextField
-                            fullWidth
-                            label="Email *"
-                            type="email"
-                            value={customer.email}
-                            onChange={(e) => handleCustomerChange('email', e.target.value)}
-                            error={!!errors.email}
-                            helperText={errors.email}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                        <TextField
-                            fullWidth
-                            label="Phone *"
-                            value={customer.phone}
-                            onChange={(e) => handleCustomerChange('phone', e.target.value)}
-                            error={!!errors.phone}
-                            helperText={errors.phone}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                        <TextField
-                            fullWidth
-                            label="WhatsApp Number (if different)"
-                            value={customer.whatsapp}
-                            onChange={(e) => handleCustomerChange('whatsapp', e.target.value)}
-                            size="small"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                        <TextField
-                            fullWidth
-                            label="Notes / Special Requests"
-                            value={customer.notes}
-                            onChange={(e) => handleCustomerChange('notes', e.target.value)}
-                            size="small"
-                            multiline
-                            rows={1}
-                        />
-                    </Grid>
-                </Grid>
-            </Paper>
+        return (
+            <Box sx={{ py: 2 }}>
+                <Alert severity="info" sx={{ mb: 3 }}>
+                    {isFreeRegistrationFlow
+                        ? `Enter the details for ${freeEntries} ${freeEntries === 1 ? 'person' : 'people'}`
+                        : `Enter details for ${totalTickets} attendee(s)`}
+                </Alert>
 
-            <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
-                    <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                    Attendee Details
-                    {errors.attendees && (
-                        <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>
-                            {errors.attendees}
+                {/* -------- Inline email-in-use banner (free registration) -------- */}
+                {emailFieldError && (
+                    <Alert
+                        severity="error"
+                        sx={{ mb: 3 }}
+                        onClose={() => {
+                            setSubmitError((prev) => {
+                                if (!prev) return prev;
+                                const { customer_email, ...rest } = prev;
+                                return Object.keys(rest).length ? rest : null;
+                            });
+                        }}
+                    >
+                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                            This email address is already in use
                         </Typography>
-                    )}
-                </Typography>
+                        <Typography variant="body2">{emailFieldError}</Typography>
+                        <Typography
+                            variant="caption"
+                            component="div"
+                            sx={{ mt: 1, color: 'text.secondary' }}
+                        >
+                            Tip: use a different email, or if you already have a
+                            booking under this email, open the booking from
+                            “My Bookings” instead of registering again.
+                        </Typography>
+                    </Alert>
+                )}
 
-                <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
-                    {attendees.map((attendee, index) => (
-                        <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                #{index + 1} • {attendee.tier_name}
+                {/* -------- Customer (lead) block -------- */}
+                <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
+                    <Typography
+                        variant="subtitle1"
+                        sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
+                    >
+                        <PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                        {isFreeRegistrationFlow ? 'Primary Contact' : 'Customer Details'}
+                    </Typography>
+                    <Grid container spacing={2}>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                fullWidth
+                                label="Full Name *"
+                                value={customer.name}
+                                onChange={(e) => handleCustomerChange('name', e.target.value)}
+                                error={!!errors.name}
+                                helperText={errors.name}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                fullWidth
+                                label="Email *"
+                                type="email"
+                                value={customer.email}
+                                onChange={(e) => handleEmailChange(e.target.value)}
+                                error={!!errors.email || !!emailFieldError}
+                                helperText={errors.email || emailFieldError || ''}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                fullWidth
+                                label="Phone *"
+                                value={customer.phone}
+                                onChange={(e) => handleCustomerChange('phone', e.target.value)}
+                                error={!!errors.phone}
+                                helperText={errors.phone}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                            <TextField
+                                fullWidth
+                                label="WhatsApp Number (if different)"
+                                value={customer.whatsapp}
+                                onChange={(e) => handleCustomerChange('whatsapp', e.target.value)}
+                                size="small"
+                            />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                            <TextField
+                                fullWidth
+                                label="Notes / Special Requests"
+                                value={customer.notes}
+                                onChange={(e) => handleCustomerChange('notes', e.target.value)}
+                                size="small"
+                                multiline
+                                rows={1}
+                            />
+                        </Grid>
+                    </Grid>
+                </Paper>
+
+                {/* -------- FREE REGISTRATION: per-entry attendee list -------- */}
+                {isFreeRegistrationFlow ? (
+                    <Paper sx={{ p: isMobile ? 2 : 3 }}>
+                        <Typography
+                            variant="subtitle1"
+                            sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}
+                        >
+                            <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                            Entry Details ({freeEntries})
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                            Each entry receives its own registration pass. Blank
+                            email/phone will fall back to the primary contact's.
+                        </Typography>
+                        {errors.freeAttendees && (
+                            <Typography
+                                variant="caption"
+                                sx={{ color: 'error.main', display: 'block', mb: 1 }}
+                            >
+                                {errors.freeAttendees}
                             </Typography>
-                            <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                <Grid item xs={12} md={6}>
-                                    <TextField
-                                        fullWidth
-                                        placeholder="Full Name *"
-                                        value={attendee.name}
-                                        onChange={(e) => updateAttendee(index, 'name', e.target.value)}
-                                        size="small"
-                                        error={!attendee.name?.trim() && activeStep === 3}
-                                    />
-                                </Grid>
-                                <Grid item xs={12} md={3}>
-                                    <TextField
-                                        fullWidth
-                                        placeholder="Email"
-                                        value={attendee.email}
-                                        onChange={(e) => updateAttendee(index, 'email', e.target.value)}
-                                        size="small"
-                                    />
-                                </Grid>
-                                <Grid item xs={12} md={3}>
-                                    <TextField
-                                        fullWidth
-                                        placeholder="Phone"
-                                        value={attendee.phone}
-                                        onChange={(e) => updateAttendee(index, 'phone', e.target.value)}
-                                        size="small"
-                                    />
-                                </Grid>
-                            </Grid>
-                        </Paper>
-                    ))}
-                </Box>
+                        )}
 
-                <Button
-                    variant="text"
-                    size="small"
-                    onClick={fillEmptyNamesWithCustomer}
-                    sx={{ mt: 1 }}
-                >
-                    Fill empty names with customer name
-                </Button>
-            </Paper>
-        </Box>
-    );
+                        <Box sx={{ maxHeight: 480, overflowY: 'auto' }}>
+                            {freeAttendees.map((att, index) => (
+                                <Paper
+                                    key={index}
+                                    sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}
+                                >
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                        Entry #{index + 1}
+                                        {index === 0 ? ' — primary contact' : ''}
+                                    </Typography>
+                                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                                        <Grid item xs={12} md={4}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Full Name *"
+                                                value={att.name}
+                                                onChange={(e) =>
+                                                    updateFreeAttendee(index, 'name', e.target.value)
+                                                }
+                                                size="small"
+                                                error={!att.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={4}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder={
+                                                    index === 0
+                                                        ? 'Email (defaults to primary)'
+                                                        : 'Email (optional)'
+                                                }
+                                                value={att.email}
+                                                onChange={(e) =>
+                                                    updateFreeAttendee(index, 'email', e.target.value)
+                                                }
+                                                size="small"
+                                                type="email"
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={4}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder={
+                                                    index === 0
+                                                        ? 'Phone (defaults to primary)'
+                                                        : 'Phone (optional)'
+                                                }
+                                                value={att.phone}
+                                                onChange={(e) =>
+                                                    updateFreeAttendee(index, 'phone', e.target.value)
+                                                }
+                                                size="small"
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Paper>
+                            ))}
+                        </Box>
+
+                        <Button
+                            variant="text"
+                            size="small"
+                            onClick={() => {
+                                if (!customer.name?.trim()) {
+                                    toast.warning('Enter the primary contact name first');
+                                    return;
+                                }
+                                freeAttendees.forEach((att, i) => {
+                                    if (i > 0 && !att.name?.trim()) {
+                                        updateFreeAttendee(i, 'name', customer.name);
+                                    }
+                                });
+                            }}
+                            sx={{ mt: 1 }}
+                        >
+                            Fill empty names with primary contact
+                        </Button>
+                    </Paper>
+                ) : (
+                    /* -------- TICKETED: per-ticket attendee list -------- */
+                    <Paper sx={{ p: isMobile ? 2 : 3 }}>
+                        <Typography
+                            variant="subtitle1"
+                            sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}
+                        >
+                            <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                            Attendee Details
+                            {errors.attendees && (
+                                <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>
+                                    {errors.attendees}
+                                </Typography>
+                            )}
+                        </Typography>
+
+                        <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+                            {attendees.map((attendee, index) => (
+                                <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                        #{index + 1} • {attendee.tier_name}
+                                    </Typography>
+                                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                                        <Grid item xs={12} md={6}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Full Name *"
+                                                value={attendee.name}
+                                                onChange={(e) => updateAttendee(index, 'name', e.target.value)}
+                                                size="small"
+                                                error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={3}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Email"
+                                                value={attendee.email}
+                                                onChange={(e) => updateAttendee(index, 'email', e.target.value)}
+                                                size="small"
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} md={3}>
+                                            <TextField
+                                                fullWidth
+                                                placeholder="Phone"
+                                                value={attendee.phone}
+                                                onChange={(e) => updateAttendee(index, 'phone', e.target.value)}
+                                                size="small"
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Paper>
+                            ))}
+                        </Box>
+
+                        <Button
+                            variant="text"
+                            size="small"
+                            onClick={fillEmptyNamesWithCustomer}
+                            sx={{ mt: 1 }}
+                        >
+                            Fill empty names with customer name
+                        </Button>
+                    </Paper>
+                )}
+            </Box>
+        );
+    };
 
     // =========================================================================
-    // Step 5 — Review (with discount row)
+    // Step 5 — Review
     // =========================================================================
 
     const renderReview = () => (
@@ -1252,7 +1501,8 @@ const CreateBooking = () => {
                                 <strong>Event:</strong> {selectedEvent?.title}
                             </Typography>
                             <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                <strong>Venue:</strong> {selectedEvent?.venue?.name || 'TBD'}
+                                <strong>Venue:</strong>{' '}
+                                {formatVenueAddress(selectedEvent?.venue) || 'TBD'}
                             </Typography>
                             <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                 <strong>Date:</strong>{' '}
@@ -1320,76 +1570,116 @@ const CreateBooking = () => {
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
                         <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>
                             <TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                            Tickets ({totalTickets})
+                            {isFreeRegistrationFlow ? 'Registration' : `Tickets (${totalTickets})`}
                         </Typography>
                         <Box>
-                            {ticketList.map((ticket, index) => (
-                                <Box
-                                    key={index}
-                                    sx={{
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        py: 0.5,
-                                        borderBottom: '1px solid #f1f5f9',
-                                        gap: 1,
-                                    }}
-                                >
-                                    <Typography
-                                        variant="body2"
+                            {isFreeRegistrationFlow ? (
+                                <Box>
+                                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                                        Free registration — <strong>{freeEntries}</strong>{' '}
+                                        {freeEntries === 1 ? 'pass' : 'passes'} will be issued, one per entry.
+                                    </Typography>
+                                    {freeAttendees.map((att, i) => (
+                                        <Box
+                                            key={i}
+                                            sx={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                py: 0.75,
+                                                borderBottom: '1px solid #f1f5f9',
+                                                gap: 1,
+                                            }}
+                                        >
+                                            <Box sx={{ minWidth: 0 }}>
+                                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
+                                                    #{i + 1} {att.name || '(name missing)'}
+                                                </Typography>
+                                                {att.email && (
+                                                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
+                                                        {att.email}
+                                                    </Typography>
+                                                )}
+                                            </Box>
+                                            <Chip
+                                                size="small"
+                                                label="REG"
+                                                variant="outlined"
+                                                sx={{ alignSelf: 'center', fontSize: '10px', height: '20px' }}
+                                            />
+                                        </Box>
+                                    ))}
+                                </Box>
+                            ) : (
+                                <>
+                                    {ticketList.map((ticket, index) => (
+                                        <Box
+                                            key={index}
+                                            sx={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                py: 0.5,
+                                                borderBottom: '1px solid #f1f5f9',
+                                                gap: 1,
+                                            }}
+                                        >
+                                            <Typography
+                                                variant="body2"
+                                                sx={{
+                                                    color: 'text.primary',
+                                                    minWidth: 0,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                }}
+                                            >
+                                                #{index + 1} {ticket.tier_name}
+                                                {attendees[index]?.name && ` - ${attendees[index].name}`}
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ color: 'text.primary', flexShrink: 0 }}>
+                                                ₹{ticket.price.toFixed(2)}
+                                            </Typography>
+                                        </Box>
+                                    ))}
+
+                                    <Divider sx={{ my: 2 }} />
+
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                            Subtotal ({totalTickets} ticket{totalTickets === 1 ? '' : 's'})
+                                        </Typography>
+                                        <Typography variant="body2" sx={{ color: 'text.primary' }}>
+                                            ₹{totalAmount.toFixed(2)}
+                                        </Typography>
+                                    </Box>
+
+                                    {appliedDiscount?.valid && (
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                                            <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
+                                                Discount ({appliedDiscount.code})
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
+                                                −₹{Number(appliedDiscount.discount_amount).toFixed(2)}
+                                            </Typography>
+                                        </Box>
+                                    )}
+
+                                    <Box
                                         sx={{
-                                            color: 'text.primary',
-                                            minWidth: 0,
-                                            overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            pt: 1.5,
+                                            mt: 1,
+                                            borderTop: '2px solid #e2e8f0',
                                         }}
                                     >
-                                        #{index + 1} {ticket.tier_name}
-                                        {attendees[index]?.name && ` - ${attendees[index].name}`}
-                                    </Typography>
-                                    <Typography variant="body2" sx={{ color: 'text.primary', flexShrink: 0 }}>
-                                        ₹{ticket.price.toFixed(2)}
-                                    </Typography>
-                                </Box>
-                            ))}
-
-                            <Divider sx={{ my: 2 }} />
-
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                    Subtotal ({totalTickets} ticket{totalTickets === 1 ? '' : 's'})
-                                </Typography>
-                                <Typography variant="body2" sx={{ color: 'text.primary' }}>
-                                    ₹{totalAmount.toFixed(2)}
-                                </Typography>
-                            </Box>
-
-                            {appliedDiscount?.valid && (
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                                    <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
-                                        Discount ({appliedDiscount.code})
-                                    </Typography>
-                                    <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
-                                        −₹{Number(appliedDiscount.discount_amount).toFixed(2)}
-                                    </Typography>
-                                </Box>
+                                        <Typography variant="subtitle1" sx={{ color: 'text.primary', fontWeight: 700 }}>
+                                            Total
+                                        </Typography>
+                                        <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>
+                                            ₹{netAmount.toFixed(2)}
+                                        </Typography>
+                                    </Box>
+                                </>
                             )}
-
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    pt: 1.5,
-                                    mt: 1,
-                                    borderTop: '2px solid #e2e8f0',
-                                }}
-                            >
-                                <Typography variant="subtitle1" sx={{ color: 'text.primary', fontWeight: 700 }}>
-                                    Total
-                                </Typography>
-                                <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>
-                                    ₹{netAmount.toFixed(2)}
-                                </Typography>
-                            </Box>
                         </Box>
                     </Paper>
                 </Grid>
@@ -1398,45 +1688,69 @@ const CreateBooking = () => {
     );
 
     // =========================================================================
-    // Render
+    // Render dispatch
     // =========================================================================
 
-    const getStepContent = (step) => {
-        switch (step) {
-            case 0:
+    const getStepContent = (key) => {
+        switch (key) {
+            case STEP_KEYS.EVENT:
                 return renderEventSelection();
-            case 1:
+            case STEP_KEYS.SLOT:
                 return renderSlotSelection();
-            case 2:
+            case STEP_KEYS.ENTRIES:
+                return renderFreeEntries();
+            case STEP_KEYS.TICKETS:
                 return renderTicketSelection();
-            case 3:
+            case STEP_KEYS.ATTENDEES:
                 return renderAttendeeDetails();
-            case 4:
+            case STEP_KEYS.REVIEW:
                 return renderReview();
             default:
                 return null;
         }
     };
 
+    const safeActiveStep = visibleSteps.includes(activeStep)
+        ? activeStep
+        : visibleSteps[0];
+
     return (
         <PageContainer>
             <PageHeader>
                 <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-                    <IconButton onClick={() => navigate('/app/bookings')}>
-                        <ArrowBackIcon />
-                    </IconButton>
+                    {/* ✅ FIX: Hide back arrow for guests */}
+                    {isAuthenticated && (
+                        <IconButton onClick={() => navigate('/app/bookings')}>
+                            <ArrowBackIcon />
+                        </IconButton>
+                    )}
                     <PageTitle variant="h4">
-                        {isRegularUser ? 'Book Tickets' : 'New Booking'}
+                        {/* ✅ FIX: Change title for guests */}
+                        {isAuthenticated 
+                            ? (isRegularUser ? 'Book Tickets' : 'New Booking') 
+                            : 'Register for Event'}
                     </PageTitle>
                 </Box>
                 <Box display="flex" gap={1}>
-                    <OutlineButton onClick={() => navigate('/app/bookings')}>Cancel</OutlineButton>
+                    {/* ✅ FIX: Change button text and behavior for guests */}
+                    <OutlineButton 
+                        onClick={() => {
+                            if (isAuthenticated) {
+                                navigate('/app/bookings');
+                            } else {
+                                // Clear history by replacing the current entry
+                                navigate('/', { replace: true });
+                            }
+                        }}
+                    >
+                        {isAuthenticated ? 'Cancel' : 'Back to Home'}
+                    </OutlineButton>
                 </Box>
             </PageHeader>
 
             <Paper sx={{ p: isMobile ? 2 : 4, mt: 2 }}>
                 <Stepper
-                    activeStep={activeStep}
+                    activeStep={stepIndex(safeActiveStep)}
                     orientation={isMobile ? 'vertical' : 'horizontal'}
                     sx={{
                         mb: 4,
@@ -1445,9 +1759,9 @@ const CreateBooking = () => {
                         }),
                     }}
                 >
-                    {steps.map((label) => (
-                        <Step key={label}>
-                            <StepLabel>{label}</StepLabel>
+                    {visibleSteps.map((key) => (
+                        <Step key={key}>
+                            <StepLabel>{stepLabel(key)}</StepLabel>
                         </Step>
                     ))}
                 </Stepper>
@@ -1457,7 +1771,7 @@ const CreateBooking = () => {
                         <CircularProgress />
                     </Box>
                 ) : (
-                    <Box>{getStepContent(activeStep)}</Box>
+                    <Box>{getStepContent(safeActiveStep)}</Box>
                 )}
 
                 <Box
@@ -1474,14 +1788,14 @@ const CreateBooking = () => {
                     <Button
                         variant="outlined"
                         onClick={handleBack}
-                        disabled={activeStep === 0}
+                        disabled={stepIndex(safeActiveStep) === 0}
                         startIcon={<ArrowBackIcon />}
                         sx={isMobile ? { width: '100%' } : undefined}
                     >
                         Back
                     </Button>
                     <Box sx={isMobile ? { width: '100%' } : undefined}>
-                        {activeStep === steps.length - 1 ? (
+                        {safeActiveStep === STEP_KEYS.REVIEW ? (
                             <PrimaryButton
                                 variant="contained"
                                 onClick={handleSubmit}
@@ -1496,6 +1810,8 @@ const CreateBooking = () => {
                                 variant="contained"
                                 onClick={handleNext}
                                 endIcon={<ArrowForwardIcon />}
+                                // ✅ FIX: Disable Next if on Entries step and 0 selected
+                                disabled={safeActiveStep === STEP_KEYS.ENTRIES && freeEntries === 0}
                                 sx={isMobile ? { width: '100%' } : undefined}
                             >
                                 Next

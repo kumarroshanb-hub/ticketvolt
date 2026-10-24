@@ -1,6 +1,6 @@
 // frontend/src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from 'styled-components';
 import { ThemeProvider as MuiThemeProvider, CssBaseline } from '@mui/material';
 import { ToastContainer } from 'react-toastify';
@@ -17,6 +17,7 @@ import Layout from './components/Layout';
 
 // Public pages
 import Landing from './pages/Landing/Landing';
+import GuestOrRegisterGate from './pages/Gate/GuestOrRegisterGate';
 
 // Authenticated app pages
 import Dashboard from './pages/Dashboard/Dashboard';
@@ -69,20 +70,70 @@ const LoadingSpinner = () => {
     );
 };
 
-const ProtectedRoute = ({ children }) => {
+// ---------------------------------------------------------------------------
+// Route wrappers
+// ---------------------------------------------------------------------------
+
+// Skipped-by-authenticated-users route (Login / Register). Preserves
+// the `state.from` intent even when the user is already logged in.
+const PublicOnlyRoute = ({ children }) => {
     const { isAuthenticated, loading } = useAuth();
+    const location = useLocation();
+
     if (loading) return <LoadingSpinner />;
-    if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+    if (isAuthenticated) {
+        const target = location.state?.from || '/app/dashboard';
+        return <Navigate to={target} replace />;
+    }
+
     return children;
 };
 
+// Requires an authenticated session. Preserves the intended
+// destination in `location.state.from` so post-login redirect works.
+const ProtectedRoute = ({ children }) => {
+    const { isAuthenticated, loading } = useAuth();
+    const location = useLocation();
+    if (loading) return <LoadingSpinner />;
+    if (!isAuthenticated) {
+        return (
+            <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname + location.search }}
+            />
+        );
+    }
+    return children;
+};
+
+// Requires an authenticated session AND a specific role.
 const RoleBasedRoute = ({ children, allowedRoles }) => {
-    const { user } = useAuth();
+    const { user, loading } = useAuth();
     const { role } = useRole();
+    if (loading) return <LoadingSpinner />;
     if (!user) return <Navigate to="/login" replace />;
     if (!allowedRoles || allowedRoles.includes(role)) return children;
     return <Navigate to="/app/unauthorized" replace />;
 };
+
+// ✅ NEW: Route that authenticated users normally reach, but that is
+// ALSO reachable by guests. Used for the booking wizard so a guest can
+// complete a booking without an account.
+//
+// Guests still get the layout shell (header/sidebar mount, then the
+// sidebar suppresses role-restricted links when `useRole().role` is
+// `user`). This keeps the page visually consistent for everyone.
+const GuestAllowedRoute = ({ children }) => {
+    // Deliberately does NOT call useAuth() — that's the whole point.
+    // We don't gate on auth at all.
+    return children;
+};
+
+// ---------------------------------------------------------------------------
+// Route tree
+// ---------------------------------------------------------------------------
 
 const AppRoutes = () => {
     const { isAuthenticated, loading } = useAuth();
@@ -94,79 +145,189 @@ const AppRoutes = () => {
                 PUBLIC ROUTES
                ============================================ */}
 
-            {/* Landing page — visible to everyone (logged in or not) */}
             <Route path="/" element={<Landing />} />
 
-            <Route path="/login" element={
-                isAuthenticated ? <Navigate to="/app/dashboard" replace /> : <Login />
-            } />
-            <Route path="/register" element={
-                isAuthenticated ? <Navigate to="/app/dashboard" replace /> : <Register />
-            } />
+            {/* Guest-or-register gate. Public by design. */}
+            <Route path="/gate" element={<GuestOrRegisterGate />} />
+
+            <Route
+                path="/login"
+                element={
+                    <PublicOnlyRoute>
+                        <Login />
+                    </PublicOnlyRoute>
+                }
+            />
+            <Route
+                path="/register"
+                element={
+                    <PublicOnlyRoute>
+                        <Register />
+                    </PublicOnlyRoute>
+                }
+            />
             <Route path="/unauthorized" element={<Unauthorized />} />
 
             {/* ============================================
-                PROTECTED APP (under /app/*)
+                APP SHELL (under /app/*)
+                - Individual routes decide their own auth.
                ============================================ */}
-            <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+            <Route path="/app" element={<Layout />}>
                 <Route index element={<Navigate to="/app/dashboard" replace />} />
-                <Route path="dashboard" element={<Dashboard />} />
-                <Route path="events/*" element={<Events />} />
 
-                <Route path="venues/*" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <Venues />
-                    </RoleBasedRoute>
-                } />
+                {/* ✅ Guest reachable: the booking wizard. Guard is a
+                    pass-through — the wizard itself handles both guest
+                    and authenticated submissions. */}
+                <Route
+                    path="bookings/create"
+                    element={
+                        <GuestAllowedRoute>
+                            <CreateBooking />
+                        </GuestAllowedRoute>
+                    }
+                />
 
-                <Route path="bookings/create" element={<CreateBooking />} />
-                <Route path="bookings/:bookingId/tickets" element={<BookingTickets />} />
-                <Route path="bookings" element={<Bookings />} />
+                {/* -------- Authenticated-only routes -------- */}
+                <Route
+                    path="dashboard"
+                    element={
+                        <ProtectedRoute>
+                            <Dashboard />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="events/*"
+                    element={
+                        <ProtectedRoute>
+                            <Events />
+                        </ProtectedRoute>
+                    }
+                />
 
-                <Route path="checkin" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <Checkin />
-                    </RoleBasedRoute>
-                } />
+                <Route
+                    path="venues/*"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <Venues />
+                        </RoleBasedRoute>
+                    }
+                />
 
-                <Route path="analytics" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <Analytics />
-                    </RoleBasedRoute>
-                } />
+                <Route
+                    path="bookings/:bookingId/tickets"
+                    element={
+                        <ProtectedRoute>
+                            <BookingTickets />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="bookings"
+                    element={
+                        <ProtectedRoute>
+                            <Bookings />
+                        </ProtectedRoute>
+                    }
+                />
 
-                <Route path="discounts" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <Discounts />
-                    </RoleBasedRoute>
-                } />
+                <Route
+                    path="checkin"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <Checkin />
+                        </RoleBasedRoute>
+                    }
+                />
 
-                <Route path="settings" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <Settings />
-                    </RoleBasedRoute>
-                } />
+                <Route
+                    path="analytics"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <Analytics />
+                        </RoleBasedRoute>
+                    }
+                />
 
-                <Route path="profile" element={<Profile />} />
+                <Route
+                    path="discounts"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <Discounts />
+                        </RoleBasedRoute>
+                    }
+                />
 
-                <Route path="tickets/:ticketId" element={<TicketView />} />
-                <Route path="tickets/:ticketId/booking/:bookingId" element={<TicketView />} />
+                <Route
+                    path="settings"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <Settings />
+                        </RoleBasedRoute>
+                    }
+                />
 
-                <Route path="cancellation-policies" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <CancellationPolicies />
-                    </RoleBasedRoute>
-                } />
+                <Route
+                    path="profile"
+                    element={
+                        <ProtectedRoute>
+                            <Profile />
+                        </ProtectedRoute>
+                    }
+                />
 
-                <Route path="users" element={
-                    <RoleBasedRoute allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
-                        <Users />
-                    </RoleBasedRoute>
-                } />
+                <Route
+                    path="tickets/:ticketId"
+                    element={
+                        <ProtectedRoute>
+                            <TicketView />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="tickets/:ticketId/booking/:bookingId"
+                    element={
+                        <ProtectedRoute>
+                            <TicketView />
+                        </ProtectedRoute>
+                    }
+                />
+
+                <Route
+                    path="cancellation-policies"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <CancellationPolicies />
+                        </RoleBasedRoute>
+                    }
+                />
+
+                <Route
+                    path="users"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <Users />
+                        </RoleBasedRoute>
+                    }
+                />
             </Route>
 
             {/* ============================================
-                FALLBACK — redirect based on auth state
+                FALLBACK
                ============================================ */}
             <Route
                 path="*"

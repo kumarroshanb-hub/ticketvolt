@@ -4,17 +4,21 @@ import { toast } from 'react-toastify';
 import api from '../../services/api';
 import { EVENT_TYPE, EVENT_CATEGORY, EVENT_STATUS } from '../../constants';
 import { formatDateForInput } from '../../utils/datetime';
+import { resolveTimezoneDefault } from '../../utils/localeDefaults';
 
-const DEFAULT_FORM = {
+// ✅ No hardcoded timezone. Resolved from device locale → env
+// override → product default at form-creation time.
+const makeDefaultForm = () => ({
     title: '',
     description: '',
     short_description: '',
     event_type: EVENT_TYPE.SINGLE,
     category: EVENT_CATEGORY.OTHER,
+    event_flow: 'ticketed',
     venue_id: '',
     start_date: '',
     end_date: '',
-    timezone: 'Asia/Kolkata',
+    timezone: resolveTimezoneDefault(),
     status: EVENT_STATUS.DRAFT,
     is_public: true,
     ticket_format: 'pdf',
@@ -22,15 +26,14 @@ const DEFAULT_FORM = {
     tickets_per_page: 4,
     cancellation_policy_id: '',
     cancellation_policy_text: '',
-};
+});
 
 export const useEventForm = (id) => {
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState(DEFAULT_FORM);
+    const [formData, setFormData] = useState(makeDefaultForm);
     const [sessions, setSessions] = useState([]);
     const [tiers, setTiers] = useState([]);
 
-    // ---- Field change handler ----
     const handleChange = useCallback((e) => {
         const { name, value, type, checked } = e.target;
         setFormData((prev) => ({
@@ -39,7 +42,6 @@ export const useEventForm = (id) => {
         }));
     }, []);
 
-    // ---- Sessions ----
     const addSession = useCallback(
         () => setSessions((prev) => [...prev, { start_time: '', end_time: '', capacity: 100 }]),
         []
@@ -56,7 +58,6 @@ export const useEventForm = (id) => {
         });
     }, []);
 
-    // ---- Tiers ----
     const addTier = useCallback(
         () =>
             setTiers((prev) => [
@@ -77,7 +78,6 @@ export const useEventForm = (id) => {
         });
     }, []);
 
-    // ---- Load existing event ----
     useEffect(() => {
         if (!id) return;
         (async () => {
@@ -90,10 +90,14 @@ export const useEventForm = (id) => {
                     short_description: data.short_description || '',
                     event_type: data.event_type || EVENT_TYPE.SINGLE,
                     category: data.category || EVENT_CATEGORY.OTHER,
+                    event_flow: data.event_flow || 'ticketed',
                     venue_id: data.venue?.id || '',
                     start_date: formatDateForInput(data.start_date),
                     end_date: formatDateForInput(data.end_date),
-                    timezone: data.timezone || 'Asia/Kolkata',
+                    // ✅ If the API returns a timezone, honor it. If not,
+                    // resolve a sensible default (device → env → fallback)
+                    // instead of forcing a hardcoded one.
+                    timezone: data.timezone || resolveTimezoneDefault(),
                     status: data.status || EVENT_STATUS.DRAFT,
                     is_public: data.is_public !== undefined ? data.is_public : true,
                     ticket_format: data.ticket_format || 'pdf',
@@ -112,7 +116,6 @@ export const useEventForm = (id) => {
                 setTiers(data.tiers || []);
             } catch (err) {
                 toast.error('Failed to load event');
-                // eslint-disable-next-line no-console
                 console.error('Load error:', err);
             } finally {
                 setLoading(false);

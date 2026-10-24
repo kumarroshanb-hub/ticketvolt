@@ -27,8 +27,25 @@ MAX_TICKETS_PER_BOOKING = 50
 # ---------------------------------------------------------------------------
 TICKET_SCHEMA_VERSION = 1
 TICKET_TYPE = 'ticket'
-TICKET_CODE_RE = re.compile(r'^TIX[A-Z0-9]{8,32}$')
+TICKET_CODE_RE = re.compile(r'^(TIX|REG)[A-Z0-9]{8,32}$')
 MAX_QR_PAYLOAD_LENGTH = 2048
+
+
+# ============================================================
+# Event-level capacity helper
+# ------------------------------------------------------------
+# Sum of tier quantities is the right answer for ticketed events.
+# For registration-style events the organizer thinks in *slot*
+# capacity, so if the event has any sessions we sum those instead.
+# ============================================================
+def _event_total_capacity(obj):
+    """Event-level capacity: sum of slot capacities when slots exist,
+    otherwise sum of tier quantities."""
+    sessions = list(obj.sessions.all())
+    if sessions:
+        return sum(max(0, (s.capacity or 0)) for s in sessions)
+    from django.db.models import Sum
+    return obj.tiers.aggregate(total=Sum('quantity_total')).get('total') or 0
 
 
 # ============================================================
@@ -207,7 +224,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
         model = Event
         fields = [
             'id', 'title', 'description', 'short_description',
-            'event_type', 'category',
+            'event_type', 'category', 'event_flow',
             'start_date', 'end_date', 'timezone',
             'cover_image', 'gallery_images',
             'status', 'is_public',
@@ -226,10 +243,12 @@ class PublicEventSerializer(serializers.ModelSerializer):
         return {
             'id': str(obj.venue.id),
             'name': obj.venue.name,
+            'address_line1': obj.venue.address_line1,
+            'address_line2': obj.venue.address_line2,
             'city': obj.venue.city,
             'state': obj.venue.state,
+            'postal_code': obj.venue.postal_code,
             'country': obj.venue.country,
-            'address_line1': obj.venue.address_line1,
         }
 
     def get_tier_count(self, obj):
@@ -239,9 +258,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        from django.db.models import Sum
-        result = obj.tiers.aggregate(total=Sum('quantity_total'))
-        return result.get('total') or 0
+        return _event_total_capacity(obj)
 
     def get_template_images(self, obj):
         images = {}
@@ -386,7 +403,7 @@ class EventSerializer(serializers.ModelSerializer):
         model = Event
         fields = [
             'id', 'organizer', 'title', 'description', 'short_description',
-            'event_type', 'category',
+            'event_type', 'category', 'event_flow',
             'start_date', 'end_date', 'timezone',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
@@ -411,8 +428,11 @@ class EventSerializer(serializers.ModelSerializer):
         return {
             'id': str(obj.venue.id),
             'name': obj.venue.name,
+            'address_line1': obj.venue.address_line1,
+            'address_line2': obj.venue.address_line2,
             'city': obj.venue.city,
             'state': obj.venue.state,
+            'postal_code': obj.venue.postal_code,
             'country': obj.venue.country,
         }
 
@@ -423,9 +443,7 @@ class EventSerializer(serializers.ModelSerializer):
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        from django.db.models import Sum
-        result = obj.tiers.aggregate(total=Sum('quantity_total'))
-        return result.get('total') or 0
+        return _event_total_capacity(obj)
 
     def validate_cancellation_policy(self, value):
         if value is None:
@@ -467,7 +485,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
         model = Event
         fields = [
             'id', 'organizer', 'title', 'description', 'short_description',
-            'event_type', 'category',
+            'event_type', 'category', 'event_flow',
             'start_date', 'end_date', 'timezone',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
@@ -526,8 +544,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
             return {
                 'id': str(obj.venue.id),
                 'name': obj.venue.name,
+                'address_line1': obj.venue.address_line1,
+                'address_line2': obj.venue.address_line2,
                 'city': obj.venue.city,
                 'state': obj.venue.state,
+                'postal_code': obj.venue.postal_code,
                 'country': obj.venue.country,
             }
         return None
@@ -539,9 +560,37 @@ class EventDetailSerializer(serializers.ModelSerializer):
         return obj.sessions.count()
 
     def get_total_capacity(self, obj):
-        from django.db.models import Sum
-        result = obj.tiers.aggregate(total=Sum('quantity_total'))
-        return result.get('total') or 0
+        return _event_total_capacity(obj)
+
+    def validate_event_flow(self, value):
+        valid = {c[0] for c in Event.EventFlow.choices}
+        if value not in valid:
+            raise serializers.ValidationError(
+                f'Invalid event_flow. Must be one of {sorted(valid)}.'
+            )
+        return value
+
+    def validate(self, attrs):
+        """Cross-field validation for event_flow."""
+        flow = attrs.get(
+            'event_flow',
+            self.instance.event_flow if self.instance else Event.EventFlow.TICKETED,
+        )
+
+        # Free registrations must not have any priced tiers.
+        tiers = attrs.get('tiers', None)
+        if flow == Event.EventFlow.FREE_REGISTRATION and tiers:
+            for i, tier in enumerate(tiers):
+                tier_price = tier.get('price', 0) or 0
+                if float(tier_price) > 0:
+                    raise serializers.ValidationError({
+                        'tiers': (
+                            f'Free registration events cannot have priced '
+                            f'tiers. Tier #{i + 1} has price {tier_price}.'
+                        )
+                    })
+
+        return attrs
 
     def validate_cancellation_policy(self, value):
         if value is None:
@@ -722,6 +771,11 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
             self._event_obj = event
 
+        # ---- Free-registration fast path ----
+        if getattr(self, '_event_obj', None) and \
+                self._event_obj.event_flow == Event.EventFlow.FREE_REGISTRATION:
+            return self._validate_free_registration(data)
+
         tickets_payload = self._resolve_tickets_payload(data)
 
         computed_total = Decimal('0.00')
@@ -864,6 +918,160 @@ class BookingSerializer(serializers.ModelSerializer):
             data.pop('discount_applied', None)
             data['discount_applied'] = Decimal('0.00')
             data['discount_code'] = ''
+
+        return data
+
+    def _validate_free_registration(self, data):
+        """
+        Free registrations: minimum required fields, no tiers, no
+        payment, but 1..N entries.
+
+        Validation mirrors `_resolve_free_registration_entries` in
+        booking_api.py so a bad payload fails here with a field-level
+        error instead of reaching the view and 400-ing with a flat
+        string.
+        """
+        required = ['customer_name', 'customer_email', 'customer_phone']
+        for f in required:
+            if not (data.get(f) or self.initial_data.get(f)):
+                raise serializers.ValidationError(
+                    {f: f'{f} is required for free registration.'}
+                )
+
+        email = (data.get('customer_email')
+                 or self.initial_data.get('customer_email', '')).strip().lower()
+
+        # ------------------------------------------------------------
+        # Duplicate-email guard for free registration.
+        #
+        # The only rule enforced here is: same email + same event +
+        # non-cancelled/non-refunded status cannot register twice. A
+        # different event (even under the same email) is allowed —
+        # that's the whole point of letting one person RSVP to many
+        # events.
+        #
+        # The error is keyed on `customer_email` so the frontend can
+        # focus the offending field and show a targeted
+        # "use a different email" prompt, rather than the user seeing
+        # a generic "Failed to create booking" toast.
+        # ------------------------------------------------------------
+        if self.instance is None and email:
+            existing = (
+                Booking.objects
+                .filter(
+                    event=self._event_obj,
+                    customer_email__iexact=email,
+                    status__in=[
+                        'pending', 'processing', 'paid',
+                        'confirmed', 'completed',
+                    ],
+                )
+                .order_by('-created_at')
+                .first()
+            )
+            if existing is not None:
+                # ✅ FIX: Distinguish between authenticated users and guests.
+                # If the user is authenticated, provide the booking reference.
+                # If the user is a guest, do not reveal the booking reference.
+                request = self.context.get('request')
+                is_authenticated = request and request.user and request.user.is_authenticated
+
+                if is_authenticated:
+                    error_message = (
+                        f'This email is already registered for this event '
+                        f'(booking {existing.booking_reference}). '
+                        f'Please use a different email address, or '
+                        f'look up your existing booking.'
+                    )
+                else:
+                    error_message = (
+                        f'This email is already registered for this event. '
+                        f'Please use a different email address.'
+                    )
+
+                raise serializers.ValidationError({
+                    'customer_email': [error_message],
+                })
+
+        # ---- entries / attendees validation ----
+        md = data.get('metadata')
+        if md is None:
+            md = (self.initial_data.get('metadata')
+                  if isinstance(self.initial_data, dict) else None)
+        md = md or {}
+
+        raw_entries = md.get('entries')
+        attendees = md.get('attendees') or []
+
+        if not isinstance(attendees, list):
+            raise serializers.ValidationError({
+                'metadata': {'attendees': 'Must be a list.'}
+            })
+
+        try:
+            entries = int(raw_entries) if raw_entries is not None else len(attendees) or 1
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({
+                'metadata': {'entries': 'Must be a positive integer.'}
+            })
+
+        if entries < 1:
+            raise serializers.ValidationError({
+                'metadata': {'entries': 'At least one entry is required.'}
+            })
+
+        max_per_order = self._event_obj.max_tickets_per_order or 10
+        if entries > max_per_order:
+            raise serializers.ValidationError({
+                'metadata': {
+                    'entries': f'Maximum {max_per_order} entries per registration.'
+                }
+            })
+
+        if attendees:
+            if len(attendees) != entries:
+                raise serializers.ValidationError({
+                    'metadata': {'attendees': (
+                        f'Expected {entries} attendee(s), got {len(attendees)}.'
+                    )}
+                })
+            for i, att in enumerate(attendees):
+                if not isinstance(att, dict):
+                    raise serializers.ValidationError({
+                        'metadata': {'attendees': f'Entry {i + 1} must be an object.'}
+                    })
+                if not (att.get('name') or '').strip():
+                    raise serializers.ValidationError({
+                        'metadata': {'attendees': f'Entry {i + 1} is missing a name.'}
+                    })
+                att_email = (att.get('email') or '').strip()
+                if att_email and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', att_email):
+                    raise serializers.ValidationError({
+                        'metadata': {
+                            'attendees': f'Entry {i + 1} has an invalid email address.'
+                        }
+                    })
+
+        # Force zero amount. Drop any client-supplied tiers / discount.
+        data['total_amount'] = Decimal('0.00')
+        data['discount_applied'] = Decimal('0.00')
+        data['discount_code'] = ''
+        data.pop('tickets', None)
+
+        # Persist normalised entries/attendees back into metadata so the
+        # view sees exactly what was validated.
+        normalised_md = dict(md) if isinstance(md, dict) else {}
+        normalised_md['entries'] = entries
+        if attendees:
+            normalised_md['attendees'] = [
+                {
+                    'name': (att.get('name') or '').strip(),
+                    'email': (att.get('email') or '').strip(),
+                    'phone': (att.get('phone') or '').strip(),
+                }
+                for att in attendees
+            ]
+        data['metadata'] = normalised_md
 
         return data
 

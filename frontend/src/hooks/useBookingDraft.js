@@ -257,10 +257,8 @@ export default function useBookingDraft({
             if (freeEntries < 1) {
                 next.entries = 'Please select at least one entry';
             }
-            const missingNames = freeAttendees.some((a) => !a.name?.trim());
-            if (missingNames) {
-                next.freeAttendees = 'Every entry must have a name';
-            }
+            // ✅ FIX: Removed the hard requirement that every entry must have a name. 
+            // The primary contact automatically acts as a fallback.
             const badEmails = freeAttendees.some(
                 (a) => a.email?.trim() && !isValidEmail(a.email)
             );
@@ -268,27 +266,24 @@ export default function useBookingDraft({
                 next.freeAttendees = 'One or more entries have an invalid email';
             }
         } else {
-            if (attendees.some((a) => !a.name?.trim())) {
-                next.attendees = 'All attendees must have names';
-            }
+            // ✅ FIX: Removed the hard requirement that every attendee must have a name.
+            // The primary contact automatically acts as a fallback.
         }
 
         setErrors(next);
         return Object.keys(next).length === 0;
-    }, [customer, attendees, isFreeRegistration, freeEntries, freeAttendees]);
+    }, [customer, isFreeRegistration, freeEntries, freeAttendees]);
 
     // -----------------------------------------------------------------------
     // Payload builder
     // -----------------------------------------------------------------------
     const buildPayload = useCallback(() => {
         if (isFreeRegistration) {
-            const attendeesPayload = freeAttendees.map((a, i) => {
-                const name = (a.name || '').trim()
-                    || (i === 0 ? customer.name : '');
-                const email = (a.email || '').trim()
-                    || (i === 0 ? customer.email : '');
-                const phone = (a.phone || '').trim()
-                    || (i === 0 ? customer.phone : '');
+            const attendeesPayload = freeAttendees.map((a) => {
+                // ✅ FIX: If the user leaves the entry blank, fall back to the primary contact.
+                const name = (a.name || '').trim() || customer.name;
+                const email = (a.email || '').trim() || customer.email;
+                const phone = (a.phone || '').trim() || customer.phone;
                 return { name, email, phone };
             });
 
@@ -317,9 +312,10 @@ export default function useBookingDraft({
 
         const ticketsWithAttendees = ticketList.map((ticket, index) => ({
             tier_id: ticket.tier_id,
-            attendee_name: attendees[index]?.name || customer.name,
-            attendee_email: attendees[index]?.email || customer.email,
-            attendee_phone: attendees[index]?.phone || customer.phone,
+            // ✅ FIX: If the attendee leaves a field blank, fall back to the primary contact.
+            attendee_name: (attendees[index]?.name || '').trim() || customer.name,
+            attendee_email: (attendees[index]?.email || '').trim() || customer.email,
+            attendee_phone: (attendees[index]?.phone || '').trim() || customer.phone,
             tier_name: ticket.tier_name || 'Unknown',
             price: ticket.price || 0,
         }));

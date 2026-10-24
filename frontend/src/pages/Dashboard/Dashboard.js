@@ -13,6 +13,7 @@ import {
     Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
+import { useRole } from '../../context/RoleContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -23,7 +24,7 @@ import {
 } from '../../components/Common';
 
 import EventCard from '../../components/Common/EventCard';
-import { BOOKING_STATUS } from '../../constants';
+import { BOOKING_STATUS, ROLES } from '../../constants';
 
 import { theme as appTheme } from '../../theme/tokens';
 
@@ -287,9 +288,18 @@ const MobileBookingCard = ({ booking, onClick }) => {
 // ============================================
 const Dashboard = () => {
     const { user } = useAuth();
+    const { role } = useRole();                       // ✅ ENHANCEMENT
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+    // ✅ ENHANCEMENT: admins, superadmins, and organizers see
+    // "View Details" on popular events; regular users see the booking
+    // CTA that routes them straight into the wizard.
+    const canManageEvents =
+        role === ROLES.ADMIN ||
+        role === ROLES.SUPER_ADMIN ||
+        role === ROLES.ORGANIZER;
 
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState({
@@ -490,7 +500,10 @@ const Dashboard = () => {
             </Box>
 
             {/* ==================================================
-                POPULAR EVENTS — now uses the shared EventCard
+                POPULAR EVENTS
+                ✅ ENHANCEMENT: role-aware CTA + routing.
+                - Admin / Organizer → "View Details" → /app/events/:id
+                - Regular User      → "Book Tickets" / "Register" → wizard
                ================================================== */}
             <Box>
                 <Typography
@@ -510,7 +523,12 @@ const Dashboard = () => {
                             <Grid item xs={12} sm={6} md={4} key={event.id}>
                                 <EventCard
                                     event={event}
-                                    onSelect={(evt) => navigate(`/app/events/${evt.id}`)}
+                                    context={canManageEvents ? 'management' : 'public'}
+                                    onSelect={
+                                        canManageEvents
+                                            ? (evt) => navigate(`/app/events/${evt.id}`)
+                                            : undefined
+                                    }
                                 />
                             </Grid>
                         ))

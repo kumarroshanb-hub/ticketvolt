@@ -4,6 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.core.mail import send_mail
@@ -27,6 +29,15 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = User.objects.all()
     serializer_class = UserSerializer
+
+    # ✅ FIX: single source of truth for which UserProfile fields may be
+    # written through either the dedicated `update_profile` action OR
+    # the standard PATCH/PUT on /users/<id>/. Both paths delegate to
+    # `_persist_profile_fields` so they can never drift.
+    PROFILE_PATCH_FIELDS = (
+        'phone', 'whatsapp_number', 'address', 'city', 'state',
+        'country', 'postal_code',
+    )
 
     def get_serializer_class(self):
         if self.action == 'create' or self.action == 'register':
@@ -79,16 +90,88 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by('-date_joined')
 
-    # ✅ FIX [P1]: shared "can the caller touch this user?" guard.
-    # Admins/superadmins may act on anyone (with the superadmin exception
-    # already enforced elsewhere). Everyone else may only act on themselves.
-    # This is used by `profile`, `update_profile`, and any future
-    # self-scoped detail action.
+    # ============================================================
+    # ✅ FIX: profile-field persistence for both write paths.
+    # ------------------------------------------------------------
+    # Before this change:
+    #   • POST /users/<id>/update_profile/  → worked
+    #   • PATCH /users/<id>/                → silently dropped every
+    #     profile field because UserSerializer declares `profile` as
+    #     read-only and has no writable phone/city/state/country.
+    #
+    # Now both paths funnel through `_persist_profile_fields`, which
+    # uses the same whitelist (PROFILE_PATCH_FIELDS) and the same
+    # staff-only rule for `is_organizer`. They cannot drift.
+    # ============================================================
     def _can_view_or_edit_user(self, request, target_user):
         requester = request.user
         if requester.is_staff or requester.is_superuser:
             return True
         return requester.id == target_user.id
+
+    def _persist_profile_fields(self, user, data):
+        """
+        Write any whitelisted profile fields present in `data` to
+        `user.profile` and save. Returns the UserProfile instance.
+
+        Caller is responsible for wrapping this in a transaction if it
+        also mutates the User row — see `update()` and `update_profile()`.
+        """
+        profile, _ = UserProfile.objects.get_or_create(
+            user=user, defaults={'email': user.email},
+        )
+        changed = False
+        for field in self.PROFILE_PATCH_FIELDS:
+            if field in data:
+                setattr(profile, field, data[field] or '')
+                changed = True
+        # Admins may also flip is_organizer — same staff-only rule as
+        # update_profile enforced before.
+        if (
+            'is_organizer' in data
+            and (self.request.user.is_staff or self.request.user.is_superuser)
+        ):
+            profile.is_organizer = bool(data['is_organizer'])
+            changed = True
+        if changed:
+            profile.save()
+        return profile
+
+    def update(self, request, *args, **kwargs):
+        """
+        ✅ FIX: persist UserProfile fields on PATCH/PUT.
+
+        DRF's default UpdateModelMixin.update() runs the UserSerializer,
+        which has no writable profile fields. We keep the standard
+        serializer flow for the User row, then write profile fields from
+        the same request body inside the same transaction.
+        """
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+
+        if not self._can_view_or_edit_user(request, instance):
+            return Response(
+                {'error': 'You do not have permission to edit this user.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = self.get_serializer(
+            instance, data=request.data, partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            self.perform_update(serializer)
+            self._persist_profile_fields(instance, request.data)
+
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(serializer.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         """
@@ -268,6 +351,192 @@ class UserViewSet(viewsets.ModelViewSet):
             'user': UserSerializer(user).data
         })
 
+    # ============================================================
+    # ✅ ENHANCEMENT: reset_password
+    # ------------------------------------------------------------
+    # Admin/superadmin may set a new password for any user. A user
+    # may reset their own password. Password is validated against
+    # Django's AUTH_PASSWORD_VALIDATORS. All of the target user's
+    # outstanding JWT sessions are blacklisted so old tokens can't
+    # survive a forced password change.
+    #
+    # The target user's Axes lockout is also cleared on reset — the
+    # whole point of an admin reset is to get a locked-out user back
+    # in. (The dedicated `unlock` action does the same thing, but
+    # doing it here too avoids the admin having to click twice.)
+    # ============================================================
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        from axes.models import AccessAttempt
+
+        target = self.get_object()
+        requester = request.user
+
+        is_self = requester.id == target.id
+        is_admin = requester.is_staff or requester.is_superuser
+
+        if not is_self and not is_admin:
+            return Response(
+                {'error': 'You do not have permission to reset this password.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Admin (non-super) may not touch a superuser.
+        if (
+            not requester.is_superuser
+            and target.is_superuser
+            and not is_self
+        ):
+            return Response(
+                {'error': 'Only a super admin can reset a super admin password.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        new_password = (request.data.get('password') or '').strip()
+        if not new_password:
+            return Response(
+                {'error': 'A new password is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_password(new_password, user=target)
+        except DjangoValidationError as exc:
+            return Response(
+                {'error': ' '.join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target.set_password(new_password)
+        target.save(update_fields=['password'])
+
+        # Rotating a password lifts any Axes lockout for this user.
+        try:
+            AccessAttempt.objects.filter(username=target.username).delete()
+        except Exception:
+            logger.exception(
+                "Failed to clear Axes attempts for user=%s during password reset",
+                target.username,
+            )
+
+        # Blacklist outstanding tokens so old sessions can't survive.
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import (
+                BlacklistedToken, OutstandingToken,
+            )
+            for outstanding in OutstandingToken.objects.filter(user=target):
+                BlacklistedToken.objects.get_or_create(token=outstanding)
+        except Exception:
+            # Token blacklist app may not be installed; never fail the
+            # reset because of it.
+            logger.warning(
+                "Could not blacklist JWT tokens for user=%s after password reset",
+                target.username,
+            )
+
+        logger.info(
+            "🔑 Password reset for user=%s by=%s",
+            target.username, requester.username,
+        )
+
+        return Response({
+            'success': True,
+            'message': f'Password reset for {target.username}.',
+            'username': target.username,
+        })
+
+    # ============================================================
+    # ✅ ENHANCEMENT: unlock
+    # ------------------------------------------------------------
+    # Clears the Axes lockout for the target user AND reactivates
+    # the account if it was deactivated. Both are usually needed
+    # after the user is locked out of login.
+    # ============================================================
+    @action(detail=True, methods=['post'])
+    def unlock(self, request, pk=None):
+        from axes.models import AccessAttempt
+
+        target = self.get_object()
+        requester = request.user
+
+        if not (requester.is_staff or requester.is_superuser):
+            return Response(
+                {'error': 'You do not have permission to unlock users.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if target.is_superuser and not requester.is_superuser:
+            return Response(
+                {'error': 'Only a super admin can unlock a super admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 1. Lift the Axes lock for this username (across all IPs).
+        deleted_attempts, _ = AccessAttempt.objects.filter(
+            username=target.username,
+        ).delete()
+
+        # 2. Reactivate the account if it was off.
+        was_inactive = not target.is_active
+        if was_inactive:
+            target.is_active = True
+            target.save(update_fields=['is_active'])
+
+        logger.info(
+            "🔓 Unlocked user=%s by=%s (attempts_deleted=%s, reactivated=%s)",
+            target.username, requester.username,
+            deleted_attempts, was_inactive,
+        )
+
+        return Response({
+            'success': True,
+            'message': f'{target.username} unlocked.',
+            'username': target.username,
+            'is_active': target.is_active,
+            'attempts_cleared': deleted_attempts,
+            'was_reactivated': was_inactive,
+        })
+
+    # ============================================================
+    # ✅ ENHANCEMENT: lockout_status (read-only)
+    # ------------------------------------------------------------
+    # Returns whether the target user is currently locked out by
+    # Axes, plus the number of failures on record. Used by the
+    # Users page to decide when to show the "Unlock" button.
+    # ============================================================
+    @action(detail=True, methods=['get'])
+    def lockout_status(self, request, pk=None):
+        from axes.models import AccessAttempt
+
+        target = self.get_object()
+        requester = request.user
+
+        if not (requester.is_staff or requester.is_superuser):
+            return Response(
+                {'error': 'Permission denied.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        attempts_qs = AccessAttempt.objects.filter(username=target.username)
+        attempt_count = attempts_qs.count()
+        failures = list(
+            attempts_qs.values_list('failures_since_start', flat=True)
+        )
+        max_failures = max(failures) if failures else 0
+
+        failure_limit = getattr(settings, 'AXES_FAILURE_LIMIT', 5)
+        is_locked = max_failures >= failure_limit or (
+            target.is_active is False
+        )
+
+        return Response({
+            'username': target.username,
+            'is_active': target.is_active,
+            'is_locked': is_locked,
+            'failures_since_start': max_failures,
+            'failure_limit': failure_limit,
+            'attempt_rows': attempt_count,
+        })
+
     @action(detail=True, methods=['get'])
     def profile(self, request, pk=None):
         # ✅ FIX [P1]: a non-staff caller must only be able to read their
@@ -290,11 +559,14 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def update_profile(self, request, pk=None):
-        # ✅ FIX [P1]: a non-staff caller may only edit their own profile.
-        # `get_object()` returns *any* user for staff, and for regular
-        # users it already scopes to `id=user.id` — but the guard below
-        # is defensive against a future change to `get_queryset()` that
-        # would widen the base queryset.
+        """
+        ✅ Dedicated profile-update action.
+
+        Refactored so profile writes go through `_persist_profile_fields`,
+        the same helper `update()` uses. If you add a profile field
+        later, add it to `PROFILE_PATCH_FIELDS` and both endpoints pick
+        it up automatically.
+        """
         user = self.get_object()
 
         if not self._can_view_or_edit_user(request, user):
@@ -309,30 +581,18 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         data = request.data
 
-        if 'email' in data and data['email'] != user.email:
-            if User.objects.exclude(id=user.id).filter(email=data['email']).exists():
-                return Response(
-                    {'error': 'Email already in use'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            user.email = data['email']
-            user.save()
-            profile.email = data['email']
+        with transaction.atomic():
+            if 'email' in data and data['email'] != user.email:
+                if User.objects.exclude(id=user.id).filter(email=data['email']).exists():
+                    return Response(
+                        {'error': 'Email already in use'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                user.email = data['email']
+                user.save(update_fields=['email'])
+                profile.email = data['email']
 
-        # ✅ FIX [P1]: only staff/superadmins may flip `is_organizer`
-        # through this endpoint. Without this, a regular user could
-        # self-promote to organizer and gain event-management access.
-        profile_fields = [
-            'phone', 'whatsapp_number', 'address', 'city', 'state',
-            'country', 'postal_code',
-        ]
-        if request.user.is_staff or request.user.is_superuser:
-            profile_fields.append('is_organizer')
-
-        for field in profile_fields:
-            if field in data:
-                setattr(profile, field, data[field])
-        profile.save()
+            self._persist_profile_fields(user, data)
 
         serializer = UserProfileSerializer(profile)
         return Response(serializer.data)

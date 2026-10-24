@@ -184,6 +184,118 @@ const CreateBooking = () => {
         updateFreeAttendee,
     } = draft;
 
+    // =========================================================================
+    // ✅ FIX: prefill the "primary contact" from the logged-in user
+    // ------------------------------------------------------------
+    // Rules:
+    //   • Only for authenticated Regular Users. Admins/organizers book
+    //     on behalf of customers, so we never overwrite their form with
+    //     the admin's own info.
+    //   • Only runs when the draft is **pristine** — i.e. every customer
+    //     field is blank. That is true:
+    //         – on first mount, and
+    //         – immediately after `resetDraft()` (e.g. when the user
+    //           picks a different event, or the auto-select effect fires
+    //           because of a `?event=…` query param).
+    //     It is false the moment the user types anything, so we never
+    //     clobber user input, and deliberately clearing a single field
+    //     is preserved.
+    //   • This replaces the previous one-shot `useRef` gate, which
+    //     refused to re-seed after `resetDraft()` wiped the fields —
+    //     that was the actual "not prefilled" bug.
+    //   • The seeded values are fully editable.
+    // =========================================================================
+    useEffect(() => {
+        if (!isAuthenticated || !user || role !== ROLES.USER) return;
+
+        // Only seed when the form is completely untouched.
+        const isPristine =
+            !customer.name?.trim() &&
+            !customer.email?.trim() &&
+            !customer.phone?.trim() &&
+            !customer.whatsapp?.trim() &&
+            !customer.notes?.trim();
+        if (!isPristine) return;
+
+        // Compute display name, preferring "First Last" over username.
+        const fullName =
+            (user.name && String(user.name).trim()) ||
+            [user.first_name, user.last_name].filter(Boolean).join(' ').trim() ||
+            user.username ||
+            '';
+
+        // Derive phone from either flat field or nested profile.
+        const phone =
+            (user.phone && String(user.phone).trim()) ||
+            (user.profile?.phone && String(user.profile.phone).trim()) ||
+            '';
+
+        const whatsapp =
+            (user.whatsapp_number && String(user.whatsapp_number).trim()) ||
+            (user.profile?.whatsapp_number && String(user.profile.whatsapp_number).trim()) ||
+            '';
+
+        if (fullName) handleCustomerChange('name', fullName);
+        if (user.email) handleCustomerChange('email', user.email);
+        if (phone) handleCustomerChange('phone', phone);
+        const wa = whatsapp || phone;
+        if (wa) handleCustomerChange('whatsapp', wa);
+    }, [isAuthenticated, user, role, customer, handleCustomerChange]);
+
+    // =========================================================================
+    // ✅ Mirror the primary contact into entry #0 of the entry list.
+    // ------------------------------------------------------------
+    // `freeAttendees` (free registration) and `attendees` (ticketed) are
+    // created BLANK by useBookingDraft. The primary-contact prefill above
+    // only touches `customer`, so entry #0 was rendering empty even though
+    // the customer block above it was filled in.
+    //
+    // This effect runs on every render, but only writes fields that are
+    // still blank. That means:
+    //   • It fills entry #0 as soon as the entry list appears.
+    //   • It never overwrites a name/email/phone the user has typed.
+    //   • It is idempotent: once the fields are filled, the patch object
+    //     is empty and no state update happens.
+    // =========================================================================
+    useEffect(() => {
+        // FREE REGISTRATION: seed freeAttendees[0]
+        if (isFreeRegistrationFlow && freeAttendees.length > 0) {
+            const first = freeAttendees[0] || {};
+            const patch = {};
+            if (!first.name?.trim() && customer.name?.trim()) patch.name = customer.name;
+            if (!first.email?.trim() && customer.email?.trim()) patch.email = customer.email;
+            if (!first.phone?.trim() && customer.phone?.trim()) patch.phone = customer.phone;
+            if (Object.keys(patch).length > 0) {
+                Object.entries(patch).forEach(([field, value]) =>
+                    updateFreeAttendee(0, field, value)
+                );
+            }
+        }
+
+        // TICKETED: seed attendees[0]
+        if (!isFreeRegistrationFlow && attendees.length > 0) {
+            const first = attendees[0] || {};
+            const patch = {};
+            if (!first.name?.trim() && customer.name?.trim()) patch.name = customer.name;
+            if (!first.email?.trim() && customer.email?.trim()) patch.email = customer.email;
+            if (!first.phone?.trim() && customer.phone?.trim()) patch.phone = customer.phone;
+            if (Object.keys(patch).length > 0) {
+                Object.entries(patch).forEach(([field, value]) =>
+                    updateAttendee(0, field, value)
+                );
+            }
+        }
+    }, [
+        isFreeRegistrationFlow,
+        freeAttendees,
+        attendees,
+        customer.name,
+        customer.email,
+        customer.phone,
+        updateFreeAttendee,
+        updateAttendee,
+    ]);
+
     const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
     const netAmount = Math.max(0, totalAmount - discountAmount);
 

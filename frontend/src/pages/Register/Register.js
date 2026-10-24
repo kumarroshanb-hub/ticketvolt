@@ -17,6 +17,25 @@ const F = appTheme.fonts;
 // when no explicit `from` intent was recorded.
 const DEFAULT_POST_REGISTER_PATH = '/app/dashboard';
 
+// ---------------------------------------------------------------------------
+// ✅ FIX: phone helpers — mirror the backend's
+// UserRegistrationSerializer.validate_phone so the client rejects obvious
+// garbage before the round-trip. The server remains authoritative.
+//
+//   • Optional leading "+"
+//   • 7–15 digits after stripping spaces, dashes, parens, dots
+//
+// The same regex is used by Users.js for admin-created accounts, so the
+// "what counts as a phone number" definition lives in one place
+// conceptually even if this file duplicates the constant.
+// ---------------------------------------------------------------------------
+const PHONE_RE = /^\+?[0-9]{7,15}$/;
+
+const normalisePhone = (raw) =>
+    String(raw || '').replace(/[\s\-\(\)\.]/g, '');
+
+const isValidPhone = (raw) => PHONE_RE.test(normalisePhone(raw));
+
 const Register = () => {
     const navigate = useNavigate();
     const location = useLocation();
@@ -32,6 +51,10 @@ const Register = () => {
         password_confirm: '',
         first_name: '',
         last_name: '',
+        // ✅ FIX: phone is REQUIRED by UserRegistrationSerializer on the
+        // backend; without it every registration 400s with
+        // {"phone": ["This field is required."]}.
+        phone: '',
     });
 
     // ------------------------------------------------------------
@@ -56,11 +79,33 @@ const Register = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setLoading(true);
         setError('');
 
+        // ✅ FIX: lightweight client-side phone check for fast feedback.
+        // The backend validator runs the exact same rule; we just avoid
+        // a pointless network round-trip for the obvious case.
+        if (!formData.phone?.trim()) {
+            setError('Mobile number is required.');
+            return;
+        }
+        if (!isValidPhone(formData.phone)) {
+            setError('Enter a valid mobile number (7–15 digits, optionally starting with "+").');
+            return;
+        }
+
+        setLoading(true);
+
         try {
-            await api.post('/users/register/', formData);
+            // ✅ FIX: send a normalised phone (digits only, plus an
+            // optional leading "+") so the stored value matches what
+            // the backend validator accepts. WhatsApp defaults to the
+            // same number on the backend when blank; we don't send it
+            // here because the register endpoint handles that.
+            const payload = {
+                ...formData,
+                phone: normalisePhone(formData.phone),
+            };
+            await api.post('/users/register/', payload);
             toast.success('Registration successful! Please log in.');
             // Pass the redirect intent forward to Login.
             navigate('/login', { state: { from: redirectTo } });
@@ -194,6 +239,40 @@ const Register = () => {
                         autoComplete="email"
                         inputProps={{ inputMode: 'email' }}
                         sx={{ mb: 2, '& .MuiInputBase-input': { fontSize: 16 } }}
+                    />
+
+                    {/*
+                      ✅ FIX: Mobile number. Required by the backend
+                      (UserRegistrationSerializer.phone is
+                      `required=True, allow_blank=False`), and used by
+                      the WhatsApp ticket-delivery path, so it must be
+                      collected here — leaving it out made every
+                      registration 400.
+
+                      Placed directly under Email because it's part of
+                      the "how do we reach you" group; name and
+                      password follow below.
+                    */}
+                    <TextField
+                        fullWidth
+                        label="Mobile Number"
+                        name="phone"
+                        type="tel"
+                        value={formData.phone}
+                        onChange={handleChange}
+                        required
+                        autoComplete="tel"
+                        placeholder="+91 9876543210"
+                        inputProps={{ inputMode: 'tel' }}
+                        helperText="7–15 digits. Used for WhatsApp ticket delivery."
+                        sx={{
+                            mb: 2,
+                            '& .MuiInputBase-input': { fontSize: 16 },
+                            '& .MuiFormHelperText-root': {
+                                fontSize: '11px',
+                                marginLeft: 0,
+                            },
+                        }}
                     />
 
                     <Box

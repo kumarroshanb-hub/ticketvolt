@@ -296,6 +296,20 @@ const CreateBooking = () => {
         updateAttendee,
     ]);
 
+    // =========================================================================
+    // ✅ FIX: Auto-select the slot if there is only one available.
+    // ------------------------------------------------------------
+    // When an event has exactly one time slot, forcing the user to
+    // click "Next" just to select that single option is poor UX. This
+    // effect automatically sets `selectedSession` to the only session
+    // if none has been chosen yet, so they can proceed immediately.
+    // =========================================================================
+    useEffect(() => {
+        if (sessions.length === 1 && !selectedSession) {
+            setSelectedSession(sessions[0]);
+        }
+    }, [sessions, selectedSession]);
+
     const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
     const netAmount = Math.max(0, totalAmount - discountAmount);
 
@@ -1311,11 +1325,6 @@ const CreateBooking = () => {
     // =========================================================================
 
     const renderAttendeeDetails = () => {
-        const emailFieldError =
-            submitError?.customer_email
-                ? firstFieldMessage(submitError.customer_email)
-                : null;
-
         return (
             <Box sx={{ py: 2 }}>
                 <Alert severity="info" sx={{ mb: 3 }}>
@@ -1323,35 +1332,6 @@ const CreateBooking = () => {
                         ? `Enter the details for ${freeEntries} ${freeEntries === 1 ? 'person' : 'people'}`
                         : `Enter details for ${totalTickets} attendee(s)`}
                 </Alert>
-
-                {/* -------- Inline email-in-use banner (free registration) -------- */}
-                {emailFieldError && (
-                    <Alert
-                        severity="error"
-                        sx={{ mb: 3 }}
-                        onClose={() => {
-                            setSubmitError((prev) => {
-                                if (!prev) return prev;
-                                const { customer_email, ...rest } = prev;
-                                return Object.keys(rest).length ? rest : null;
-                            });
-                        }}
-                    >
-                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                            This email address is already in use
-                        </Typography>
-                        <Typography variant="body2">{emailFieldError}</Typography>
-                        <Typography
-                            variant="caption"
-                            component="div"
-                            sx={{ mt: 1, color: 'text.secondary' }}
-                        >
-                            Tip: use a different email, or if you already have a
-                            booking under this email, open the booking from
-                            “My Bookings” instead of registering again.
-                        </Typography>
-                    </Alert>
-                )}
 
                 {/* -------- Customer (lead) block -------- */}
                 <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
@@ -1381,8 +1361,8 @@ const CreateBooking = () => {
                                 type="email"
                                 value={customer.email}
                                 onChange={(e) => handleEmailChange(e.target.value)}
-                                error={!!errors.email || !!emailFieldError}
-                                helperText={errors.email || emailFieldError || ''}
+                                error={!!errors.email}
+                                helperText={errors.email}
                                 size="small"
                             />
                         </Grid>

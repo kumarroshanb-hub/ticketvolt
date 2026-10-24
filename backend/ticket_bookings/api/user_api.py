@@ -11,6 +11,9 @@ from django.db.models import Q
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils.html import strip_tags
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.contrib.auth.tokens import default_token_generator
 from ..models import UserProfile
 from .serializers import UserSerializer, UserProfileSerializer, UserRegistrationSerializer
 import logging
@@ -30,10 +33,6 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
 
-    # ✅ FIX: single source of truth for which UserProfile fields may be
-    # written through either the dedicated `update_profile` action OR
-    # the standard PATCH/PUT on /users/<id>/. Both paths delegate to
-    # `_persist_profile_fields` so they can never drift.
     PROFILE_PATCH_FIELDS = (
         'phone', 'whatsapp_number', 'address', 'city', 'state',
         'country', 'postal_code',
@@ -50,7 +49,6 @@ class UserViewSet(viewsets.ModelViewSet):
         is_active_param = self.request.query_params.get('is_active', None)
         search = self.request.query_params.get('search', None)
 
-        # Base queryset based on caller's role
         if user.is_superuser:
             queryset = User.objects.all()
         elif user.is_staff:
@@ -58,15 +56,12 @@ class UserViewSet(viewsets.ModelViewSet):
         else:
             queryset = User.objects.filter(id=user.id)
 
-        # ✅ Prefetch profile so the serializer doesn't N+1 on user.profile
         queryset = queryset.select_related('profile')
 
-        # ✅ Handle is_active filter (frontend sends 'active' / 'inactive')
         if is_active_param is not None:
             is_active_bool = str(is_active_param).lower() in ('true', '1', 'yes')
             queryset = queryset.filter(is_active=is_active_bool)
 
-        # ✅ Handle search filter across username / email / name
         if search:
             queryset = queryset.filter(
                 Q(username__icontains=search) |
@@ -75,16 +70,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 Q(last_name__icontains=search)
             )
 
-        # Role filter
         if role == 'organizer':
-            # ✅ FIX: `is_organizer` is not a User field — it only exists
-            # on UserProfile. The old code did
-            #     Q(profile__is_organizer=True) | Q(is_organizer=True)
-            # which raises FieldError at query time and 500s the whole
-            # endpoint. We now:
-            #   1. Filter users whose profile is flagged as organizer.
-            #   2. ALSO include staff users, since they can own events
-            #      (the event form's organizer picker needs to see them).
             queryset = queryset.filter(
                 Q(profile__is_organizer=True) | Q(is_staff=True)
             )
@@ -97,19 +83,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by('-date_joined')
 
-    # ============================================================
-    # ✅ FIX: profile-field persistence for both write paths.
-    # ------------------------------------------------------------
-    # Before this change:
-    #   • POST /users/<id>/update_profile/  → worked
-    #   • PATCH /users/<id>/                → silently dropped every
-    #     profile field because UserSerializer declares `profile` as
-    #     read-only and has no writable phone/city/state/country.
-    #
-    # Now both paths funnel through `_persist_profile_fields`, which
-    # uses the same whitelist (PROFILE_PATCH_FIELDS) and the same
-    # staff-only rule for `is_organizer`. They cannot drift.
-    # ============================================================
     def _can_view_or_edit_user(self, request, target_user):
         requester = request.user
         if requester.is_staff or requester.is_superuser:
@@ -117,13 +90,6 @@ class UserViewSet(viewsets.ModelViewSet):
         return requester.id == target_user.id
 
     def _persist_profile_fields(self, user, data):
-        """
-        Write any whitelisted profile fields present in `data` to
-        `user.profile` and save. Returns the UserProfile instance.
-
-        Caller is responsible for wrapping this in a transaction if it
-        also mutates the User row — see `update()` and `update_profile()`.
-        """
         profile, _ = UserProfile.objects.get_or_create(
             user=user, defaults={'email': user.email},
         )
@@ -132,8 +98,6 @@ class UserViewSet(viewsets.ModelViewSet):
             if field in data:
                 setattr(profile, field, data[field] or '')
                 changed = True
-        # Admins may also flip is_organizer — same staff-only rule as
-        # update_profile enforced before.
         if (
             'is_organizer' in data
             and (self.request.user.is_staff or self.request.user.is_superuser)
@@ -145,14 +109,6 @@ class UserViewSet(viewsets.ModelViewSet):
         return profile
 
     def update(self, request, *args, **kwargs):
-        """
-        ✅ FIX: persist UserProfile fields on PATCH/PUT.
-
-        DRF's default UpdateModelMixin.update() runs the UserSerializer,
-        which has no writable profile fields. We keep the standard
-        serializer flow for the User row, then write profile fields from
-        the same request body inside the same transaction.
-        """
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
 
@@ -181,9 +137,6 @@ class UserViewSet(viewsets.ModelViewSet):
         return self.update(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
-        """
-        Create a new user (Admin/Super Admin only)
-        """
         if not request.user.is_staff and not request.user.is_superuser:
             return Response(
                 {'error': 'You do not have permission to create users'},
@@ -195,7 +148,6 @@ class UserViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 user = serializer.save()
 
-                # Set role based on request
                 role = request.data.get('role', 'user')
                 if role == 'admin' and request.user.is_superuser:
                     user.is_staff = True
@@ -221,7 +173,6 @@ class UserViewSet(viewsets.ModelViewSet):
                     profile.is_organizer = True
                     profile.save()
 
-                # Allow `is_active` to be set on creation
                 if 'is_active' in request.data:
                     user.is_active = bool(request.data['is_active'])
                     user.save(update_fields=['is_active'])
@@ -238,9 +189,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
-        """
-        Public registration for regular users
-        """
         serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
             with transaction.atomic():
@@ -278,9 +226,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def update_role(self, request, pk=None):
-        """
-        Update user role (Super Admin only)
-        """
         user = self.get_object()
 
         if not request.user.is_superuser:
@@ -332,9 +277,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def toggle_active(self, request, pk=None):
-        """
-        Toggle user active status (Admin+ only)
-        """
         user = self.get_object()
 
         if not request.user.is_staff and not request.user.is_superuser:
@@ -358,20 +300,6 @@ class UserViewSet(viewsets.ModelViewSet):
             'user': UserSerializer(user).data
         })
 
-    # ============================================================
-    # ✅ ENHANCEMENT: reset_password
-    # ------------------------------------------------------------
-    # Admin/superadmin may set a new password for any user. A user
-    # may reset their own password. Password is validated against
-    # Django's AUTH_PASSWORD_VALIDATORS. All of the target user's
-    # outstanding JWT sessions are blacklisted so old tokens can't
-    # survive a forced password change.
-    #
-    # The target user's Axes lockout is also cleared on reset — the
-    # whole point of an admin reset is to get a locked-out user back
-    # in. (The dedicated `unlock` action does the same thing, but
-    # doing it here too avoids the admin having to click twice.)
-    # ============================================================
     @action(detail=True, methods=['post'])
     def reset_password(self, request, pk=None):
         from axes.models import AccessAttempt
@@ -388,7 +316,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Admin (non-super) may not touch a superuser.
         if (
             not requester.is_superuser
             and target.is_superuser
@@ -417,7 +344,6 @@ class UserViewSet(viewsets.ModelViewSet):
         target.set_password(new_password)
         target.save(update_fields=['password'])
 
-        # Rotating a password lifts any Axes lockout for this user.
         try:
             AccessAttempt.objects.filter(username=target.username).delete()
         except Exception:
@@ -426,7 +352,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 target.username,
             )
 
-        # Blacklist outstanding tokens so old sessions can't survive.
         try:
             from rest_framework_simplejwt.token_blacklist.models import (
                 BlacklistedToken, OutstandingToken,
@@ -434,8 +359,6 @@ class UserViewSet(viewsets.ModelViewSet):
             for outstanding in OutstandingToken.objects.filter(user=target):
                 BlacklistedToken.objects.get_or_create(token=outstanding)
         except Exception:
-            # Token blacklist app may not be installed; never fail the
-            # reset because of it.
             logger.warning(
                 "Could not blacklist JWT tokens for user=%s after password reset",
                 target.username,
@@ -452,13 +375,96 @@ class UserViewSet(viewsets.ModelViewSet):
             'username': target.username,
         })
 
-    # ============================================================
-    # ✅ ENHANCEMENT: unlock
-    # ------------------------------------------------------------
-    # Clears the Axes lockout for the target user AND reactivates
-    # the account if it was deactivated. Both are usually needed
-    # after the user is locked out of login.
-    # ============================================================
+    # ✅ ADDED: Forgot Password flow
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def forgot_password(self, request):
+        email = request.data.get('email', '').strip()
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+            reset_link = f"{frontend_url}/reset-password/{uid}/{token}"
+
+            subject = "Password Reset Request - TicketVolt"
+            html_message = f"""
+            <p>Hi {user.first_name or user.username},</p>
+            <p>You requested a password reset. Click the link below to set a new password:</p>
+            <p><a href="{reset_link}">Reset Password</a></p>
+            <p>If you didn't request this, you can safely ignore this email.</p>
+            <p>Thanks,<br>TicketVolt Team</p>
+            """
+            
+            try:
+                send_mail(
+                    subject,
+                    strip_tags(html_message),
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    html_message=html_message,
+                    fail_silently=False,
+                )
+                logger.info(f"✉️ Password reset email sent to {email}")
+            except Exception as e:
+                logger.error(f"❌ Failed to send reset email to {email}: {str(e)}")
+                return Response(
+                    {'error': 'Failed to send email. Please try again later.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        return Response(
+            {'message': 'If an account exists with this email, a reset link has been sent.'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def confirm_password_reset(self, request):
+        uidb64 = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('password')
+
+        if not uidb64 or not token or not new_password:
+            return Response(
+                {'error': 'Missing required fields.'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+
+        if user is not None and default_token_generator.check_token(user, token):
+            try:
+                validate_password(new_password, user=user)
+            except DjangoValidationError as exc:
+                return Response(
+                    {'error': ' '.join(exc.messages)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            user.set_password(new_password)
+            user.save()
+            
+            try:
+                from axes.models import AccessAttempt
+                AccessAttempt.objects.filter(username=user.username).delete()
+            except Exception:
+                pass
+
+            logger.info(f"🔑 Password successfully reset via link for {user.username}")
+            return Response({'message': 'Password has been reset successfully.'})
+        else:
+            return Response(
+                {'error': 'Invalid or expired reset link. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     @action(detail=True, methods=['post'])
     def unlock(self, request, pk=None):
         from axes.models import AccessAttempt
@@ -477,12 +483,10 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # 1. Lift the Axes lock for this username (across all IPs).
         deleted_attempts, _ = AccessAttempt.objects.filter(
             username=target.username,
         ).delete()
 
-        # 2. Reactivate the account if it was off.
         was_inactive = not target.is_active
         if was_inactive:
             target.is_active = True
@@ -503,13 +507,6 @@ class UserViewSet(viewsets.ModelViewSet):
             'was_reactivated': was_inactive,
         })
 
-    # ============================================================
-    # ✅ ENHANCEMENT: lockout_status (read-only)
-    # ------------------------------------------------------------
-    # Returns whether the target user is currently locked out by
-    # Axes, plus the number of failures on record. Used by the
-    # Users page to decide when to show the "Unlock" button.
-    # ============================================================
     @action(detail=True, methods=['get'])
     def lockout_status(self, request, pk=None):
         from axes.models import AccessAttempt
@@ -546,9 +543,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def profile(self, request, pk=None):
-        # ✅ FIX [P1]: a non-staff caller must only be able to read their
-        # own profile. Without this check any authenticated user could
-        # GET /api/users/<someone-elses-id>/profile/ and harvest PII.
         user = self.get_object()
 
         if not self._can_view_or_edit_user(request, user):
@@ -566,14 +560,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def update_profile(self, request, pk=None):
-        """
-        ✅ Dedicated profile-update action.
-
-        Refactored so profile writes go through `_persist_profile_fields`,
-        the same helper `update()` uses. If you add a profile field
-        later, add it to `PROFILE_PATCH_FIELDS` and both endpoints pick
-        it up automatically.
-        """
         user = self.get_object()
 
         if not self._can_view_or_edit_user(request, user):
@@ -629,7 +615,6 @@ class UserViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     def _send_welcome_email(self, user):
-        """Send welcome email to new user"""
         try:
             subject = f'Welcome to TicketVolt, {user.first_name or user.username}!'
 

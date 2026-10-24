@@ -682,7 +682,7 @@ const Landing = () => {
                                 onClick={isAuthenticated ? handleDashboardClick : handleLoginClick}
                                 endIcon={<ArrowForwardIcon />}
                             >
-                                {isAuthenticated ? 'Go to Dashboard' : 'Book Tickets'}
+                                {isAuthenticated ? 'Go to Dashboard' : 'Login to Book Tickets'}
                             </PrimaryHeroButton>
                             <GhostHeroButton
                                 onClick={() => {

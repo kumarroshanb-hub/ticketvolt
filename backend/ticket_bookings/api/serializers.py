@@ -1389,7 +1389,12 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'date_joined', 'last_login',
-            'is_active', 'is_staff', 'is_superuser', 'profile',
+            'is_staff', 'is_superuser', 'profile',
+            # ✅ FIX: `is_active` is intentionally writable so the Users
+            # admin page's Active/Inactive toggle persists via
+            # PATCH /users/<id>/. Non-staff callers can't reach this
+            # serializer for other users anyway — `get_queryset()`
+            # scopes them to `id=self.id`.
         ]
 
     def get_role(self, obj):

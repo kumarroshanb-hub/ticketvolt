@@ -30,6 +30,15 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
 
+    # ✅ FIX: single source of truth for which UserProfile fields may be
+    # written through either the dedicated `update_profile` action OR
+    # the standard PATCH/PUT on /users/<id>/. Both paths delegate to
+    # `_persist_profile_fields` so they can never drift.
+    PROFILE_PATCH_FIELDS = (
+        'phone', 'whatsapp_number', 'address', 'city', 'state',
+        'country', 'postal_code',
+    )
+
     def get_serializer_class(self):
         if self.action == 'create' or self.action == 'register':
             return UserRegistrationSerializer
@@ -81,16 +90,88 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by('-date_joined')
 
-    # ✅ FIX [P1]: shared "can the caller touch this user?" guard.
-    # Admins/superadmins may act on anyone (with the superadmin exception
-    # already enforced elsewhere). Everyone else may only act on themselves.
-    # This is used by `profile`, `update_profile`, and any future
-    # self-scoped detail action.
+    # ============================================================
+    # ✅ FIX: profile-field persistence for both write paths.
+    # ------------------------------------------------------------
+    # Before this change:
+    #   • POST /users/<id>/update_profile/  → worked
+    #   • PATCH /users/<id>/                → silently dropped every
+    #     profile field because UserSerializer declares `profile` as
+    #     read-only and has no writable phone/city/state/country.
+    #
+    # Now both paths funnel through `_persist_profile_fields`, which
+    # uses the same whitelist (PROFILE_PATCH_FIELDS) and the same
+    # staff-only rule for `is_organizer`. They cannot drift.
+    # ============================================================
     def _can_view_or_edit_user(self, request, target_user):
         requester = request.user
         if requester.is_staff or requester.is_superuser:
             return True
         return requester.id == target_user.id
+
+    def _persist_profile_fields(self, user, data):
+        """
+        Write any whitelisted profile fields present in `data` to
+        `user.profile` and save. Returns the UserProfile instance.
+
+        Caller is responsible for wrapping this in a transaction if it
+        also mutates the User row — see `update()` and `update_profile()`.
+        """
+        profile, _ = UserProfile.objects.get_or_create(
+            user=user, defaults={'email': user.email},
+        )
+        changed = False
+        for field in self.PROFILE_PATCH_FIELDS:
+            if field in data:
+                setattr(profile, field, data[field] or '')
+                changed = True
+        # Admins may also flip is_organizer — same staff-only rule as
+        # update_profile enforced before.
+        if (
+            'is_organizer' in data
+            and (self.request.user.is_staff or self.request.user.is_superuser)
+        ):
+            profile.is_organizer = bool(data['is_organizer'])
+            changed = True
+        if changed:
+            profile.save()
+        return profile
+
+    def update(self, request, *args, **kwargs):
+        """
+        ✅ FIX: persist UserProfile fields on PATCH/PUT.
+
+        DRF's default UpdateModelMixin.update() runs the UserSerializer,
+        which has no writable profile fields. We keep the standard
+        serializer flow for the User row, then write profile fields from
+        the same request body inside the same transaction.
+        """
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+
+        if not self._can_view_or_edit_user(request, instance):
+            return Response(
+                {'error': 'You do not have permission to edit this user.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = self.get_serializer(
+            instance, data=request.data, partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            self.perform_update(serializer)
+            self._persist_profile_fields(instance, request.data)
+
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(serializer.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         """
@@ -478,11 +559,14 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def update_profile(self, request, pk=None):
-        # ✅ FIX [P1]: a non-staff caller may only edit their own profile.
-        # `get_object()` returns *any* user for staff, and for regular
-        # users it already scopes to `id=user.id` — but the guard below
-        # is defensive against a future change to `get_queryset()` that
-        # would widen the base queryset.
+        """
+        ✅ Dedicated profile-update action.
+
+        Refactored so profile writes go through `_persist_profile_fields`,
+        the same helper `update()` uses. If you add a profile field
+        later, add it to `PROFILE_PATCH_FIELDS` and both endpoints pick
+        it up automatically.
+        """
         user = self.get_object()
 
         if not self._can_view_or_edit_user(request, user):
@@ -497,30 +581,18 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         data = request.data
 
-        if 'email' in data and data['email'] != user.email:
-            if User.objects.exclude(id=user.id).filter(email=data['email']).exists():
-                return Response(
-                    {'error': 'Email already in use'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            user.email = data['email']
-            user.save()
-            profile.email = data['email']
+        with transaction.atomic():
+            if 'email' in data and data['email'] != user.email:
+                if User.objects.exclude(id=user.id).filter(email=data['email']).exists():
+                    return Response(
+                        {'error': 'Email already in use'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                user.email = data['email']
+                user.save(update_fields=['email'])
+                profile.email = data['email']
 
-        # ✅ FIX [P1]: only staff/superadmins may flip `is_organizer`
-        # through this endpoint. Without this, a regular user could
-        # self-promote to organizer and gain event-management access.
-        profile_fields = [
-            'phone', 'whatsapp_number', 'address', 'city', 'state',
-            'country', 'postal_code',
-        ]
-        if request.user.is_staff or request.user.is_superuser:
-            profile_fields.append('is_organizer')
-
-        for field in profile_fields:
-            if field in data:
-                setattr(profile, field, data[field])
-        profile.save()
+            self._persist_profile_fields(user, data)
 
         serializer = UserProfileSerializer(profile)
         return Response(serializer.data)

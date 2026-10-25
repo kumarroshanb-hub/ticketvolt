@@ -1,5 +1,6 @@
 # backend/ticket_bookings/api/serializers.py
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.utils import timezone
@@ -29,6 +30,31 @@ TICKET_SCHEMA_VERSION = 1
 TICKET_TYPE = 'ticket'
 TICKET_CODE_RE = re.compile(r'^(TIX|REG)[A-Z0-9]{8,32}$')
 MAX_QR_PAYLOAD_LENGTH = 2048
+
+
+# ============================================================
+# ✅ NEW: Login with Email OR Username
+# ============================================================
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Allows users to log in using either their username or their email address.
+    """
+    def validate(self, attrs):
+        # The incoming field from the frontend is usually 'username'
+        login_identifier = attrs.get('username', '').strip()
+
+        # If the input looks like an email (contains '@'), resolve the username
+        if '@' in login_identifier:
+            try:
+                user = User.objects.get(email__iexact=login_identifier)
+                attrs['username'] = user.username
+            except User.DoesNotExist:
+                # We don't raise an error here, we let the parent class
+                # handle the invalid credentials (returns 401)
+                pass
+
+        # Proceed with standard authentication
+        return super().validate(attrs)
 
 
 # ============================================================
@@ -1037,60 +1063,11 @@ class BookingSerializer(serializers.ModelSerializer):
                     {f: f'{f} is required for free registration.'}
                 )
 
-        email = (data.get('customer_email')
-                 or self.initial_data.get('customer_email', '')).strip().lower()
-
-        # ------------------------------------------------------------
-        # Duplicate-email guard for free registration.
-        #
-        # The only rule enforced here is: same email + same event +
-        # non-cancelled/non-refunded status cannot register twice. A
-        # different event (even under the same email) is allowed —
-        # that's the whole point of letting one person RSVP to many
-        # events.
-        #
-        # The error is keyed on `customer_email` so the frontend can
-        # focus the offending field and show a targeted
-        # "use a different email" prompt, rather than the user seeing
-        # a generic "Failed to create booking" toast.
-        # ------------------------------------------------------------
-        if self.instance is None and email:
-            existing = (
-                Booking.objects
-                .filter(
-                    event=self._event_obj,
-                    customer_email__iexact=email,
-                    status__in=[
-                        'pending', 'processing', 'paid',
-                        'confirmed', 'completed',
-                    ],
-                )
-                .order_by('-created_at')
-                .first()
-            )
-            if existing is not None:
-                # ✅ FIX: Distinguish between authenticated users and guests.
-                # If the user is authenticated, provide the booking reference.
-                # If the user is a guest, do not reveal the booking reference.
-                request = self.context.get('request')
-                is_authenticated = request and request.user and request.user.is_authenticated
-
-                if is_authenticated:
-                    error_message = (
-                        f'This email is already registered for this event '
-                        f'(booking {existing.booking_reference}). '
-                        f'Please use a different email address, or '
-                        f'look up your existing booking.'
-                    )
-                else:
-                    error_message = (
-                        f'This email is already registered for this event. '
-                        f'Please use a different email address.'
-                    )
-
-                raise serializers.ValidationError({
-                    'customer_email': [error_message],
-                })
+        # ✅ FIX: Duplicate-email guard removed entirely.
+        # Whether the email belongs to a registered user, a past guest,
+        # or is brand new, the booking will proceed. The serializer's
+        # `create()` method will tie this booking to the existing user
+        # (or create a new one if needed) via `_resolve_or_create_user_for_booking`.
 
         # ---- entries / attendees validation ----
         md = data.get('metadata')

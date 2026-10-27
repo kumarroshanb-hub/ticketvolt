@@ -5,8 +5,8 @@
 # ----------------------------------------------------------------------------
 # `Event.status` is a denormalized field kept in sync by a Celery Beat
 # task (`ticket_bookings.tasks.update_completed_events`). Between the
-# moment an event's `end_date` passes and the next run of that task,
-# the DB value can be stale.
+# moment an `end_date` passes and the next run of that task, the DB value
+# can be stale.
 #
 # EVERY read path that exposes event status to a user MUST go through
 # `Event.get_effective_status()` — not the raw `event.status` field.
@@ -59,6 +59,8 @@ class UserProfile(models.Model):
     country = models.CharField(max_length=100, default='India')
     postal_code = models.CharField(max_length=20, blank=True)
     is_organizer = models.BooleanField(default=False)
+    # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
+    last_active = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

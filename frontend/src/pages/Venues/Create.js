@@ -19,14 +19,14 @@ import {
 import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
-import { resolveCountryDefault } from '../../utils/localeDefaults';
+import { useSettings } from '../../context/SettingsContext';
+import {
+    getCountryOptionsWithDefault,
+    normaliseCountryName,
+} from '../../config/countries';
 
 const C = theme.colors;
 const F = theme.fonts;
-
-const COUNTRIES = [
-    'Afghanistan','Albania','Algeria','Andorra','Angola','Antigua and Barbuda','Argentina','Armenia','Australia','Austria','Azerbaijan','Bahamas','Bahrain','Bangladesh','Barbados','Belarus','Belgium','Belize','Benin','Bhutan','Bolivia','Bosnia and Herzegovina','Botswana','Brazil','Brunei','Bulgaria','Burkina Faso','Burundi','Cabo Verde','Cambodia','Cameroon','Canada','Central African Republic','Chad','Chile','China','Colombia','Comoros','Congo (Brazzaville)','Congo (Kinshasa)','Costa Rica','Croatia','Cuba','Cyprus','Czech Republic','Denmark','Djibouti','Dominica','Dominican Republic','Ecuador','Egypt','El Salvador','Equatorial Guinea','Eritrea','Estonia','Eswatini','Ethiopia','Fiji','Finland','France','Gabon','Gambia','Georgia','Germany','Ghana','Greece','Grenada','Guatemala','Guinea','Guinea-Bissau','Guyana','Haiti','Honduras','Hong Kong','Hungary','Iceland','India','Indonesia','Iran','Iraq','Ireland','Israel','Italy','Ivory Coast','Jamaica','Japan','Jordan','Kazakhstan','Kenya','Kiribati','Kosovo','Kuwait','Kyrgyzstan','Laos','Latvia','Lebanon','Lesotho','Liberia','Libya','Liechtenstein','Lithuania','Luxembourg','Macau','Madagascar','Malawi','Malaysia','Maldives','Mali','Malta','Marshall Islands','Mauritania','Mauritius','Mexico','Micronesia','Moldova','Monaco','Mongolia','Montenegro','Morocco','Mozambique','Myanmar','Namibia','Nauru','Nepal','Netherlands','New Zealand','Nicaragua','Niger','Nigeria','North Korea','North Macedonia','Norway','Oman','Pakistan','Palau','Palestine','Panama','Papua New Guinea','Paraguay','Peru','Philippines','Poland','Portugal','Puerto Rico','Qatar','Romania','Russia','Rwanda','Saint Kitts and Nevis','Saint Lucia','Saint Vincent and the Grenadines','Samoa','San Marino','Sao Tome and Principe','Saudi Arabia','Senegal','Serbia','Seychelles','Sierra Leone','Singapore','Slovakia','Slovenia','Solomon Islands','Somalia','South Africa','South Korea','South Sudan','Spain','Sri Lanka','Sudan','Suriname','Sweden','Switzerland','Syria','Taiwan','Tajikistan','Tanzania','Thailand','Timor-Leste','Togo','Tonga','Trinidad and Tobago','Tunisia','Turkey','Turkmenistan','Tuvalu','UAE','Uganda','UK','Ukraine','Uruguay','USA','Uzbekistan','Vanuatu','Vatican City','Venezuela','Vietnam','Yemen','Zambia','Zimbabwe',
-];
 
 const StyledPaper = styled(Paper)`
     background: ${props => props.theme?.colors?.bgCard || C.bgCard};
@@ -82,6 +82,18 @@ const CreateVenue = () => {
     const { id } = useParams();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    const { settings } = useSettings();
+
+    // ✅ Platform-level default country — dropdowns follow it.
+    const platformCountry = useMemo(() => {
+        const normalised = normaliseCountryName(settings?.country);
+        return normalised || 'Hong Kong';
+    }, [settings?.country]);
+
+    const countryOptions = useMemo(
+        () => getCountryOptionsWithDefault(platformCountry),
+        [platformCountry],
+    );
 
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
@@ -95,8 +107,7 @@ const CreateVenue = () => {
         city: '',
         state: '',
         postal_code: '',
-        // ✅ Resolved from device locale → env override → product default.
-        country: resolveCountryDefault(),
+        country: platformCountry,
         capacity: '',
         contact_phone: '',
         contact_email: '',
@@ -104,18 +115,31 @@ const CreateVenue = () => {
         is_active: true,
     }));
 
-    const countryOptions = useMemo(() => {
+    // ✅ Keep the form's country in sync when platform default loads
+    // after the first render (SettingsContext fetches asynchronously).
+    useEffect(() => {
+        setFormData((prev) => {
+            if (prev.country && prev.country !== '') return prev;
+            return { ...prev, country: platformCountry };
+        });
+    }, [platformCountry]);
+
+    // ✅ If the venue already has a country that's not in the catalog
+    // (legacy value), surface it as an extra option so the select can
+    // still represent it.
+    const countryMenuOptions = useMemo(() => {
         const current = (formData.country || '').trim();
-        if (current && !COUNTRIES.includes(current)) {
-            return [current, ...COUNTRIES];
+        if (current && !countryOptions.some((o) => o.value === current)) {
+            return [{ value: current, label: current, code: '', currencyCode: '', currencySymbol: '' }, ...countryOptions];
         }
-        return COUNTRIES;
-    }, [formData.country]);
+        return countryOptions;
+    }, [formData.country, countryOptions]);
 
     useEffect(() => {
         if (id) {
             loadVenue();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
     const loadVenue = async () => {
@@ -132,7 +156,7 @@ const CreateVenue = () => {
                 city: data.city || '',
                 state: data.state || '',
                 postal_code: data.postal_code || '',
-                country: data.country || resolveCountryDefault(),
+                country: data.country || platformCountry,
                 capacity: data.capacity || '',
                 contact_phone: data.contact_phone || '',
                 contact_email: data.contact_email || '',
@@ -323,9 +347,9 @@ const CreateVenue = () => {
                                     },
                                 }}
                             >
-                                {countryOptions.map((country) => (
-                                    <MenuItem key={country} value={country}>
-                                        {country}
+                                {countryMenuOptions.map((country) => (
+                                    <MenuItem key={country.value} value={country.value}>
+                                        {country.label}
                                     </MenuItem>
                                 ))}
                             </StyledTextField>

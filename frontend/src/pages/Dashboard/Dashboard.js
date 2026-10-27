@@ -14,6 +14,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
+import { useSettings } from '../../context/SettingsContext';   // ✅ NEW
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -32,7 +33,8 @@ const C = appTheme.colors;
 const F = appTheme.fonts;
 
 // ============================================
-// MONEY HELPERS
+// MONEY HELPERS (pure numeric only — no currency symbol here)
+// Formatting now comes from SettingsContext via `useSettings().formatMoney`.
 // ============================================
 const getNetAmount = (booking) => {
     if (!booking) return 0;
@@ -44,12 +46,12 @@ const getNetAmount = (booking) => {
 
 const getGrossAmount = (booking) => Number(booking?.total_amount || 0);
 const getDiscountAmount = (booking) => Number(booking?.discount_applied || 0);
-const formatMoney = (value) => `₹${Number(value || 0).toFixed(2)}`;
 
 // ============================================
 // AMOUNT DISPLAY
 // ============================================
 const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
+    const { formatMoney } = useSettings();
     const net = getNetAmount(booking);
     const gross = getGrossAmount(booking);
     const discount = getDiscountAmount(booking);
@@ -288,14 +290,14 @@ const MobileBookingCard = ({ booking, onClick }) => {
 // ============================================
 const Dashboard = () => {
     const { user } = useAuth();
-    const { role } = useRole();                       // ✅ ENHANCEMENT
+    const { role } = useRole();
+    const { formatMoney } = useSettings();   // ✅ currency-aware formatter
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // ✅ ENHANCEMENT: admins, superadmins, and organizers see
-    // "View Details" on popular events; regular users see the booking
-    // CTA that routes them straight into the wizard.
+    // Admins, superadmins, and organizers see "View Details" on popular
+    // events; regular users see the booking CTA that routes them into the wizard.
     const canManageEvents =
         role === ROLES.ADMIN ||
         role === ROLES.SUPER_ADMIN ||
@@ -399,10 +401,10 @@ const Dashboard = () => {
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
                         title="Revenue"
-                        value={`₹${stats.total_revenue?.toLocaleString() || 0}`}
+                        value={formatMoney(stats.total_revenue || 0)}
                         icon={<MoneyIcon sx={{ color: C.warning, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.warning}
-                        subtitle={`Today: ₹${stats.today_revenue?.toLocaleString() || 0}`}
+                        subtitle={`Today: ${formatMoney(stats.today_revenue || 0)}`}
                     />
                 </Grid>
             </Grid>
@@ -501,7 +503,7 @@ const Dashboard = () => {
 
             {/* ==================================================
                 POPULAR EVENTS
-                ✅ ENHANCEMENT: role-aware CTA + routing.
+                Role-aware CTA + routing.
                 - Admin / Organizer → "View Details" → /app/events/:id
                 - Regular User      → "Book Tickets" / "Register" → wizard
                ================================================== */}

@@ -5,8 +5,8 @@
 # ----------------------------------------------------------------------------
 # `Event.status` is a denormalized field kept in sync by a Celery Beat
 # task (`ticket_bookings.tasks.update_completed_events`). Between the
-# moment an event's `end_date` passes and the next run of that task,
-# the DB value can be stale.
+# moment an `end_date` passes and the next run of that task, the DB value
+# can be stale.
 #
 # EVERY read path that exposes event status to a user MUST go through
 # `Event.get_effective_status()` — not the raw `event.status` field.
@@ -59,6 +59,8 @@ class UserProfile(models.Model):
     country = models.CharField(max_length=100, default='India')
     postal_code = models.CharField(max_length=20, blank=True)
     is_organizer = models.BooleanField(default=False)
+    # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
+    last_active = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -749,3 +751,57 @@ class EventTemplate(models.Model):
 
     def __str__(self):
         return f"{self.event.title} - {self.template_type.name}: {self.name}"
+
+# ============================================================
+# SYSTEM SETTINGS — deployment-wide configuration (singleton)
+# ============================================================
+class SystemSettings(models.Model):
+    """
+    Singleton row holding deployment-wide configuration.
+
+    Only one row may exist. `pk` is forced to 1 on save.
+
+    Readable by any authenticated user (the booking wizard, emails,
+    and ticket PDFs all need `currency_symbol` / `currency_locale`).
+    Writable only by superusers.
+    """
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+
+    # ---- Currency ----
+    currency_code = models.CharField(max_length=3, default='HKD')
+    currency_symbol = models.CharField(max_length=8, default='HK$')
+    currency_locale = models.CharField(max_length=16, default='en-HK')
+
+    # ---- Region ----
+    country = models.CharField(max_length=100, default='Hong Kong')
+    country_code = models.CharField(max_length=2, default='HK')
+    default_timezone = models.CharField(max_length=64, default='Asia/Hong_Kong')
+
+    # ---- Organisation / branding ----
+    org_name = models.CharField(max_length=200, blank=True, default='TicketVolt')
+    org_email = models.EmailField(blank=True, default='')
+    org_logo_url = models.URLField(blank=True, default='')
+    email_from_name = models.CharField(max_length=120, blank=True, default='')
+
+    # ---- Audit ----
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+',
+    )
+
+    class Meta:
+        verbose_name = 'System Settings'
+        verbose_name_plural = 'System Settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return f'SystemSettings({self.currency_code}, {self.country})'

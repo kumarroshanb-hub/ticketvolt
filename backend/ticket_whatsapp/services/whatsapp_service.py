@@ -15,6 +15,7 @@ import re
 # ✅ Canonical signed QR payload builder — single source of truth.
 # Every QR sent via WhatsApp must use this so the scanner accepts it.
 from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
+from ticket_bookings.utils.money import format_money
 
 logger = logging.getLogger(__name__)
 
@@ -358,7 +359,6 @@ class WhatsAppService:
                 tier_groups[tier_name] = []
             tier_groups[tier_name].append(ticket)
 
-        # Build ticket details section
         ticket_section = ""
         for tier_name, tier_tickets in tier_groups.items():
             ticket_section += f"\n*{tier_name}*: {len(tier_tickets)} ticket(s)"
@@ -366,24 +366,24 @@ class WhatsAppService:
                 attendee = ticket.attendee_name or 'Guest'
                 ticket_section += f"\n  • *{ticket.unique_code}* - {attendee}"
 
-        # Build slot information
         slot_info = ""
         if booking.session:
             slot_info = f"\n*Slot:* {booking.session.start_time.strftime('%I:%M %p')} - {booking.session.end_time.strftime('%I:%M %p')}"
 
-        # Slot allocation message if available
         allocation_msg = ""
         if hasattr(booking, 'metadata') and booking.metadata:
             allocation_msg = booking.metadata.get('slot_allocation_message', '')
             if allocation_msg:
                 allocation_msg = f"\n*Allocation:* {allocation_msg}"
 
-        # Venue information
         venue_info = ""
         if booking.event and booking.event.venue:
             venue_info = f"\n*Venue:* {booking.event.venue.name}"
             if booking.event.venue.city:
                 venue_info += f"\n*Location:* {booking.event.venue.city}, {booking.event.venue.state or ''}"
+
+        # ✅ FIX: money is formatted server-side, single source of truth.
+        total_display = format_money(booking.total_amount)
 
         message = f"""
 🎫 *Booking Confirmation!*
@@ -395,7 +395,7 @@ class WhatsAppService:
 
 *Tickets Details:*{ticket_section}
 
-*Total Amount:* ₹{booking.total_amount}
+*Total Amount:* {total_display}
 
 📌 *Next Steps:*
 1. Share your booking reference at the venue
@@ -569,7 +569,6 @@ Thank you for choosing TicketVolt! 🎉
 
     @classmethod
     def _format_ticket_message(cls, booking, tickets):
-        """Legacy text-only ticket formatting (kept for compatibility)."""
         ticket_details = ""
         for i, ticket in enumerate(tickets, 1):
             ticket_details += f"""
@@ -581,7 +580,7 @@ Thank you for choosing TicketVolt! 🎉
 │ Attendee: {ticket.attendee_name or booking.customer_name}
 └──────────────
 """
-
+        total_display = format_money(booking.total_amount)
         message = f"""
 🎫 *Ticket Confirmation*
 
@@ -590,7 +589,7 @@ Thank you for choosing TicketVolt! 🎉
 *Venue:* {booking.event.venue.name if booking.event and booking.event.venue else 'TBD'}
 
 *Booking Reference:* {booking.booking_reference}
-*Total Amount:* ₹{booking.total_amount}
+*Total Amount:* {total_display}
 
 {ticket_details}
 
@@ -600,7 +599,7 @@ Thank you for choosing TicketVolt! 🎉
 3. Enjoy the event! 🎉
 
 🔐 *Keep this message and PDF safe.*
-    """
+"""
         return message
 
     # ============ OTHER METHODS ============

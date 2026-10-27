@@ -7,6 +7,7 @@ import {
     Notifications as NotificationsIcon,
     Palette as PaletteIcon,
     Language as LanguageIcon,
+    Settings as SettingsIcon,          // ← NEW: icon for the Platform tab
     Save as SaveIcon,
 } from '@mui/icons-material';
 import {
@@ -29,6 +30,8 @@ import {
     PrimaryButton,
 } from '../../components/Common';
 import { theme } from '../../theme/tokens';
+import PlatformSettingsTab from './PlatformSettingsTab';
+import { ROLES } from '../../constants';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -217,13 +220,21 @@ const switchSx = {
 // TABS CONFIG
 // ============================================
 
-const settingsTabs = [
-    { id: 'profile', label: 'Profile', icon: <PersonIcon /> },
-    { id: 'security', label: 'Security', icon: <SecurityIcon /> },
-    { id: 'notifications', label: 'Notifications', icon: <NotificationsIcon /> },
-    { id: 'appearance', label: 'Appearance', icon: <PaletteIcon /> },
-    { id: 'language', label: 'Language', icon: <LanguageIcon /> },
-];
+// The 5 user-facing tabs are always present.
+// The Platform tab is appended only for admin / superadmin.
+const getSettingsTabs = (canManagePlatform) => {
+    const tabs = [
+        { id: 'profile', label: 'Profile', icon: <PersonIcon /> },
+        { id: 'security', label: 'Security', icon: <SecurityIcon /> },
+        { id: 'notifications', label: 'Notifications', icon: <NotificationsIcon /> },
+        { id: 'appearance', label: 'Appearance', icon: <PaletteIcon /> },
+        { id: 'language', label: 'Language', icon: <LanguageIcon /> },
+    ];
+    if (canManagePlatform) {
+        tabs.push({ id: 'platform', label: 'Platform', icon: <SettingsIcon /> });
+    }
+    return tabs;
+};
 
 // ============================================
 // MAIN COMPONENT
@@ -233,6 +244,10 @@ const Settings = () => {
     const { user, updateUser } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+    // Platform settings tab is for admin / superadmin only.
+    const canManagePlatform =
+        user?.role === ROLES.SUPER_ADMIN;
 
     const [activeTab, setActiveTab] = useState('profile');
     const [loading, setLoading] = useState(false);
@@ -254,6 +269,14 @@ const Settings = () => {
         newPassword: '',
         confirmPassword: '',
     });
+
+    // Defensive: if the user's role changes (or a non-admin lands here with
+    // a stale activeTab='platform' value), fall back to 'profile'.
+    useEffect(() => {
+        if (activeTab === 'platform' && !canManagePlatform) {
+            setActiveTab('profile');
+        }
+    }, [activeTab, canManagePlatform]);
 
     // ✅ Memoized so the effect dep list is stable and React doesn't re-warn.
     const loadSettings = useCallback(async () => {
@@ -687,6 +710,27 @@ const Settings = () => {
                     </SettingsSection>
                 );
 
+            case 'platform':
+                // Render the platform tab only if the user is allowed to see it.
+                // (Tab is already hidden from the sidebar for non-admins, but
+                // this guards against a stale `activeTab` value after role
+                // changes without a full page reload.)
+                if (!canManagePlatform) {
+                    return (
+                        <SettingsSection>
+                            <h2>Access denied</h2>
+                            <p className="description">
+                                You do not have permission to view platform settings.
+                            </p>
+                        </SettingsSection>
+                    );
+                }
+                return (
+                    <SettingsSection>
+                        <PlatformSettingsTab />
+                    </SettingsSection>
+                );
+
             default:
                 return <div>Select a tab</div>;
         }
@@ -705,7 +749,7 @@ const Settings = () => {
 
             <SettingsGrid>
                 <SettingsSidebar>
-                    {settingsTabs.map((tab) => (
+                    {getSettingsTabs(canManagePlatform).map((tab) => (
                         <SettingsTab
                             key={tab.id}
                             active={activeTab === tab.id}

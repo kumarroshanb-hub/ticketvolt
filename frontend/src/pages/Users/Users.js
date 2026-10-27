@@ -1,5 +1,5 @@
 // frontend/src/pages/Users/Users.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useMediaQuery, useTheme } from '@mui/material';
@@ -31,10 +31,10 @@ import {
 } from '@mui/icons-material';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useSettings } from '../../context/SettingsContext';
 import { theme } from '../../theme/tokens';
 import {
     COUNTRY_OPTIONS,
-    DEFAULT_COUNTRY,
     normaliseCountryName,
 } from '../../config/countries';
 
@@ -972,10 +972,6 @@ const formatDate = (date) => {
     });
 };
 
-// ✅ NEW: phone helpers — mirror the backend's UserRegistrationSerializer
-// validator so client and server agree on what "valid" means.
-//   • Optional leading "+"
-//   • 7–15 digits after stripping spaces, dashes, parens, dots
 const PHONE_RE = /^\+?[0-9]{7,15}$/;
 
 const normalisePhone = (raw) =>
@@ -984,22 +980,41 @@ const normalisePhone = (raw) =>
 const isValidPhone = (raw) => PHONE_RE.test(normalisePhone(raw));
 
 // ============================================================================
-// MODAL COMPONENTS — HOISTED TO MODULE SCOPE
+// ✅ FIX [USERS-PAGE-COUNT]: normalise the /users/ response.
+//
+// Before: the code did `setUsers(data.results || data)` and
+// `setTotalPages(Math.ceil((data.count || 0) / 10))`. When the backend
+// returned a bare array (because DEFAULT_PAGINATION_CLASS is None),
+// `data.count` was undefined, so `totalPages` became NaN and the
+// pagination footer rendered "Showing 8 of NaN users" with no page
+// buttons.
+//
+// After: we tolerate BOTH shapes. If the response is `{count, results}`
+// we use them; if it's a bare array we derive count from the array
+// length. `totalPages` is clamped to >= 1 so the footer always renders
+// correctly.
 // ============================================================================
-// ✅ FIX: these four modals used to be declared *inside* the `Users`
-// component body. React treats an inline-declared function component as
-// a NEW component type on every parent render, so it unmounts and
-// remounts the entire subtree on every keystroke. That destroyed focus
-// (and, with `autoFocus` on the "New Password" field, actively stole
-// focus back from the "Confirm Password" field on the second keystroke).
-//
-// Hoisting them to module scope gives them a stable identity, so a
-// parent re-render just re-renders them in place.
-//
-// We also move the password state *into* ResetPasswordModal so the
-// controlled inputs' owner never changes. This is belt-and-braces:
-// hoisting alone fixes the remount; owning the state in the modal
-// removes an extra reason for the browser to reset the caret.
+const normalizeUserResponse = (data) => {
+    if (Array.isArray(data)) {
+        return { users: data, count: data.length };
+    }
+    if (data && Array.isArray(data.results)) {
+        return {
+            users: data.results,
+            count: typeof data.count === 'number' ? data.count : data.results.length,
+        };
+    }
+    if (data && typeof data === 'object') {
+        const values = Object.values(data).filter(
+            (u) => u && u.id && u.username,
+        );
+        return { users: values, count: values.length };
+    }
+    return { users: [], count: 0 };
+};
+
+// ============================================================================
+// MODAL COMPONENTS — HOISTED TO MODULE SCOPE
 // ============================================================================
 
 const UserFormModal = ({
@@ -1009,12 +1024,11 @@ const UserFormModal = ({
     onClose,
     onSubmit,
     currentUser,
+    countryOptions,
+    defaultCountry,
 }) => {
     const isEdit = mode === 'edit';
 
-    // ✅ NEW: inline validation for the mobile field on CREATE only.
-    // Edit mode stays permissive so legacy profiles with blank phones
-    // can still be saved.
     const phoneInvalid =
         !isEdit && formData.phone && !isValidPhone(formData.phone);
 
@@ -1057,9 +1071,6 @@ const UserFormModal = ({
                                 />
                             </FormGroup>
 
-                            {/* ✅ NEW: Mobile Number, moved to sit next to
-                                Email. Required on create; optional on edit.
-                                Inline red border + FormError when invalid. */}
                             <FormGroup>
                                 <FormLabel>
                                     Mobile Number {isEdit ? '(optional)' : '*'}
@@ -1191,22 +1202,13 @@ const UserFormModal = ({
                                 />
                             </FormGroup>
 
-                            {/*
-                            ✅ FIX: full ISO-3166 country list (249 entries). The previous
-                            hardcoded 6-item dropdown could not represent any country outside
-                            {India, USA, UK, Australia, Canada, Other}, so an admin editing a
-                            user whose profile had e.g. "Germany" saw a blank select and could
-                            silently overwrite it. Now every country is selectable, and the
-                            value stored is the display name (matching what the backend and
-                            existing rows already hold).
-                            */}
                             <FormGroup>
                                 <FormLabel>Country</FormLabel>
                                 <FormSelect
-                                    value={normaliseCountryName(formData.country) || DEFAULT_COUNTRY}
+                                    value={normaliseCountryName(formData.country) || defaultCountry}
                                     onChange={(e) => setFormData({ ...formData, country: e.target.value })}
                                 >
-                                    {COUNTRY_OPTIONS.map(({ value, label }) => (
+                                    {countryOptions.map(({ value, label }) => (
                                         <option key={value} value={value}>{label}</option>
                                     ))}
                                 </FormSelect>
@@ -1403,18 +1405,6 @@ const DeleteUserModal = ({ user, onClose, onConfirm }) => {
     );
 };
 
-// ============================================================================
-// ✅ FIX: ResetPasswordModal now owns its own field state.
-//   - `user` prop is read once for display.
-//   - `newPassword` / `confirmPassword` are local state.
-//   - The "Reset" action calls `onReset(userId, newPassword)`.
-//   - `busy` comes from the parent, which flips to true while the API
-//     call is in flight and back to false when it resolves or rejects.
-//
-// This means: as the user types in either field, no parent state
-// changes, so the parent doesn't re-render, so the input the user is
-// currently typing in is never unmounted. Focus is preserved.
-// ============================================================================
 const ResetPasswordModal = ({ user, onClose, onReset, busy }) => {
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -1506,8 +1496,24 @@ const ResetPasswordModal = ({ user, onClose, onReset, busy }) => {
 
 const Users = () => {
     const { user: currentUser } = useAuth();
+    const { settings } = useSettings();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+    // ✅ Platform-level default country — dropdowns follow it.
+    const platformCountry = useMemo(() => {
+        const normalised = normaliseCountryName(settings?.country);
+        return normalised || 'Hong Kong';
+    }, [settings?.country]);
+
+    // ✅ Prefer the platform country at the top of the list so it's
+    // immediately visible when creating a new user.
+    const countryOptions = useMemo(() => {
+        if (!platformCountry) return COUNTRY_OPTIONS;
+        const preferred = COUNTRY_OPTIONS.filter((o) => o.value === platformCountry);
+        const rest = COUNTRY_OPTIONS.filter((o) => o.value !== platformCountry);
+        return [...preferred, ...rest];
+    }, [platformCountry]);
 
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -1518,6 +1524,7 @@ const Users = () => {
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     const [totalUsers, setTotalUsers] = useState(0);
+    const PAGE_SIZE = 10;
 
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
@@ -1525,8 +1532,6 @@ const Users = () => {
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [selectedUser, setSelectedUser] = useState(null);
 
-    // ✅ FIX: only user + open live in the parent now.
-    // The password fields live inside ResetPasswordModal.
     const [resetTarget, setResetTarget] = useState(null);
     const [actionBusy, setActionBusy] = useState(false);
 
@@ -1543,10 +1548,19 @@ const Users = () => {
         whatsapp_number: '',
         city: '',
         state: '',
-        country: DEFAULT_COUNTRY,   // was: 'India'
+        country: platformCountry,
         role: 'user',
         is_active: true,
     });
+
+    // ✅ Keep the form's country in sync when the platform default
+    // changes (e.g. superadmin just saved Settings and navigated here).
+    useEffect(() => {
+        setFormData((prev) => {
+            if (prev.country && prev.country !== '') return prev;
+            return { ...prev, country: platformCountry };
+        });
+    }, [platformCountry]);
 
     const [stats, setStats] = useState({
         total: 0,
@@ -1561,26 +1575,38 @@ const Users = () => {
         try {
             const params = {
                 page: page,
-                page_size: 10,
+                page_size: PAGE_SIZE,
                 search: search || undefined,
                 role: roleFilter !== 'all' ? roleFilter : undefined,
                 is_active: statusFilter !== 'all' ? statusFilter === 'active' : undefined,
             };
 
             const response = await api.get('/users/', { params });
-            const data = response.data;
 
-            setUsers(data.results || data);
-            setTotalPages(Math.ceil((data.count || 0) / 10));
-            setTotalUsers(data.count || 0);
+            // ✅ FIX [USERS-PAGE-COUNT]: tolerate both paginated and
+            // bare-array responses. `totalPages` is always a real
+            // number >= 1, so the footer never renders NaN.
+            const { users: pageUsers, count } = normalizeUserResponse(response.data);
 
-            setStats(prev => ({
-                ...prev,
-                total: data.count || 0,
-                active: (data.results || data).filter(u => u.is_active).length,
-                organizers: (data.results || data).filter(u => u.role === 'organizer').length,
-                admins: (data.results || data).filter(u => ['admin', 'super_admin'].includes(u.role)).length,
-            }));
+            setUsers(pageUsers);
+            setTotalUsers(count);
+            setTotalPages(Math.max(1, Math.ceil(count / PAGE_SIZE)));
+
+            // ✅ FIX [USERS-STATS]: keep the stat cards honest.
+            // When the backend paginates, `pageUsers` is only one
+            // page — we cannot derive "active users on the whole
+            // dataset" from it. The cards show:
+            //   • Total Users → `count` from the server (accurate).
+            //   • Active / Organizers / Admins → counts from the
+            //     current page (same as before, but now they are
+            //     derived from the normalised array, and they no
+            //     longer write stale values from a previous page).
+            setStats({
+                total: count,
+                active: pageUsers.filter((u) => u.is_active).length,
+                organizers: pageUsers.filter((u) => u.role === 'organizer').length,
+                admins: pageUsers.filter((u) => ['admin', 'super_admin'].includes(u.role)).length,
+            });
         } catch (err) {
             console.error('Error loading users:', err);
             setError(err.response?.data?.detail || 'Failed to load users');
@@ -1588,7 +1614,7 @@ const Users = () => {
         } finally {
             setLoading(false);
         }
-    }, [page, search, roleFilter, statusFilter]);
+    }, [page, search, roleFilter, statusFilter, PAGE_SIZE]);
 
     useEffect(() => {
         loadUsers();
@@ -1633,7 +1659,7 @@ const Users = () => {
             whatsapp_number: '',
             city: '',
             state: '',
-            country: DEFAULT_COUNTRY,   // was: 'India'
+            country: platformCountry,
             role: 'user',
             is_active: true,
         });
@@ -1652,7 +1678,6 @@ const Users = () => {
             return;
         }
 
-        // ✅ NEW: Mobile number is mandatory on create.
         if (!formData.phone?.trim()) {
             toast.error('Mobile number is required');
             return;
@@ -1663,9 +1688,6 @@ const Users = () => {
         }
 
         try {
-            // ✅ NEW: Send a normalised phone so the stored value matches
-            // the format used by the backend validator. WhatsApp defaults
-            // to the phone when the admin left it blank.
             const payload = {
                 ...formData,
                 phone: normalisePhone(formData.phone),
@@ -1774,9 +1796,6 @@ const Users = () => {
         setResetTarget(null);
     };
 
-    // ✅ FIX: the modal calls this with (userId, newPassword).
-    // We never touch the password fields from here — that's the modal's
-    // state — so a keystroke can never re-render `Users` mid-typing.
     const handleResetPassword = async (userId, newPassword) => {
         if (!userId) return;
         setActionBusy(true);
@@ -1808,14 +1827,8 @@ const Users = () => {
             whatsapp_number: user.profile?.whatsapp_number || '',
             city: user.profile?.city || '',
             state: user.profile?.state || '',
-            // ✅ FIX: normalise whatever the DB has. If the stored value
-            // is "IN" or "IND" or "united states", it becomes "India" /
-            // "United States" so the <select> highlights correctly. If
-            // it's empty or unknown, fall back to DEFAULT_COUNTRY. We do
-            // NOT overwrite the DB here — this is display-only until the
-            // admin saves.
             country:
-                normaliseCountryName(user.profile?.country) || DEFAULT_COUNTRY,
+                normaliseCountryName(user.profile?.country) || platformCountry,
             role: user.role || 'user',
             is_active: user.is_active !== false,
         });
@@ -2235,6 +2248,8 @@ const Users = () => {
                     onClose={() => setShowCreateModal(false)}
                     onSubmit={handleCreateUser}
                     currentUser={currentUser}
+                    countryOptions={countryOptions}
+                    defaultCountry={platformCountry}
                 />
             )}
 
@@ -2249,6 +2264,8 @@ const Users = () => {
                     }}
                     onSubmit={handleUpdateUser}
                     currentUser={currentUser}
+                    countryOptions={countryOptions}
+                    defaultCountry={platformCountry}
                 />
             )}
 
@@ -2278,9 +2295,6 @@ const Users = () => {
                 />
             )}
 
-            {/* ✅ ResetPasswordModal is now a stable, module-scope
-                component. Its password state lives inside it, so typing
-                there never re-renders `Users` and never steals focus. */}
             {resetTarget && (
                 <ResetPasswordModal
                     user={resetTarget}

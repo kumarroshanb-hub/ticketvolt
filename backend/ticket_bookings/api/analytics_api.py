@@ -23,6 +23,7 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from ..utils.money import format_money
 
 from ..models import Event, Booking, Ticket, CheckInLog, Venue, Discount
 from ..managers import (
@@ -261,7 +262,7 @@ class AnalyticsView(APIView):
             # ============================================================
             # 8. Response — field names match Analytics.js exactly.
             # ============================================================
-                        # Free vs paid split (canonical — uses managers.py status groups)
+            # Free vs paid split (canonical — uses managers.py status groups)
             free_registrations = bookings_qs.filter(
                 event__event_flow=Event.EventFlow.FREE_REGISTRATION,
             ).total_count()
@@ -269,6 +270,12 @@ class AnalyticsView(APIView):
             paid_bookings = bookings_qs.exclude(
                 event__event_flow=Event.EventFlow.FREE_REGISTRATION,
             ).total_count()
+
+            # Display-formatted revenue values alongside raw values.
+            for row in revenue_data:
+                row['revenue_display'] = format_money(row['revenue'])
+            for row in top_events:
+                row['revenue_display'] = format_money(row['revenue'])
 
             return Response({
                 'timeframe': timeframe,
@@ -281,11 +288,13 @@ class AnalyticsView(APIView):
                     'total_events': total_events,
                     'total_bookings': total_bookings,
                     'total_revenue': total_revenue,
+                    'total_revenue_display': format_money(total_revenue),
                     'total_tickets': total_tickets,
                     'total_checkins': total_checkins,
                     'conversion_rate': conversion_rate,
                     'windowed_bookings': windowed_bookings,
                     'windowed_revenue': windowed_revenue,
+                    'windowed_revenue_display': format_money(windowed_revenue),
                     'total_venues': Venue.objects.filter(is_active=True).count(),
                     'total_discounts': Discount.objects.filter(is_active=True).count(),
                     'free_registrations': free_registrations,

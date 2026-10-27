@@ -11,6 +11,7 @@ import muiTheme from './theme/muiTheme';
 import { GlobalStyle } from './styles/global';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SettingsProvider } from './context/SettingsContext';
 import { RoleProvider, useRole } from './context/RoleContext';
 
 import Layout from './components/Layout';
@@ -18,8 +19,8 @@ import Layout from './components/Layout';
 // Public pages
 import Landing from './pages/Landing/Landing';
 import GuestOrRegisterGate from './pages/Gate/GuestOrRegisterGate';
-import ForgotPassword from './pages/ForgotPassword/ForgotPassword'; // ✅ ADDED
-import ResetPassword from './pages/ResetPassword/ResetPassword';     // ✅ ADDED
+import ForgotPassword from './pages/ForgotPassword/ForgotPassword';
+import ResetPassword from './pages/ResetPassword/ResetPassword';
 
 // Authenticated app pages
 import Dashboard from './pages/Dashboard/Dashboard';
@@ -39,6 +40,7 @@ import Register from './pages/Register/Register';
 import Users from './pages/Users/Users';
 import Profile from './pages/Profile';
 import CancellationPolicies from './pages/CancellationPolicies';
+import ActiveSessions from './pages/ActiveSessions';
 
 import { ROLES } from './constants';
 
@@ -83,6 +85,16 @@ const PublicOnlyRoute = ({ children }) => {
     if (loading) return <LoadingSpinner />;
 
     if (isAuthenticated) {
+        // ✅ FIX [PUBLIC-ONLY-TOKEN-GUARD]: if isAuthenticated says
+        // "true" but the token is gone (another tab wiped it, or a
+        // stale cache survived a crash), don't bounce — let /login
+        // render. The user can log in normally.
+        const token =
+            localStorage.getItem('token') ||
+            sessionStorage.getItem('token');
+        if (!token) {
+            return children;
+        }
         const target = location.state?.from || '/app/dashboard';
         return <Navigate to={target} replace />;
     }
@@ -153,8 +165,8 @@ const AppRoutes = () => {
                     </PublicOnlyRoute>
                 }
             />
-            
-            {/* ✅ ADDED: Password Reset Routes (Public) */}
+
+            {/* Password Reset Routes (Public) */}
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
 
@@ -311,10 +323,25 @@ const AppRoutes = () => {
                         </RoleBasedRoute>
                     }
                 />
+
+                {/* ✅ FIX: Active Sessions lives INSIDE the /app shell
+                    (renders with Sidebar + Navbar), and its full
+                    resolved path is /app/active-sessions — matching
+                    the Sidebar NavLink. SuperAdmin-only. */}
+                <Route
+                    path="active-sessions"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.SUPER_ADMIN]}
+                        >
+                            <ActiveSessions />
+                        </RoleBasedRoute>
+                    }
+                />
             </Route>
 
             {/* ============================================
-                FALLBACK
+                FALLBACK — must stay LAST
                ============================================ */}
             <Route
                 path="*"
@@ -358,26 +385,28 @@ const App = () => {
                 <GlobalStyle />
                 <Router>
                     <AuthProvider>
-                        <RoleProvider>
-                            <ToastContainer
-                                position={toastPosition}
-                                autoClose={5000}
-                                hideProgressBar={false}
-                                newestOnTop={false}
-                                closeOnClick
-                                rtl={false}
-                                pauseOnFocusLoss
-                                draggable
-                                pauseOnHover
-                                theme="dark"
-                                style={{
-                                    fontSize: toastPosition === 'top-center' ? '0.875rem' : '1rem',
-                                    width: toastPosition === 'top-center' ? 'calc(100% - 32px)' : 'auto',
-                                    maxWidth: toastPosition === 'top-center' ? '420px' : 'none',
-                                }}
-                            />
-                            <AppRoutes />
-                        </RoleProvider>
+                        <SettingsProvider>
+                            <RoleProvider>
+                                <ToastContainer
+                                    position={toastPosition}
+                                    autoClose={5000}
+                                    hideProgressBar={false}
+                                    newestOnTop={false}
+                                    closeOnClick
+                                    rtl={false}
+                                    pauseOnFocusLoss
+                                    draggable
+                                    pauseOnHover
+                                    theme="dark"
+                                    style={{
+                                        fontSize: toastPosition === 'top-center' ? '0.875rem' : '1rem',
+                                        width: toastPosition === 'top-center' ? 'calc(100% - 32px)' : 'auto',
+                                        maxWidth: toastPosition === 'top-center' ? '420px' : 'none',
+                                    }}
+                                />
+                                <AppRoutes />
+                            </RoleProvider>
+                        </SettingsProvider>
                     </AuthProvider>
                 </Router>
             </MuiThemeProvider>

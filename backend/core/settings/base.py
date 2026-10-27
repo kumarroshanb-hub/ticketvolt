@@ -144,6 +144,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'axes.middleware.AxesMiddleware',             # Must be last
+    # ✅ NEW: Track JWT user activity for Active Sessions dashboard
+    'core.middleware.ActivityTrackingMiddleware',
 ]
 
 # Axes must be first in the authentication backends list.
@@ -252,9 +254,38 @@ REST_FRAMEWORK = {
 # ============================================
 # JWT — SHORT-LIVED, ROTATING, BLACKLISTED
 # ============================================
+#
+# ✅ Absolute session cap.
+#
+# Previously REFRESH_TOKEN_LIFETIME was timedelta(days=7). Combined with
+# ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION, that meant a user who
+# kept a tab open (and made any request periodically) could stay logged
+# in for up to 7 days. That is a server-side lifetime, not an idle
+# timeout — but it is the hard ceiling we want to enforce on top of the
+# client's idle timer.
+#
+# Now:
+#   • 12 hours by default (env-overridable via JWT_REFRESH_HOURS).
+#   • Overridable per-deployment without a code change:
+#       JWT_REFRESH_HOURS=8
+#   • Minimum 1 hour, maximum 168 (7 days) — refuse obviously-wrong
+#     values at boot so a typo can't silently give everyone a 1-minute
+#     session or a year-long one.
+#
+# The client-side idle timer (AuthContext.js) still does the "tab sat
+# open untouched" logout at 30 min. This setting only controls the
+# absolute cap the server will accept.
+# ============================================
+_JWT_REFRESH_HOURS = int(os.environ.get('JWT_REFRESH_HOURS', '12'))
+if not (1 <= _JWT_REFRESH_HOURS <= 168):
+    raise ImproperlyConfigured(
+        f"JWT_REFRESH_HOURS must be between 1 and 168 (got {_JWT_REFRESH_HOURS}). "
+        "12 is the recommended default."
+    )
+
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'REFRESH_TOKEN_LIFETIME': timedelta(hours=_JWT_REFRESH_HOURS),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,

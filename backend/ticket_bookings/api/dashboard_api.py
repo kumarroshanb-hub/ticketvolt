@@ -139,6 +139,7 @@ class DashboardStatsView(APIView):
                     ),
                     'event_title': b.event.title if b.event else 'N/A',
                     'event_id': str(b.event.id) if b.event else None,
+                    'ticket_count': b.tickets.count(), # 👈 ADD THIS LINE
                 }
                 for b in recent
             ]

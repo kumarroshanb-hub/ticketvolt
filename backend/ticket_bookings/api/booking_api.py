@@ -12,6 +12,7 @@ from django.core.mail import send_mail, EmailMultiAlternatives
 from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.template.loader import render_to_string
+from ..utils.money import format_money
 from django.utils.html import strip_tags
 import logging
 import uuid
@@ -74,6 +75,30 @@ def _safe_send_email(email_message, context_label=''):
     except Exception as exc:
         logger.exception(f"📧 [{context_label}] SMTP FAILURE: {type(exc).__name__}: {exc} | Recipients: {email_message.to}")
         return False
+
+
+def _with_total_display(serializer_data, booking):
+    """
+    Attach `total_display` to a serialized booking dict for downstream
+    consumers (WhatsApp gateway, email templates, frontend) that must not
+    format money themselves.
+
+    `serializer_data` may be a DRF `ReturnDict` (dict subclass) — we copy it
+    into a plain dict so callers can freely `.pop()` / add keys without
+    mutating the serializer's cached representation.
+    """
+    data = dict(serializer_data)
+    try:
+        data['total_display'] = format_money(booking.total_amount)
+    except Exception:
+        # format_money should never fail, but never break the response
+        # path because of a money-formatting edge case.
+        logger.exception(
+            "Failed to format total_display for booking %s; falling back to string",
+            getattr(booking, 'booking_reference', '<unknown>'),
+        )
+        data['total_display'] = f"₹{booking.total_amount}"
+    return data
 
 
 BULK_ACTION_MAP = {
@@ -386,7 +411,8 @@ class BookingViewSet(viewsets.ModelViewSet):
             )
 
         response_serializer = self.get_serializer(booking)
-        payload = dict(response_serializer.data)
+        # ✅ FIX: attach server-formatted total for downstream consumers.
+        payload = _with_total_display(response_serializer.data, booking)
         payload['registration_passes'] = [
             {
                 'id': str(t.id),
@@ -797,7 +823,9 @@ class BookingViewSet(viewsets.ModelViewSet):
                 self.perform_create(serializer)
 
                 headers = self.get_success_headers(serializer.data)
-                response = Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+                # ✅ FIX: attach server-formatted total for downstream consumers.
+                response_data = _with_total_display(serializer.data, serializer.instance)
+                response = Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
 
                 if locked_session is not None and response.status_code >= 400:
                     locked_session.booked = max(0, locked_session.booked - requested_count)
@@ -813,6 +841,21 @@ class BookingViewSet(viewsets.ModelViewSet):
             logger.exception("Booking creation failed; transaction rolled back")
             raise
 
+    # ============================================================
+    # RETRIEVE
+    # ============================================================
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Return a single booking with `total_display` attached.
+
+        Overriding `retrieve` (rather than modifying the serializer) keeps
+        the permission semantics identical: `self.get_object()` still runs
+        the same per-user / per-organizer check.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(_with_total_display(serializer.data, instance))
+
     def _update_event_counts(self, event):
         if not event:
             return False
@@ -825,6 +868,8 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def _send_partial_cancellation_email(self, booking, *, cancelled_ids, refund_amount, fully_cancelled):
         from django.core.mail import EmailMultiAlternatives
+        from ..utils.money import format_money
+
         if fully_cancelled:
             subject = f'Booking Cancelled - {booking.booking_reference}'
             intro = 'Your entire booking has been cancelled.'
@@ -834,7 +879,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         html = f"""
         <p>Hi {booking.customer_name},</p>
         <p>{intro}</p>
-        <p><strong>Refund amount:</strong> ₹{refund_amount}</p>
+        <p><strong>Refund amount:</strong> {format_money(refund_amount)}</p>
         <p><strong>Booking reference:</strong> {booking.booking_reference}</p>
         <p>If you did not request this, please contact support.</p>
         """
@@ -983,7 +1028,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             if prior:
                 return Response({'valid': False, 'reason': 'This code is only for first-time buyers.'}, status=status.HTTP_200_OK)
         if discount.min_order_amount and subtotal < Decimal(str(discount.min_order_amount)):
-            return Response({'valid': False, 'reason': f'Minimum order ₹{discount.min_order_amount} required.'}, status=status.HTTP_200_OK)
+            return Response({'valid': False, 'reason': f'Minimum order {format_money(discount.min_order_amount)} required.'}, status=status.HTTP_200_OK)
         if discount.min_ticket_count and ticket_count < discount.min_ticket_count:
             return Response({'valid': False, 'reason': f'Minimum {discount.min_ticket_count} tickets required.'}, status=status.HTTP_200_OK)
 
@@ -1944,10 +1989,16 @@ class BookingViewSet(viewsets.ModelViewSet):
         from django.core.mail import EmailMultiAlternatives
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
+        from ..utils.money import format_money
         try:
             if not booking.customer_email:
                 return {'success': False, 'message': 'No customer email on booking.'}
-            context = {'booking': booking, 'event': booking.event, 'customer_name': booking.customer_name}
+            context = {
+                'booking': booking,
+                'event': booking.event,
+                'customer_name': booking.customer_name,
+                'total_display': format_money(booking.total_amount),
+            }
             html_content = render_to_string('emails/booking_confirmation.html', context)
             text_content = strip_tags(html_content)
             subject = f'✅ Payment Received - {booking.booking_reference}'
@@ -2156,14 +2207,26 @@ class BookingViewSet(viewsets.ModelViewSet):
         from django.core.mail import EmailMultiAlternatives
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
+        from ..utils.money import format_money
         try:
             if not booking.customer_email:
                 return {'success': False, 'error': 'No customer email.'}
-            context = {'booking': booking, 'event': booking.event, 'customer_name': booking.customer_name, 'refund_amount': booking.refund_amount or 0}
+            refund_amount = booking.refund_amount or 0
+            context = {
+                'booking': booking,
+                'event': booking.event,
+                'customer_name': booking.customer_name,
+                'refund_amount': refund_amount,
+                'refund_display': format_money(refund_amount),
+            }
             try:
                 html_content = render_to_string('emails/booking_refunded.html', context)
             except Exception:
-                html_content = (f'<p>Hi {booking.customer_name},</p><p>Your booking <strong>{booking.booking_reference}</strong> has been refunded.</p><p>Refund amount: ₹{booking.refund_amount or 0}</p>')
+                html_content = (
+                    f'<p>Hi {booking.customer_name},</p>'
+                    f'<p>Your booking <strong>{booking.booking_reference}</strong> has been refunded.</p>'
+                    f'<p>Refund amount: {format_money(refund_amount)}</p>'
+                )
             text_content = strip_tags(html_content)
             subject = f'💸 Booking Refunded - {booking.booking_reference}'
             email = EmailMultiAlternatives(subject=subject, body=text_content, from_email=settings.DEFAULT_FROM_EMAIL, to=[booking.customer_email])

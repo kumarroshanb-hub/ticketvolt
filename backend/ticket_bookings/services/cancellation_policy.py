@@ -368,11 +368,9 @@ def _to_decimal(value) -> Decimal:
 def describe_policy(rules: dict) -> list[str]:
     """
     Return a list of human-readable lines describing the policy.
-
-    Useful for admin preview, booking confirmation emails, and the
-    events UI. Returns [] for a malformed policy so callers don't need
-    to guard against exceptions.
+    Uses the deployment currency symbol from SystemSettings.
     """
+    from ..utils.money import format_money
     try:
         validate_cancellation_rules(rules)
     except ValidationError:
@@ -384,7 +382,6 @@ def describe_policy(rules: dict) -> list[str]:
         pct = tier['refund_percent']
         label = tier.get('label')
 
-        # Format the window in the friendliest unit available.
         if hours == 0:
             window = 'Any time before the event'
         elif hours < 24:
@@ -408,7 +405,7 @@ def describe_policy(rules: dict) -> list[str]:
 
     fee = rules.get('cancellation_fee', 0)
     if fee and fee > 0:
-        lines.append(f'A flat cancellation fee of ₹{fee} applies to any refund.')
+        lines.append(f'A flat cancellation fee of {format_money(fee)} applies to any refund.')
 
     if not rules.get('allow_partial_cancellation', False):
         lines.append('Cancellation is all-or-nothing — the whole booking must be cancelled.')

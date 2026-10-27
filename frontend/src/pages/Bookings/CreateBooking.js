@@ -39,6 +39,7 @@ import {
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
+import { useSettings } from '../../context/SettingsContext';
 import api from '../../services/api';
 import { PageContainer, PageHeader, PageTitle, PrimaryButton, OutlineButton } from '../../components/Common';
 import { ROLES } from '../../constants';
@@ -83,6 +84,33 @@ const formatVenueAddress = (venue) => {
     return parts.join(', ');
 };
 
+// ✅ NEW: render a date/time in the platform timezone (settings.default_timezone).
+// Falls back to the browser's locale rendering if the timezone is missing or
+// invalid, so a misconfigured setting can never crash the wizard.
+const formatPlatformTime = (value, timezone, options = {}) => {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+
+    const baseOptions = {
+        hour: '2-digit',
+        minute: '2-digit',
+        ...options,
+    };
+
+    if (timezone) {
+        try {
+            return new Intl.DateTimeFormat(undefined, {
+                ...baseOptions,
+                timeZone: timezone,
+            }).format(date);
+        } catch {
+            // Invalid timezone — fall through to locale rendering.
+        }
+    }
+    return date.toLocaleTimeString([], baseOptions);
+};
+
 const BOOKING_ERROR_FIELD_KEYS = [
     'customer_email',
     'customer_name',
@@ -121,6 +149,7 @@ const CreateBooking = () => {
     const location = useLocation();
     const { user, isAuthenticated } = useAuth();
     const { role } = useRole();
+    const { formatMoney, settings } = useSettings();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -128,6 +157,9 @@ const CreateBooking = () => {
     const isOrganizer = role === ROLES.ORGANIZER;
     const canManageEvents = isAdmin || isOrganizer;
     const isRegularUser = role === ROLES.USER;
+
+    // ✅ Platform timezone used for every slot time in the wizard.
+    const platformTimezone = settings?.default_timezone;
 
     const [activeStep, setActiveStep] = useState(STEP_KEYS.EVENT);
     const [loading, setLoading] = useState(false);
@@ -408,7 +440,10 @@ const CreateBooking = () => {
                     event_id: selectedEvent?.id,
                     subtotal: totalAmount,
                     ticket_count: totalTickets,
-                });
+                },
+                    // ✅ FIX [GUEST-FLOW]: same opt-out as validateDiscount.
+                    { skipAuthRedirect: !isAuthenticated }
+            );
                 if (cancelled) return;
 
                 if (res.data?.valid) {
@@ -587,12 +622,20 @@ const CreateBooking = () => {
                 event_id: selectedEvent?.id,
                 subtotal: totalAmount,
                 ticket_count: totalTickets,
-            });
+            },
+            // ✅ FIX [GUEST-FLOW]: allow guests to attempt this
+            // without a hard redirect to /login. The endpoint may
+            // be AllowAny on the backend (discount codes are
+            // commonly public); if it's not, the guest sees a
+            // toast and can proceed without a discount instead of
+            // being kicked out of the wizard.
+            { skipAuthRedirect: !isAuthenticated }
+        );
 
             const data = res.data;
             if (data.valid) {
                 setAppliedDiscount(data);
-                toast.success(`Discount applied: −₹${Number(data.discount_amount).toFixed(2)}`);
+                toast.success(`Discount applied: −${formatMoney(data.discount_amount)}`);
             } else {
                 setAppliedDiscount(null);
                 toast.error(data.reason || 'Invalid discount code');
@@ -927,8 +970,6 @@ const CreateBooking = () => {
                         const remaining = session.capacity - session.booked;
                         const isAvailable = remaining > 0;
                         const isSelected = selectedSession?.id === session.id;
-                        const startTime = new Date(session.start_time);
-                        const endTime = new Date(session.end_time);
 
                         return (
                             <Grid item xs={12} sm={6} md={4} key={session.id}>
@@ -957,15 +998,10 @@ const CreateBooking = () => {
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ color: 'text.primary' }}>
                                                     🕐{' '}
-                                                    {startTime.toLocaleTimeString([], {
-                                                        hour: '2-digit',
-                                                        minute: '2-digit',
-                                                    })}{' '}
+                                                    {/* ✅ FIX: render in platform timezone */}
+                                                    {formatPlatformTime(session.start_time, platformTimezone)}{' '}
                                                     -{' '}
-                                                    {endTime.toLocaleTimeString([], {
-                                                        hour: '2-digit',
-                                                        minute: '2-digit',
-                                                    })}
+                                                    {formatPlatformTime(session.end_time, platformTimezone)}
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ color: isAvailable ? '#16a34a' : '#ef4444' }}>
                                                     {isAvailable
@@ -1027,15 +1063,10 @@ const CreateBooking = () => {
                         <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}>
                             <Typography variant="body2" sx={{ color: 'success.main' }}>
                                 ✅ Allocated Slot: Slot #{sessions.indexOf(selectedSession) + 1} (
-                                {new Date(selectedSession.start_time).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                })}{' '}
+                                {/* ✅ FIX: render in platform timezone */}
+                                {formatPlatformTime(selectedSession.start_time, platformTimezone)}{' '}
                                 -{' '}
-                                {new Date(selectedSession.end_time).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                })})
+                                {formatPlatformTime(selectedSession.end_time, platformTimezone)})
                             </Typography>
                         </Box>
                     )}
@@ -1135,15 +1166,10 @@ const CreateBooking = () => {
                         {' • '}
                         <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} />
                         Slot:{' '}
-                        {new Date(selectedSession.start_time).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                        })}{' '}
+                        {/* ✅ FIX: render in platform timezone */}
+                        {formatPlatformTime(selectedSession.start_time, platformTimezone)}{' '}
                         -{' '}
-                        {new Date(selectedSession.end_time).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                        })}
+                        {formatPlatformTime(selectedSession.end_time, platformTimezone)}
                     </span>
                 )}
             </Alert>
@@ -1181,7 +1207,7 @@ const CreateBooking = () => {
                                         {tier.name}
                                     </Typography>
                                     <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        ₹{parseFloat(tier.price).toFixed(2)} each • {available} available
+                                        {formatMoney(tier.price)} each • {available} available
                                     </Typography>
                                 </Box>
                                 <Box display="flex" alignItems="center" gap={2}>
@@ -1223,7 +1249,7 @@ const CreateBooking = () => {
                                 🎫 {totalTickets} ticket(s) selected
                             </Typography>
                             <Typography variant="h6" sx={{ color: 'primary.main' }}>
-                                Total: ₹{totalAmount.toFixed(2)}
+                                Total: {formatMoney(totalAmount)}
                             </Typography>
                         </Box>
                     )}
@@ -1297,8 +1323,8 @@ const CreateBooking = () => {
                             {appliedDiscount?.valid && (
                                 <Box sx={{ mt: 2, p: 1.5, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}>
                                     <Typography variant="body2" sx={{ color: 'success.dark', fontWeight: 600 }}>
-                                        ✅ {appliedDiscount.code} applied — you save ₹
-                                        {Number(appliedDiscount.discount_amount).toFixed(2)}
+                                        ✅ {appliedDiscount.code} applied — you save{' '}
+                                        {formatMoney(appliedDiscount.discount_amount)}
                                     </Typography>
                                 </Box>
                             )}
@@ -1309,7 +1335,7 @@ const CreateBooking = () => {
                                         New total
                                     </Typography>
                                     <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 700 }}>
-                                        ₹{netAmount.toFixed(2)}
+                                        {formatMoney(netAmount)}
                                     </Typography>
                                 </Box>
                             )}
@@ -1605,15 +1631,10 @@ const CreateBooking = () => {
                             {selectedSession && (
                                 <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                                     <strong>Slot:</strong>{' '}
-                                    {new Date(selectedSession.start_time).toLocaleTimeString([], {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                    })}{' '}
+                                    {/* ✅ FIX: render in platform timezone */}
+                                    {formatPlatformTime(selectedSession.start_time, platformTimezone)}{' '}
                                     -{' '}
-                                    {new Date(selectedSession.end_time).toLocaleTimeString([], {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                    })}
+                                    {formatPlatformTime(selectedSession.end_time, platformTimezone)}
                                 </Typography>
                             )}
                             {slotPreferences.length > 0 && (
@@ -1727,7 +1748,7 @@ const CreateBooking = () => {
                                                 {attendees[index]?.name && ` - ${attendees[index].name}`}
                                             </Typography>
                                             <Typography variant="body2" sx={{ color: 'text.primary', flexShrink: 0 }}>
-                                                ₹{ticket.price.toFixed(2)}
+                                                {formatMoney(ticket.price)}
                                             </Typography>
                                         </Box>
                                     ))}
@@ -1739,7 +1760,7 @@ const CreateBooking = () => {
                                             Subtotal ({totalTickets} ticket{totalTickets === 1 ? '' : 's'})
                                         </Typography>
                                         <Typography variant="body2" sx={{ color: 'text.primary' }}>
-                                            ₹{totalAmount.toFixed(2)}
+                                            {formatMoney(totalAmount)}
                                         </Typography>
                                     </Box>
 
@@ -1749,7 +1770,7 @@ const CreateBooking = () => {
                                                 Discount ({appliedDiscount.code})
                                             </Typography>
                                             <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>
-                                                −₹{Number(appliedDiscount.discount_amount).toFixed(2)}
+                                                −{formatMoney(appliedDiscount.discount_amount)}
                                             </Typography>
                                         </Box>
                                     )}
@@ -1767,7 +1788,7 @@ const CreateBooking = () => {
                                             Total
                                         </Typography>
                                         <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>
-                                            ₹{netAmount.toFixed(2)}
+                                            {formatMoney(netAmount)}
                                         </Typography>
                                     </Box>
                                 </>
@@ -1818,14 +1839,14 @@ const CreateBooking = () => {
                     )}
                     <PageTitle variant="h4">
                         {/* ✅ FIX: Change title for guests */}
-                        {isAuthenticated 
-                            ? (isRegularUser ? 'Book Tickets' : 'New Booking') 
+                        {isAuthenticated
+                            ? (isRegularUser ? 'Book Tickets' : 'New Booking')
                             : 'Register for Event'}
                     </PageTitle>
                 </Box>
                 <Box display="flex" gap={1}>
                     {/* ✅ FIX: Change button text and behavior for guests */}
-                    <OutlineButton 
+                    <OutlineButton
                         onClick={() => {
                             if (isAuthenticated) {
                                 navigate('/app/bookings');
@@ -1866,8 +1887,7 @@ const CreateBooking = () => {
                     <Box>{getStepContent(safeActiveStep)}</Box>
                 )}
 
-                <Box
-                    sx={{
+                <Box                    sx={{
                         display: 'flex',
                         flexDirection: isMobile ? 'column-reverse' : 'row',
                         justifyContent: 'space-between',

@@ -23,6 +23,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ROLES } from '../../constants';
 import { theme } from '../../theme/tokens';
 import Logo from '../Logo';
+import DevicesIcon from '@mui/icons-material/Devices';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -385,6 +386,13 @@ const MENU_ITEMS = {
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
+    activeSessions: {
+    path: '/app/active-sessions',
+    icon: <DevicesIcon />,          // import DevicesIcon from '@mui/icons-material'
+    label: 'Active Sessions',
+    roles: [ROLES.SUPER_ADMIN],     // SuperAdmin only
+    section: 'admin',
+},
 };
 
 const SECTION_LABELS = {

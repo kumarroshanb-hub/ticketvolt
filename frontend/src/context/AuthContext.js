@@ -1,5 +1,5 @@
 // frontend/src/context/AuthContext.js
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import api from '../services/api';
 
 const AuthContext = createContext();
@@ -12,9 +12,21 @@ export const useAuth = () => {
     return context;
 };
 
-// ✅ Helper: write the user blob to whichever storages are active.
-//    We keep both localStorage and sessionStorage in sync because
-//    legacy code paths read from either one.
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const IDLE_TIMEOUT_MS =
+    (parseInt(process.env.REACT_APP_IDLE_TIMEOUT_MINUTES, 10) || 30) * 60 * 1000;
+
+const REFRESH_CAP_ENFORCED = true;
+const EXPIRY_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+
+const IDLE_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 const persistUser = (userData) => {
     if (!userData) {
         localStorage.removeItem('user');
@@ -26,14 +38,71 @@ const persistUser = (userData) => {
     sessionStorage.setItem('user', serialized);
 };
 
+/**
+ * Clear all auth material from both storages and the axios header.
+ * Does NOT navigate — callers decide whether to redirect.
+ */
+const clearAuthStorage = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('refresh_token');
+    sessionStorage.removeItem('user');
+    delete api.defaults.headers.common['Authorization'];
+};
+
+/**
+ * Decode a JWT's payload (second segment) without verifying the signature.
+ * Returns null on any parse error. We only use this to read `exp`.
+ */
+const decodeJwtPayload = (token) => {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    try {
+        const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+        return JSON.parse(atob(padded));
+    } catch {
+        return null;
+    }
+};
+
+/**
+ * Returns true if the refresh token exists AND its `exp` claim is in the past.
+ * Returns false if the token is missing, has no `exp`, or is still valid.
+ */
+const isRefreshTokenExpired = () => {
+    const token =
+        localStorage.getItem('refresh_token') ||
+        sessionStorage.getItem('refresh_token');
+    if (!token) return false;
+    const payload = decodeJwtPayload(token);
+    if (!payload || typeof payload.exp !== 'number') return false;
+    return payload.exp * 1000 <= Date.now();
+};
+
+// ---------------------------------------------------------------------------
+// Provider
+// ---------------------------------------------------------------------------
+
 export const AuthProvider = ({ children }) => {
     const [user, setUserState] = useState(null);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
 
-    // ✅ Central setter — keeps state + storage + api header in sync.
-    //    Exposed via context so a profile-save page can push a fresh
-    //    user without forcing a re-login.
+    // Refs so the idle-timer effect can read the latest values without
+    // being recreated on every render.
+    const isAuthenticatedRef = useRef(isAuthenticated);
+    useEffect(() => {
+        isAuthenticatedRef.current = isAuthenticated;
+    }, [isAuthenticated]);
+
+    // -----------------------------------------------------------------------
+    // Central setters
+    // -----------------------------------------------------------------------
+
     const setUser = useCallback((userData) => {
         if (!userData) {
             setUserState(null);
@@ -46,15 +115,10 @@ export const AuthProvider = ({ children }) => {
         setIsAuthenticated(true);
     }, []);
 
-    // ✅ Merge a partial patch into the existing user (and storage).
-    //    Convenience for pages that only know a couple of fields —
-    //    e.g. after the user edits their phone on a profile form.
     const patchUser = useCallback((patch) => {
         setUserState((prev) => {
             if (!prev) return prev;
             const next = { ...prev, ...patch };
-            // If the caller passes a nested `profile`, shallow-merge it
-            // rather than clobbering the whole object.
             if (patch && typeof patch.profile === 'object' && prev.profile) {
                 next.profile = { ...prev.profile, ...patch.profile };
             }
@@ -63,20 +127,59 @@ export const AuthProvider = ({ children }) => {
         });
     }, []);
 
-    // ✅ On mount: restore from storage, then re-hydrate from /me/.
+    // -----------------------------------------------------------------------
+    // Logout
+    // -----------------------------------------------------------------------
+    const logout = useCallback(({ redirect = true, reason = null } = {}) => {
+        if (reason) {
+            console.warn(`🔓 Logging out (${reason})`);
+        } else {
+            console.log('🔓 Logging out...');
+        }
+        clearAuthStorage();
+        setUserState(null);
+        setIsAuthenticated(false);
+        if (redirect && typeof window !== 'undefined') {
+            const path = window.location.pathname;
+            if (path !== '/login' && path !== '/register') {
+                window.location.href = '/login';
+            }
+        }
+    }, []);
+
+    // -----------------------------------------------------------------------
+    // ✅ FIX [REDIRECT-LOOP-2]: listen for the interceptor's force-logout
+    // event. api.js dispatches this BEFORE navigating to /login, so we
+    // clear React state synchronously.
+    // -----------------------------------------------------------------------
+    useEffect(() => {
+        const handleForceLogout = () => {
+            console.warn('🔓 Force-logout event received from API interceptor');
+            clearAuthStorage();
+            setUserState(null);
+            setIsAuthenticated(false);
+        };
+        window.addEventListener('auth:force-logout', handleForceLogout);
+        return () => {
+            window.removeEventListener('auth:force-logout', handleForceLogout);
+        };
+    }, []);
+
+    // -----------------------------------------------------------------------
+    // Bootstrap
+    // -----------------------------------------------------------------------
     //
-    //    Why the second step matters:
-    //      • Users who logged in BEFORE the backend started returning
-    //        `phone` / `whatsapp_number` have a stale `user` blob in
-    //        localStorage. Without the /me/ call, CreateBooking's
-    //        prefill effect reads `user.phone === undefined` and does
-    //        nothing.
-    //      • Any profile edit (admin changes a phone, user updates
-    //        their address) is invisible until the next login unless
-    //        we refresh.
+    // ✅ FIX [BOOTSTRAP-VERIFY-BEFORE-PAINT]:
+    // Do NOT paint the cached user optimistically. Paint only after
+    // /auth/me/ succeeds. Painting first opens a window where
+    // isAuthenticated=true is visible to PublicOnlyRoute on /login
+    // (the interceptor's redirect lands there after the 401), causing
+    // the visible redirect loop.
     //
-    //    The cached blob is still painted immediately so there's no
-    //    flash of "logged out" while the request is in flight.
+    // The cost: a brief spinner instead of an instant paint of
+    // possibly-stale user data. Worth it — the alternative is a
+    // redirect loop.
+    // -----------------------------------------------------------------------
     useEffect(() => {
         let cancelled = false;
 
@@ -85,9 +188,6 @@ export const AuthProvider = ({ children }) => {
                 const token =
                     localStorage.getItem('token') ||
                     sessionStorage.getItem('token');
-                const storedUser =
-                    localStorage.getItem('user') ||
-                    sessionStorage.getItem('user');
 
                 if (!token) {
                     if (!cancelled) {
@@ -97,55 +197,39 @@ export const AuthProvider = ({ children }) => {
                     return;
                 }
 
-                // Fast path: paint the cached user (may be stale).
-                if (storedUser) {
-                    try {
-                        const cached = JSON.parse(storedUser);
-                        if (!cancelled) {
-                            setUserState(cached);
-                            setIsAuthenticated(true);
-                        }
-                        console.log('✅ Auth restored from storage');
-                    } catch (parseErr) {
-                        console.error('Error parsing cached user:', parseErr);
-                        localStorage.removeItem('user');
-                        sessionStorage.removeItem('user');
+                // Cheap pre-check: if the refresh token is already past
+                // its `exp`, don't even attempt /auth/me/ — we're logged out.
+                if (isRefreshTokenExpired()) {
+                    console.warn('⚠️ Refresh token expired on bootstrap — logging out');
+                    clearAuthStorage();
+                    if (!cancelled) {
+                        setUserState(null);
+                        setIsAuthenticated(false);
                     }
+                    return;
                 }
 
-                // Authoritative refresh: pick up new fields
-                // (phone / whatsapp_number / is_organizer / profile)
-                // added since the last login, and any profile edits.
+                // Authoritative verify: /auth/me/. Paint user ONLY on success.
                 api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
                 try {
                     const res = await api.get('/auth/me/');
                     if (cancelled) return;
-                    // ✅ Store the FULL /me/ body — it now includes
-                    //    phone, whatsapp_number, is_organizer, profile.
                     setUser(res.data);
-                    console.log('✅ Auth refreshed from /auth/me/');
-                    console.log('👤 User:', res.data);
+                    console.log('✅ Auth verified via /auth/me/');
                 } catch (refreshErr) {
-                    // 401 → token expired; 403 → forbidden. Either way,
-                    // fall back to whatever we had cached (the interceptor
-                    // will redirect on the next real request). Don't nuke
-                    // the session on a transient network blip.
                     const status = refreshErr.response?.status;
                     console.warn(
                         '⚠️ /auth/me/ refresh failed',
                         status || refreshErr.message
                     );
-                    if (status === 401) {
-                        // Token is definitively dead — clear it.
-                        localStorage.removeItem('token');
-                        sessionStorage.removeItem('token');
-                        localStorage.removeItem('refresh_token');
-                        sessionStorage.removeItem('refresh_token');
-                        delete api.defaults.headers.common['Authorization'];
-                        if (!cancelled) {
-                            setUserState(null);
-                            setIsAuthenticated(false);
-                        }
+                    // 401 → dead token; clear everything.
+                    // Any other error (500, network) → also treat as
+                    // logged out for this render, but still clear so
+                    // the next mount starts clean.
+                    clearAuthStorage();
+                    if (!cancelled) {
+                        setUserState(null);
+                        setIsAuthenticated(false);
                     }
                 }
             } catch (error) {
@@ -157,10 +241,83 @@ export const AuthProvider = ({ children }) => {
 
         bootstrap();
         return () => { cancelled = true; };
-        // setUser is stable (useCallback with no deps).
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // -----------------------------------------------------------------------
+    // Hard-cap check — the refresh token's `exp` claim.
+    // -----------------------------------------------------------------------
+    useEffect(() => {
+        if (!isAuthenticated || !REFRESH_CAP_ENFORCED) return undefined;
+
+        const check = () => {
+            if (!isAuthenticatedRef.current) return;
+            if (isRefreshTokenExpired()) {
+                logout({ reason: 'refresh token expired (hard cap)' });
+            }
+        };
+
+        check();
+        const id = setInterval(check, EXPIRY_CHECK_INTERVAL_MS);
+        return () => clearInterval(id);
+    }, [isAuthenticated, logout]);
+
+    // -----------------------------------------------------------------------
+    // Idle timeout.
+    // -----------------------------------------------------------------------
+    useEffect(() => {
+        if (!isAuthenticated) return undefined;
+        if (IDLE_TIMEOUT_MS <= 0) return undefined;
+
+        let idleTimer = null;
+        let lastActivity = Date.now();
+
+        const scheduleLogout = () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                const elapsed = Date.now() - lastActivity;
+                if (elapsed >= IDLE_TIMEOUT_MS) {
+                    logout({ reason: `idle for ${Math.round(elapsed / 60000)} min` });
+                } else {
+                    scheduleLogout();
+                }
+            }, IDLE_TIMEOUT_MS);
+        };
+
+        const onActivity = () => {
+            lastActivity = Date.now();
+            scheduleLogout();
+        };
+
+        const onVisibilityChange = () => {
+            if (document.visibilityState !== 'visible') return;
+            const elapsed = Date.now() - lastActivity;
+            if (elapsed >= IDLE_TIMEOUT_MS) {
+                logout({ reason: `idle for ${Math.round(elapsed / 60000)} min (background)` });
+                return;
+            }
+            lastActivity = Date.now();
+            scheduleLogout();
+        };
+
+        IDLE_EVENTS.forEach((evt) =>
+            window.addEventListener(evt, onActivity, { passive: true })
+        );
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        scheduleLogout();
+
+        return () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            IDLE_EVENTS.forEach((evt) =>
+                window.removeEventListener(evt, onActivity)
+            );
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [isAuthenticated, logout]);
+
+    // -----------------------------------------------------------------------
+    // Login
+    // -----------------------------------------------------------------------
     const login = useCallback(async (email, password) => {
         console.log('🔐 Login function called with:', { email, password: password ? '***' : 'missing' });
 
@@ -174,10 +331,6 @@ export const AuthProvider = ({ children }) => {
             if (response.data && response.data.access) {
                 const { access, refresh, user: userData } = response.data;
 
-                // ✅ Store the FULL user object returned by LoginView.
-                //    It now includes phone / whatsapp_number /
-                //    is_organizer, so CreateBooking can prefill without
-                //    an extra /me/ call.
                 const userToStore = {
                     ...userData,
                     role: userData?.role || 'user',
@@ -188,7 +341,6 @@ export const AuthProvider = ({ children }) => {
                 sessionStorage.setItem('token', access);
                 sessionStorage.setItem('refresh_token', refresh || 'mock-refresh-token');
 
-                // Central setter handles storage + state + header.
                 setUser(userToStore);
                 api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
 
@@ -219,28 +371,15 @@ export const AuthProvider = ({ children }) => {
         }
     }, [setUser]);
 
-    const logout = useCallback(() => {
-        console.log('🔓 Logging out...');
-        localStorage.removeItem('token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
-        sessionStorage.removeItem('token');
-        sessionStorage.removeItem('refresh_token');
-        sessionStorage.removeItem('user');
-        delete api.defaults.headers.common['Authorization'];
-        setUserState(null);
-        setIsAuthenticated(false);
-        window.location.href = '/';
-    }, []);
-
+    // -----------------------------------------------------------------------
+    // Context value
+    // -----------------------------------------------------------------------
     const value = {
         user,
         isAuthenticated,
         loading,
         login,
         logout,
-        // ✅ Exposed so profile-save pages can push fresh data into
-        //    context without a re-login.
         setUser,
         patchUser,
     };

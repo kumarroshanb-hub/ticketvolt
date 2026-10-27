@@ -15,6 +15,7 @@ import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
+import { useSettings } from '../../context/SettingsContext';
 import eventService from '../../services/eventService';
 import { theme as appTheme } from '../../theme/tokens';
 
@@ -458,6 +459,7 @@ const EventCard = ({
 }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
+    const { formatMoney, settings } = useSettings();
 
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
@@ -648,13 +650,10 @@ const EventCard = ({
                             ) : priceDisplay.kind === 'free' ? (
                                 <span className="free-label">Free</span>
                             ) : priceDisplay.kind === 'number' ? (
-                                <>
-                                    <span className="currency">₹</span>
-                                    {priceDisplay.value.toLocaleString()}
-                                </>
+                                <span>{formatMoney(priceDisplay.value)}</span>
                             ) : (
                                 <>
-                                    <span className="currency">₹</span>
+                                    <span className="currency">{settings.currency_symbol}</span>
                                     —
                                 </>
                             )}
@@ -703,7 +702,7 @@ const EventCard = ({
                                                 <Box textAlign="right">
                                                     <div className="price">
                                                         {tierPrice > 0
-                                                            ? `₹${tierPrice.toFixed(2)}`
+                                                            ? formatMoney(tierPrice)
                                                             : 'Free'}
                                                     </div>
                                                     {isTierSoldOut && <div className="sold-out">Sold out</div>}

@@ -9,8 +9,11 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { scannerApi } from '../services/api';
+import { theme } from '../theme';
+
+const C = theme.colors;
+const F = theme.fonts;
 
 // ---------------------------------------------------------------------------
 // Map one backend /checkin/history/ row into the shape this screen renders.
@@ -117,6 +120,10 @@ export default function HistoryScreen({ navigation }) {
   };
 
   const renderItem = (item, index) => {
+    // Three-way mapping matching the web admin's StatusChip semantics:
+    //   success   → green
+    //   cancelled → amber  (undone, not a failure)
+    //   failed    → red    (default for anything unknown)
     const isSuccess = item.status === 'success';
     const isCancelled = item.status === 'cancelled';
 
@@ -169,21 +176,21 @@ export default function HistoryScreen({ navigation }) {
 
   if (loading) {
     return (
-      <LinearGradient colors={['#0a0a0f', '#1a0a2e']} style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>📋 AUTH LOG</Text>
           <Text style={styles.subtitle}>Loading records...</Text>
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#00f5ff" />
+          <ActivityIndicator size="large" color={C.secondary} />
           <Text style={styles.loadingText}>Fetching authentication history...</Text>
         </View>
-      </LinearGradient>
+      </View>
     );
   }
 
   return (
-    <LinearGradient colors={['#0a0a0f', '#1a0a2e']} style={styles.container}>
+    <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>📋 AUTH LOG</Text>
         <View style={styles.headerRow}>
@@ -201,8 +208,8 @@ export default function HistoryScreen({ navigation }) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#00f5ff"
-            colors={['#00f5ff']}
+            tintColor={C.secondary}
+            colors={[C.secondary]}
           />
         }
         showsVerticalScrollIndicator={false}
@@ -213,12 +220,7 @@ export default function HistoryScreen({ navigation }) {
             <Text style={styles.emptyTitle}>Connection Error</Text>
             <Text style={styles.emptySubtitle}>{error}</Text>
             <TouchableOpacity style={styles.actionButton} onPress={loadHistory}>
-              <LinearGradient
-                colors={['rgba(0,245,255,0.15)', 'rgba(0,102,255,0.15)']}
-                style={styles.actionButtonGradient}
-              >
-                <Text style={styles.actionButtonText}>⟳ RETRY</Text>
-              </LinearGradient>
+              <Text style={styles.actionButtonText}>⟳ RETRY</Text>
             </TouchableOpacity>
           </View>
         ) : history.length === 0 ? (
@@ -232,41 +234,33 @@ export default function HistoryScreen({ navigation }) {
               <Text style={styles.tip}>🔗 Check API connection in Settings</Text>
             </View>
             <TouchableOpacity style={styles.actionButton} onPress={onRefresh}>
-              <LinearGradient
-                colors={['rgba(0,245,255,0.15)', 'rgba(0,102,255,0.15)']}
-                style={styles.actionButtonGradient}
-              >
-                <Text style={styles.actionButtonText}>⟳ REFRESH</Text>
-              </LinearGradient>
+              <Text style={styles.actionButtonText}>⟳ REFRESH</Text>
             </TouchableOpacity>
           </View>
         ) : (
           history.map((item, index) => renderItem(item, index))
         )}
       </ScrollView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: C.bgDark,
   },
   header: {
     paddingTop: 20,
     paddingHorizontal: 20,
     paddingBottom: 15,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,245,255,0.1)',
+    borderBottomColor: C.bgDarkBorder,
   },
   title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#00f5ff',
-    fontFamily: 'monospace',
-    textShadowColor: '#00f5ff',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 15,
+    fontSize: 20,
+    fontFamily: F.familyBold,
+    color: C.textInverse,
     letterSpacing: 2,
   },
   headerRow: {
@@ -276,9 +270,9 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   subtitle: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     letterSpacing: 1,
   },
   statusIndicator: {
@@ -289,17 +283,14 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#00f5ff',
+    backgroundColor: C.success,
     marginRight: 6,
-    shadowColor: '#00f5ff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 5,
   },
   statusText: {
-    color: '#00f5ff',
+    color: C.textMuted,
     fontSize: 10,
-    fontFamily: 'monospace',
-    opacity: 0.7,
+    fontFamily: F.family,
+    letterSpacing: 1,
   },
   scrollContent: {
     padding: 15,
@@ -310,24 +301,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 15,
     marginBottom: 8,
-    borderRadius: 8,
+    borderRadius: theme.radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.05)',
+    borderColor: C.bgDarkBorder,
   },
   itemEven: {
-    backgroundColor: 'rgba(26,10,46,0.4)',
+    backgroundColor: C.bgDarkCard,
   },
   itemOdd: {
-    backgroundColor: 'rgba(10,10,15,0.6)',
+    backgroundColor: C.bgPrimary,
   },
   itemLeft: {
     flexDirection: 'row',
     flex: 1,
   },
   index: {
-    color: '#8899aa',
+    color: C.textLight,
     fontSize: 10,
-    fontFamily: 'monospace',
+    fontFamily: F.familyMono,
     marginRight: 12,
     paddingTop: 2,
   },
@@ -335,21 +326,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   code: {
-    color: '#00f5ff',
+    color: C.textInverse,
     fontSize: 14,
-    fontFamily: 'monospace',
+    fontFamily: F.familyMono,
     fontWeight: 'bold',
   },
   attendee: {
-    color: '#ffffff',
+    color: C.textInverse,
     fontSize: 13,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 2,
   },
   event: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 11,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 1,
   },
   itemRight: {
@@ -365,40 +356,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   badgeSuccess: {
-    backgroundColor: 'rgba(0,245,255,0.15)',
-    borderColor: 'rgba(0,245,255,0.2)',
+    backgroundColor: `${C.success}26`,
+    borderColor: `${C.success}4D`,
   },
   badgeError: {
-    backgroundColor: 'rgba(255,0,85,0.15)',
-    borderColor: 'rgba(255,0,85,0.2)',
+    backgroundColor: `${C.error}26`,
+    borderColor: `${C.error}4D`,
   },
   badgeWarning: {
-    backgroundColor: 'rgba(255,190,0,0.15)',
-    borderColor: 'rgba(255,190,0,0.2)',
+    backgroundColor: `${C.warning}26`,
+    borderColor: `${C.warning}4D`,
   },
   badgeText: {
     fontSize: 10,
-    fontFamily: 'monospace',
+    fontFamily: F.familyBold,
   },
   badgeTextSuccess: {
-    color: '#00f5ff',
+    color: C.success,
   },
   badgeTextError: {
-    color: '#ff0055',
+    color: C.error,
   },
   badgeTextWarning: {
-    color: '#ffbe00',
+    color: C.warning,
   },
   time: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 10,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 4,
   },
   device: {
-    color: 'rgba(136,153,170,0.5)',
-    fontSize: 8,
-    fontFamily: 'monospace',
+    color: C.textLight,
+    fontSize: 9,
+    fontFamily: F.family,
     marginTop: 2,
   },
   loadingContainer: {
@@ -407,9 +398,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 14,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 15,
     letterSpacing: 1,
   },
@@ -422,15 +413,15 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   emptyTitle: {
-    color: '#ffffff',
+    color: C.textInverse,
     fontSize: 18,
-    fontFamily: 'monospace',
+    fontFamily: F.familySemiBold,
     marginBottom: 5,
   },
   emptySubtitle: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 14,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     textAlign: 'center',
   },
   tipsContainer: {
@@ -438,28 +429,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tip: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginBottom: 4,
     textAlign: 'center',
   },
   actionButton: {
     marginTop: 20,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  actionButtonGradient: {
+    borderRadius: theme.radius.sm,
     paddingHorizontal: 30,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.2)',
-    borderRadius: 8,
+    borderColor: C.bgDarkBorder,
+    backgroundColor: C.bgDarkCard,
   },
   actionButtonText: {
-    color: '#00f5ff',
+    color: C.textInverse,
     fontSize: 14,
-    fontFamily: 'monospace',
+    fontFamily: F.familySemiBold,
     letterSpacing: 2,
   },
 });

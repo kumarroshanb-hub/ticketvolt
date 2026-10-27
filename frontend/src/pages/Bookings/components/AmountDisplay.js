@@ -2,16 +2,17 @@
 import React from 'react';
 import { Box, Typography } from '@mui/material';
 import { theme as appTheme } from '../../../theme/tokens';
+import { useSettings } from '../../../context/SettingsContext';
 import {
     getNetAmount,
     getGrossAmount,
     getDiscountAmount,
-    formatMoney,
 } from '../../../utils/money';
 
 const C = appTheme.colors;
 
 export const AmountDisplay = ({ booking, align = 'right', size = 'body2' }) => {
+    const { formatMoney } = useSettings();
     const net = getNetAmount(booking);
     const gross = getGrossAmount(booking);
     const discount = getDiscountAmount(booking);

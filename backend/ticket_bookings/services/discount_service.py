@@ -39,8 +39,9 @@ def validate_discount(
         raise DiscountError('This discount has expired.')
 
     if discount.min_order_amount and order_subtotal < discount.min_order_amount:
+        from ..utils.money import format_money
         raise DiscountError(
-            f'Minimum order amount of ₹{discount.min_order_amount} '
+            f'Minimum order amount of {format_money(discount.min_order_amount)} '
             f'is required for this discount.'
         )
 

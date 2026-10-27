@@ -12,20 +12,16 @@
 // This page makes the trade-off explicit:
 //
 //   • "Continue as Guest" → booking wizard with an anonymous purchaser.
-//       The customer record is created on submit (the backend already
-//       supports this via `_resolve_or_create_user_for_booking`).
 //   • "Register / Log in" → auth flow that preserves the event intent.
-//       After login/registration, the user lands on the booking wizard
-//       with the event preselected.
 //
 // Both paths preserve `?event=<id>` so the user always lands where
 // they intended.
 
 import React, { useMemo } from 'react';
-import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
+import { useNavigate, useLocation, Link as RouterLink, Navigate } from 'react-router-dom';
 import {
     Box, Container, Paper, Typography, Button, Divider,
-    Stack, useMediaQuery, useTheme,
+    Stack, useMediaQuery, useTheme, CircularProgress,
 } from '@mui/material';
 import {
     PersonAdd as PersonAddIcon,
@@ -92,17 +88,16 @@ const secondaryBtnSx = {
 const GuestOrRegisterGate = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { isAuthenticated } = useAuth();
+    // ✅ FIX [GATE-LOADING-GUARD]: read `loading` too. While auth is
+    // still bootstrapping, we don't know whether the user is a guest
+    // or a logged-in user who bookmarked this URL. Render a spinner
+    // instead of either path.
+    const { isAuthenticated, loading } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     // -------------------------------------------------------------------
     // Resolve intent
-    // -------------------------------------------------------------------
-    //   • `eventId` comes from `?event=<id>` — set by EventCard.
-    //   • `eventTitle` comes from `location.state` — nice UX if present,
-    //     but not required (user may have opened this URL directly).
-    //   • `flow` also comes from state — used to pick the right copy.
     // -------------------------------------------------------------------
     const search = new URLSearchParams(location.search);
     const eventId = search.get('event');
@@ -110,12 +105,8 @@ const GuestOrRegisterGate = () => {
     const eventTitle = location.state?.eventTitle || null;
     const flow = location.state?.flow || 'ticketed';
 
-    // A defensive check: if there's no event ID, we can't route to the
-    // wizard meaningfully. Send the user back to the landing page
-    // rather than letting them click buttons that do nothing.
     const hasIntent = Boolean(eventId);
 
-    // Where each path sends the user.
     const guestPath = useMemo(
         () => (eventId ? `/app/bookings/create?event=${eventId}` : '/app/bookings/create'),
         [eventId]
@@ -126,16 +117,35 @@ const GuestOrRegisterGate = () => {
         [eventId]
     );
 
-    // If the user is somehow already authenticated (e.g., they
-    // bookmarked this URL, or auth state finished hydrating after
-    // mount), we don't need the gate — send them to the wizard.
-    // This is also why we don't hard-redirect in an effect: doing so
-    // would cause a flash for users whose token is still loading.
-    // The `useAuth().isAuthenticated` value is only `true` once
-    // hydration finished, so this is safe.
+    // ✅ FIX [GATE-LOADING-GUARD]:
+    // Don't render either branch until auth is resolved. Otherwise we
+    // can flash the gate for a logged-in user, or (with the old
+    // optimistic bootstrap) short-circuit the guest path with a
+    // navigate() that runs on every render.
+    if (loading) {
+        return (
+            <Box
+                sx={{
+                    minHeight: '100vh',
+                    minHeight: '100dvh',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    bgcolor: C.bgPrimary,
+                }}
+            >
+                <CircularProgress />
+            </Box>
+        );
+    }
+
+    // ✅ FIX [GATE-RENDER-NAVIGATE]:
+    // Use <Navigate /> instead of calling navigate() during render.
+    // navigate() in the render body is invalid in React Router v6 —
+    // it fires on every render and produces double-navigation warnings.
+    // <Navigate> is the supported way to redirect during render.
     if (isAuthenticated) {
-        navigate(guestPath, { replace: true });
-        return null;
+        return <Navigate to={guestPath} replace />;
     }
 
     const flowCopy = {

@@ -34,6 +34,7 @@ import {
 import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
+import { useSettings } from '../../context/SettingsContext';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -175,6 +176,7 @@ const Discounts = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+    const { formatMoney, settings } = useSettings();   // ✅ NEW
 
     const [loading, setLoading] = useState(true);
     const [discounts, setDiscounts] = useState([]);
@@ -592,7 +594,7 @@ const Discounts = () => {
                                                 value:
                                                     discount.type === 'percentage'
                                                         ? `${discount.value}%`
-                                                        : `₹${discount.value}`,
+                                                        : formatMoney(discount.value),   // ✅ PATCHED
                                                 color: C.textPrimary,
                                                 weight: 700,
                                             },
@@ -767,7 +769,7 @@ const Discounts = () => {
                                             <TableCell align="center" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                                 {discount.type === 'percentage'
                                                     ? `${discount.value}%`
-                                                    : `₹${discount.value}`}
+                                                    : formatMoney(discount.value)}   {/* ✅ PATCHED */}
                                             </TableCell>
                                             <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                 {discount.used_count || 0}
@@ -854,7 +856,7 @@ const Discounts = () => {
                                     onChange={handleFormChange}
                                 >
                                     <MenuItem value="percentage">Percentage (%)</MenuItem>
-                                    <MenuItem value="fixed">Fixed Amount (₹)</MenuItem>
+                                    <MenuItem value="fixed">Fixed Amount ({settings.currency_code})</MenuItem>   {/* ✅ PATCHED */}
                                 </TextField>
                             </Grid>
                         </FormRow>
@@ -876,7 +878,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label={formData.type === 'percentage' ? 'Percentage (%)' : 'Amount (₹)'}
+                                    label={formData.type === 'percentage' ? 'Percentage (%)' : `Amount (${settings.currency_code})`}
                                     name="value"
                                     type="number"
                                     value={formData.value}
@@ -888,7 +890,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label="Min Order Amount (₹)"
+                                    label={`Min Order Amount (${settings.currency_code})`}
                                     name="min_order_amount"
                                     type="number"
                                     value={formData.min_order_amount}
@@ -899,7 +901,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label="Max Discount Amount (₹)"
+                                    label={`Max Discount Amount (${settings.currency_code})`}
                                     name="max_discount"
                                     type="number"
                                     value={formData.max_discount}

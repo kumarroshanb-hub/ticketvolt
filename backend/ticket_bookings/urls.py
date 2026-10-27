@@ -12,6 +12,7 @@ from .api.qr_api import QRCodeDownloadView, QRCodeImageView
 from .api.template_api import TemplateTypeViewSet, EventTemplateViewSet
 from .api.user_api import UserViewSet
 from .api.cancellation_policy_api import CancellationPolicyViewSet
+from .api.settings_api import SystemSettingsView
 
 # Scanner views.
 # - checkin_verify / checkin_perform: signed-payload (mobile app)
@@ -77,7 +78,8 @@ urlpatterns = [
     # Dashboard & Analytics
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
     path('analytics/', AnalyticsView.as_view(), name='analytics'),
-
+    path('settings/', SystemSettingsView.as_view(), name='system-settings'),
+    
     # QR Code URLs
     path('qr/download/<uuid:ticket_id>/', QRCodeDownloadView.as_view(), name='qr-download'),
     path('qr/image/<uuid:ticket_id>/', QRCodeImageView.as_view(), name='qr-image'),

@@ -3,6 +3,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -14,12 +15,38 @@ from django.utils.html import strip_tags
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth.tokens import default_token_generator
-from ..models import UserProfile
+from ..models import UserProfile, SystemSettings
 from .serializers import UserSerializer, UserProfileSerializer, UserRegistrationSerializer
 import logging
 import re
 
 logger = logging.getLogger(__name__)
+
+
+def _platform_country_default():
+    """
+    Read the deployment-wide country from SystemSettings so new user
+    profiles follow the platform config instead of hardcoded 'India'.
+    Never raises — falls back to 'India' if the row cannot be read.
+    """
+    try:
+        return SystemSettings.get().country or 'India'
+    except Exception:
+        return 'India'
+
+
+class UserPagination(PageNumberPagination):
+    """
+    Explicit pagination for the users list.
+
+    `core/settings/base.py` sets DEFAULT_PAGINATION_CLASS = None, so
+    without this the endpoint returns a bare array and the frontend
+    cannot read `count` — which is exactly why the Users page footer
+    showed NaN.
+    """
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -32,6 +59,7 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = User.objects.all()
     serializer_class = UserSerializer
+    pagination_class = UserPagination
 
     PROFILE_PATCH_FIELDS = (
         'phone', 'whatsapp_number', 'address', 'city', 'state',
@@ -166,7 +194,7 @@ class UserViewSet(viewsets.ModelViewSet):
                             'address': request.data.get('address', ''),
                             'city': request.data.get('city', ''),
                             'state': request.data.get('state', ''),
-                            'country': request.data.get('country', 'India'),
+                            'country': request.data.get('country') or _platform_country_default(),
                             'postal_code': request.data.get('postal_code', ''),
                         },
                     )
@@ -203,7 +231,7 @@ class UserViewSet(viewsets.ModelViewSet):
                         'address': request.data.get('address', ''),
                         'city': request.data.get('city', ''),
                         'state': request.data.get('state', ''),
-                        'country': request.data.get('country', 'India'),
+                        'country': request.data.get('country') or _platform_country_default(),
                         'postal_code': request.data.get('postal_code', ''),
                         'is_organizer': False,
                     }
@@ -260,6 +288,7 @@ class UserViewSet(viewsets.ModelViewSet):
                         'email': user.email,
                         'phone': request.data.get('phone', ''),
                         'whatsapp_number': request.data.get('whatsapp_number', ''),
+                        'country': request.data.get('country') or _platform_country_default(),
                     }
                 )
                 profile.is_organizer = True
@@ -386,7 +415,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
-            
+
             frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
             reset_link = f"{frontend_url}/reset-password/{uid}/{token}"
 
@@ -398,7 +427,7 @@ class UserViewSet(viewsets.ModelViewSet):
             <p>If you didn't request this, you can safely ignore this email.</p>
             <p>Thanks,<br>TicketVolt Team</p>
             """
-            
+
             try:
                 send_mail(
                     subject,
@@ -429,7 +458,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
         if not uidb64 or not token or not new_password:
             return Response(
-                {'error': 'Missing required fields.'}, 
+                {'error': 'Missing required fields.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -444,13 +473,13 @@ class UserViewSet(viewsets.ModelViewSet):
                 validate_password(new_password, user=user)
             except DjangoValidationError as exc:
                 return Response(
-                    {'error': ' '.join(exc.messages)}, 
+                    {'error': ' '.join(exc.messages)},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
             user.set_password(new_password)
             user.save()
-            
+
             try:
                 from axes.models import AccessAttempt
                 AccessAttempt.objects.filter(username=user.username).delete()

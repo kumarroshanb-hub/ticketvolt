@@ -43,6 +43,9 @@ Both versions are accepted on read. Only v2 is issued.
 
 The signed-payload endpoints use HMAC-SHA256 over the canonical byte
 string of {"v","type","code"} with TICKET_SIGNING_SECRET.
+
+Cron endpoints (bottom of file) exist because Render's free tier does
+not run Celery Beat. See the block-comment there for details.
 """
 import hashlib
 import hmac
@@ -1144,17 +1147,27 @@ def run_scheduled_tasks(request):
     schedule:
       • update_completed_events   — flip past events to 'completed'
       • update_sold_out_events    — flip sold-out events to 'sold_out'
+      • flush_expired_tokens      — prune expired JWT records
+                                    (OutstandingToken / BlacklistedToken)
 
-    Both are executed SYNCHRONOUSLY in the request thread. This is
+    All three are executed SYNCHRONOUSLY in the request thread. This is
     intentional: without a running Celery worker, `.delay()` would just
     queue a job that never executes. The tasks are cheap (a handful of
-    UPDATE statements) so synchronous is fine.
+    UPDATE / DELETE statements) so synchronous is fine.
+
+    Failure isolation:
+      • update_completed_events / update_sold_out_events failing → 500
+        (these are the primary job; if they break, the operator must
+        know).
+      • flush_expired_tokens failing → swallowed, reported inline in
+        the `token_flush` key. The two event-status jobs are the
+        primary job; a prune failure must not fail the whole run.
 
     Returns:
-      200 { ok: true, completed: {...}, sold_out: {...} }
+      200 { ok: true, completed: {...}, sold_out: {...}, token_flush: {...} }
       401 { error: "Unauthorized" }        — bad/missing token
       405 { error: "Method not allowed" }  — non-POST
-      500 { error: "..." }                 — task raised
+      500 { error: "..." }                 — primary task raised
     """
     # Support both `X-Cron-Token: ...` and `Authorization: Bearer ...`.
     provided = (
@@ -1176,18 +1189,33 @@ def run_scheduled_tasks(request):
     from .tasks import (
         update_completed_events,
         update_sold_out_events,
+        flush_expired_tokens,
     )
 
     try:
-        # Call the underlying functions directly. `.delay()` would need a
-        # broker + worker; we're deliberately bypassing both.
+        # Primary jobs — a failure here must surface.
         completed_result = update_completed_events()
         sold_out_result = update_sold_out_events()
+
+        # ✅ FIX [CRON]: prune expired JWT records.
+        #    Best-effort — a failure here must NOT fail the whole cron run,
+        #    because event-status updates are the primary job. The failure
+        #    is reported inline so the GitHub Actions workflow can assert
+        #    on it.
+        try:
+            token_flush_result = flush_expired_tokens()
+        except Exception as flush_exc:
+            logger.exception('flushexpiredtokens failed inside cron run')
+            token_flush_result = {
+                'status': 'error',
+                'detail': str(flush_exc),
+            }
 
         return JsonResponse({
             'ok': True,
             'completed': completed_result,
             'sold_out': sold_out_result,
+            'token_flush': token_flush_result,
         })
     except Exception as exc:
         logger.exception('Cron task run failed')

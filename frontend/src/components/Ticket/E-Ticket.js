@@ -17,6 +17,7 @@ import { Button, Box, Chip, IconButton, useMediaQuery, useTheme } from '@mui/mat
 import { toast } from 'react-toastify';
 import { theme } from '../../theme/tokens';
 import Logo from '../Logo';
+import { useSettings } from '../../context/SettingsContext';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -404,6 +405,7 @@ const Ticket = ({
     const ticketRef = useRef();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    const { formatMoney } = useSettings();
     const [currentIndex, setCurrentIndex] = useState(0);
 
     // Get all tickets (support both single ticket and array)
@@ -635,7 +637,7 @@ const Ticket = ({
                         <div className="label">
                             <LocalOfferIcon sx={{ fontSize: 14 }} /> Price
                         </div>
-                        <div className="value">₹{price?.toLocaleString() || '0'}</div>
+                        <div className="value">{formatMoney(price || 0)}</div>
                         <div className="value-sm">Tier: {tierName}</div>
                     </DetailItem>
                 </DetailGrid>

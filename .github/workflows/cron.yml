@@ -6,8 +6,8 @@
 # ---------------
 # Running Celery Beat on Render requires a paid Background Worker
 # (~$7/mo). For low-frequency maintenance tasks (mark past events as
-# completed, flip sold-out events, etc.), a free GitHub Actions
-# workflow on a cron schedule is sufficient.
+# completed, flip sold-out events, prune expired JWT records), a free
+# GitHub Actions workflow on a cron schedule is sufficient.
 #
 # How it works
 # ------------
@@ -16,7 +16,8 @@
 #    service down after ~15 min of inactivity, so we need this.
 # 2. The `trigger` job then POSTs /api/cron/run-tasks/ with the
 #    shared secret in an `X-Cron-Token` header. The Django view runs
-#    the same task functions Celery Beat would have dispatched.
+#    the same task functions Celery Beat would have dispatched, and
+#    also prunes expired JWT records.
 #
 # Repo setup required
 # -------------------
@@ -33,9 +34,13 @@ name: Scheduled Tasks
 
 on:
   schedule:
-    # Every 15 minutes. GitHub uses UTC.
+    # Hourly at :17. GitHub uses UTC.
+    # The 12-hour refresh-token cap in core/settings/base.py only needs
+    # pruning once a day or so; hourly is plenty and keeps the workflow
+    # responsive if we ever need to bump the cap lower.
+    # Off-peak minute (:17) avoids GitHub's :00 congestion.
     # Ref: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule
-    - cron: '*/15 * * * *'
+    - cron: '17 * * * *'
 
   # Allows manual triggering from the Actions tab — useful for testing.
   workflow_dispatch:
@@ -139,4 +144,14 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Tasks ran successfully"
+          # ✅ FIX [CRON]: assert that the JWT-token prune step succeeded.
+          #    The view swallows a flush failure (so a broken prune can't
+          #    fail the whole cron run), which means the job must check
+          #    explicitly — otherwise silent prune breakage would never
+          #    show up in the Actions tab.
+          if ! grep -q '"token_flush": {"status": "ok"}' /tmp/body.txt; then
+            echo "::error::token_flush reported an error — see response above."
+            exit 1
+          fi
+
+          echo "✅ Tasks ran successfully (including token_flush)"

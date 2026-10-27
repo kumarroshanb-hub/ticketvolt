@@ -6,9 +6,13 @@ import { EVENT_TYPE, EVENT_CATEGORY, EVENT_STATUS } from '../../constants';
 import { formatDateForInput } from '../../utils/datetime';
 import { resolveTimezoneDefault } from '../../utils/localeDefaults';
 
-// ✅ No hardcoded timezone. Resolved from device locale → env
-// override → product default at form-creation time.
-const makeDefaultForm = () => ({
+// ✅ No hardcoded timezone. Resolution order:
+//    1. explicit `defaultTimezone` argument (platform setting from
+//       useSettings().settings.default_timezone)
+//    2. device locale
+//    3. env override
+//    4. product fallback
+const makeDefaultForm = (defaultTimezone) => ({
     title: '',
     description: '',
     short_description: '',
@@ -18,7 +22,7 @@ const makeDefaultForm = () => ({
     venue_id: '',
     start_date: '',
     end_date: '',
-    timezone: resolveTimezoneDefault(),
+    timezone: defaultTimezone || resolveTimezoneDefault(),
     status: EVENT_STATUS.DRAFT,
     is_public: true,
     ticket_format: 'pdf',
@@ -30,9 +34,9 @@ const makeDefaultForm = () => ({
     organizer_id: '',
 });
 
-export const useEventForm = (id) => {
+export const useEventForm = (id, { defaultTimezone } = {}) => {
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState(makeDefaultForm);
+    const [formData, setFormData] = useState(() => makeDefaultForm(defaultTimezone));
     const [sessions, setSessions] = useState([]);
     const [tiers, setTiers] = useState([]);
 
@@ -48,12 +52,12 @@ export const useEventForm = (id) => {
         () => setSessions((prev) => [...prev, { start_time: '', end_time: '', capacity: 100 }]),
         []
     );
-    
+
     const removeSession = useCallback(
         (index) => setSessions((prev) => prev.filter((_, i) => i !== index)),
         []
     );
-    
+
     const updateSession = useCallback((index, field, value) => {
         setSessions((prev) => {
             const next = [...prev];
@@ -70,12 +74,12 @@ export const useEventForm = (id) => {
             ]),
         []
     );
-    
+
     const removeTier = useCallback(
         (index) => setTiers((prev) => prev.filter((_, i) => i !== index)),
         []
     );
-    
+
     const updateTier = useCallback((index, field, value) => {
         setTiers((prev) => {
             const next = [...prev];
@@ -101,9 +105,12 @@ export const useEventForm = (id) => {
                     start_date: formatDateForInput(data.start_date),
                     end_date: formatDateForInput(data.end_date),
                     // ✅ If the API returns a timezone, honor it. If not,
-                    // resolve a sensible default (device → env → fallback)
-                    // instead of forcing a hardcoded one.
-                    timezone: data.timezone || resolveTimezoneDefault(),
+                    // resolve the platform default (settings → device → env
+                    // → fallback) instead of forcing a hardcoded one.
+                    timezone:
+                        data.timezone ||
+                        defaultTimezone ||
+                        resolveTimezoneDefault(),
                     status: data.status || EVENT_STATUS.DRAFT,
                     is_public: data.is_public !== undefined ? data.is_public : true,
                     ticket_format: data.ticket_format || 'pdf',
@@ -127,7 +134,7 @@ export const useEventForm = (id) => {
                         is_active: s.is_active !== false,
                     }))
                 );
-                
+
                 setTiers(data.tiers || []);
             } catch (err) {
                 toast.error('Failed to load event');
@@ -136,7 +143,7 @@ export const useEventForm = (id) => {
                 setLoading(false);
             }
         })();
-    }, [id]);
+    }, [id, defaultTimezone]);
 
     return {
         loading,

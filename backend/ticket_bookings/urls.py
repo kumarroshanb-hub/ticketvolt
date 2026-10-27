@@ -14,6 +14,9 @@ from .api.user_api import UserViewSet
 from .api.cancellation_policy_api import CancellationPolicyViewSet
 from .api.settings_api import SystemSettingsView
 
+# ✅ NEW: SuperAdmin-only active-sessions endpoint
+from .api.active_sessions_api import ActiveSessionsView
+
 # Scanner views.
 # - checkin_verify / checkin_perform: signed-payload (mobile app)
 # - checkin_manual_verify / checkin_manual: bare-code (admin web UI)
@@ -45,13 +48,23 @@ router.register(
 )
 
 urlpatterns = [
-        # ============ CRON ENDPOINTS ============
+    # ============ CRON ENDPOINTS ============
     # ✅ GitHub Actions hits these on a schedule instead of running a
     #    paid Celery Beat worker. See ticket_bookings/views.py for the
     #    security model.
     path('cron/health/', cron_health, name='cron-health'),
     path('cron/run-tasks/', run_scheduled_tasks, name='cron-run-tasks'),
-    
+
+    # ============ ADMIN: ACTIVE SESSIONS ============
+    # ✅ NEW: SuperAdmin-only. Powers the "Active Sessions" page in the
+    #    admin UI so the operator can see who is logged in before
+    #    deploying. Resolved full path: /api/admin/active-sessions/
+    path(
+        'admin/active-sessions/',
+        ActiveSessionsView.as_view(),
+        name='admin-active-sessions',
+    ),
+
     # ============ SCANNER ENDPOINTS ============
     # Order matters: Django matches top-to-bottom, so the more specific
     # paths must come before the bare `checkin/` prefix.
@@ -79,7 +92,7 @@ urlpatterns = [
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
     path('analytics/', AnalyticsView.as_view(), name='analytics'),
     path('settings/', SystemSettingsView.as_view(), name='system-settings'),
-    
+
     # QR Code URLs
     path('qr/download/<uuid:ticket_id>/', QRCodeDownloadView.as_view(), name='qr-download'),
     path('qr/image/<uuid:ticket_id>/', QRCodeImageView.as_view(), name='qr-image'),

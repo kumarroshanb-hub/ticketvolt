@@ -144,6 +144,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'axes.middleware.AxesMiddleware',             # Must be last
+    # ✅ NEW: Track JWT user activity for Active Sessions dashboard
+    'core.middleware.ActivityTrackingMiddleware',
 ]
 
 # Axes must be first in the authentication backends list.

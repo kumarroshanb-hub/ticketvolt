@@ -295,6 +295,7 @@ const PAGE_TITLES = {
     '/app/settings':               'Settings',
     '/app/profile':                'Profile',
     '/app/cancellation-policies':  'Cancellation Policies',
+    '/app/active-sessions':        'Active Sessions',
 };
 
 const getPageTitleFromPath = (pathname, isGuest) => {

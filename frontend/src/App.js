@@ -40,6 +40,7 @@ import Register from './pages/Register/Register';
 import Users from './pages/Users/Users';
 import Profile from './pages/Profile';
 import CancellationPolicies from './pages/CancellationPolicies';
+import ActiveSessions from './pages/ActiveSessions';
 
 import { ROLES } from './constants';
 
@@ -322,10 +323,25 @@ const AppRoutes = () => {
                         </RoleBasedRoute>
                     }
                 />
+
+                {/* ✅ FIX: Active Sessions lives INSIDE the /app shell
+                    (renders with Sidebar + Navbar), and its full
+                    resolved path is /app/active-sessions — matching
+                    the Sidebar NavLink. SuperAdmin-only. */}
+                <Route
+                    path="active-sessions"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.SUPER_ADMIN]}
+                        >
+                            <ActiveSessions />
+                        </RoleBasedRoute>
+                    }
+                />
             </Route>
 
             {/* ============================================
-                FALLBACK
+                FALLBACK — must stay LAST
                ============================================ */}
             <Route
                 path="*"

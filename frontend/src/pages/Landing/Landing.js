@@ -19,6 +19,10 @@ import { useAuth } from '../../context/AuthContext';
 import EventCard from '../../components/Common/EventCard';
 import Logo from '../../components/Logo';
 import { theme } from '../../theme/tokens';
+import {
+    EVENT_CATEGORY_LABELS,
+    EVENT_CATEGORY_ICONS,
+} from '../../constants';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -46,8 +50,6 @@ const PageWrapper = styled.div`
     min-height: 100vh;
     font-family: ${F.family};
 `;
-
-/* ---------- HERO ---------- */
 
 const HeroWrapper = styled.section`
     position: relative;
@@ -160,7 +162,6 @@ const HeroSubtitle = styled.p`
     animation: ${fadeUp} 0.7s 0.15s ease both;
 `;
 
-// ---------- Hero Action area (stats + buttons) ----------
 const HeroActionArea = styled.div`
     display: flex;
     flex-direction: column;
@@ -277,8 +278,6 @@ const GhostHeroButton = styled(Button)`
     }
 `;
 
-/* ---------- SEARCH OVERLAY ---------- */
-
 const SearchOverlayWrapper = styled(Container)`
     position: relative;
     z-index: 2;
@@ -350,8 +349,6 @@ const RefreshBtn = styled(Button)`
         }
     }
 `;
-
-/* ---------- SECTION & FILTERS ---------- */
 
 const SectionWrapper = styled(Container)`
     padding-top: 60px;
@@ -429,8 +426,6 @@ const EventGrid = styled(Grid)`
     animation: ${fadeUp} 0.5s ease both;
 `;
 
-/* ---------- EMPTY & SKELETON STATES ---------- */
-
 const EmptyState = styled.div`
     display: flex;
     flex-direction: column;
@@ -497,8 +492,6 @@ const SkeletonBar = styled.div`
     animation: ${shimmer} 1.6s infinite linear;
 `;
 
-/* ---------- FOOTER ---------- */
-
 const Footer = styled.footer`
     background: #1a1a1a;
     color: rgba(255, 255, 255, 0.65);
@@ -537,25 +530,46 @@ const Footer = styled.footer`
 `;
 
 // ============================================
-// CATEGORY DEFINITIONS
+// ICONS
+// ------------------------------------------------------------
+// Merged map: keeps the bespoke icons that were already in the
+// original `CATEGORIES` array (so visual style is unchanged for
+// existing pills) and falls back to the canonical
+// EVENT_CATEGORY_ICONS from constants/index.js for everything
+// else — including 'community' → 🤝.
 // ============================================
+const PREFERRED_ICONS = {
+    concert:    '🎵',
+    sports:     '⚽',
+    theater:    '🎭',
+    conference: '💼',
+    workshop:   '🔧',
+    party:      '🎉',
+    festival:   '🎪',
+    exhibition: '🖼️',
+    community:  '🤝',
+    virtual:    '💻',
+    other:      '📌',
+};
 
-const CATEGORIES = [
-    { value: 'all',          label: 'All Events',  icon: '✨' },
-    { value: 'concert',      label: 'Concerts',    icon: '🎵' },
-    { value: 'sports',       label: 'Sports',      icon: '⚽' },
-    { value: 'theater',      label: 'Theater',     icon: '🎭' },
-    { value: 'conference',   label: 'Conferences', icon: '💼' },
-    { value: 'workshop',     label: 'Workshops',   icon: '🔧' },
-    { value: 'party',        label: 'Parties',     icon: '🎉' },
-    { value: 'festival',     label: 'Festivals',   icon: '🎪' },
-    { value: 'exhibition',   label: 'Exhibitions', icon: '🖼️' },
-    { value: 'other',        label: 'Other',       icon: '📌' },
+const ICONS = { ...EVENT_CATEGORY_ICONS, ...PREFERRED_ICONS };
+
+// Preferred display order for the pills. Anything not listed here
+// still shows up (alphabetically, after these) so a new backend
+// category can never be silently hidden.
+const PREFERRED_ORDER = [
+    'concert',
+    'sports',
+    'theater',
+    'conference',
+    'workshop',
+    'party',
+    'festival',
+    'exhibition',
+    'community',
+    'virtual',
+    'other',
 ];
-
-// ============================================
-// MAIN COMPONENT
-// ============================================
 
 const Landing = () => {
     const navigate = useNavigate();
@@ -573,10 +587,14 @@ const Landing = () => {
         setLoading(true);
         setError(null);
         try {
-            const data = await eventService.getPublicEvents();
-            // ✅ Defensive: the API returns `{count, results}` but a
-            // future endpoint change to a bare array should not break
-            // the page.
+            // ✅ FIX [PUBLIC-EVENTS-SKIP-REDIRECT]:
+            // Belt-and-braces on top of api.js's PUBLIC_ENDPOINTS list.
+            // Even if the URL check in api.js misses, this request can
+            // never trigger redirectToLoginOnce() — the landing page
+            // must always be reachable while logged out.
+            const data = await eventService.getPublicEvents({
+                skipAuthRedirect: true,
+            });
             const list = Array.isArray(data) ? data : (data?.results || []);
             setEvents(list);
         } catch (err) {
@@ -618,6 +636,50 @@ const Landing = () => {
         return counts;
     }, [events]);
 
+    // ============================================================
+    // ✅ FIX [LANDING-CATEGORY-FILTER]:
+    // Derive the pill list from the actual event data instead of
+    // a hardcoded array. A pill is emitted for every category that
+    // has at least one event, using:
+    //   • EVENT_CATEGORY_LABELS from constants/index.js for the
+    //     human-readable label ("Community", "Festivals", …)
+    //   • ICONS (merged map above) for the emoji
+    //   • PREFERRED_ORDER for sort order; anything not listed
+    //     falls back to alphabetical, so a brand-new backend
+    //     category still renders — the "Community not showing"
+    //     class of bug cannot recur.
+    //
+    // The "All Events" pill is always first.
+    // ============================================================
+    const categories = useMemo(() => {
+        const items = [{ value: 'all', label: 'All Events', icon: '✨' }];
+
+        const sortedSlugs = Object.keys(categoryCounts)
+            .filter((slug) => slug !== 'all' && categoryCounts[slug] > 0)
+            .sort((a, b) => {
+                const ai = PREFERRED_ORDER.indexOf(a);
+                const bi = PREFERRED_ORDER.indexOf(b);
+                if (ai !== -1 && bi !== -1) return ai - bi;
+                if (ai !== -1) return -1;
+                if (bi !== -1) return 1;
+                return a.localeCompare(b);
+            });
+
+        for (const slug of sortedSlugs) {
+            const label =
+                EVENT_CATEGORY_LABELS[slug] ||
+                (slug.charAt(0).toUpperCase() + slug.slice(1));
+
+            items.push({
+                value: slug,
+                label,
+                icon: ICONS[slug] || '📌',
+            });
+        }
+
+        return items;
+    }, [categoryCounts]);
+
     const heroStats = useMemo(() => {
         const cities = new Set();
         events.forEach((e) => {
@@ -626,15 +688,28 @@ const Landing = () => {
         return {
             eventCount: events.length,
             cityCount: cities.size,
-            // ✅ FIX [P24]: show a friendly label instead of the em-dash
-            // when no events have a city set. Without this, an empty
-            // events list rendered "Cities: —" which looked broken.
             cityCountLabel: cities.size > 0 ? String(cities.size) : 'All',
         };
     }, [events]);
 
     const handleLoginClick = () => navigate('/login');
     const handleDashboardClick = () => navigate('/app/dashboard');
+
+    // ✅ Belt-and-braces: if we're "authenticated" but the token is
+    // gone (e.g. another tab wiped storage), send the user to /login
+    // instead of /app/dashboard where they'd 401 and bounce.
+    const handlePrimaryCta = () => {
+        if (!isAuthenticated) {
+            handleLoginClick();
+            return;
+        }
+        const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+        if (!token) {
+            handleLoginClick();
+            return;
+        }
+        handleDashboardClick();
+    };
 
     return (
         <PageWrapper>
@@ -666,7 +741,6 @@ const Landing = () => {
                             </HeroStat>
                             <HeroStatDivider />
                             <HeroStat>
-                                {/* ✅ FIX [P24] */}
                                 <span className="value">{heroStats.cityCountLabel}</span>
                                 <span className="label">Cities</span>
                             </HeroStat>
@@ -679,7 +753,7 @@ const Landing = () => {
 
                         <HeroButtons>
                             <PrimaryHeroButton
-                                onClick={isAuthenticated ? handleDashboardClick : handleLoginClick}
+                                onClick={handlePrimaryCta}
                                 endIcon={<ArrowForwardIcon />}
                             >
                                 {isAuthenticated ? 'Go to Dashboard' : 'Login to Book Tickets'}
@@ -732,7 +806,7 @@ const Landing = () => {
 
                 <Box sx={{ mb: 5 }}>
                     <CategoryChips>
-                        {CATEGORIES.map((cat) => {
+                        {categories.map((cat) => {
                             const count = categoryCounts[cat.value] || 0;
                             if (cat.value !== 'all' && count === 0) return null;
 

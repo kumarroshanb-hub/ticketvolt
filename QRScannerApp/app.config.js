@@ -27,6 +27,17 @@ if (IS_PRODUCTION_BUILD && showDemoCreds) {
 
 export default ({ config }) => ({
     ...config,
+
+    // ✅ expo-font plugin — required for the Montserrat fonts loaded via
+    //    useFonts() in App.js. Expo's `npx expo install` cannot auto-edit
+    //    a dynamic config (this file exports a function), so it's added
+    //    manually here. Preserves any plugins already declared in
+    //    app.json so nothing gets clobbered.
+    plugins: [
+        ...(config.plugins ?? []),
+        'expo-font',
+    ],
+
     extra: {
         ...(config.extra ?? {}),
         // -----------------------------------------------------------------

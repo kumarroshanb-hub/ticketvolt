@@ -119,3 +119,50 @@ export const getTimezoneLabel = (value) => {
     }
     return value || '';
 };
+
+/**
+ * ✅ NEW: return TIMEZONE_GROUPS with the platform-configured timezone
+ * promoted to the top of the list. Every consumer that renders a
+ * timezone <select> should call this with
+ * `useSettings().settings.default_timezone` so the dropdown follows
+ * the deployment config instead of a hardcoded default.
+ *
+ * If the configured timezone isn't in the catalog (legacy value or a
+ * typo on the settings page), it is prepended as a custom option so
+ * the select can still represent it.
+ */
+export const getTimezoneGroups = (platformDefault) => {
+    const preferred = (platformDefault || '').trim();
+    if (!preferred) return TIMEZONE_GROUPS;
+
+    // Check whether the configured timezone is already in the catalog.
+    const inCatalog = TIMEZONE_GROUPS.some((group) =>
+        group.timezones.some((tz) => tz.value === preferred),
+    );
+
+    if (!inCatalog) {
+        return [
+            {
+                region: '⭐ Platform Default',
+                timezones: [{ value: preferred, label: preferred }],
+            },
+            ...TIMEZONE_GROUPS,
+        ];
+    }
+
+    // Move the preferred timezone to the top of its group and label
+    // the group so the operator can spot it instantly.
+    return TIMEZONE_GROUPS.map((group) => {
+        const idx = group.timezones.findIndex((tz) => tz.value === preferred);
+        if (idx === -1) return group;
+        const preferredEntry = group.timezones[idx];
+        const rest = group.timezones.filter((_, i) => i !== idx);
+        return {
+            ...group,
+            timezones: [
+                { ...preferredEntry, label: `⭐ ${preferredEntry.label}` },
+                ...rest,
+            ],
+        };
+    });
+};

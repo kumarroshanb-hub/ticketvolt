@@ -10,7 +10,6 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getCurrentApiUrl,
@@ -21,6 +20,10 @@ import {
   discoverBackend,
   getWorkingIp,
 } from '../services/api';
+import { theme } from '../theme';
+
+const C = theme.colors;
+const F = theme.fonts;
 
 export default function SettingsScreen({ navigation }) {
   const [apiUrl, setApiUrl] = useState('');
@@ -277,10 +280,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   return (
-    <LinearGradient
-      colors={['#0a0a0f', '#1a0a2e', '#0a0a0f']}
-      style={styles.container}
-    >
+    <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Text style={styles.title}>⚙️ SYSTEM CONFIG</Text>
@@ -320,7 +320,7 @@ export default function SettingsScreen({ navigation }) {
               value={apiUrl}
               onChangeText={setApiUrl}
               placeholder="http://192.168.31.197:8000/api"
-              placeholderTextColor="rgba(136,153,170,0.5)"
+              placeholderTextColor={C.textDisabled}
               autoCapitalize="none"
               autoCorrect={false}
               editable={!loading}
@@ -333,41 +333,32 @@ export default function SettingsScreen({ navigation }) {
               onPress={handleDiscoverBackend}
               disabled={loading || isDiscovering}
             >
-              <LinearGradient
-                colors={['#00f5ff', '#0066ff']}
-                style={styles.buttonGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                {isDiscovering ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator color="#0a0a0f" size="small" />
-                    <Text style={[styles.buttonText, { marginLeft: 8 }]}>
-                      {discoveryProgress}%
-                    </Text>
-                  </View>
-                ) : (
+              {isDiscovering ? (
+                <View style={[styles.buttonInner, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}>
+                  <ActivityIndicator color={C.textInverse} size="small" />
+                  <Text style={[styles.buttonText, { marginLeft: 8 }]}>
+                    {discoveryProgress}%
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.buttonInner}>
                   <Text style={styles.buttonText}>🔍 DISCOVER</Text>
-                )}
-              </LinearGradient>
+                </View>
+              )}
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.button, styles.saveButton]}
               onPress={handleSaveUrl}
               disabled={loading}
             >
-              <LinearGradient
-                colors={['#00f5ff', '#0066ff']}
-                style={styles.buttonGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
+              <View style={styles.buttonInner}>
                 {loading ? (
-                  <ActivityIndicator color="#0a0a0f" size="small" />
+                  <ActivityIndicator color={C.textInverse} size="small" />
                 ) : (
                   <Text style={styles.buttonText}>UPDATE</Text>
                 )}
-              </LinearGradient>
+              </View>
             </TouchableOpacity>
           </View>
 
@@ -388,14 +379,9 @@ export default function SettingsScreen({ navigation }) {
               onPress={handleResetUrl}
               disabled={loading}
             >
-              <LinearGradient
-                colors={['rgba(255,0,85,0.2)', 'rgba(255,0,85,0.1)']}
-                style={styles.buttonGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
+              <View style={[styles.buttonInner, styles.resetButtonInner]}>
                 <Text style={styles.resetButtonText}>RESET TO DEFAULT</Text>
-              </LinearGradient>
+              </View>
             </TouchableOpacity>
           </View>
 
@@ -423,8 +409,8 @@ export default function SettingsScreen({ navigation }) {
 
           {showCloudOptions && (
             <View>
-              <View style={[styles.tipContainer, { borderLeftColor: '#8b5cf6' }]}>
-                <Text style={[styles.tipTitle, { color: '#8b5cf6' }]}>
+              <View style={styles.tipContainer}>
+                <Text style={styles.tipTitle}>
                   🔗 ngrok / Cloudflare:
                 </Text>
                 <Text style={styles.tip}>1. Install: brew install ngrok</Text>
@@ -441,7 +427,7 @@ export default function SettingsScreen({ navigation }) {
                   value={tunnelUrl}
                   onChangeText={setTunnelUrl}
                   placeholder="https://abc123.ngrok-free.app/api"
-                  placeholderTextColor="rgba(136,153,170,0.5)"
+                  placeholderTextColor={C.textDisabled}
                   autoCapitalize="none"
                   autoCorrect={false}
                   editable={!loading}
@@ -453,20 +439,13 @@ export default function SettingsScreen({ navigation }) {
                 onPress={handleSaveTunnel}
                 disabled={loading}
               >
-                <LinearGradient
-                  colors={['#8b5cf6', '#6d28d9']}
-                  style={styles.buttonGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                >
+                <View style={styles.buttonInner}>
                   {loading ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
+                    <ActivityIndicator color={C.textInverse} size="small" />
                   ) : (
-                    <Text style={[styles.buttonText, { color: '#ffffff' }]}>
-                      SAVE TUNNEL
-                    </Text>
+                    <Text style={styles.buttonText}>SAVE TUNNEL</Text>
                   )}
-                </LinearGradient>
+                </View>
               </TouchableOpacity>
 
               {ngrokUrl ? (
@@ -485,18 +464,11 @@ export default function SettingsScreen({ navigation }) {
             onPress={checkConnection}
             disabled={loading}
           >
-            <LinearGradient
-              colors={['rgba(0,245,255,0.15)', 'rgba(0,102,255,0.15)']}
-              style={styles.checkButtonGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              {loading ? (
-                <ActivityIndicator color="#00f5ff" size="small" />
-              ) : (
-                <Text style={styles.checkButtonText}>⟳ PING SERVER</Text>
-              )}
-            </LinearGradient>
+            {loading ? (
+              <ActivityIndicator color={C.secondary} size="small" />
+            ) : (
+              <Text style={styles.checkButtonText}>⟳ PING SERVER</Text>
+            )}
           </TouchableOpacity>
           <View style={styles.statusContainer}>
             <View
@@ -526,12 +498,7 @@ export default function SettingsScreen({ navigation }) {
           <Text style={styles.label}>📋 TROUBLESHOOTING</Text>
 
           <TouchableOpacity style={styles.helpButton} onPress={openHelp}>
-            <LinearGradient
-              colors={['rgba(0,245,255,0.1)', 'rgba(0,102,255,0.1)']}
-              style={styles.helpButtonGradient}
-            >
-              <Text style={styles.helpButtonText}>🆘 GET HELP</Text>
-            </LinearGradient>
+            <Text style={styles.helpButtonText}>🆘 GET HELP</Text>
           </TouchableOpacity>
 
           <View style={styles.tipContainer}>
@@ -550,8 +517,8 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.tip}>Linux: hostname -I</Text>
           </View>
 
-          <View style={[styles.tipContainer, { borderLeftColor: '#00f5ff' }]}>
-            <Text style={[styles.tipTitle, { color: '#00f5ff' }]}>
+          <View style={styles.tipContainer}>
+            <Text style={styles.tipTitle}>
               AUTO-DISCOVER:
             </Text>
             <Text style={styles.tip}>
@@ -565,8 +532,8 @@ export default function SettingsScreen({ navigation }) {
             </Text>
           </View>
 
-          <View style={[styles.tipContainer, { borderLeftColor: '#8b5cf6' }]}>
-            <Text style={[styles.tipTitle, { color: '#8b5cf6' }]}>
+          <View style={styles.tipContainer}>
+            <Text style={styles.tipTitle}>
               ☁️ CLOUD CONNECTION:
             </Text>
             <Text style={styles.tip}>
@@ -586,13 +553,14 @@ export default function SettingsScreen({ navigation }) {
           </Text>
         </View>
       </ScrollView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: C.bgDark,
   },
   scrollContent: {
     padding: 20,
@@ -603,66 +571,57 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#00f5ff',
-    fontFamily: 'monospace',
-    textShadowColor: '#00f5ff',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 20,
-    letterSpacing: 3,
+    fontSize: 24,
+    fontFamily: F.familyBold,
+    color: C.textInverse,
+    letterSpacing: 2,
   },
   subtitle: {
     fontSize: 14,
-    color: '#8899aa',
+    color: C.textMuted,
     marginTop: 5,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     letterSpacing: 1,
   },
   headerDivider: {
-    height: 1,
-    backgroundColor: 'rgba(0,245,255,0.2)',
+    height: 2,
+    width: 40,
+    backgroundColor: C.secondary,
     marginTop: 15,
   },
   card: {
-    backgroundColor: 'rgba(26,10,46,0.6)',
+    backgroundColor: C.bgDarkCard,
     padding: 20,
-    borderRadius: 12,
+    borderRadius: theme.radius.md,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.1)',
-    shadowColor: '#00f5ff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 3,
+    borderColor: C.bgDarkBorder,
   },
   label: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#00f5ff',
+    fontFamily: F.familySemiBold,
+    color: C.textInverse,
     marginBottom: 5,
-    fontFamily: 'monospace',
     letterSpacing: 2,
   },
   hint: {
     fontSize: 12,
-    color: '#8899aa',
+    color: C.textMuted,
     marginBottom: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
   },
   inputWrapper: {
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.2)',
-    borderRadius: 8,
-    backgroundColor: 'rgba(10,10,15,0.8)',
+    borderColor: C.bgDarkBorder,
+    borderRadius: theme.radius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
     marginBottom: 12,
   },
   input: {
     padding: 12,
     fontSize: 14,
-    color: '#ffffff',
-    fontFamily: 'monospace',
+    color: C.textInverse,
+    fontFamily: F.family,
   },
   buttonRow: {
     flexDirection: 'row',
@@ -671,8 +630,14 @@ const styles = StyleSheet.create({
   },
   button: {
     flex: 1,
-    borderRadius: 8,
+    borderRadius: theme.radius.sm,
     overflow: 'hidden',
+    backgroundColor: C.secondary,
+  },
+  buttonInner: {
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   discoverButton: {
     marginRight: 5,
@@ -682,45 +647,43 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     flex: 1,
+    backgroundColor: C.bgDark,
+    borderWidth: 1,
+    borderColor: C.secondary,
+  },
+  resetButtonInner: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   fullWidthButton: {
     width: '100%',
   },
-  buttonGradient: {
-    padding: 12,
-    alignItems: 'center',
-  },
   buttonText: {
-    color: '#0a0a0f',
+    color: C.textInverse,
     fontSize: 14,
-    fontWeight: 'bold',
-    fontFamily: 'monospace',
+    fontFamily: F.familyBold,
     letterSpacing: 2,
   },
   resetButtonText: {
-    color: '#ff0055',
+    color: C.secondary,
     fontSize: 14,
-    fontWeight: 'bold',
-    fontFamily: 'monospace',
+    fontFamily: F.familyBold,
     letterSpacing: 2,
   },
   checkButton: {
-    borderRadius: 8,
-    overflow: 'hidden',
+    borderRadius: theme.radius.sm,
+    backgroundColor: C.bgDark,
+    borderWidth: 1,
+    borderColor: C.bgDarkBorder,
+    paddingVertical: 12,
+    alignItems: 'center',
     marginVertical: 10,
   },
-  checkButtonGradient: {
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.2)',
-    borderRadius: 8,
-  },
   checkButtonText: {
-    color: '#00f5ff',
+    color: C.textInverse,
     fontSize: 14,
-    fontWeight: '600',
-    fontFamily: 'monospace',
+    fontFamily: F.familySemiBold,
     letterSpacing: 2,
   },
   disabled: {
@@ -733,68 +696,68 @@ const styles = StyleSheet.create({
   statusBadge: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: theme.radius.sm,
     width: '100%',
     alignItems: 'center',
     borderWidth: 1,
   },
   statusHealthy: {
-    backgroundColor: 'rgba(0,245,255,0.1)',
-    borderColor: 'rgba(0,245,255,0.3)',
+    backgroundColor: `${C.success}1A`,
+    borderColor: `${C.success}4D`,
   },
   statusUnhealthy: {
-    backgroundColor: 'rgba(255,0,85,0.1)',
-    borderColor: 'rgba(255,0,85,0.3)',
+    backgroundColor: `${C.error}1A`,
+    borderColor: `${C.error}4D`,
   },
   statusText: {
     fontSize: 14,
-    fontFamily: 'monospace',
+    fontFamily: F.familySemiBold,
     letterSpacing: 1,
   },
   statusTextHealthy: {
-    color: '#00f5ff',
+    color: C.success,
   },
   statusTextUnhealthy: {
-    color: '#ff0055',
+    color: C.error,
   },
   retryText: {
-    color: '#f59e0b',
+    color: C.warning,
     fontSize: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 8,
     textAlign: 'center',
   },
   discoveryStatusContainer: {
     marginTop: 10,
     padding: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(0,245,255,0.05)',
+    borderRadius: theme.radius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.1)',
+    borderColor: C.bgDarkBorder,
   },
   discoveryStatusText: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     textAlign: 'center',
   },
   lastIpContainer: {
     marginBottom: 12,
     padding: 10,
-    backgroundColor: 'rgba(0,245,255,0.05)',
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: theme.radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.15)',
+    borderColor: C.bgDarkBorder,
   },
   lastIpLabel: {
-    color: '#64748b',
+    color: C.textLight,
     fontSize: 11,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
   },
   lastIpValue: {
-    color: '#00f5ff',
-    fontSize: 16,
-    fontFamily: 'monospace',
+    color: C.textInverse,
+    fontSize: 14,
+    fontFamily: F.familyMono,
     fontWeight: 'bold',
     marginTop: 2,
   },
@@ -804,106 +767,101 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     height: 4,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 2,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#00f5ff',
+    backgroundColor: C.secondary,
     borderRadius: 2,
   },
   progressText: {
-    color: '#8899aa',
+    color: C.textMuted,
     fontSize: 11,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 4,
     textAlign: 'center',
   },
   ngrokButton: {
     paddingVertical: 10,
     paddingHorizontal: 15,
-    backgroundColor: 'rgba(139,92,246,0.15)',
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: theme.radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(139,92,246,0.3)',
+    borderColor: C.bgDarkBorder,
     marginBottom: 10,
   },
   ngrokButtonText: {
-    color: '#a78bfa',
+    color: C.textInverse,
     fontSize: 14,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     textAlign: 'center',
     letterSpacing: 1,
   },
   savedUrlContainer: {
     marginTop: 8,
     padding: 10,
-    backgroundColor: 'rgba(139,92,246,0.1)',
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: theme.radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(139,92,246,0.2)',
+    borderColor: C.bgDarkBorder,
   },
   savedUrlText: {
-    color: '#a78bfa',
+    color: C.textMuted,
     fontSize: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.familyMono,
   },
   helpButton: {
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginVertical: 10,
-  },
-  helpButtonGradient: {
+    borderRadius: theme.radius.sm,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.2)',
-    borderRadius: 8,
+    borderColor: C.bgDarkBorder,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    marginVertical: 10,
   },
   helpButtonText: {
-    color: '#00f5ff',
+    color: C.textInverse,
     fontSize: 14,
-    fontWeight: '600',
-    fontFamily: 'monospace',
+    fontFamily: F.familySemiBold,
     letterSpacing: 2,
   },
   tipContainer: {
-    backgroundColor: 'rgba(255,200,0,0.05)',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
     padding: 15,
-    borderRadius: 8,
+    borderRadius: theme.radius.sm,
     marginBottom: 10,
     borderLeftWidth: 3,
-    borderLeftColor: '#ffcc00',
+    borderLeftColor: C.secondary,
   },
   tipTitle: {
     fontSize: 12,
-    fontWeight: 'bold',
-    color: '#ffcc00',
+    fontFamily: F.familyBold,
+    color: C.textInverse,
     marginBottom: 5,
-    fontFamily: 'monospace',
     letterSpacing: 1,
   },
   tip: {
     fontSize: 12,
-    color: '#8899aa',
+    color: C.textMuted,
     marginBottom: 3,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
   },
   footer: {
     marginTop: 20,
     alignItems: 'center',
   },
   footerText: {
-    color: 'rgba(0,245,255,0.3)',
+    color: C.textLight,
     fontSize: 12,
-    fontFamily: 'monospace',
+    fontFamily: F.familySemiBold,
     letterSpacing: 3,
   },
   footerSubText: {
-    color: 'rgba(0,245,255,0.15)',
+    color: C.textDisabled,
     fontSize: 10,
-    fontFamily: 'monospace',
+    fontFamily: F.family,
     marginTop: 4,
     letterSpacing: 1,
   },

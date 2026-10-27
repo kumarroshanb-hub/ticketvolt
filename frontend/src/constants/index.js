@@ -246,6 +246,31 @@ export const EVENT_CATEGORY_LABELS = {
     [EVENT_CATEGORY.OTHER]: 'Other',
 };
 
+// ────────────────────────────────────────────────────────────────────
+// EVENT_CATEGORY_ICONS
+// Mirrors backend/ticket_bookings/constants.py::EventCategory.get_icon()
+// and the icon map used by EventCard.
+//
+// Required by:
+//   • frontend/src/pages/Landing/Landing.js (category filter pills)
+//   • frontend/src/components/Common/EventCard.js (category tag)
+//   • any other consumer that renders a category badge
+// ────────────────────────────────────────────────────────────────────
+export const EVENT_CATEGORY_ICONS = {
+    [EVENT_CATEGORY.CONCERT]:    '🎵',
+    [EVENT_CATEGORY.SPORTS]:     '⚽',
+    [EVENT_CATEGORY.THEATER]:    '🎭',
+    [EVENT_CATEGORY.CONFERENCE]: '💼',
+    [EVENT_CATEGORY.WORKSHOP]:   '🔧',
+    [EVENT_CATEGORY.PARTY]:      '🎉',
+    [EVENT_CATEGORY.DINING]:     '🍽️',
+    [EVENT_CATEGORY.FESTIVAL]:   '🎪',
+    [EVENT_CATEGORY.EXHIBITION]: '🖼️',
+    [EVENT_CATEGORY.COMMUNITY]:  '🤝',
+    [EVENT_CATEGORY.VIRTUAL]:    '💻',
+    [EVENT_CATEGORY.OTHER]:      '📌',
+};
+
 export const EventStatusUtils = {
     isValid: function(status) {
         return Object.values(EVENT_STATUS).includes(status);
@@ -320,7 +345,7 @@ export const EventTemplateTypeUtils = {
 };
 
 // ============================================
-// ROLES CONSTANTS  <-- THIS WAS MISSING!
+// ROLES CONSTANTS
 // ============================================
 
 export const ROLES = {
@@ -439,6 +464,7 @@ export default {
     EVENT_TYPE_LABELS,
     EVENT_CATEGORY,
     EVENT_CATEGORY_LABELS,
+    EVENT_CATEGORY_ICONS,
     EventStatusUtils,
     EVENT_TEMPLATE_TYPE,
     EVENT_TEMPLATE_TYPE_LABELS,

@@ -24,6 +24,7 @@ import {
     PageHeaderLeft, PageHeaderRight, PrimaryButton,
     OutlineButton, LoadingWrapper,
 } from '../../components/Common';
+import { useSettings } from '../../context/SettingsContext';
 
 // ---------------------------------------------------------------------------
 // Default new-policy draft. Kept at module scope so "reset" is trivial.
@@ -147,6 +148,7 @@ function validateRulesClient(rules) {
 const CancellationPolicies = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    const { formatMoney, settings } = useSettings();
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -482,7 +484,7 @@ const CancellationPolicies = () => {
                                         ))}
                                         {policy.rules?.cancellation_fee > 0 && (
                                             <Typography variant="body2" sx={{ color: 'error.main', mt: 1 }}>
-                                                Fee: ₹{policy.rules.cancellation_fee}
+                                                Fee: {formatMoney(policy.rules.cancellation_fee)}
                                             </Typography>
                                         )}
                                         {!policy.rules?.allow_partial_cancellation && (
@@ -712,7 +714,7 @@ const CancellationPolicies = () => {
                             <TextField
                                 fullWidth
                                 type="number"
-                                label="Flat Cancellation Fee (₹)"
+                                label={`Flat Cancellation Fee (${settings.currency_code})`}
                                 value={formData.rules.cancellation_fee}
                                 onChange={(e) => handleRuleField('cancellation_fee', e.target.value)}
                                 inputProps={{ min: 0, step: '0.01' }}

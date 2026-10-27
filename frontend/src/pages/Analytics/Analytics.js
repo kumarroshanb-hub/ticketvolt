@@ -34,6 +34,7 @@ import {
 import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
+import { useSettings } from '../../context/SettingsContext';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -137,6 +138,7 @@ const EMPTY_ANALYTICS = {
 
 const Analytics = () => {
     useAuth();
+    const { formatMoney } = useSettings();   // ✅ NEW
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
@@ -226,7 +228,7 @@ const Analytics = () => {
         },
         {
             title: 'Revenue',
-            value: `₹${(overview.total_revenue || 0).toLocaleString()}`,
+            value: formatMoney(overview.total_revenue || 0),   // ✅ PATCHED
             icon: <MoneyIcon />,
             color: C.success,
             bg: `${C.success}14`,
@@ -521,7 +523,7 @@ const Analytics = () => {
                                         <YAxis stroke={C.textLight} axisLine={false} tickLine={false} />
                                         <Tooltip
                                             contentStyle={TOOLTIP_CONTENT_STYLE}
-                                            formatter={(value) => [`₹${Number(value).toLocaleString()}`, 'Revenue']}
+                                            formatter={(value) => [formatMoney(value), 'Revenue']}   // ✅ PATCHED
                                         />
                                         <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                                             {eventData.map((entry, index) => (
@@ -572,7 +574,7 @@ const Analytics = () => {
                                                     {event.name}
                                                 </Typography>
                                                 <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                                                    {event.bookings || 0} bookings • ₹{(event.revenue || 0).toLocaleString()}
+                                                    {event.bookings || 0} bookings • {formatMoney(event.revenue || 0)}   {/* ✅ PATCHED */}
                                                 </Typography>
                                             </Box>
                                             <Chip

@@ -188,6 +188,29 @@ function formatEventDuration(startStr, endStr) {
     return parts.length ? parts.join(' ') : '< 1 minute';
 }
 
+// ✅ FIX: single money-formatting helper mirroring Django's
+// ticket_bookings.utils.money.format_money (Indian grouping,
+// 2 decimal places, ₹ prefix). The gateway only formats money for
+// the PRE-BOOKING interactive flow where no server total exists yet;
+// post-booking it prefers `booking.total_display`.
+function formatMoney(value) {
+    const n = Number(value);
+    if (!isFinite(n)) return '₹0.00';
+    // Indian digit grouping: last 3 digits, then groups of 2.
+    const fixed = Math.abs(n).toFixed(2);
+    const [intPart, frac] = fixed.split('.');
+    let grouped;
+    if (intPart.length <= 3) {
+        grouped = intPart;
+    } else {
+        const last3 = intPart.slice(-3);
+        const rest = intPart.slice(0, -3);
+        grouped = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + last3;
+    }
+    const sign = n < 0 ? '-' : '';
+    return `${sign}₹${grouped}.${frac}`;
+}
+
 // ============================================================
 // Generic helpers
 // ============================================================
@@ -398,6 +421,11 @@ class WhatsAppService {
 
     formatEventDuration(startStr, endStr) {
         return formatEventDuration(startStr, endStr);
+    }
+
+    // ✅ FIX: expose the money formatter alongside the other public helpers.
+    formatMoney(value) {
+        return formatMoney(value);
     }
 
     // ============ API client ============
@@ -1129,7 +1157,7 @@ Thank you for choosing TicketVolt! 🎫`;
 
         tiers.forEach((tier, index) => {
             const available = Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0));
-            message += `${index + 1}. *${tier.name}* - ₹${tier.price || 0}\n`;
+            message += `${index + 1}. *${tier.name}* - ${formatMoney(tier.price || 0)}\n`;
             message += `   Available: ${available}\n\n`;
         });
 
@@ -1204,7 +1232,7 @@ Thank you for choosing TicketVolt! 🎫`;
 
         let message = `✅ Selected *${selectedTiers.length}* tier type(s):\n\n`;
         selectedTiers.forEach((tier, index) => {
-            message += `${index + 1}. *${tier.tier_name}* - ₹${tier.price}\n`;
+            message += `${index + 1}. *${tier.tier_name}* - ${formatMoney(tier.price)}\n`;
             message += `   Available: ${tier.max_available}\n`;
             message += `   Max per order: ${tier.max_per_order}\n\n`;
         });
@@ -1261,9 +1289,9 @@ Thank you for choosing TicketVolt! 🎫`;
         }
         message += `\n*Selected Tickets:*\n`;
         session.selected_tiers.forEach(tier => {
-            message += `   • ${tier.quantity} × ${tier.tier_name} - ₹${tier.quantity * tier.price}\n`;
+            message += `   • ${tier.quantity} × ${tier.tier_name} - ${formatMoney(tier.quantity * tier.price)}\n`;
         });
-        message += `\n💰 Total Amount: *₹${totalAmount}*\n`;
+        message += `\n💰 Total Amount: *${formatMoney(totalAmount)}*\n`;
         message += `🎫 Total Tickets: *${totalTickets}*\n\n`;
         message += `✅ Type *confirm* to proceed with these selections.\n`;
         message += `Type *cancel* to start over.`;
@@ -1390,13 +1418,13 @@ Thank you for choosing TicketVolt! 🎫`;
         }
         message += `\n*Tickets:*\n`;
         session.selected_tiers.forEach(tier => {
-            message += `   • ${tier.quantity} × ${tier.tier_name} - ₹${tier.quantity * tier.price}\n`;
+            message += `   • ${tier.quantity} × ${tier.tier_name} - ${formatMoney(tier.quantity * tier.price)}\n`;
             const names = session.tier_attendees[tier.tier_id] || [];
             names.forEach((name, idx) => {
                 message += `      ${idx + 1}. ${name}\n`;
             });
         });
-        message += `\n💰 Total Amount: *₹${session.total_amount}*\n`;
+        message += `\n💰 Total Amount: *${formatMoney(session.total_amount)}*\n`;
         message += `👤 Customer: ${session.customer_name}\n`;
         message += `📧 Email: ${session.customer_email}\n\n`;
         message += `Type *confirm* to book or *cancel* to cancel.`;
@@ -1543,8 +1571,13 @@ Thank you for choosing TicketVolt! 🎫`;
             }
         }
 
+        // ✅ FIX: prefer the server-formatted total; fall back to the
+        // local formatter only during a rolling deploy against an older
+        // backend that hasn't started sending `total_display` yet.
+        const totalDisplay = booking.total_display || formatMoney(session.total_amount);
+
         message += `🎟️ Total Tickets: ${session.total_tickets}\n`;
-        message += `💳 Total: ₹${session.total_amount}\n\n`;
+        message += `💳 Total: ${totalDisplay}\n\n`;
         message += `📌 *Next Steps:*\n`;
         message += `1. Please complete the payment at the venue/counter\n`;
         message += `2. Share your booking reference: *${booking.booking_reference}*\n`;
@@ -1552,7 +1585,7 @@ Thank you for choosing TicketVolt! 🎫`;
 
         message += this.whatsappTicketDeliveryEnabled
             ? `📱 You will receive your tickets via WhatsApp and Email.\n\n`
-            : `📧 You will receive your tickets via Email only.\n\n`;
+            : `📧 You will receive tickets via Email only.\n\n`;
 
         message += `Thank you for choosing TicketVolt! 🎉`;
         return message;

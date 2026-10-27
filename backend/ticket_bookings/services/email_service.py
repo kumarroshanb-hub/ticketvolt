@@ -14,6 +14,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 import logging
 import base64
 from django.utils import timezone
+from ..utils.money import format_money
 
 # ✅ Canonical signed QR payload builder — single source of truth.
 from .qr_payload import serialise_ticket_qr_payload
@@ -227,6 +228,7 @@ class EmailTicketService:
     @staticmethod
     def send_booking_confirmation_email(booking):
         """Send booking confirmation email (without tickets)."""
+        from .money import format_money
         try:
             if not booking.customer_email:
                 return {'success': False, 'error': 'No email address available'}
@@ -235,6 +237,7 @@ class EmailTicketService:
                 'booking': booking,
                 'event': booking.event,
                 'customer_name': booking.customer_name,
+                'total_display': format_money(booking.total_amount),
             }
 
             html_content = render_to_string('emails/booking_confirmation.html', context)

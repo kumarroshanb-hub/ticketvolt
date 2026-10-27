@@ -11,94 +11,173 @@ const api = axios.create({
 });
 
 // ============================================================
+// PUBLIC ENDPOINT REGISTRY
+// ------------------------------------------------------------
+// ✅ FIX [AUTH-401-ON-PUBLIC]:
+// DRF's JWTAuthentication runs BEFORE permission classes. If a
+// stale/invalid token is present on an AllowAny endpoint, JWT auth
+// raises AuthenticationFailed and the request returns 401 — even
+// though the view would have allowed anonymous access. That 401
+// then enters the refresh flow, which fails, which redirects to
+// /login.
+//
+// The fix: never attach an Authorization header to these endpoints.
+// JWTAuthentication.authenticate() returns None when no header is
+// present, AllowAny lets the request through, and the endpoint
+// returns 200.
+// ============================================================
+
+const PUBLIC_ENDPOINTS = [
+    '/events/public/',
+    '/auth/login/',
+    '/auth/refresh/',
+    '/auth/register/',
+    '/auth/forgot-password/',
+    '/auth/confirm-password-reset/',
+    '/auth/verify-email/',
+    '/settings/public/',
+];
+
+const isPublicEndpoint = (url) => {
+    if (!url) return false;
+    // Pre-signed S3/GCS URLs must never carry our bearer token.
+    if (url.startsWith('http://') || url.startsWith('https://')) return true;
+    return PUBLIC_ENDPOINTS.some((p) => url.includes(p));
+};
+
+// ============================================================
 // REQUEST INTERCEPTOR
 // ============================================================
 api.interceptors.request.use(
     (config) => {
-        const token = localStorage.getItem('token');
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+        if (!isPublicEndpoint(config.url)) {
+            const token = localStorage.getItem('token');
+            if (token) {
+                config.headers.Authorization = `Bearer ${token}`;
+            }
         }
         return config;
     },
-    (error) => {
-        return Promise.reject(error);
-    }
+    (error) => Promise.reject(error)
 );
 
 // ============================================================
-// ✅ FIX [P31]: single-flight refresh + loop guard
+// SINGLE-FLIGHT REFRESH + LOOP GUARD
 // ------------------------------------------------------------
-// The old interceptor fired a separate refresh call for EVERY
-// parallel 401. When the refresh itself returned 401 (expired
-// refresh token), `_retry` was already true on the original request
-// so the code fell through to `window.location.href = '/login'` for
-// each in-flight request — producing a redirect storm that
-// occasionally looped back to the same page.
-//
-// Three fixes:
-//   1. One shared `refreshPromise` — parallel 401s await the same
-//      refresh.
-//   2. If the *retried* request returns 401 again, we give up and
-//      reject immediately. No further refresh attempts.
-//   3. We never redirect if we're already on `/login` — that was the
-//      source of the redirect loop.
-//
-// ✅ FIX [GUEST-BOOKING]: config.skipAuthRedirect honours callers
-// that expect a request may be unauthenticated (e.g. a guest
-// submitting a booking). Without this flag, any 401 on such a
-// request triggered a hard redirect to /login — wiping the guest's
-// in-progress booking. Passing `skipAuthRedirect: true` on the
-// request means:
-//   • The refresh flow is skipped (there's nothing to refresh if
-//     the caller is a guest).
-//   • No hard redirect happens.
-//   • The 401 (or whatever error) is rejected to the caller so the
-//     component can surface an inline error message.
+// Responsibilities:
+//   • refresh an expired access token exactly once when N parallel
+//     requests all get 401;
+//   • persist the ROTATED refresh token (SIMPLE_JWT has
+//     ROTATE_REFRESH_TOKENS=True);
+//   • redirect to /login exactly once on unrecoverable auth failure
+//     (never from public pages);
+//   • notify AuthContext BEFORE navigating, so React state
+//     (isAuthenticated) is false by the time /login renders;
+//   • respect `skipAuthRedirect: true` for guest flows.
 // ============================================================
+
 let isRefreshing = false;
 let refreshPromise = null;
 
-const redirectToLoginOnce = () => {
+/**
+ * Wipe all auth material from storage + axios. Does NOT navigate.
+ * Kept in sync with AuthContext.clearAuthStorage().
+ */
+const clearAuthStorage = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
-    if (
-        typeof window !== 'undefined' &&
-        window.location.pathname !== '/login' &&
-        window.location.pathname !== '/register'
-    ) {
-        window.location.href = '/login';
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('refresh_token');
+    sessionStorage.removeItem('user');
+    delete api.defaults.headers.common['Authorization'];
+};
+
+// ✅ FIX [REDIRECT-LOOP-PUBLIC-PATHS]:
+// Never redirect away from a public page. If Landing.js is on "/"
+// and a background request (e.g. /auth/me/ from bootstrap) 401s,
+// we stay put and let the page render its own state.
+const PUBLIC_PATHS = [
+    '/',
+    '/login',
+    '/register',
+    '/forgot-password',
+    '/gate',
+    '/unauthorized',
+];
+
+// ✅ FIX [GUEST-FLOW]:
+// Guest-allowed app paths. A guest is a *supported* state on these
+// pages — the booking wizard intentionally allows anonymous checkout.
+// A 401 here means "the guest tried an authenticated action from the
+// wizard" (e.g. validate_discount), which should surface as an error
+// in the UI, NOT trigger a hard redirect to /login. The submit call
+// itself is guarded by `skipAuthRedirect: !isAuthenticated` in
+// CreateBooking.js.
+const GUEST_ALLOWED_PREFIXES = [
+    '/app/bookings/create',
+];
+
+const isPublicPath = (path) =>
+    PUBLIC_PATHS.includes(path) ||
+    path.startsWith('/reset-password') ||
+    GUEST_ALLOWED_PREFIXES.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'));
+
+/**
+ * Navigate to /login and clear auth.
+ *
+ * ✅ FIX [REDIRECT-LOOP]: no module-level latch.
+ * ✅ FIX [REDIRECT-LOOP-2]: dispatch force-logout event first.
+ * ✅ FIX [REDIRECT-LOOP-PUBLIC-PATHS]: bail on public paths.
+ * ✅ FIX [GUEST-FLOW]: bail on guest-allowed app paths.
+ */
+const redirectToLoginOnce = () => {
+    clearAuthStorage();
+
+    // Notify AuthContext first, synchronously.
+    if (typeof window !== 'undefined') {
+        try {
+            window.dispatchEvent(new CustomEvent('auth:force-logout'));
+        } catch {
+            // Older browsers / SSR — ignore.
+        }
     }
+
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname;
+
+    // ✅ Never redirect away from public or guest-allowed pages.
+    if (isPublicPath(path)) return;
+
+    window.location.href = '/login';
 };
 
 api.interceptors.response.use(
-    (response) => {
-        return response;
-    },
+    (response) => response,
     async (error) => {
         const originalRequest = error.config;
         if (!originalRequest) {
             return Promise.reject(error);
         }
 
-        // Only handle 401 for non-login requests.
         const isLogin = originalRequest.url?.includes('/auth/login/');
-
-        // ✅ FIX [GUEST-BOOKING]: some requests are *expected* to be
-        // unauthenticated — e.g. a guest submitting a booking. If the
-        // caller set `skipAuthRedirect` on the request config, we must
-        // NOT attempt a token refresh and MUST NOT hard-redirect to
-        // /login when the response is 401. We just reject and let the
-        // calling component show the error inline.
+        const isRefresh = originalRequest.url?.includes('/auth/refresh/');
         const skipAuthRedirect = originalRequest.skipAuthRedirect === true;
+        // ✅ Public endpoints never trigger the refresh/redirect flow.
+        const isPublic = isPublicEndpoint(originalRequest.url);
 
-        if (error.response?.status !== 401 || isLogin || skipAuthRedirect) {
+        if (
+            error.response?.status !== 401 ||
+            isLogin ||
+            isRefresh ||
+            skipAuthRedirect ||
+            isPublic
+        ) {
             return Promise.reject(error);
         }
 
-        // ✅ FIX [P31]: if we've already retried this request once,
-        // do NOT try to refresh again. This is the loop guard.
+        // Loop guard: if this request has already been retried once,
+        // do NOT refresh again. Give up and log out.
         if (originalRequest._retry) {
             console.error('❌ 401 after refresh — giving up and logging out');
             redirectToLoginOnce();
@@ -107,26 +186,41 @@ api.interceptors.response.use(
 
         originalRequest._retry = true;
 
-        // ✅ FIX [P31]: single-flight refresh. Parallel requests that
-        // all got 401 wait on the SAME refresh call instead of firing
-        // N separate refresh attempts.
+        // ---- Single-flight refresh ----
         if (!isRefreshing) {
             isRefreshing = true;
             refreshPromise = (async () => {
                 try {
-                    const refreshToken = localStorage.getItem('refresh_token');
+                    const refreshToken =
+                        localStorage.getItem('refresh_token') ||
+                        sessionStorage.getItem('refresh_token');
                     if (!refreshToken) {
                         throw new Error('No refresh token available');
                     }
-                    const response = await axios.post(`${API_URL}/auth/refresh/`, {
-                        refresh: refreshToken,
-                    });
-                    const { access } = response.data || {};
+
+                    const response = await axios.post(
+                        `${API_URL}/auth/refresh/`,
+                        { refresh: refreshToken }
+                    );
+
+                    const { access, refresh: rotatedRefresh } =
+                        response.data || {};
+
                     if (!access) {
-                        throw new Error('Refresh response missing access token');
+                        throw new Error(
+                            'Refresh response missing access token'
+                        );
                     }
+
                     localStorage.setItem('token', access);
-                    api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
+                    sessionStorage.setItem('token', access);
+
+                    if (rotatedRefresh) {
+                        localStorage.setItem('refresh_token', rotatedRefresh);
+                        sessionStorage.setItem('refresh_token', rotatedRefresh);
+                    }
+
+                    api.defaults.headers.common.Authorization = `Bearer ${access}`;
                     console.log('✅ Token refreshed successfully');
                     return access;
                 } finally {
@@ -141,7 +235,10 @@ api.interceptors.response.use(
             originalRequest.headers.Authorization = `Bearer ${access}`;
             return api(originalRequest);
         } catch (refreshError) {
-            console.error('❌ Token refresh failed:', refreshError.message);
+            console.error(
+                '❌ Token refresh failed:',
+                refreshError.message
+            );
             redirectToLoginOnce();
             return Promise.reject(refreshError);
         }

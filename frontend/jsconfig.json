@@ -10,7 +10,8 @@
       "@services/*": ["services/*"],
       "@hooks/*": ["hooks/*"],
       "@styles/*": ["styles/*"],
-      "@theme/*": ["theme/*"]
+      "@theme/*": ["theme/*"],
+      "shared/constants/currencies": ["constants/currencies"]
     }
   },
   "include": ["src"]

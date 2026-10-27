@@ -2,6 +2,7 @@ from django.conf import settings
 import requests
 import logging
 from ticket_bookings.services.qr_service import QRCodeService
+from ticket_bookings.utils.money import format_money
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,10 @@ class MessageService:
     def send_booking_confirmation(booking):
         """Send booking confirmation message"""
         gateway_url = getattr(settings, 'WHATSAPP_GATEWAY_URL', 'http://localhost:3002')
-        
+
+        # ✅ FIX: server-side money formatting.
+        total_display = format_money(booking.total_amount)
+
         message = f"""
 ✅ *Booking Confirmed!*
 
@@ -65,17 +69,19 @@ class MessageService:
 *Event:* {booking.event.title}
 *Date:* {booking.event.start_date.strftime('%d %b %Y, %I:%M %p')}
 *Tickets:* {booking.tickets.count()}
-*Total Amount:* ₹{booking.total_amount}
+*Total Amount:* {total_display}
 
 You will receive your tickets shortly.
 Thank you for booking with TicketVolt! 🎫
         """
-        
+
         payload = {
             'phone_number': booking.whatsapp_number or booking.customer_phone,
-            'message': message
+            'message': message,
+            # ✅ Pass through so any downstream consumer can re-render consistently.
+            'total_display': total_display,
         }
-        
+
         try:
             response = requests.post(
                 f"{gateway_url}/api/send_message",

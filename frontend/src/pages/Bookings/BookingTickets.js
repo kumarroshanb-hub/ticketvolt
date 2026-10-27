@@ -40,6 +40,7 @@ import {
 
 // ✅ Single source of truth — every color/font below flows from here.
 import { theme } from '../../theme/tokens';
+import { useSettings } from '../../context/SettingsContext';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -127,6 +128,7 @@ const BookingTickets = () => {
     const { bookingId } = useParams();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const { formatMoney } = useSettings();   // ✅ NEW
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -295,9 +297,9 @@ const BookingTickets = () => {
                 refund_amount_added,
             } = result.data;
 
-            const refundText =
+            const refundText =   // ✅ PATCHED
                 refund_amount_added && refund_amount_added > 0
-                    ? ` (₹${refund_amount_added} refunded)`
+                    ? ` (${formatMoney(refund_amount_added)} refunded)`
                     : '';
 
             toast.success(
@@ -373,7 +375,7 @@ const BookingTickets = () => {
                     ? new Date(t.check_in_time).toLocaleString()
                     : '-',
                 t.tier_name || 'N/A',
-                `₹${t.price || '0'}`,
+                formatMoney(t.price || 0),   // ✅ PATCHED
             ]);
 
             const csvContent = [
@@ -628,7 +630,7 @@ const BookingTickets = () => {
                                     Subtotal
                                 </Typography>
                                 <Typography variant="body2" sx={{ color: C.textPrimary }}>
-                                    ₹{subtotal.toFixed(2)}
+                                    {formatMoney(subtotal)}   {/* ✅ PATCHED */}
                                 </Typography>
                             </Box>
 
@@ -640,7 +642,7 @@ const BookingTickets = () => {
                                         {booking.discount_code ? ` (${booking.discount_code})` : ''}
                                     </Typography>
                                     <Typography variant="body2" sx={{ color: C.success, fontWeight: 600 }}>
-                                        −₹{discountApplied.toFixed(2)}
+                                        −{formatMoney(discountApplied)}   {/* ✅ PATCHED */}
                                     </Typography>
                                 </Box>
                             )}
@@ -659,7 +661,7 @@ const BookingTickets = () => {
                                     Net Paid
                                 </Typography>
                                 <Typography variant="body2" sx={{ color: C.primary, fontWeight: 700 }}>
-                                    ₹{netPaid.toFixed(2)}
+                                    {formatMoney(netPaid)}   {/* ✅ PATCHED */}
                                 </Typography>
                             </Box>
 
@@ -940,7 +942,7 @@ const BookingTickets = () => {
                                                 variant="body2"
                                                 sx={{ color: C.textPrimary, fontWeight: 600 }}
                                             >
-                                                ₹{ticket.price || '0'}
+                                                {formatMoney(ticket.price || 0)}   {/* ✅ PATCHED */}
                                             </Typography>
                                         </Box>
                                         {ticket.check_in_time && (
@@ -1124,7 +1126,7 @@ const BookingTickets = () => {
                                                     align="right"
                                                     sx={{ color: C.textPrimary }}
                                                 >
-                                                    ₹{ticket.price || '0'}
+                                                    {formatMoney(ticket.price || 0)}   {/* ✅ PATCHED */}
                                                 </TableCell>
                                                 <TableCell align="center">
                                                     {ticket.check_in_time ? (
@@ -1328,7 +1330,7 @@ const BookingTickets = () => {
                                         variant="body2"
                                         sx={{ color: C.textPrimary }}
                                     >
-                                        ₹{selectedTicket.price || '0'}
+                                        {formatMoney(selectedTicket.price || 0)}   {/* ✅ PATCHED */}
                                     </Typography>
                                 </Grid>
                             </Grid>
@@ -1485,14 +1487,14 @@ const BookingTickets = () => {
                                                         : C.textLight,
                                                 }}
                                             >
-                                                ₹{row.refund_amount.toFixed(2)}
+                                                {formatMoney(row.refund_amount)}   {/* ✅ PATCHED */}
                                             </Typography>
                                             {row.cancellation_fee > 0 && (
                                                 <Typography
                                                     variant="caption"
                                                     sx={{ color: C.error }}
                                                 >
-                                                    −₹{row.cancellation_fee.toFixed(2)} fee
+                                                    −{formatMoney(row.cancellation_fee)} fee   {/* ✅ PATCHED */}
                                                 </Typography>
                                             )}
                                         </Box>
@@ -1518,7 +1520,7 @@ const BookingTickets = () => {
                                         variant="body2"
                                         sx={{ fontWeight: 700, color: C.success }}
                                     >
-                                        ₹{previewData.total_refund.toFixed(2)}
+                                        {formatMoney(previewData.total_refund)}   {/* ✅ PATCHED */}
                                     </Typography>
                                 </Box>
                             </Box>

@@ -13,6 +13,7 @@ import {
 } from '@mui/icons-material';
 import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';                      // ✅ NEW
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -309,18 +310,23 @@ const BookButton = styled(Button)`
     }
 `;
 
-const formatDate = (dateString) => {
-    if (!dateString) return 'TBD';
+// ✅ FIX: locale-aware date/time formatters (was hardcoded 'en-US').
+const formatDate = (dateString, locale) => {
+    if (!dateString) return null;
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) return 'TBD';
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleDateString(locale, {
+        month: 'short', day: 'numeric', year: 'numeric',
+    });
 };
 
-const formatTime = (dateString) => {
-    if (!dateString) return 'TBD';
+const formatTime = (dateString, locale) => {
+    if (!dateString) return null;
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) return 'TBD';
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString(locale, {
+        hour: '2-digit', minute: '2-digit',
+    });
 };
 
 const getCategoryIcon = (category) => {
@@ -350,8 +356,8 @@ const pickAnnouncementImage = (event) => {
     );
 };
 
-const getFullVenueAddress = (venue) => {
-    if (!venue) return 'Online Event';
+const getFullVenueAddress = (venue, t) => {
+    if (!venue) return t('eventCard.onlineEvent');                   // ✅ FIX
 
     const parts = [
         venue.name,
@@ -360,7 +366,7 @@ const getFullVenueAddress = (venue) => {
         venue.state,
     ].filter((p) => p && String(p).trim().length > 0);
 
-    return parts.length > 0 ? parts.join(', ') : 'Online Event';
+    return parts.length > 0 ? parts.join(', ') : t('eventCard.onlineEvent');
 };
 
 const VALID_FLOWS = ['ticketed', 'free_registration', 'paid_registration'];
@@ -383,20 +389,14 @@ const resolveFlow = (event) => {
 const isRegistrationFlow = (flow) =>
     flow === 'free_registration' || flow === 'paid_registration';
 
-// ============================================================
-// ✅ ENHANCEMENT: `context` decides what the CTA says and does.
-//
-//   'public'     → Book / Register (existing behaviour)
-//   'management' → View Details (routes to the event detail page)
-// ============================================================
+// ✅ FIX: CTA resolver now returns `labelKey` instead of `label` so the
+// component can translate at render time (avoids capturing stale `t`).
 const resolveCta = (event, isActuallySoldOut, context = 'public') => {
     const flow = resolveFlow(event);
 
-    // Management context wins over the sold-out rule: admins and
-    // organizers still want to view details of a sold-out event.
     if (context === 'management') {
         return {
-            label: 'View Details',
+            labelKey: 'eventCard.viewDetails',
             icon: <VisibilityIcon />,
             disabled: false,
             flow,
@@ -405,7 +405,7 @@ const resolveCta = (event, isActuallySoldOut, context = 'public') => {
 
     if (isActuallySoldOut) {
         return {
-            label: 'Sold Out',
+            labelKey: 'eventCard.soldOut',
             icon: <ShoppingCart />,
             disabled: true,
             flow,
@@ -415,14 +415,14 @@ const resolveCta = (event, isActuallySoldOut, context = 'public') => {
     switch (flow) {
         case 'free_registration':
             return {
-                label: 'Register Free',
+                labelKey: 'eventCard.registerFree',
                 icon: <CheckCircleIcon />,
                 disabled: false,
                 flow,
             };
         case 'paid_registration':
             return {
-                label: 'Register',
+                labelKey: 'eventCard.register',
                 icon: <HowToRegIcon />,
                 disabled: false,
                 flow,
@@ -430,7 +430,7 @@ const resolveCta = (event, isActuallySoldOut, context = 'public') => {
         case 'ticketed':
         default:
             return {
-                label: 'Book Tickets',
+                labelKey: 'eventCard.bookTickets',
                 icon: <ShoppingCart />,
                 disabled: false,
                 flow: 'ticketed',
@@ -455,11 +455,15 @@ const EventCard = ({
     event: initialEvent,
     onSelect = null,
     selected = false,
-    context = 'public',       // ✅ ENHANCEMENT: 'public' | 'management'
+    context = 'public',
 }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
     const { formatMoney, settings } = useSettings();
+    const { t, i18n } = useTranslation();                            // ✅ NEW
+
+    // ✅ FIX: map i18n code to a BCP-47 locale for Intl formatting.
+    const intlLocale = i18n.language === 'zh-Hant' ? 'zh-HK' : 'en-HK';
 
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
@@ -511,7 +515,7 @@ const EventCard = ({
     }
 
     const prices = tiers
-        .map((t) => parseFloat(t.price))
+        .map((tier) => parseFloat(tier.price))
         .filter((p) => !isNaN(p) && p > 0);
     const minPrice = prices.length ? Math.min(...prices) : null;
     const lowStock = availableSlots > 0 && availableSlots <= 10;
@@ -532,19 +536,15 @@ const EventCard = ({
 
     const announcementImage = pickAnnouncementImage(event);
 
-    // ✅ ENHANCEMENT: pass `context` through.
     const cta = resolveCta(event, isActuallySoldOut, context);
     const priceDisplay = resolvePriceDisplay(flow, minPrice, tiers);
 
     const handleCtaClick = () => {
-        // Management context: always go to the details page via onSelect.
-        // (No sold-out short-circuit — admins still want to inspect it.)
         if (context === 'management') {
             if (onSelect) onSelect(event);
             return;
         }
 
-        // Public context: honour the existing wizard / gate flow.
         if (isActuallySoldOut) return;
 
         if (onSelect) {
@@ -594,12 +594,13 @@ const EventCard = ({
                     <EventTitle>{event.title}</EventTitle>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end', flexShrink: 0 }}>
                         <CategoryTag>
-                            {getCategoryIcon(event.category)} {event.category || 'Event'}
+                            {getCategoryIcon(event.category)} {event.category || t('eventCard.event')}
                         </CategoryTag>
-                        {/* ✅ ENHANCEMENT: show the event_flow badge */}
                         {flow !== 'ticketed' && (
                             <FlowTag $flow={flow}>
-                                {flow === 'free_registration' ? 'Free Reg' : 'Paid Reg'}
+                                {flow === 'free_registration'
+                                    ? t('eventCard.freeReg')
+                                    : t('eventCard.paidReg')}
                             </FlowTag>
                         )}
                     </Box>
@@ -610,21 +611,23 @@ const EventCard = ({
                     <div className="text">
                         {displaySessions.length === 1 ? (
                             <div style={{ fontWeight: 500, color: C.textPrimary }}>
-                                {formatDate(displaySessions[0].start_time)} · {formatTime(displaySessions[0].start_time)}
+                                {formatDate(displaySessions[0].start_time, intlLocale) || t('eventCard.tbd')}
+                                {' · '}
+                                {formatTime(displaySessions[0].start_time, intlLocale) || t('eventCard.tbd')}
                             </div>
                         ) : (
                             <SessionList>
                                 {visibleSessions.map((sess, idx) => (
                                     <div key={idx} className="session-item">
-                                        <span>{formatDate(sess.start_time)}</span>
+                                        <span>{formatDate(sess.start_time, intlLocale) || t('eventCard.tbd')}</span>
                                         <span style={{ color: C.textMuted, fontSize: '11px', fontWeight: 400 }}>
-                                            at {formatTime(sess.start_time)}
+                                            {t('eventCard.at')} {formatTime(sess.start_time, intlLocale) || t('eventCard.tbd')}
                                         </span>
                                     </div>
                                 ))}
                                 {remainingSessionsCount > 0 && (
                                     <div className="session-more">
-                                        +{remainingSessionsCount} more date{remainingSessionsCount > 1 ? 's' : ''}
+                                        {t('eventCard.moreDates', { count: remainingSessionsCount })}
                                     </div>
                                 )}
                             </SessionList>
@@ -635,20 +638,22 @@ const EventCard = ({
                 <InfoRow>
                     <LocationOn />
                     <span className="text">
-                        {getFullVenueAddress(event.venue)}
+                        {getFullVenueAddress(event.venue, t)}
                     </span>
                 </InfoRow>
 
                 <PriceRow $low={lowStock}>
                     <div>
                         <div className="from-label">
-                            {priceDisplay.kind === 'free' ? 'Admission' : 'From'}
+                            {priceDisplay.kind === 'free'
+                                ? t('eventCard.admission')
+                                : t('eventCard.from')}
                         </div>
                         <div className="price">
                             {loadingDetails ? (
                                 <CircularProgress size={16} sx={{ color: C.textMuted }} />
                             ) : priceDisplay.kind === 'free' ? (
-                                <span className="free-label">Free</span>
+                                <span className="free-label">{t('eventCard.free')}</span>
                             ) : priceDisplay.kind === 'number' ? (
                                 <span>{formatMoney(priceDisplay.value)}</span>
                             ) : (
@@ -661,18 +666,20 @@ const EventCard = ({
                     </div>
                     {isActuallySoldOut ? (
                         <span className="slots" style={{ color: C.error }}>
-                            Sold out
+                            {t('eventCard.soldOut')}
                         </span>
                     ) : availableSlots > 0 ? (
                         <span className="slots">
-                            {lowStock ? `Only ${availableSlots} left` : `${availableSlots} seats`}
+                            {lowStock
+                                ? t('eventCard.onlyLeft', { count: availableSlots })
+                                : t('eventCard.seats', { count: availableSlots })}
                         </span>
                     ) : (
                         !loadingDetails && (
                             <span className="slots" style={{ color: C.textMuted }}>
                                 {flow === 'free_registration'
-                                    ? 'Registration open'
-                                    : 'Check availability'}
+                                    ? t('eventCard.registrationOpen')
+                                    : t('eventCard.checkAvailability')}
                             </span>
                         )
                     )}
@@ -682,7 +689,9 @@ const EventCard = ({
                     <Box sx={{ mt: 1 }}>
                         <TiersToggle onClick={() => setTiersExpanded(!tiersExpanded)}>
                             {tiersExpanded ? <ArrowUpIcon fontSize="small" /> : <ArrowDownIcon fontSize="small" />}
-                            {tiersExpanded ? 'Hide Ticket Tiers' : 'View Ticket Tiers'}
+                            {tiersExpanded
+                                ? t('eventCard.hideTicketTiers')
+                                : t('eventCard.viewTicketTiers')}
                         </TiersToggle>
 
                         <Collapse in={tiersExpanded}>
@@ -703,16 +712,20 @@ const EventCard = ({
                                                     <div className="price">
                                                         {tierPrice > 0
                                                             ? formatMoney(tierPrice)
-                                                            : 'Free'}
+                                                            : t('eventCard.free')}
                                                     </div>
-                                                    {isTierSoldOut && <div className="sold-out">Sold out</div>}
+                                                    {isTierSoldOut && (
+                                                        <div className="sold-out">
+                                                            {t('eventCard.soldOut')}
+                                                        </div>
+                                                    )}
                                                 </Box>
                                             </TierItem>
                                         );
                                     })
                                 ) : (
                                     <Typography variant="body2" sx={{ color: C.textSecondary, textAlign: 'center', fontSize: '12px' }}>
-                                        No tiers configured.
+                                        {t('eventCard.noTiers')}
                                     </Typography>
                                 )}
                             </Box>
@@ -729,7 +742,7 @@ const EventCard = ({
                     startIcon={cta.icon}
                     color={selected ? "success" : "primary"}
                 >
-                    {selected ? 'Selected' : cta.label}
+                    {selected ? t('eventCard.selected') : t(cta.labelKey)}
                 </BookButton>
             </StyledActions>
         </StyledCard>

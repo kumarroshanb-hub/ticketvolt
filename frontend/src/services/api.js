@@ -1,5 +1,6 @@
 // frontend/src/services/api.js
 import axios from 'axios';
+import { getCurrentLanguage } from '../i18n';                         // ✅ NEW
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
 
@@ -36,6 +37,7 @@ const PUBLIC_ENDPOINTS = [
     '/auth/confirm-password-reset/',
     '/auth/verify-email/',
     '/settings/public/',
+    '/i18n/setlang/',
 ];
 
 const isPublicEndpoint = (url) => {
@@ -50,10 +52,31 @@ const isPublicEndpoint = (url) => {
 // ============================================================
 api.interceptors.request.use(
     (config) => {
+        // ✅ NEW: send the current language so DRF returns translated
+        // validation messages, and Django admin/emails follow suit.
+        // Handles both AxiosHeaders instances (axios ≥1.0) and plain
+        // objects (older axios / test mocks).
+        try {
+            const lang = getCurrentLanguage();
+            if (config.headers && typeof config.headers.set === 'function') {
+                config.headers.set('Accept-Language', lang);
+            } else {
+                config.headers = config.headers || {};
+                config.headers['Accept-Language'] = lang;
+            }
+        } catch {
+            /* i18n not initialised yet — ignore */
+        }
+
         if (!isPublicEndpoint(config.url)) {
             const token = localStorage.getItem('token');
             if (token) {
-                config.headers.Authorization = `Bearer ${token}`;
+                if (config.headers && typeof config.headers.set === 'function') {
+                    config.headers.set('Authorization', `Bearer ${token}`);
+                } else {
+                    config.headers = config.headers || {};
+                    config.headers.Authorization = `Bearer ${token}`;
+                }
             }
         }
         return config;
@@ -200,7 +223,9 @@ api.interceptors.response.use(
 
                     const response = await axios.post(
                         `${API_URL}/auth/refresh/`,
-                        { refresh: refreshToken }
+                        { refresh: refreshToken },
+                        // ✅ NEW: send language on the raw refresh call too.
+                        { headers: { 'Accept-Language': getCurrentLanguage() } }
                     );
 
                     const { access, refresh: rotatedRefresh } =
@@ -231,8 +256,13 @@ api.interceptors.response.use(
 
         try {
             const access = await refreshPromise;
-            originalRequest.headers = originalRequest.headers || {};
-            originalRequest.headers.Authorization = `Bearer ${access}`;
+            // ✅ CHANGED: use .set() when available (axios ≥1.0).
+            if (originalRequest.headers && typeof originalRequest.headers.set === 'function') {
+                originalRequest.headers.set('Authorization', `Bearer ${access}`);
+            } else {
+                originalRequest.headers = originalRequest.headers || {};
+                originalRequest.headers.Authorization = `Bearer ${access}`;
+            }
             return api(originalRequest);
         } catch (refreshError) {
             console.error(

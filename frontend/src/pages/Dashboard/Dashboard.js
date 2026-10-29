@@ -12,9 +12,10 @@ import {
     AttachMoney as MoneyIcon,
     Refresh as RefreshIcon,
 } from '@mui/icons-material';
+import { useTranslation } from 'react-i18next';                   // ✅ NEW
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
-import { useSettings } from '../../context/SettingsContext';   // ✅ NEW
+import { useSettings } from '../../context/SettingsContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -173,6 +174,7 @@ const StatCard = ({ title, value, icon, color, subtitle }) => {
 // MOBILE BOOKING CARD
 // ============================================
 const MobileBookingCard = ({ booking, onClick }) => {
+    const { t } = useTranslation();                                 // ✅ NEW
     const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
 
     return (
@@ -226,10 +228,10 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             letterSpacing: 0.5,
                         }}
                     >
-                        Customer
+                        {t('booking.customer')}                       {/* ✅ FIX */}
                     </Typography>
                     <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 500 }}>
-                        {booking.customer_name || 'N/A'}
+                        {booking.customer_name || t('common.nA')}     {/* ✅ FIX */}
                     </Typography>
                 </Box>
 
@@ -244,7 +246,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             letterSpacing: 0.5,
                         }}
                     >
-                        Event
+                        {t('booking.event')}                          {/* ✅ FIX */}
                     </Typography>
                     <Typography
                         variant="body2"
@@ -256,7 +258,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             whiteSpace: 'nowrap',
                         }}
                     >
-                        {booking.event_title || 'N/A'}
+                        {booking.event_title || t('common.nA')}       {/* ✅ FIX */}
                     </Typography>
                 </Box>
 
@@ -271,13 +273,16 @@ const MobileBookingCard = ({ booking, onClick }) => {
                 >
                     <AmountDisplay booking={booking} align="left" size="h6" />
                     <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
-                        {booking.ticket_count || 0} ticket{(booking.ticket_count || 0) !== 1 ? 's' : ''}
+                        {/* ✅ FIX: singular / plural aware */}
+                        {t('booking.ticketCount', {
+                            count: booking.ticket_count || 0,
+                        })}
                     </Typography>
                 </Box>
 
                 {isCompleted && (
                     <Typography variant="caption" sx={{ color: C.success, display: 'block', mt: 1, fontWeight: 600 }}>
-                        ✅ All tickets used
+                        ✅ {t('booking.allTicketsUsed')}               {/* ✅ FIX */}
                     </Typography>
                 )}
             </CardContent>
@@ -291,7 +296,8 @@ const MobileBookingCard = ({ booking, onClick }) => {
 const Dashboard = () => {
     const { user } = useAuth();
     const { role } = useRole();
-    const { formatMoney } = useSettings();   // ✅ currency-aware formatter
+    const { formatMoney } = useSettings();
+    const { t } = useTranslation();                                 // ✅ NEW
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -326,13 +332,14 @@ const Dashboard = () => {
             setStats(response.data);
         } catch (error) {
             console.error('Dashboard error:', error);
-            toast.error('Failed to load dashboard stats');
+            toast.error(t('dashboard.loadFailed'));                 // ✅ FIX
         }
         setLoading(false);
     };
 
     useEffect(() => {
         loadDashboard();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     if (loading) {
@@ -350,7 +357,7 @@ const Dashboard = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle variant="h4">Dashboard</PageTitle>
+                    <PageTitle variant="h4">{t('dashboard.title')}</PageTitle>          {/* ✅ FIX */}
                     <Typography
                         variant="body2"
                         sx={{
@@ -360,12 +367,13 @@ const Dashboard = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
-                        Welcome back, {user?.name || 'Admin'}!
+                        {/* ✅ FIX: user name interpolated */}
+                        {t('dashboard.welcome', { name: user?.name || 'Admin' })}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadDashboard}>
-                        Refresh
+                        {t('common.refresh')}                                  {/* ✅ FIX */}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -373,38 +381,46 @@ const Dashboard = () => {
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Total Events"
+                        title={t('dashboard.statTotalEvents')}                 /* ✅ FIX */
                         value={stats.total_events || 0}
                         icon={<EventIcon sx={{ color: C.primary, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.primary}
-                        subtitle={`${stats.active_events || 0} active`}
+                        subtitle={t('dashboard.statTotalEventsSubtitle', {
+                            count: stats.active_events || 0,
+                        })}                                                    /* ✅ FIX */
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Total Bookings"
+                        title={t('dashboard.statTotalBookings')}               /* ✅ FIX */
                         value={stats.total_bookings || 0}
                         icon={<PeopleIcon sx={{ color: C.success, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.success}
-                        subtitle={`${stats.pending_bookings || 0} pending`}
+                        subtitle={t('dashboard.statTotalBookingsSubtitle', {
+                            count: stats.pending_bookings || 0,
+                        })}                                                    /* ✅ FIX */
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Tickets"
+                        title={t('dashboard.statTickets')}                     /* ✅ FIX */
                         value={stats.total_tickets || 0}
                         icon={<TicketIcon sx={{ color: C.secondary, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.secondary}
-                        subtitle={`${stats.used_tickets || 0} used`}
+                        subtitle={t('dashboard.statTicketsSubtitle', {
+                            count: stats.used_tickets || 0,
+                        })}                                                    /* ✅ FIX */
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Revenue"
+                        title={t('dashboard.statRevenue')}                     /* ✅ FIX */
                         value={formatMoney(stats.total_revenue || 0)}
                         icon={<MoneyIcon sx={{ color: C.warning, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.warning}
-                        subtitle={`Today: ${formatMoney(stats.today_revenue || 0)}`}
+                        subtitle={t('dashboard.statRevenueSubtitle', {
+                            amount: formatMoney(stats.today_revenue || 0),
+                        })}                                                    /* ✅ FIX */
                     />
                 </Grid>
             </Grid>
@@ -419,7 +435,7 @@ const Dashboard = () => {
                         fontSize: isMobile ? '1rem' : '1.25rem',
                     }}
                 >
-                    Recent Bookings
+                    {t('dashboard.recentBookings')}                            {/* ✅ FIX */}
                 </Typography>
 
                 {isMobile ? (
@@ -435,7 +451,9 @@ const Dashboard = () => {
                         </Box>
                     ) : (
                         <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
-                            <Typography sx={{ color: C.textLight }}>No recent bookings</Typography>
+                            <Typography sx={{ color: C.textLight }}>
+                                {t('dashboard.noRecentBookings')}              {/* ✅ FIX */}
+                            </Typography>
                         </Paper>
                     )
                 ) : (
@@ -443,12 +461,24 @@ const Dashboard = () => {
                         <Table>
                             <TableHead>
                                 <TableRow>
-                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Reference</TableCell>
-                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Customer</TableCell>
-                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Event</TableCell>
-                                    <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>Amount</TableCell>
-                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>Status</TableCell>
-                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>Date</TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.reference')}                   {/* ✅ FIX */}
+                                    </TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.customer')}                    {/* ✅ FIX */}
+                                    </TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.event')}                       {/* ✅ FIX */}
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.amount')}                      {/* ✅ FIX */}
+                                    </TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.status')}                      {/* ✅ FIX */}
+                                    </TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.date')}                        {/* ✅ FIX */}
+                                    </TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -470,7 +500,7 @@ const Dashboard = () => {
                                                     {booking.booking_reference}
                                                     {isCompleted && (
                                                         <Typography variant="caption" sx={{ color: C.success, display: 'block' }}>
-                                                            ✅ All tickets used
+                                                            ✅ {t('booking.allTicketsUsed')}  {/* ✅ FIX */}
                                                         </Typography>
                                                     )}
                                                 </TableCell>
@@ -491,7 +521,7 @@ const Dashboard = () => {
                                 ) : (
                                     <TableRow>
                                         <TableCell colSpan={6} align="center" sx={{ py: 4, color: C.textLight }}>
-                                            No recent bookings
+                                            {t('dashboard.noRecentBookings')}       {/* ✅ FIX */}
                                         </TableCell>
                                     </TableRow>
                                 )}
@@ -517,7 +547,7 @@ const Dashboard = () => {
                         fontSize: isMobile ? '1rem' : '1.25rem',
                     }}
                 >
-                    Popular Events
+                    {t('dashboard.popularEvents')}                             {/* ✅ FIX */}
                 </Typography>
                 <Grid container spacing={isMobile ? 1.5 : 2}>
                     {popularEvents.length > 0 ? (
@@ -537,7 +567,7 @@ const Dashboard = () => {
                     ) : (
                         <Grid item xs={12}>
                             <Box sx={{ textAlign: 'center', py: 4, color: C.textLight }}>
-                                No events found
+                                {t('dashboard.noEvents')}                      {/* ✅ FIX */}
                             </Box>
                         </Grid>
                     )}

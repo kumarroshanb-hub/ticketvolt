@@ -12,12 +12,14 @@ import {
 } from '@mui/icons-material';
 import styled, { keyframes } from 'styled-components';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';                       // ✅ NEW
 import { toast } from 'react-toastify';
 
 import eventService from '../../services/eventService';
 import { useAuth } from '../../context/AuthContext';
 import EventCard from '../../components/Common/EventCard';
 import Logo from '../../components/Logo';
+import LanguageSwitcher from '../../components/LanguageSwitcher';    // ✅ NEW
 import { theme } from '../../theme/tokens';
 import {
     EVENT_CATEGORY_LABELS,
@@ -46,6 +48,7 @@ const shimmer = keyframes`
 // ============================================
 
 const PageWrapper = styled.div`
+    position: relative;                    /* ✅ NEW — anchors the floating switcher */
     background: ${C.bgPrimary};
     min-height: 100vh;
     font-family: ${F.family};
@@ -531,12 +534,6 @@ const Footer = styled.footer`
 
 // ============================================
 // ICONS
-// ------------------------------------------------------------
-// Merged map: keeps the bespoke icons that were already in the
-// original `CATEGORIES` array (so visual style is unchanged for
-// existing pills) and falls back to the canonical
-// EVENT_CATEGORY_ICONS from constants/index.js for everything
-// else — including 'community' → 🤝.
 // ============================================
 const PREFERRED_ICONS = {
     concert:    '🎵',
@@ -554,9 +551,6 @@ const PREFERRED_ICONS = {
 
 const ICONS = { ...EVENT_CATEGORY_ICONS, ...PREFERRED_ICONS };
 
-// Preferred display order for the pills. Anything not listed here
-// still shows up (alphabetically, after these) so a new backend
-// category can never be silently hidden.
 const PREFERRED_ORDER = [
     'concert',
     'sports',
@@ -574,6 +568,7 @@ const PREFERRED_ORDER = [
 const Landing = () => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
+    const { t } = useTranslation();                                    // ✅ NEW
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -587,11 +582,6 @@ const Landing = () => {
         setLoading(true);
         setError(null);
         try {
-            // ✅ FIX [PUBLIC-EVENTS-SKIP-REDIRECT]:
-            // Belt-and-braces on top of api.js's PUBLIC_ENDPOINTS list.
-            // Even if the URL check in api.js misses, this request can
-            // never trigger redirectToLoginOnce() — the landing page
-            // must always be reachable while logged out.
             const data = await eventService.getPublicEvents({
                 skipAuthRedirect: true,
             });
@@ -599,8 +589,8 @@ const Landing = () => {
             setEvents(list);
         } catch (err) {
             console.error('Failed to load public events:', err);
-            setError('Could not load events. Please try again later.');
-            toast.error('Failed to load events.');
+            setError(t('landing.loadError'));                          // ✅ FIX
+            toast.error(t('landing.loadErrorToast'));                  // ✅ FIX
         } finally {
             setLoading(false);
         }
@@ -608,6 +598,7 @@ const Landing = () => {
 
     useEffect(() => {
         loadEvents();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const filteredEvents = useMemo(() => {
@@ -636,23 +627,8 @@ const Landing = () => {
         return counts;
     }, [events]);
 
-    // ============================================================
-    // ✅ FIX [LANDING-CATEGORY-FILTER]:
-    // Derive the pill list from the actual event data instead of
-    // a hardcoded array. A pill is emitted for every category that
-    // has at least one event, using:
-    //   • EVENT_CATEGORY_LABELS from constants/index.js for the
-    //     human-readable label ("Community", "Festivals", …)
-    //   • ICONS (merged map above) for the emoji
-    //   • PREFERRED_ORDER for sort order; anything not listed
-    //     falls back to alphabetical, so a brand-new backend
-    //     category still renders — the "Community not showing"
-    //     class of bug cannot recur.
-    //
-    // The "All Events" pill is always first.
-    // ============================================================
     const categories = useMemo(() => {
-        const items = [{ value: 'all', label: 'All Events', icon: '✨' }];
+        const items = [{ value: 'all', label: t('landing.allEvents'), icon: '✨' }];
 
         const sortedSlugs = Object.keys(categoryCounts)
             .filter((slug) => slug !== 'all' && categoryCounts[slug] > 0)
@@ -678,7 +654,7 @@ const Landing = () => {
         }
 
         return items;
-    }, [categoryCounts]);
+    }, [categoryCounts, t]);
 
     const heroStats = useMemo(() => {
         const cities = new Set();
@@ -688,16 +664,15 @@ const Landing = () => {
         return {
             eventCount: events.length,
             cityCount: cities.size,
-            cityCountLabel: cities.size > 0 ? String(cities.size) : 'All',
+            cityCountLabel: cities.size > 0
+                ? String(cities.size)
+                : t('landing.allCities'),                               // ✅ FIX
         };
-    }, [events]);
+    }, [events, t]);
 
     const handleLoginClick = () => navigate('/login');
     const handleDashboardClick = () => navigate('/app/dashboard');
 
-    // ✅ Belt-and-braces: if we're "authenticated" but the token is
-    // gone (e.g. another tab wiped storage), send the user to /login
-    // instead of /app/dashboard where they'd 401 and bounce.
     const handlePrimaryCta = () => {
         if (!isAuthenticated) {
             handleLoginClick();
@@ -713,6 +688,18 @@ const Landing = () => {
 
     return (
         <PageWrapper>
+            {/* ✅ NEW: floating language switcher over the hero */}
+            <Box
+                sx={{
+                    position: 'absolute',
+                    top: { xs: 12, sm: 16 },
+                    right: { xs: 12, sm: 24 },
+                    zIndex: 50,
+                }}
+            >
+                <LanguageSwitcher variant="dark" />
+            </Box>
+
             <HeroWrapper>
                 <HeroContent maxWidth="xl">
                     <ResponsiveLogoWrapper>
@@ -721,33 +708,33 @@ const Landing = () => {
 
                     <HeroBadge>
                         <span className="dot" />
-                        Live · {heroStats.eventCount} Event{heroStats.eventCount === 1 ? '' : 's'} Available
+                        {t('landing.liveBadge', { count: heroStats.eventCount })}
                     </HeroBadge>
 
                     <HeroTitle>
-                        Find Your Next <span className="highlight">Experience</span>
+                        {t('landing.heroTitleLine1')}{' '}
+                        <span className="highlight">
+                            {t('landing.heroTitleHighlight')}
+                        </span>
                     </HeroTitle>
 
-                    <HeroSubtitle>
-                        Discover concerts, sports, theater, and more. Book tickets
-                        in seconds with instant confirmation and e-ticket delivery.
-                    </HeroSubtitle>
+                    <HeroSubtitle>{t('landing.heroSubtitle')}</HeroSubtitle>
 
                     <HeroActionArea>
                         <HeroStats>
                             <HeroStat>
                                 <span className="value">{heroStats.eventCount}</span>
-                                <span className="label">Events</span>
+                                <span className="label">{t('landing.statEvents')}</span>
                             </HeroStat>
                             <HeroStatDivider />
                             <HeroStat>
                                 <span className="value">{heroStats.cityCountLabel}</span>
-                                <span className="label">Cities</span>
+                                <span className="label">{t('landing.statCities')}</span>
                             </HeroStat>
                             <HeroStatDivider />
                             <HeroStat>
                                 <span className="value">24/7</span>
-                                <span className="label">Booking</span>
+                                <span className="label">{t('landing.statBooking')}</span>
                             </HeroStat>
                         </HeroStats>
 
@@ -756,7 +743,9 @@ const Landing = () => {
                                 onClick={handlePrimaryCta}
                                 endIcon={<ArrowForwardIcon />}
                             >
-                                {isAuthenticated ? 'Go to Dashboard' : 'Login to Book Tickets'}
+                                {isAuthenticated
+                                    ? t('landing.goToDashboard')
+                                    : t('landing.loginToBook')}
                             </PrimaryHeroButton>
                             <GhostHeroButton
                                 onClick={() => {
@@ -765,7 +754,7 @@ const Landing = () => {
                                         ?.scrollIntoView({ behavior: 'smooth' });
                                 }}
                             >
-                                Browse Events
+                                {t('landing.browseEvents')}
                             </GhostHeroButton>
                         </HeroButtons>
                     </HeroActionArea>
@@ -775,7 +764,7 @@ const Landing = () => {
             <SearchOverlayWrapper maxWidth="xl">
                 <SearchCard>
                     <SearchField
-                        placeholder="Search by event name, venue, or city..."
+                        placeholder={t('landing.searchPlaceholder')}
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         InputProps={{
@@ -787,7 +776,7 @@ const Landing = () => {
                         }}
                     />
                     <RefreshBtn onClick={loadEvents} startIcon={<RefreshIcon />}>
-                        Refresh
+                        {t('common.refresh')}
                     </RefreshBtn>
                 </SearchCard>
             </SearchOverlayWrapper>
@@ -795,11 +784,11 @@ const Landing = () => {
             <SectionWrapper maxWidth="xl" id="events-section">
                 <SectionHeader>
                     <div>
-                        <SectionTitle>Upcoming Events</SectionTitle>
+                        <SectionTitle>{t('landing.upcomingEvents')}</SectionTitle>
                         <SectionSubtitle>
                             {loading
-                                ? 'Loading events...'
-                                : `${filteredEvents.length} event${filteredEvents.length === 1 ? '' : 's'} found`}
+                                ? t('common.loading')
+                                : t('landing.eventsFound', { count: filteredEvents.length })}
                         </SectionSubtitle>
                     </div>
                 </SectionHeader>
@@ -855,7 +844,7 @@ const Landing = () => {
                         severity="error"
                         action={
                             <Button color="inherit" size="small" onClick={loadEvents}>
-                                Retry
+                                {t('common.retry')}
                             </Button>
                         }
                     >
@@ -876,13 +865,13 @@ const Landing = () => {
                         </div>
                         <h3 className="title">
                             {searchTerm || activeCategory !== 'all'
-                                ? 'No matching events'
-                                : 'No events available yet'}
+                                ? t('landing.noMatchingEvents')
+                                : t('landing.noEventsAvailable')}
                         </h3>
                         <p className="subtitle">
                             {searchTerm || activeCategory !== 'all'
-                                ? 'Try adjusting your search or choosing a different category.'
-                                : 'Check back soon — new events are added regularly.'}
+                                ? t('landing.noMatchingEventsHint')
+                                : t('landing.noEventsHint')}
                         </p>
                         {(searchTerm || activeCategory !== 'all') && (
                             <Button
@@ -893,7 +882,7 @@ const Landing = () => {
                                 }}
                                 sx={{ textTransform: 'none' }}
                             >
-                                Clear filters
+                                {t('landing.clearFilters')}
                             </Button>
                         )}
                     </EmptyState>
@@ -907,7 +896,7 @@ const Landing = () => {
                     </Box>
                     <div className="inner">
                         <span className="copy">
-                            © {new Date().getFullYear()} TiKetVault. All rights reserved.
+                            © {new Date().getFullYear()} {t('landing.brandFooter')}
                         </span>
                         <div className="links">
                             <a
@@ -919,7 +908,7 @@ const Landing = () => {
                                         ?.scrollIntoView({ behavior: 'smooth' });
                                 }}
                             >
-                                Browse Events
+                                {t('landing.browseEvents')}
                             </a>
                             <a
                                 href="/login"
@@ -928,7 +917,7 @@ const Landing = () => {
                                     navigate('/login');
                                 }}
                             >
-                                Admin Login
+                                {t('landing.adminLogin')}
                             </a>
                         </div>
                     </div>

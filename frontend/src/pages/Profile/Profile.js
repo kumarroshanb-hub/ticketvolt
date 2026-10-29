@@ -1,6 +1,7 @@
 // frontend/src/pages/Profile/Profile.js
 import React, { useState } from 'react';
 import styled from 'styled-components';
+import { useTranslation } from 'react-i18next';                       // ✅ NEW
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import {
@@ -258,6 +259,7 @@ const Message = styled.div`
 const Profile = () => {
     const { user, updateProfile } = useAuth();
     const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
+    const { t } = useTranslation();                                    // ✅ NEW
     const navigate = useNavigate();
 
     const [editing, setEditing] = useState(false);
@@ -266,10 +268,10 @@ const Profile = () => {
     const [message, setMessage] = useState(null);
 
     const getRoleLabel = () => {
-        if (isSuperAdmin) return 'Super Admin';
-        if (isAdmin) return 'Admin';
-        if (isOrganizer) return 'Organizer';
-        return 'User';
+        if (isSuperAdmin) return t('roles.superAdmin');                // ✅ FIX
+        if (isAdmin) return t('roles.admin');
+        if (isOrganizer) return t('roles.organizer');
+        return t('roles.user');
     };
 
     const getInitial = () => {
@@ -279,11 +281,11 @@ const Profile = () => {
 
     const handleSave = async () => {
         if (!updateProfile) {
-            setMessage({ text: 'Profile editing is not supported.', error: true });
+            setMessage({ text: t('profile.editingUnsupported'), error: true });
             return;
         }
         if (!name.trim()) {
-            setMessage({ text: 'Name cannot be empty.', error: true });
+            setMessage({ text: t('profile.nameEmpty'), error: true });
             return;
         }
 
@@ -291,11 +293,11 @@ const Profile = () => {
             setSaving(true);
             setMessage(null);
             await updateProfile({ name: name.trim() });
-            setMessage({ text: 'Profile updated successfully.', error: false });
+            setMessage({ text: t('profile.saveSuccess'), error: false });
             setEditing(false);
         } catch (err) {
             setMessage({
-                text: err?.message || 'Failed to update profile.',
+                text: err?.message || t('profile.saveFailed'),
                 error: true,
             });
         } finally {
@@ -315,22 +317,22 @@ const Profile = () => {
                 <Header>
                     <Avatar>{getInitial()}</Avatar>
                     <HeaderText>
-                        <Name>{user?.name || user?.username || 'User'}</Name>
+                        <Name>{user?.name || user?.username || t('common.user')}</Name>
                         <RolePill $role={role}>{getRoleLabel()}</RolePill>
                     </HeaderText>
                 </Header>
 
-                <SectionTitle>Account Information</SectionTitle>
+                <SectionTitle>{t('profile.accountInformation')}</SectionTitle>
 
                 <Field>
                     <FieldIcon><PersonIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Full name</FieldLabel>
+                        <FieldLabel>{t('profile.fullName')}</FieldLabel>
                         {editing ? (
                             <Input
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
-                                placeholder="Enter your name"
+                                placeholder={t('profile.enterName')}
                                 autoFocus
                             />
                         ) : (
@@ -342,7 +344,7 @@ const Profile = () => {
                 <Field>
                     <FieldIcon><EmailIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Email</FieldLabel>
+                        <FieldLabel>{t('profile.email')}</FieldLabel>
                         <FieldValue>{user?.email || '—'}</FieldValue>
                     </FieldBody>
                 </Field>
@@ -350,7 +352,7 @@ const Profile = () => {
                 <Field>
                     <FieldIcon><BadgeIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Username</FieldLabel>
+                        <FieldLabel>{t('profile.username')}</FieldLabel>
                         <FieldValue>{user?.username || '—'}</FieldValue>
                     </FieldBody>
                 </Field>
@@ -358,7 +360,7 @@ const Profile = () => {
                 <Field>
                     <FieldIcon><BadgeIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Role</FieldLabel>
+                        <FieldLabel>{t('profile.role')}</FieldLabel>
                         <FieldValue>{getRoleLabel()}</FieldValue>
                     </FieldBody>
                 </Field>
@@ -375,13 +377,13 @@ const Profile = () => {
                                 disabled={saving}
                             >
                                 <SaveIcon />
-                                {saving ? 'Saving…' : 'Save changes'}
+                                {saving ? t('profile.saving') : t('profile.saveChanges')}
                             </PrimaryButton>
                             <GhostButton
                                 onClick={handleCancel}
                                 disabled={saving}
                             >
-                                Cancel
+                                {t('common.cancel')}
                             </GhostButton>
                         </>
                     ) : (
@@ -394,15 +396,15 @@ const Profile = () => {
                                 disabled={!updateProfile}
                                 title={
                                     !updateProfile
-                                        ? 'Editing not supported by AuthContext'
+                                        ? t('profile.editingUnsupported')
                                         : undefined
                                 }
                             >
-                                Edit profile
+                                {t('profile.editProfile')}
                             </PrimaryButton>
                             <GhostButton onClick={() => navigate(-1)}>
                                 <ArrowBackIcon />
-                                Back
+                                {t('common.back')}
                             </GhostButton>
                         </>
                     )}

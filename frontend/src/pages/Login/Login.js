@@ -1,6 +1,7 @@
 // frontend/src/pages/Login/Login.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';                       // ✅ NEW
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'react-toastify';
 import {
@@ -20,6 +21,7 @@ import {
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
 import Logo from '../../components/Logo';
+import LanguageSwitcher from '../../components/LanguageSwitcher';    // ✅ NEW
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
@@ -33,25 +35,31 @@ if (IS_PRODUCTION && SHOW_DEMO_CREDS) {
     );
 }
 
-const DEMO_CREDS = SHOW_DEMO_CREDS
+// Build demo creds once. Role labels are looked up lazily via t() at
+// render time so they follow the current language.
+const DEMO_CREDS_RAW = SHOW_DEMO_CREDS
     ? [
           {
-              role: '👑 Super Admin',
+              roleKey: 'roles.superAdmin',
+              icon: '👑',
               email: process.env.REACT_APP_DEMO_SUPERADMIN_EMAIL,
               password: process.env.REACT_APP_DEMO_SUPERADMIN_PASSWORD,
           },
           {
-              role: '🛡️ Admin',
+              roleKey: 'roles.admin',
+              icon: '🛡️',
               email: process.env.REACT_APP_DEMO_ADMIN_EMAIL,
               password: process.env.REACT_APP_DEMO_ADMIN_PASSWORD,
           },
           {
-              role: '📋 Organizer',
+              roleKey: 'roles.organizer',
+              icon: '📋',
               email: process.env.REACT_APP_DEMO_ORGANIZER_EMAIL,
               password: process.env.REACT_APP_DEMO_ORGANIZER_PASSWORD,
           },
           {
-              role: '👤 User',
+              roleKey: 'roles.user',
+              icon: '👤',
               email: process.env.REACT_APP_DEMO_USER_EMAIL,
               password: process.env.REACT_APP_DEMO_USER_PASSWORD,
           },
@@ -64,6 +72,7 @@ const Login = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const { login, isAuthenticated, loading } = useAuth();
+    const { t } = useTranslation();                                    // ✅ NEW
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -93,21 +102,22 @@ const Login = () => {
             const result = await login(email, password);
 
             if (!result) {
-                setError('Login failed. Please try again.');
-                toast.error('Login failed. Please try again.');
+                const msg = t('login.failed');
+                setError(msg);
+                toast.error(msg);
                 return;
             }
 
             if (result.success === true) {
-                toast.success('Login successful!');
+                toast.success(t('login.success'));
                 navigate(redirectTo, { replace: true });
             } else {
-                const errorMsg = result.error || 'Login failed. Please try again.';
+                const errorMsg = result.error || t('login.failed');
                 setError(errorMsg);
                 toast.error(errorMsg);
             }
         } catch (err) {
-            const errorMsg = err.message || 'An unexpected error occurred';
+            const errorMsg = err.message || t('common.unexpectedError');
             setError(errorMsg);
             toast.error(errorMsg);
         } finally {
@@ -118,7 +128,7 @@ const Login = () => {
     const fillCredentials = (emailVal, passwordVal) => {
         setEmail(emailVal);
         setPassword(passwordVal);
-        toast.info(`Credentials loaded: ${emailVal}`);
+        toast.info(t('login.credentialsLoaded', { email: emailVal }));
     };
 
     if (loading) {
@@ -157,19 +167,12 @@ const Login = () => {
             color: C.textInverse,
             fontSize: 15,
             fontFamily: F.family,
-
             '& fieldset': { borderColor: C.bgDarkBorder },
             '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
             '&.Mui-focused fieldset': { borderColor: C.secondary },
         },
-        '& .MuiOutlinedInput-input': {
-            padding: '14px 14px',
-            fontFamily: F.family,
-        },
-        '& .MuiFormHelperText-root': {
-            color: C.errorLight,
-            marginLeft: 0,
-        },
+        '& .MuiOutlinedInput-input': { padding: '14px 14px', fontFamily: F.family },
+        '& .MuiFormHelperText-root': { color: C.errorLight, marginLeft: 0 },
     };
 
     return (
@@ -190,7 +193,7 @@ const Login = () => {
                 position: 'relative',
             }}
         >
-            {/* Floating Back to Home Button */}
+            {/* Back to Home */}
             <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10 }}>
                 <Button
                     component={RouterLink}
@@ -207,8 +210,13 @@ const Login = () => {
                         },
                     }}
                 >
-                    {!isMobile && 'Back to Home'}
+                    {!isMobile && t('login.backToHome')}
                 </Button>
+            </Box>
+
+            {/* ✅ NEW: Language switcher (dark variant fits the dark card) */}
+            <Box sx={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+                <LanguageSwitcher variant="dark" compact={isMobile} />
             </Box>
 
             <Paper
@@ -241,7 +249,7 @@ const Login = () => {
                             fontFamily: F.family,
                         }}
                     >
-                        Sign in to manage your events
+                        {t('login.title')}
                     </Typography>
                 </Box>
 
@@ -272,18 +280,14 @@ const Login = () => {
                             fontFamily: F.family,
                         }}
                     >
-                        You are already logged in. Click "Sign In" to continue to dashboard.
+                        {t('login.alreadyLoggedIn')}
                     </Alert>
                 )}
 
                 <form onSubmit={handleSubmit} noValidate>
                     <FormControl fullWidth sx={{ mb: 2.5 }}>
-                        <InputLabel
-                            htmlFor="login-email"
-                            shrink
-                            sx={labelSx}
-                        >
-                            Email Address
+                        <InputLabel htmlFor="login-email" shrink sx={labelSx}>
+                            {t('login.email')}
                         </InputLabel>
                         <TextField
                             id="login-email"
@@ -293,7 +297,7 @@ const Login = () => {
                             onChange={(e) => setEmail(e.target.value)}
                             required
                             autoComplete="email"
-                            placeholder="Enter your email"
+                            placeholder={t('login.emailPlaceholder')}
                             inputProps={{ inputMode: 'email' }}
                             sx={fieldSx}
                             disabled={isSubmitting}
@@ -301,12 +305,8 @@ const Login = () => {
                     </FormControl>
 
                     <FormControl fullWidth sx={{ mb: 1 }}>
-                        <InputLabel
-                            htmlFor="login-password"
-                            shrink
-                            sx={labelSx}
-                        >
-                            Password
+                        <InputLabel htmlFor="login-password" shrink sx={labelSx}>
+                            {t('login.password')}
                         </InputLabel>
                         <TextField
                             id="login-password"
@@ -322,7 +322,6 @@ const Login = () => {
                         />
                     </FormControl>
 
-                    {/* ✅ ADDED: Forgot Password Link */}
                     <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2.5 }}>
                         <Link
                             component={RouterLink}
@@ -338,7 +337,7 @@ const Login = () => {
                                 },
                             }}
                         >
-                            Forgot Password?
+                            {t('login.forgotPassword')}
                         </Link>
                     </Box>
 
@@ -373,12 +372,12 @@ const Login = () => {
                         {isSubmitting ? (
                             <CircularProgress size={22} sx={{ color: C.textInverse }} />
                         ) : (
-                            'Sign In'
+                            t('login.signIn')
                         )}
                     </Button>
                 </form>
 
-                {DEMO_CREDS.length > 0 && (
+                {DEMO_CREDS_RAW.length > 0 && (
                     <Box
                         sx={{
                             mt: 3,
@@ -401,11 +400,11 @@ const Login = () => {
                                 fontFamily: F.family,
                             }}
                         >
-                            Demo Credentials (Dev Only)
+                            {t('login.demoCredentials')}
                         </Typography>
 
                         <Box sx={{ mt: 1.5 }}>
-                            {DEMO_CREDS.map((cred, index) => (
+                            {DEMO_CREDS_RAW.map((cred, index) => (
                                 <Typography
                                     key={index}
                                     variant="caption"
@@ -424,10 +423,14 @@ const Login = () => {
                                             background: 'rgba(255, 255, 255, 0.05)',
                                         },
                                     }}
-                                    onClick={() => fillCredentials(cred.email, cred.password)}
+                                    onClick={() =>
+                                        fillCredentials(cred.email, cred.password)
+                                    }
                                 >
-                                    {cred.role}:{' '}
-                                    <span style={{ color: C.secondary }}>{cred.email}</span>{' '}
+                                    {cred.icon} {t(cred.roleKey)}:{' '}
+                                    <span style={{ color: C.secondary }}>
+                                        {cred.email}
+                                    </span>{' '}
                                     / {cred.password}
                                 </Typography>
                             ))}
@@ -444,7 +447,7 @@ const Login = () => {
                             fontSize: '13px',
                         }}
                     >
-                        Don't have an account?{' '}
+                        {t('login.noAccount')}{' '}
                         <Link
                             component={RouterLink}
                             to="/register"
@@ -459,7 +462,7 @@ const Login = () => {
                                 },
                             }}
                         >
-                            Register
+                            {t('login.registerLink')}
                         </Link>
                     </Typography>
                 </Box>

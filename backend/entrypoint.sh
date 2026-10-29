@@ -17,6 +17,9 @@
 
 set -e
 
+echo "🌐 Compiling translations..."
+python manage.py compilemessages || true
+
 # -------------------- collectstatic --------------------
 # Always run on the primary service. Idempotent, cheap, and required
 # for WhiteNoise to find the static root at runtime.

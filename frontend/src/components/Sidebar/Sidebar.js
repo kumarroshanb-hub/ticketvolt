@@ -2,6 +2,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import styled from 'styled-components';
+import { useTranslation } from 'react-i18next';                       // ✅ NEW
 import {
     Dashboard as DashboardIcon,
     Event as EventIcon,
@@ -311,21 +312,21 @@ const DrawerCloseButton = styled.button`
 `;
 
 // ============================================
-// MENU DEFINITIONS
+// MENU DEFINITIONS — labelKey, not label
 // ============================================
 
 const MENU_ITEMS = {
     dashboard: {
         path: '/app/dashboard',
         icon: <DashboardIcon />,
-        label: 'Dashboard',
+        labelKey: 'nav.dashboard',
         roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'main',
     },
     bookings: {
         path: '/app/bookings',
         icon: <TicketIcon />,
-        label: 'Bookings',
+        labelKey: 'nav.bookings',
         roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'main',
         badge: true,
@@ -333,72 +334,72 @@ const MENU_ITEMS = {
     events: {
         path: '/app/events',
         icon: <EventIcon />,
-        label: 'Events',
+        labelKey: 'nav.events',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     venues: {
         path: '/app/venues',
         icon: <VenueIcon />,
-        label: 'Venues',
+        labelKey: 'nav.venues',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     discounts: {
         path: '/app/discounts',
         icon: <DiscountIcon />,
-        label: 'Discounts',
+        labelKey: 'nav.discounts',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     cancellationPolicies: {
         path: '/app/cancellation-policies',
         icon: <PolicyIcon />,
-        label: 'Cancellation Policies',
+        labelKey: 'nav.cancellationPolicies',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     analytics: {
         path: '/app/analytics',
         icon: <AnalyticsIcon />,
-        label: 'Analytics',
+        labelKey: 'nav.analytics',
         roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'management',
     },
     scanner: {
         path: '/app/checkin',
         icon: <ScannerIcon />,
-        label: 'QR Scanner',
+        labelKey: 'nav.checkin',
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
     users: {
         path: '/app/users',
         icon: <PeopleIcon />,
-        label: 'Users',
+        labelKey: 'nav.users',
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
     settings: {
         path: '/app/settings',
         icon: <SettingsIcon />,
-        label: 'Settings',
+        labelKey: 'nav.settings',
         roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'admin',
     },
     activeSessions: {
-    path: '/app/active-sessions',
-    icon: <DevicesIcon />,          // import DevicesIcon from '@mui/icons-material'
-    label: 'Active Sessions',
-    roles: [ROLES.SUPER_ADMIN],     // SuperAdmin only
-    section: 'admin',
-},
+        path: '/app/active-sessions',
+        icon: <DevicesIcon />,
+        labelKey: 'nav.activeSessions',
+        roles: [ROLES.SUPER_ADMIN],
+        section: 'admin',
+    },
 };
 
-const SECTION_LABELS = {
-    main: 'MAIN',
-    management: 'MANAGEMENT',
-    admin: 'ADMIN',
+const SECTION_LABEL_KEYS = {
+    main: 'sections.main',
+    management: 'sections.management',
+    admin: 'sections.admin',
 };
 
 // ============================================
@@ -408,6 +409,7 @@ const SECTION_LABELS = {
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const { role, isSuperAdmin } = useRole();
     const { logout, isAuthenticated } = useAuth();
+    const { t } = useTranslation();
 
     const isDrawer = Boolean(onNavigate);
     const effectiveCollapsed = isDrawer ? false : collapsed;
@@ -415,7 +417,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
 
     const getVisibleItems = () => {
         return Object.entries(MENU_ITEMS)
-            .filter(([key, item]) => {
+            .filter(([, item]) => {
                 if (isGuest) return false;
                 if (isSuperAdmin) return true;
                 return item.roles.includes(role);
@@ -433,9 +435,16 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     }, {});
 
     const handleLogout = () => {
-        if (window.confirm('Are you sure you want to logout?')) {
+        if (window.confirm(t('common.logoutConfirm'))) {
             logout();
         }
+    };
+
+    const getRoleLabel = () => {
+        if (role === ROLES.SUPER_ADMIN) return t('roles.superAdmin');
+        if (role === ROLES.ADMIN)       return t('roles.admin');
+        if (role === ROLES.ORGANIZER)   return t('roles.organizer');
+        return t('roles.user');
     };
 
     return (
@@ -445,7 +454,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                     to={isGuest ? '/' : '/app/dashboard'}
                     onClick={() => onNavigate && onNavigate()}
                 >
-                    {/* ✅ FIX: Increased height from 44 to 84 for a larger main logo */}
                     <Logo
                         variant="full"
                         height={84}
@@ -453,26 +461,34 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                     />
                 </LogoLink>
                 {isDrawer && (
-                    <DrawerCloseButton onClick={onNavigate} aria-label="Close menu">
+                    <DrawerCloseButton
+                        onClick={onNavigate}
+                        aria-label={t('common.closeMenu')}
+                    >
                         <CloseIcon fontSize="small" />
                     </DrawerCloseButton>
                 )}
             </LogoWrap>
 
             {!isGuest && (
-                <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+                <RoleBadge
+                    role={role}
+                    collapsed={effectiveCollapsed}
+                    $drawer={isDrawer}
+                >
                     <span className="role-dot" />
-                    {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
-                     role === ROLES.ADMIN ? 'Admin' :
-                     role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
+                    {getRoleLabel()}
                 </RoleBadge>
             )}
 
             <NavItems>
                 {Object.entries(groupedItems).map(([section, items]) => (
                     <NavSection key={section}>
-                        <NavSectionLabel collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                            {SECTION_LABELS[section] || section.toUpperCase()}
+                        <NavSectionLabel
+                            collapsed={effectiveCollapsed}
+                            $drawer={isDrawer}
+                        >
+                            {t(SECTION_LABEL_KEYS[section] || section)}
                         </NavSectionLabel>
                         {items.map((item) => (
                             <NavItem
@@ -486,9 +502,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                                 }}
                             >
                                 <span className="icon">{item.icon}</span>
-                                <span className="label">{item.label}</span>
+                                <span className="label">
+                                    {t(item.labelKey)}
+                                </span>
                                 {item.badge && (
-                                    <span className="badge">New</span>
+                                    <span className="badge">
+                                        {t('common.new')}
+                                    </span>
                                 )}
                             </NavItem>
                         ))}
@@ -503,8 +523,10 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
                         collapsed={effectiveCollapsed}
                         $drawer={isDrawer}
                     >
-                        <span className="icon"><LogoutIcon fontSize="small" /></span>
-                        <span className="label">Logout</span>
+                        <span className="icon">
+                            <LogoutIcon fontSize="small" />
+                        </span>
+                        <span className="label">{t('nav.logout')}</span>
                     </LogoutButton>
                 </LogoutSection>
             )}
@@ -512,9 +534,17 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             <ToggleButton
                 onClick={onToggle}
                 $drawer={isDrawer}
-                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                aria-label={
+                    collapsed
+                        ? t('common.expandSidebar')
+                        : t('common.collapseSidebar')
+                }
             >
-                {collapsed ? <ChevronRight fontSize="small" /> : <ChevronLeft fontSize="small" />}
+                {collapsed ? (
+                    <ChevronRight fontSize="small" />
+                ) : (
+                    <ChevronLeft fontSize="small" />
+                )}
             </ToggleButton>
         </SidebarContainer>
     );

@@ -29,3 +29,5 @@ django-environ==0.11.2
 resend==2.46.0
 django-storages==1.14.4
 boto3==1.35.36
+django-parler==2.3
+django-parler-rest==2.2

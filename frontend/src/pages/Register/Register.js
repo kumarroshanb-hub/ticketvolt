@@ -5,10 +5,14 @@ import {
     Alert, CircularProgress, useMediaQuery, useTheme,
 } from '@mui/material';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
+// ✅ NEW
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { theme as appTheme } from '../../theme/tokens';
 import Logo from '../../components/Logo';
+// ✅ NEW
+import LanguageSwitcher from '../../components/LanguageSwitcher';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
@@ -39,6 +43,8 @@ const isValidPhone = (raw) => PHONE_RE.test(normalisePhone(raw));
 const Register = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    // ✅ NEW
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -85,11 +91,13 @@ const Register = () => {
         // The backend validator runs the exact same rule; we just avoid
         // a pointless network round-trip for the obvious case.
         if (!formData.phone?.trim()) {
-            setError('Mobile number is required.');
+            // ✅ CHANGED: translated
+            setError(t('register.phoneRequired'));
             return;
         }
         if (!isValidPhone(formData.phone)) {
-            setError('Enter a valid mobile number (7–15 digits, optionally starting with "+").');
+            // ✅ CHANGED: translated
+            setError(t('register.phoneInvalid'));
             return;
         }
 
@@ -106,14 +114,16 @@ const Register = () => {
                 phone: normalisePhone(formData.phone),
             };
             await api.post('/users/register/', payload);
-            toast.success('Registration successful! Please log in.');
+            // ✅ CHANGED: translated
+            toast.success(t('register.success'));
             // Pass the redirect intent forward to Login.
             navigate('/login', { state: { from: redirectTo } });
         } catch (err) {
             console.error('Registration error:', err);
             const errorData = err.response?.data;
 
-            let msg = 'Registration failed. Please try again.';
+            // ✅ CHANGED: translated
+            let msg = t('register.failed');
 
             if (typeof errorData === 'string') {
                 msg = errorData;
@@ -124,9 +134,14 @@ const Register = () => {
                 if (entries.length > 0) {
                     const messages = entries.slice(0, 3).map(([field, val]) => {
                         const text = Array.isArray(val) ? val[0] : String(val);
-                        return field === 'non_field_errors' || field === 'detail'
-                            ? text
-                            : `${field}: ${text}`;
+                        if (field === 'non_field_errors' || field === 'detail') {
+                            return text;
+                        }
+                        // ✅ NEW: translate known field names, fall back to raw.
+                        const fieldLabel = t(`register.fields.${field}`, {
+                            defaultValue: field,
+                        });
+                        return `${fieldLabel}: ${text}`;
                     });
                     msg = messages.join(' · ');
                 }
@@ -156,8 +171,15 @@ const Register = () => {
                 pl: isMobile ? 'max(12px, env(safe-area-inset-left))' : 2,
                 pr: isMobile ? 'max(12px, env(safe-area-inset-right))' : 2,
                 fontFamily: F.family,
+                // ✅ NEW: anchors the floating language switcher
+                position: 'relative',
             }}
         >
+            {/* ✅ NEW: Language switcher */}
+            <Box sx={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+                <LanguageSwitcher variant="light" compact={isMobile} />
+            </Box>
+
             <Paper
                 sx={{
                     p: isMobile ? 2.5 : 4,
@@ -193,7 +215,8 @@ const Register = () => {
                             fontFamily: F.family,
                         }}
                     >
-                        Create your account
+                        {/* ✅ CHANGED: translated */}
+                        {t('register.title')}
                     </Typography>
                     <Typography
                         variant="body2"
@@ -203,7 +226,8 @@ const Register = () => {
                             fontFamily: F.family,
                         }}
                     >
-                        Sign up to book tickets in seconds
+                        {/* ✅ CHANGED: translated */}
+                        {t('register.subtitle')}
                     </Typography>
                 </Box>
 
@@ -219,7 +243,8 @@ const Register = () => {
                 <form onSubmit={handleSubmit} noValidate>
                     <TextField
                         fullWidth
-                        label="Username"
+                        // ✅ CHANGED: translated
+                        label={t('register.username')}
                         name="username"
                         value={formData.username}
                         onChange={handleChange}
@@ -230,7 +255,8 @@ const Register = () => {
 
                     <TextField
                         fullWidth
-                        label="Email"
+                        // ✅ CHANGED: translated
+                        label={t('register.email')}
                         name="email"
                         type="email"
                         value={formData.email}
@@ -255,16 +281,19 @@ const Register = () => {
                     */}
                     <TextField
                         fullWidth
-                        label="Mobile Number"
+                        // ✅ CHANGED: translated
+                        label={t('register.phone')}
                         name="phone"
                         type="tel"
                         value={formData.phone}
                         onChange={handleChange}
                         required
                         autoComplete="tel"
-                        placeholder="+91 9876543210"
+                        // ✅ CHANGED: translated
+                        placeholder={t('register.phonePlaceholder')}
                         inputProps={{ inputMode: 'tel' }}
-                        helperText="7–15 digits. Used for WhatsApp ticket delivery."
+                        // ✅ CHANGED: translated
+                        helperText={t('register.phoneHelper')}
                         sx={{
                             mb: 2,
                             '& .MuiInputBase-input': { fontSize: 16 },
@@ -285,7 +314,8 @@ const Register = () => {
                     >
                         <TextField
                             fullWidth
-                            label="First Name"
+                            // ✅ CHANGED: translated
+                            label={t('register.firstName')}
                             name="first_name"
                             value={formData.first_name}
                             onChange={handleChange}
@@ -294,7 +324,8 @@ const Register = () => {
                         />
                         <TextField
                             fullWidth
-                            label="Last Name"
+                            // ✅ CHANGED: translated
+                            label={t('register.lastName')}
                             name="last_name"
                             value={formData.last_name}
                             onChange={handleChange}
@@ -305,14 +336,16 @@ const Register = () => {
 
                     <TextField
                         fullWidth
-                        label="Password"
+                        // ✅ CHANGED: translated
+                        label={t('register.password')}
                         name="password"
                         type="password"
                         value={formData.password}
                         onChange={handleChange}
                         required
                         autoComplete="new-password"
-                        helperText="Minimum 10 characters."
+                        // ✅ CHANGED: translated
+                        helperText={t('register.passwordHelper')}
                         sx={{
                             mb: 2,
                             '& .MuiInputBase-input': { fontSize: 16 },
@@ -325,7 +358,8 @@ const Register = () => {
 
                     <TextField
                         fullWidth
-                        label="Confirm Password"
+                        // ✅ CHANGED: translated
+                        label={t('register.confirmPassword')}
                         name="password_confirm"
                         type="password"
                         value={formData.password_confirm}
@@ -360,7 +394,8 @@ const Register = () => {
                         {loading ? (
                             <CircularProgress size={22} sx={{ color: C.textInverse }} />
                         ) : (
-                            'Create Account'
+                            // ✅ CHANGED: translated
+                            t('register.createAccount')
                         )}
                     </Button>
                 </form>
@@ -380,7 +415,8 @@ const Register = () => {
                             fontFamily: F.family,
                         }}
                     >
-                        Already have an account?{' '}
+                        {/* ✅ CHANGED: translated */}
+                        {t('register.haveAccount')}{' '}
                         <Link
                             component={RouterLink}
                             to="/login"
@@ -395,7 +431,8 @@ const Register = () => {
                                 },
                             }}
                         >
-                            Log in
+                            {/* ✅ CHANGED: translated */}
+                            {t('register.login')}
                         </Link>
                     </Typography>
                 </Box>

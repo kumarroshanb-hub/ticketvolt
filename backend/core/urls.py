@@ -4,6 +4,13 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import HttpResponse
+# REMOVE:
+# from django.views.i18n import set_language
+
+# ADD:
+from core.i18n_views import set_language_view
+
+
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.views import TokenBlacklistView
 from ticket_bookings.views import LoginView, MeView
@@ -35,6 +42,16 @@ urlpatterns = [
     # having to know about the root-level path. Both routes hit the same
     # view — no duplication of logic.
     path('api/health/', health_check, name='api_health_check'),
+
+    # Root-level path — used by any tooling that POSTs directly.
+    path('i18n/setlang/', set_language_view, name='set_language'),
+
+    # ✅ Alias under /api/ so the frontend's `api` axios instance
+    #    (baseURL = http://localhost:8000/api) reaches the same view.
+    #    Without this, every LanguageSwitcher click returns 404, the
+    #    django_language cookie is never persisted, and backend-rendered
+    #    strings stay English.
+    path('api/i18n/setlang/', set_language_view, name='api_set_language'),
 
     # ============================================
     # Django Admin — served under a secret path.

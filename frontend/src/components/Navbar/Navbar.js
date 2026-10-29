@@ -4,6 +4,7 @@ import styled from 'styled-components';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';                       // ✅ NEW
 import {
     Menu as MenuIcon,
     KeyboardArrowDown as KeyboardArrowDownIcon,
@@ -11,6 +12,7 @@ import {
     Logout as LogoutIcon,
 } from '@mui/icons-material';
 import { theme } from '../../theme/tokens';
+import LanguageSwitcher from '../LanguageSwitcher';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -280,47 +282,44 @@ const DropdownItem = styled.button`
 `;
 
 // ============================================
-// PAGE TITLE MAP  — paths now under /app/*
+// ✅ FIX: PAGE TITLES → translation keys
 // ============================================
-
-const PAGE_TITLES = {
-    '/app/dashboard':              'Dashboard',
-    '/app/events':                 'Events',
-    '/app/venues':                 'Venues',
-    '/app/bookings':               'Bookings',
-    '/app/checkin':                'QR Scanner',
-    '/app/analytics':              'Analytics',
-    '/app/discounts':              'Discounts',
-    '/app/users':                  'Users',
-    '/app/settings':               'Settings',
-    '/app/profile':                'Profile',
-    '/app/cancellation-policies':  'Cancellation Policies',
-    '/app/active-sessions':        'Active Sessions',
+const PAGE_TITLE_KEYS = {
+    '/app/dashboard':              'nav.dashboard',
+    '/app/events':                 'nav.events',
+    '/app/venues':                 'nav.venues',
+    '/app/bookings':               'nav.bookings',
+    '/app/checkin':                'nav.checkin',
+    '/app/analytics':              'nav.analytics',
+    '/app/discounts':              'nav.discounts',
+    '/app/users':                  'nav.users',
+    '/app/settings':               'nav.settings',
+    '/app/profile':                'nav.profile',
+    '/app/cancellation-policies':  'nav.cancellationPolicies',
+    '/app/active-sessions':        'nav.activeSessions',
 };
 
-const getPageTitleFromPath = (pathname, isGuest) => {
-    if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+const getPageTitleKeyFromPath = (pathname, isGuest) => {
+    if (PAGE_TITLE_KEYS[pathname]) return PAGE_TITLE_KEYS[pathname];
 
     let bestMatch = '';
-    for (const prefix of Object.keys(PAGE_TITLES)) {
+    for (const prefix of Object.keys(PAGE_TITLE_KEYS)) {
         if (pathname.startsWith(prefix) && prefix.length > bestMatch.length) {
             bestMatch = prefix;
         }
     }
-    if (bestMatch) return PAGE_TITLES[bestMatch];
+    if (bestMatch) return PAGE_TITLE_KEYS[bestMatch];
 
-    // Deep-link fallbacks for detail pages
-    if (pathname.startsWith('/app/bookings/'))  return 'Bookings';
-    if (pathname.startsWith('/app/tickets/'))   return 'Ticket';
-    if (pathname.startsWith('/app/events/'))    return 'Events';
-    if (pathname.startsWith('/app/venues/'))    return 'Venues';
+    if (pathname.startsWith('/app/bookings/'))  return 'nav.bookings';
+    if (pathname.startsWith('/app/tickets/'))   return 'nav.bookings';
+    if (pathname.startsWith('/app/events/'))    return 'nav.events';
+    if (pathname.startsWith('/app/venues/'))    return 'nav.venues';
 
-    // Fallback for guests on specific flows
     if (isGuest && pathname.includes('/bookings/create')) {
-        return 'Register for Event';
+        return 'booking.registerForEvent';
     }
 
-    return 'Dashboard';
+    return 'nav.dashboard';
 };
 
 // ============================================
@@ -332,6 +331,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
     const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
     const navigate = useNavigate();
     const location = useLocation();
+    const { t } = useTranslation();                                    // ✅ NEW
 
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef(null);
@@ -361,10 +361,10 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
     }, [location.pathname]);
 
     const getRoleLabel = () => {
-        if (isSuperAdmin) return 'Super Admin';
-        if (isAdmin) return 'Admin';
-        if (isOrganizer) return 'Organizer';
-        return 'User';
+        if (isSuperAdmin) return t('roles.superAdmin');                // ✅ FIX
+        if (isAdmin) return t('roles.admin');
+        if (isOrganizer) return t('roles.organizer');
+        return t('roles.user');
     };
 
     const getInitial = () => {
@@ -378,7 +378,6 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         if (typeof logout === 'function') {
             logout();
         }
-        // After logout, go to the public landing page
         navigate('/');
     };
 
@@ -387,12 +386,16 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         navigate('/app/profile');
     };
 
-    const pageTitle = getPageTitleFromPath(location.pathname, !isAuthenticated);
+    const pageTitleKey = getPageTitleKeyFromPath(location.pathname, !isAuthenticated);
+    const pageTitle = t(pageTitleKey);                                 // ✅ FIX
 
     return (
         <NavbarContainer $fixed={isMobile}>
             <NavLeft>
-                <MenuButton onClick={onMenuToggle} aria-label="Toggle navigation menu">
+                <MenuButton
+                    onClick={onMenuToggle}
+                    aria-label={t('common.toggleNavigationMenu')}     // ✅ FIX
+                >
                     <MenuIcon />
                 </MenuButton>
                 <PageTitle $compact={isMobile} title={pageTitle}>
@@ -401,18 +404,21 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
             </NavLeft>
 
             <NavRight>
-                {/* ✅ FIX: Only render the User Menu if authenticated */}
+                <LanguageSwitcher variant="light" />
+
                 {isAuthenticated && (
                     <UserMenuWrapper ref={menuRef}>
                         <UserInfo
                             onClick={() => setMenuOpen(prev => !prev)}
-                            aria-label="User menu"
+                            aria-label={t('common.userMenu')}         // ✅ FIX
                             aria-haspopup="menu"
                             aria-expanded={menuOpen}
                         >
                             <UserAvatar>{getInitial()}</UserAvatar>
                             <UserDetails>
-                                <UserName>{user?.name || user?.username || 'User'}</UserName>
+                                <UserName>
+                                    {user?.name || user?.username || t('common.user')}
+                                </UserName>
                                 <UserRole>{getRoleLabel()}</UserRole>
                             </UserDetails>
                             <RoleBadge role={role}>
@@ -425,7 +431,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                             <Dropdown role="menu">
                                 <DropdownHeader>
                                     <DropdownName>
-                                        {user?.name || user?.username || 'User'}
+                                        {user?.name || user?.username || t('common.user')}
                                     </DropdownName>
                                     {user?.email && (
                                         <DropdownEmail>{user.email}</DropdownEmail>
@@ -434,7 +440,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
 
                                 <DropdownItem role="menuitem" onClick={handleGoToProfile}>
                                     <PersonIcon />
-                                    Profile
+                                    {t('nav.profile')}                {/* ✅ FIX */}
                                 </DropdownItem>
 
                                 <DropdownItem
@@ -443,7 +449,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                     onClick={handleLogout}
                                 >
                                     <LogoutIcon />
-                                    Logout
+                                    {t('nav.logout')}                 {/* ✅ FIX */}
                                 </DropdownItem>
                             </Dropdown>
                         )}

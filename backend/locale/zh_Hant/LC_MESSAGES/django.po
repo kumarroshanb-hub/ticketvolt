@@ -1,0 +1,3798 @@
+# backend/locale/zh_Hant/LC_MESSAGES/django.po
+# Traditional Chinese (Hong Kong) — Cantonese-flavoured Hong Kong Traditional Chinese.
+# Language: zh_Hant
+# Plural-Forms: nplurals=1; plural=0;
+msgid ""
+msgstr ""
+"Project-Id-Version: TicketVolt\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-29 12:00+0800\n"
+"PO-Revision-Date: 2026-10-29 12:00+0800\n"
+"Last-Translator: TicketVolt i18n\n"
+"Language-Team: Traditional Chinese (Hong Kong)\n"
+"Language: zh_Hant\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# ===========================================================================
+# core/settings/base.py — language display names
+# ===========================================================================
+msgid "English"
+msgstr "英文"
+
+msgid "Traditional Chinese"
+msgstr "繁體中文"
+
+# ===========================================================================
+# AUTH / LOGIN / REGISTRATION
+# ===========================================================================
+msgid "Email and password required"
+msgstr "請輸入電郵同密碼"
+
+msgid "Too many failed login attempts. Please try again later."
+msgstr "登入失敗次數過多，請遲啲再試。"
+
+msgid "Invalid credentials"
+msgstr "登入資料唔啱"
+
+msgid "Username already exists"
+msgstr "用戶名稱已經有人用咗"
+
+msgid "Email already exists"
+msgstr "電郵已經有人用咗"
+
+msgid "Passwords do not match"
+msgstr "兩次輸入嘅密碼唔一致"
+
+msgid "Email is too long."
+msgstr "電郵地址太長。"
+
+msgid "Invalid phone number."
+msgstr "電話號碼唔啱。"
+
+msgid "Enter a valid mobile number (7–15 digits, optionally starting with \"+\")."
+msgstr "請輸入有效嘅手機號碼（7–15 位數字，可以以「+」開頭）。"
+
+msgid "Enter a valid WhatsApp number (7–15 digits, optionally starting with \"+\")."
+msgstr "請輸入有效嘅 WhatsApp 號碼（7–15 位數字，可以以「+」開頭）。"
+
+msgid "If an account exists with this email, a reset link has been sent."
+msgstr "如果呢個電郵有登記帳戶，我哋已經發送咗重設連結。"
+
+msgid "Failed to send email. Please try again later."
+msgstr "電郵發送失敗，請遲啲再試。"
+
+msgid "Missing required fields."
+msgstr "請填寫所有必填欄位。"
+
+msgid "Invalid or expired reset link. Please request a new one."
+msgstr "重設連結無效或者過咗期，請重新申請。"
+
+msgid "Password has been reset successfully."
+msgstr "密碼重設成功。"
+
+msgid "A new password is required."
+msgstr "請輸入新密碼。"
+
+msgid "You do not have permission to reset this password."
+msgstr "你冇權重設呢個密碼。"
+
+msgid "Only a super admin can reset a super admin password."
+msgstr "只有超級管理員先可以重設超級管理員嘅密碼。"
+
+msgid "You do not have permission to modify users"
+msgstr "你冇權修改用戶資料"
+
+msgid "You do not have permission to unlock users."
+msgstr "你冇權為用戶解鎖。"
+
+msgid "Only a super admin can unlock a super admin."
+msgstr "只有超級管理員先可以為超級管理員解鎖。"
+
+msgid "Only super admin can delete users"
+msgstr "只有超級管理員先可以刪除用戶"
+
+msgid "Only super admin can update user roles"
+msgstr "只有超級管理員先可以更改用戶角色"
+
+msgid "Only super admin can modify super admin users"
+msgstr "只有超級管理員先可以修改超級管理員帳戶"
+
+msgid "You cannot delete your own account"
+msgstr "你唔可以刪除自己嘅帳戶"
+
+msgid "Email already in use"
+msgstr "呢個電郵已經俾人用咗"
+
+msgid "Invalid role. Must be: user, organizer, admin, super_admin"
+msgstr "角色唔啱，必須係：user、organizer、admin 或 super_admin"
+
+msgid "You do not have permission to create users"
+msgstr "你冇權建立用戶"
+
+msgid "You do not have permission to edit this user."
+msgstr "你冇權編輯呢個用戶。"
+
+msgid "You do not have permission to view this profile."
+msgstr "你冇權查看呢個個人檔案。"
+
+msgid "You do not have permission to edit this profile."
+msgstr "你冇權編輯呢個個人檔案。"
+
+msgid "Password reset for {username}."
+msgstr "已為 {username} 重設密碼。"
+
+msgid "{username} unlocked."
+msgstr "{username} 已解鎖。"
+
+msgid "Permission denied."
+msgstr "權限不足。"
+
+#. ✅ NEW — Frontend ForgotPassword.js / ResetPassword.js
+msgid "Forgot Password"
+msgstr "忘記密碼"
+
+msgid "Enter your email address and we'll send you a link to reset your password."
+msgstr "輸入你嘅電郵地址，我哋會發送一條重設密碼嘅連結俾你。"
+
+msgid "Send Reset Link"
+msgstr "發送重設連結"
+
+msgid "Back to Login"
+msgstr "返回登入"
+
+msgid "Return to Login"
+msgstr "返回登入"
+
+msgid "Set New Password"
+msgstr "設定新密碼"
+
+msgid "Please enter your new password below."
+msgstr "請喺下面輸入你嘅新密碼。"
+
+msgid "New Password"
+msgstr "新密碼"
+
+msgid "Confirm New Password"
+msgstr "確認新密碼"
+
+msgid "Reset Password"
+msgstr "重設密碼"
+
+msgid "Password must be at least 10 characters long."
+msgstr "密碼最少要有 10 個字元。"
+
+msgid "Passwords do not match."
+msgstr "兩次輸入嘅密碼唔一致。"
+
+msgid "Password reset successfully! You can now log in."
+msgstr "密碼重設成功！你而家可以登入。"
+
+msgid "Failed to reset password. The link may be expired."
+msgstr "重設密碼失敗，連結可能已經過期。"
+
+msgid "Reset link sent!"
+msgstr "重設連結已發送！"
+
+msgid "Failed to send reset link. Please try again."
+msgstr "發送重設連結失敗，請再試一次。"
+
+msgid "If an account exists with this email, a reset link has been sent. Check your inbox."
+msgstr "如果呢個電郵有登記帳戶，我哋已經發送咗重設連結，請檢查你嘅收件匣。"
+
+# ===========================================================================
+# EVENT ERRORS
+# ===========================================================================
+msgid "This event is not available for booking"
+msgstr "呢個活動而家唔接受預訂"
+
+msgid "This event has already ended"
+msgstr "呢個活動已經完咗"
+
+msgid "This event is not available for public booking"
+msgstr "呢個活動唔開放俾公眾預訂"
+
+msgid "Event not found"
+msgstr "搵唔到呢個活動"
+
+msgid "Event has ended"
+msgstr "活動已經完咗"
+
+msgid "You do not have permission to create events."
+msgstr "你冇權建立活動。"
+
+msgid "Invalid event_flow: {value!r}. Valid values: {valid}."
+msgstr "活動流程唔啱：{value!r}。可用值：{valid}。"
+
+msgid "start_date and end_date are required and must be valid ISO dates."
+msgstr "必須填寫開始日期同結束日期，而且要係有效嘅 ISO 日期。"
+
+msgid "Venue not found."
+msgstr "搵唔到場地。"
+
+msgid "Policy not found."
+msgstr "搵唔到政策。"
+
+msgid "You can only attach your own cancellation policies."
+msgstr "你只可以附加自己嘅取消政策。"
+
+msgid "Organizer not found."
+msgstr "搵唔到主辦方。"
+
+msgid "The selected user is not an organizer."
+msgstr "所選用戶唔係主辦方。"
+
+msgid "Could not create event: {exc}"
+msgstr "建立活動失敗：{exc}"
+
+msgid "Event was created but the response could not be serialized: {exc}"
+msgstr "活動已建立，但係回應無法序列化：{exc}"
+
+msgid "Permission denied"
+msgstr "權限不足"
+
+msgid "Cannot edit past events"
+msgstr "唔可以編輯過咗期嘅活動"
+
+msgid "Cannot delete past events"
+msgstr "唔可以刪除過咗期嘅活動"
+
+msgid "Cannot publish past events"
+msgstr "唔可以發佈過咗期嘅活動"
+
+msgid "Cannot change event flow: {count} active booking(s) exist. Cancel them first."
+msgstr "無法更改活動流程：仲有 {count} 個有效預訂。請先取消佢哋。"
+
+msgid "Cannot reassign an event that has {count} active booking(s). Cancel or refund them first."
+msgstr "無法重新分配有 {count} 個有效預訂嘅活動。請先取消或退款。"
+
+msgid "Cannot delete session {id}: it has {count} booked seat(s). Cancel or reassign those bookings first."
+msgstr "無法刪除時段 {id}：已經有 {count} 個座位被預訂。請先取消或重新分配相關預訂。"
+
+msgid "Cannot delete session {id}: existing tickets reference it."
+msgstr "無法刪除時段 {id}：已經有門票引用呢個時段。"
+
+msgid "Cannot delete tier \"{name}\": it has {count} sold ticket(s). Cancel those tickets first."
+msgstr "無法刪除票種「{name}」：已經賣出 {count} 張門票。請先取消嗰啲門票。"
+
+msgid "Cannot delete tier \"{name}\": existing tickets reference it."
+msgstr "無法刪除票種「{name}」：已經有門票引用呢個票種。"
+
+msgid "Free registration events cannot have priced tiers. Tier #{index} has price {price}."
+msgstr "免費登記活動唔可以有收費票種。票種 #{index} 嘅價格係 {price}。"
+
+msgid "Only administrators can assign an event to another organizer."
+msgstr "只有管理員先可以將活動分配俾其他主辦方。"
+
+msgid "Invalid event_flow. Must be one of {valid}."
+msgstr "活動流程唔啱，必須係以下其中之一：{valid}。"
+
+#. ✅ NEW — Events management UI labels
+msgid "Events Management"
+msgstr "活動管理"
+
+msgid "New Event"
+msgstr "新活動"
+
+msgid "Browse Events"
+msgstr "瀏覽活動"
+
+msgid "Delete Event"
+msgstr "刪除活動"
+
+msgid "Are you sure you want to delete {title}? This action cannot be undone."
+msgstr "你確定要刪除「{title}」嗎？呢個操作無法復原。"
+
+msgid "Event Type"
+msgstr "活動類型"
+
+msgid "Basic Information"
+msgstr "基本資料"
+
+msgid "Start Date"
+msgstr "開始日期"
+
+msgid "End Date"
+msgstr "結束日期"
+
+msgid "Timezone"
+msgstr "時區"
+
+msgid "Status"
+msgstr "狀態"
+
+msgid "Sessions"
+msgstr "時段"
+
+msgid "Ticket Tiers"
+msgstr "票種"
+
+msgid "Add Session"
+msgstr "新增時段"
+
+msgid "Add Tier"
+msgstr "新增票種"
+
+msgid "Registration Fees"
+msgstr "登記費用"
+
+msgid "Create Event"
+msgstr "建立活動"
+
+msgid "Update Event"
+msgstr "更新活動"
+
+msgid "Edit Event"
+msgstr "編輯活動"
+
+msgid "Create New Event"
+msgstr "建立新活動"
+
+msgid "Event Templates"
+msgstr "活動範本"
+
+msgid "Add More"
+msgstr "新增更多"
+
+msgid "Summary"
+msgstr "摘要"
+
+msgid "Schedule"
+msgstr "時間表"
+
+msgid "Location"
+msgstr "地點"
+
+msgid "Assign to Organizer"
+msgstr "分配俾主辦方"
+
+msgid "Organizer Assignment"
+msgstr "主辦方分配"
+
+msgid "Myself"
+msgstr "我自己"
+
+msgid "Event Title"
+msgstr "活動標題"
+
+msgid "Short Description"
+msgstr "簡短描述"
+
+msgid "Description"
+msgstr "描述"
+
+msgid "Category"
+msgstr "類別"
+
+msgid "Venue"
+msgstr "場地"
+
+msgid "Select Venue"
+msgstr "選擇場地"
+
+msgid "Event Flow"
+msgstr "活動流程"
+
+msgid "Ticketed Event"
+msgstr "售票活動"
+
+msgid "Free Registration"
+msgstr "免費登記"
+
+msgid "Paid Registration"
+msgstr "付費登記"
+
+msgid "Ticket Settings"
+msgstr "門票設定"
+
+msgid "Ticket Format"
+msgstr "門票格式"
+
+msgid "PDF"
+msgstr "PDF"
+
+msgid "PNG"
+msgstr "PNG"
+
+msgid "Both"
+msgstr "兩者"
+
+msgid "Combine tickets into single file"
+msgstr "合併門票成一個檔案"
+
+msgid "Tickets Per Page"
+msgstr "每頁門票數"
+
+msgid "Cancellation Policy"
+msgstr "取消政策"
+
+msgid "Refund Policy"
+msgstr "退款政策"
+
+msgid "No policy (no refunds offered)"
+msgstr "冇政策（不設退款）"
+
+msgid "Additional Cancellation Notes"
+msgstr "額外取消備註"
+
+msgid "Manage policies →"
+msgstr "管理政策 →"
+
+msgid "Save the event first to enable template uploads."
+msgstr "請先儲存活動，然後先可以上載範本。"
+
+msgid "Please save the event first before uploading templates"
+msgstr "請先儲存活動，然後先上載範本"
+
+msgid "Please save the event first before adding templates"
+msgstr "請先儲存活動，然後先新增範本"
+
+msgid "Event updated successfully!"
+msgstr "活動更新成功！"
+
+msgid "Event created successfully!"
+msgstr "活動建立成功！"
+
+msgid "Event deleted successfully"
+msgstr "活動刪除成功"
+
+msgid "Event published successfully"
+msgstr "活動發佈成功"
+
+msgid "Title is required"
+msgstr "必須填寫標題"
+
+msgid "Start date is required"
+msgstr "必須填寫開始日期"
+
+msgid "End date is required"
+msgstr "必須填寫結束日期"
+
+msgid "Failed to save event"
+msgstr "儲存活動失敗"
+
+msgid "Failed to load event"
+msgstr "載入活動失敗"
+
+msgid "Failed to load event details"
+msgstr "載入活動詳情失敗"
+
+msgid "Failed to load events"
+msgstr "載入活動失敗"
+
+msgid "Failed to publish event"
+msgstr "發佈活動失敗"
+
+msgid "Failed to delete event"
+msgstr "刪除活動失敗"
+
+msgid "The server returned an unexpected response."
+msgstr "伺服器回應不如預期。"
+
+msgid "Template uploaded successfully!"
+msgstr "範本上載成功！"
+
+msgid "Template deleted"
+msgstr "範本已刪除"
+
+msgid "Default template updated"
+msgstr "預設範本已更新"
+
+msgid "Failed to upload template"
+msgstr "上載範本失敗"
+
+msgid "Failed to delete template"
+msgstr "刪除範本失敗"
+
+msgid "Failed to set default template"
+msgstr "設定預設範本失敗"
+
+msgid "Please select an image and template type"
+msgstr "請選擇圖片同範本類型"
+
+msgid "Are you sure you want to delete \"{name}\"?"
+msgstr "你確定要刪除「{name}」嗎？"
+
+msgid "Create your first event"
+msgstr "建立你第一個活動"
+
+msgid "No events found"
+msgstr "搵唔到活動"
+
+msgid "No events available"
+msgstr "暫時冇活動"
+
+msgid "No active events available for booking. Check back later!"
+msgstr "暫時冇可供預訂嘅活動，請遲啲再返嚟睇！"
+
+msgid "No events found. Please create an event first!"
+msgstr "搵唔到活動，請先建立活動！"
+
+msgid "No events available. Create an event first!"
+msgstr "暫時冇活動，請先建立活動！"
+
+# ===========================================================================
+# BOOKING ERRORS
+# ===========================================================================
+msgid "The selected slot was not found."
+msgstr "搵唔到所選時段。"
+
+msgid "The selected slot does not belong to this event."
+msgstr "所選時段唔屬於呢個活動。"
+
+msgid "This slot is fully booked."
+msgstr "呢個時段已經滿咗。"
+
+msgid "Only 1 seat left in this slot."
+msgstr "呢個時段仲剩返 1 個位。"
+
+msgid "Only {available} seats left in this slot."
+msgstr "呢個時段仲剩返 {available} 個位。"
+
+msgid "At least one entry is required."
+msgstr "最少要有一個登記名額。"
+
+msgid "metadata.entries must be a positive integer."
+msgstr "metadata.entries 必須係正整數。"
+
+msgid "metadata.attendees must be a list."
+msgstr "metadata.attendees 必須係一個列表。"
+
+msgid "metadata.attendees must contain exactly {entries} entries (got {actual})."
+msgstr "metadata.attendees 必須啱啱好有 {entries} 個名額（而家有 {actual} 個）。"
+
+msgid "Entry {index} must be an object."
+msgstr "名額 {index} 必須係一個物件。"
+
+msgid "Entry {index} is missing a name."
+msgstr "名額 {index} 漏咗個名。"
+
+msgid "Entry {index} has an invalid email address."
+msgstr "名額 {index} 嘅電郵地址唔啱。"
+
+msgid "Maximum {max} entries per registration."
+msgstr "每次登記最多 {max} 個名額。"
+
+msgid "Registration is closed — all slots are full."
+msgstr "登記已經截止 — 所有時段都滿咗。"
+
+msgid "Could not issue registration passes for this booking. Please contact support."
+msgstr "無法為呢個預訂發出登記通行證，請聯絡客戶服務。"
+
+msgid "Registration could not be completed. Please try again or contact support."
+msgstr "登記未能完成，請再試一次或者聯絡客戶服務。"
+
+msgid "You do not have permission to access this booking."
+msgstr "你冇權查看呢個預訂。"
+
+msgid "Maximum 200 bookings per bulk action."
+msgstr "每次批量操作最多 200 個預訂。"
+
+msgid "No valid booking_ids provided"
+msgstr "冇提供有效嘅 booking_ids"
+
+msgid "action is required and must be a string"
+msgstr "必須提供 action，而且一定要係字串"
+
+msgid "Request body must be a JSON object"
+msgstr "請求內容必須係 JSON 物件"
+
+msgid "Invalid JSON body"
+msgstr "JSON 內容無效"
+
+msgid "Invalid action: {action!r}"
+msgstr "操作無效：{action!r}"
+
+msgid "Booking not found"
+msgstr "搵唔到預訂"
+
+msgid "No valid bookings found"
+msgstr "搵唔到有效預訂"
+
+msgid "{count} booking(s) are not eligible for {action}"
+msgstr "{count} 個預訂唔符合 {action} 嘅條件"
+
+msgid "Cannot confirm payment for cancelled booking"
+msgstr "無法為已取消嘅預訂確認付款"
+
+msgid "Cannot confirm payment for refunded booking"
+msgstr "無法為已退款嘅預訂確認付款"
+
+msgid "Booking is already completed"
+msgstr "預訂已經完成"
+
+msgid "Payment already confirmed at {when}"
+msgstr "付款已經喺 {when} 確認咗"
+
+msgid "Booking must be pending or processing. Current status: {status}"
+msgstr "預訂必須係待處理或者處理中。而家嘅狀態：{status}"
+
+msgid "This booking already has {count} active ticket(s). New tickets cannot be issued."
+msgstr "呢個預訂已經有 {count} 張有效門票，唔可以再發新門票。"
+
+msgid "Booking must be paid or confirmed. Current status: {status}"
+msgstr "預訂必須係已付款或者已確認。而家嘅狀態：{status}"
+
+msgid "Only paid or confirmed bookings can be refunded. Current status: {status}"
+msgstr "只有已付款或者已確認嘅預訂先可以退款。而家嘅狀態：{status}"
+
+msgid "Booking is already refunded"
+msgstr "預訂已經退款"
+
+msgid "Cannot refund a completed booking (all tickets already used)"
+msgstr "無法為已完成嘅預訂退款（所有門票已經用咗）"
+
+msgid "Booking has no associated event"
+msgstr "預訂冇關聯活動"
+
+msgid "Cannot process booking for cancelled event"
+msgstr "無法處理已取消活動嘅預訂"
+
+msgid "Payment confirmed successfully"
+msgstr "付款確認成功"
+
+msgid "Payment confirmed and tickets issued successfully"
+msgstr "付款確認同門票發放成功"
+
+msgid "Cannot issue tickets. Booking already has active tickets."
+msgstr "無法發放門票，預訂已經有有效門票。"
+
+msgid "No sessions available for this event. Please contact support."
+msgstr "呢個活動冇可用時段，請聯絡客戶服務。"
+
+msgid "All slots are currently full. Please contact support."
+msgstr "所有時段而家都滿咗，請聯絡客戶服務。"
+
+msgid "Allocated based on your Preference #{rank}"
+msgstr "已經根據你嘅第 #{rank} 志願分配"
+
+msgid "Allocated to next available slot (your preferred slots were full)"
+msgstr "已經分配去下一個可用時段（你揀嘅時段都滿咗）"
+
+msgid "Slot confirmed"
+msgstr "時段已確認"
+
+msgid "No slot available for this booking"
+msgstr "呢個預訂冇可用時段"
+
+msgid "Cannot issue tickets. Booking already has {count} active ticket(s)"
+msgstr "無法發放門票，預訂已經有 {count} 張有效門票"
+
+msgid "This event has no ticket tiers configured. Tickets cannot be issued until at least one tier exists."
+msgstr "呢個活動未設定票種，至少要有一個票種先可以發放門票。"
+
+msgid "No available ticket tiers found for this event. Please contact support."
+msgstr "呢個活動搵唔到可用票種，請聯絡客戶服務。"
+
+msgid "No ticket information found for this booking. Please contact support."
+msgstr "呢個預訂搵唔到門票資料，請聯絡客戶服務。"
+
+msgid "Ticket issuance incomplete: expected {expected} tickets, created {created}. {missing} attendee(s) were dropped. See server logs for details."
+msgstr "門票發放未完成：預期 {expected} 張，實際建立 {created} 張，有 {missing} 位參加者被漏掉。詳情請睇伺服器日誌。"
+
+msgid "No active tickets found to regenerate QR codes"
+msgstr "搵唔到有效門票可以重新產生 QR code"
+
+msgid "Booking cancelled successfully"
+msgstr "預訂取消成功"
+
+msgid "Booking refunded successfully"
+msgstr "預訂退款成功"
+
+msgid "No active tickets to resend"
+msgstr "冇有效門票可以重新發送"
+
+msgid "The supplied email does not match the email on this booking. If the customer has changed their email, update the booking first."
+msgstr "提供嘅電郵同呢個預訂嘅電郵唔一致。如果客人改咗電郵，請先更新預訂。"
+
+msgid "Tickets resent successfully"
+msgstr "門票重新發送成功"
+
+msgid "No active ticket to send."
+msgstr "冇有效門票可以發送。"
+
+msgid "No customer email on booking."
+msgstr "預訂冇客人電郵。"
+
+msgid "You cannot apply discounts to this booking"
+msgstr "你唔可以為呢個預訂套用折扣"
+
+msgid "discount_code is required"
+msgstr "必須提供 discount_code"
+
+msgid "Discount is not yet valid"
+msgstr "折扣未開始生效"
+
+msgid "Discount has expired"
+msgstr "折扣已經過期"
+
+msgid "Discount has reached maximum uses"
+msgstr "折扣已經達到使用上限"
+
+msgid "Invalid discount code"
+msgstr "折扣代碼無效"
+
+msgid "Invalid or inactive discount code."
+msgstr "折扣代碼無效或者已經停用。"
+
+msgid "Only staff may cancel checked-in tickets"
+msgstr "只有職員先可以取消已簽到嘅門票"
+
+msgid "ticket_ids must be a non-empty list"
+msgstr "ticket_ids 必須係一個非空列表"
+
+msgid "Booking is already {status}"
+msgstr "預訂已經係 {status}"
+
+msgid "No cancellation policy attached to this booking. Cancellation is not allowed."
+msgstr "呢個預訂冇附加取消政策，唔可以取消。"
+
+msgid "This event does not allow partial cancellation. Cancel the whole booking instead."
+msgstr "呢個活動唔允許部分取消，請取消整個預訂。"
+
+msgid "No ticket IDs provided."
+msgstr "冇提供門票 ID。"
+
+msgid "Ticket(s) not found on this booking: {ids}"
+msgstr "喺呢個預訂搵唔到以下門票：{ids}"
+
+msgid "No tickets to cancel."
+msgstr "冇門票可以取消。"
+
+msgid "Ticket {code}: {reason}"
+msgstr "門票 {code}：{reason}"
+
+msgid "Minimum order {amount} required."
+msgstr "最低訂單金額係 {amount}。"
+
+msgid "Minimum {count} tickets required."
+msgstr "最少要買 {count} 張門票。"
+
+msgid "This discount is not active."
+msgstr "呢個折扣未啟用。"
+
+msgid "This discount is not yet valid."
+msgstr "呢個折扣未開始生效。"
+
+msgid "This discount has expired."
+msgstr "呢個折扣已經過期。"
+
+msgid "This discount requires at least {count} tickets."
+msgstr "呢個折扣最少要買 {count} 張門票。"
+
+msgid "This discount does not apply to this event."
+msgstr "呢個折扣唔適用於呢個活動。"
+
+msgid "This discount has reached its usage limit."
+msgstr "呢個折扣已經達到使用上限。"
+
+msgid "You have already used this discount the maximum number of times."
+msgstr "你已經用咗呢個折扣嘅最多次數。"
+
+msgid "This discount is only for first-time customers."
+msgstr "呢個折扣只限首次購物嘅客人使用。"
+
+msgid "Computed discount amount is zero."
+msgstr "計出嚟嘅折扣金額係零。"
+
+msgid "No cancellation policy is attached to this booking."
+msgstr "呢個預訂冇附加取消政策。"
+
+msgid "Ticket has been checked in and cannot be refunded."
+msgstr "門票已經簽到，唔可以退款。"
+
+msgid "The event has already started."
+msgstr "活動已經開始咗。"
+
+msgid "No policy"
+msgstr "冇政策"
+
+msgid "Event has started"
+msgstr "活動已經開始"
+
+msgid "After check-in"
+msgstr "簽到之後"
+
+msgid "This booking has no cancellation policy attached. Cancellation is not allowed."
+msgstr "呢個預訂冇附加取消政策，唔可以取消。"
+
+msgid "No tickets found for this booking"
+msgstr "呢個預訂搵唔到門票"
+
+#. ✅ NEW — Bookings.js / BookingTickets.js UI labels
+msgid "Bookings"
+msgstr "預訂"
+
+msgid "My Bookings"
+msgstr "我嘅預訂"
+
+msgid "View and manage your bookings"
+msgstr "查看同管理你嘅預訂"
+
+msgid "Manage all customer bookings"
+msgstr "管理所有客戶預訂"
+
+msgid "Book Tickets"
+msgstr "訂票"
+
+msgid "New Booking"
+msgstr "新預訂"
+
+msgid "Reference"
+msgstr "參考編號"
+
+msgid "Customer"
+msgstr "客戶"
+
+msgid "Amount"
+msgstr "金額"
+
+msgid "Tickets"
+msgstr "門票"
+
+msgid "Actions"
+msgstr "操作"
+
+msgid "Search by ticket code, attendee name, or status..."
+msgstr "按門票代碼、參加者姓名或狀態搜尋..."
+
+msgid "Search by ticket code..."
+msgstr "按門票代碼搜尋..."
+
+msgid "Cancel Selected Tickets"
+msgstr "取消已選門票"
+
+msgid "Keep Tickets"
+msgstr "保留門票"
+
+msgid "Cancelling..."
+msgstr "取消中..."
+
+msgid "Cancel {count} Ticket(s)?"
+msgstr "取消 {count} 張門票？"
+
+msgid "This action cannot be undone. The selected tickets will be marked as cancelled and a refund will be recorded on the booking."
+msgstr "呢個操作無法復原。所選門票會被標記為已取消，並會喺預訂記錄一筆退款。"
+
+msgid "Calculating refund..."
+msgstr "計算退款中..."
+
+msgid "Refund preview"
+msgstr "退款預覽"
+
+msgid "Subtotal"
+msgstr "小計"
+
+msgid "Discount"
+msgstr "折扣"
+
+msgid "Net Paid"
+msgstr "實付金額"
+
+msgid "Total refund"
+msgstr "退款總額"
+
+msgid "Reason (optional)"
+msgstr "原因（可選）"
+
+msgid "e.g. Customer request, event rescheduled..."
+msgstr "例如：客戶要求、活動改期..."
+
+msgid "Not allowed"
+msgstr "不允許"
+
+msgid "fee"
+msgstr "手續費"
+
+msgid "Tickets exported successfully"
+msgstr "門票匯出成功"
+
+msgid "Failed to export tickets"
+msgstr "匯出門票失敗"
+
+msgid "Failed to load tickets"
+msgstr "載入門票失敗"
+
+msgid "Failed to load bookings"
+msgstr "載入預訂失敗"
+
+msgid "Back to Bookings"
+msgstr "返回預訂"
+
+msgid "Booking Tickets"
+msgstr "預訂門票"
+
+msgid "Ticket Statistics"
+msgstr "門票統計"
+
+msgid "View QR Code"
+msgstr "查看 QR code"
+
+msgid "QR Code"
+msgstr "QR code"
+
+msgid "QR Code not available"
+msgstr "QR code 未能提供"
+
+msgid "QR Code data available"
+msgstr "有 QR code 資料"
+
+msgid "Download QR"
+msgstr "下載 QR code"
+
+msgid "QR code downloaded"
+msgstr "QR code 已下載"
+
+msgid "QR code is embedded and cannot be downloaded directly"
+msgstr "QR code 已經內嵌，無法直接下載"
+
+msgid "Not checked in"
+msgstr "未簽到"
+
+msgid "Checked In"
+msgstr "已簽到"
+
+msgid "Ticket Code"
+msgstr "門票代碼"
+
+msgid "Attendee Name"
+msgstr "參加者姓名"
+
+msgid "Check-in Time"
+msgstr "簽到時間"
+
+msgid "Tier"
+msgstr "票種"
+
+msgid "Price"
+msgstr "價格"
+
+msgid "Showing {shown} of {total} tickets"
+msgstr "顯示 {total} 張門票中的 {shown} 張"
+
+msgid "No matching tickets found"
+msgstr "搵唔到相符門票"
+
+msgid "Export CSV"
+msgstr "匯出 CSV"
+
+msgid "Selected: {count} booking(s)"
+msgstr "已選：{count} 個預訂"
+
+msgid "Please select bookings and an action"
+msgstr "請選擇預訂同操作"
+
+msgid "This will apply \"{action}\" to {count} booking(s). Continue?"
+msgstr "將會對 {count} 個預訂套用「{action}」，繼續？"
+
+msgid "Action completed successfully"
+msgstr "操作完成"
+
+msgid "Action failed"
+msgstr "操作失敗"
+
+msgid "Notification email sent to customer"
+msgstr "已向客戶發送通知電郵"
+
+msgid "Email notification could not be sent"
+msgstr "未能發送電郵通知"
+
+msgid "{count} of {total} bookings processed successfully"
+msgstr "{total} 個預訂中，{count} 個處理成功"
+
+msgid "{count} booking(s) are not eligible for this action"
+msgstr "{count} 個預訂唔符合呢個操作嘅條件"
+
+msgid "Bulk action failed"
+msgstr "批量操作失敗"
+
+msgid "Mark Payment Received"
+msgstr "標記為已收款"
+
+msgid "Mark Payment Received (No Tickets)"
+msgstr "標記為已收款（不發門票）"
+
+msgid "Confirm Payment & Issue Tickets"
+msgstr "確認付款並發放門票"
+
+msgid "Issue Tickets"
+msgstr "發放門票"
+
+msgid "Regenerate QR Codes"
+msgstr "重新產生 QR code"
+
+msgid "Regen QR"
+msgstr "重產 QR"
+
+msgid "Cancel Booking"
+msgstr "取消預訂"
+
+msgid "Cancel Bookings"
+msgstr "取消預訂"
+
+msgid "Refund Booking"
+msgstr "退款預訂"
+
+msgid "Refund"
+msgstr "退款"
+
+msgid "Mark Paid"
+msgstr "標記已付"
+
+msgid "Confirm & Issue"
+msgstr "確認並發放"
+
+msgid "Issue"
+msgstr "發放"
+
+msgid "Send E-Ticket Email"
+msgstr "發送電子門票電郵"
+
+msgid "View E-Ticket"
+msgstr "查看電子門票"
+
+msgid "View All Tickets"
+msgstr "查看所有門票"
+
+msgid "View Details"
+msgstr "查看詳情"
+
+msgid "E-Ticket"
+msgstr "電子門票"
+
+msgid "Notes"
+msgstr "備註"
+
+msgid "Created"
+msgstr "建立時間"
+
+msgid "Customer Details"
+msgstr "客戶資料"
+
+msgid "Booking Details"
+msgstr "預訂詳情"
+
+msgid "No bookings found"
+msgstr "搵唔到預訂"
+
+msgid "No bookings found. Book your first event!"
+msgstr "搵唔到預訂，去預訂你第一個活動啦！"
+
+msgid "You don't have any bookings yet. Click \"Book Tickets\" to browse events and book your first ticket!"
+msgstr "你仲未有預訂。撳「訂票」瀏覽活動，預訂你第一張門票啦！"
+
+msgid "All tickets used"
+msgstr "所有門票已使用"
+
+msgid "ticket(s)"
+msgstr "張門票"
+
+msgid "Pending"
+msgstr "待處理"
+
+msgid "Processing"
+msgstr "處理中"
+
+msgid "Paid"
+msgstr "已付款"
+
+msgid "Confirmed"
+msgstr "已確認"
+
+msgid "Completed"
+msgstr "已完成"
+
+msgid "Refunded"
+msgstr "已退款"
+
+msgid "Expired"
+msgstr "已過期"
+
+msgid "Sold Out"
+msgstr "已售罄"
+
+msgid "Published"
+msgstr "已發佈"
+
+msgid "Draft"
+msgstr "草稿"
+
+msgid "Postponed"
+msgstr "延期"
+
+#. ✅ NEW — CreateBooking.js (wizard)
+msgid "Select Event"
+msgstr "選擇活動"
+
+msgid "Choose Slot"
+msgstr "選擇時段"
+
+msgid "Number of Entries"
+msgstr "登記名額"
+
+msgid "Choose Tickets"
+msgstr "選擇門票"
+
+msgid "Attendee Details"
+msgstr "參加者資料"
+
+msgid "Registrant Details"
+msgstr "登記人資料"
+
+msgid "Review & Confirm"
+msgstr "檢查並確認"
+
+msgid "Please select an event"
+msgstr "請選擇活動"
+
+msgid "Please select a slot or use Auto-Allocate"
+msgstr "請選擇時段，或者使用自動分配"
+
+msgid "Please select at least one entry"
+msgstr "請至少選擇一個名額"
+
+msgid "Please select at least one ticket"
+msgstr "請至少選擇一張門票"
+
+msgid "Please enter a name for every entry"
+msgstr "請為每個名額輸入姓名"
+
+msgid "Please enter names for all attendees"
+msgstr "請輸入所有參加者姓名"
+
+msgid "Please fill in name, email, and phone"
+msgstr "請填寫姓名、電郵同電話"
+
+msgid "Please fix all errors before submitting"
+msgstr "提交前請先修正所有錯誤"
+
+msgid "One or more entries have an invalid email"
+msgstr "有一個或多個名額嘅電郵地址唔啱"
+
+msgid "Confirm Booking"
+msgstr "確認預訂"
+
+msgid "Creating..."
+msgstr "建立中..."
+
+msgid "Full Name *"
+msgstr "全名 *"
+
+msgid "Full Name"
+msgstr "全名"
+
+msgid "Email *"
+msgstr "電郵 *"
+
+msgid "Email Address"
+msgstr "電郵地址"
+
+msgid "Phone *"
+msgstr "電話 *"
+
+msgid "Phone"
+msgstr "電話"
+
+msgid "WhatsApp Number (if different)"
+msgstr "WhatsApp 號碼（如不同）"
+
+msgid "WhatsApp Number"
+msgstr "WhatsApp 號碼"
+
+msgid "Notes / Special Requests"
+msgstr "備註 / 特別要求"
+
+msgid "Have a discount code?"
+msgstr "有折扣碼？"
+
+msgid "Discount Code"
+msgstr "折扣碼"
+
+msgid "Apply"
+msgstr "套用"
+
+msgid "Remove"
+msgstr "移除"
+
+msgid "Checking…"
+msgstr "檢查中…"
+
+msgid "Total"
+msgstr "總額"
+
+msgid "Total: {amount}"
+msgstr "總額：{amount}"
+
+msgid "{count} ticket(s) selected"
+msgstr "已選 {count} 張門票"
+
+msgid "You are registering {count} {people}."
+msgstr "你而家登記 {count} {people}。"
+
+msgid "Max {max} per registration"
+msgstr "每次登記最多 {max} 個"
+
+msgid "Decrease entries"
+msgstr "減少名額"
+
+msgid "Increase entries"
+msgstr "增加名額"
+
+msgid "Primary Contact"
+msgstr "主要聯絡人"
+
+msgid "Entry Details ({count})"
+msgstr "名額詳情（{count}）"
+
+msgid "Entry #{index}"
+msgstr "名額 #{index}"
+
+msgid "primary contact"
+msgstr "主要聯絡人"
+
+msgid "Email (defaults to primary)"
+msgstr "電郵（預設為主要聯絡人）"
+
+msgid "Email (optional)"
+msgstr "電郵（可選）"
+
+msgid "Phone (defaults to primary)"
+msgstr "電話（預設為主要聯絡人）"
+
+msgid "Phone (optional)"
+msgstr "電話（可選）"
+
+msgid "Fill empty names with primary contact"
+msgstr "用主要聯絡人填補空白姓名"
+
+msgid "Fill empty names with customer name"
+msgstr "用客戶姓名填補空白姓名"
+
+msgid "Slot #{index}"
+msgstr "時段 #{index}"
+
+msgid "seats available"
+msgstr "個座位可用"
+
+msgid "Fully booked"
+msgstr "已滿"
+
+msgid "Selected"
+msgstr "已選擇"
+
+msgid "Slot Preferences (Optional)"
+msgstr "時段志願（可選）"
+
+msgid "Enter your slot preferences in order (e.g., 1,3,2 means Slot 1 is your first preference)"
+msgstr "按順序輸入你嘅時段志願（例如 1,3,2 代表時段 1 係你第一志願）"
+
+msgid "Enter numbers 1-{max}"
+msgstr "輸入 1-{max} 之間的數字"
+
+msgid "Auto-Allocate"
+msgstr "自動分配"
+
+msgid "Preferences: {list}"
+msgstr "志願：{list}"
+
+msgid "Allocated Slot: Slot #{index}"
+msgstr "已分配時段：時段 #{index}"
+
+msgid "This event does not have time slots. Click Next to continue."
+msgstr "呢個活動冇時段。撳「下一步」繼續。"
+
+msgid "Select your preferred time slot for {event}"
+msgstr "選擇你喺 {event} 嘅首選時段"
+
+msgid "All tickets are sold out!"
+msgstr "所有門票已售罄！"
+
+msgid "No ticket tiers available for this event"
+msgstr "呢個活動冇可用票種"
+
+msgid "All tickets for this event are sold out"
+msgstr "呢個活動所有門票已售罄"
+
+msgid "No tickets available for this event"
+msgstr "呢個活動冇可用門票"
+
+msgid "Review your booking details before confirming"
+msgstr "確認前請檢查你嘅預訂資料"
+
+msgid "Event Details"
+msgstr "活動資料"
+
+msgid "Slot Preferences:"
+msgstr "時段志願："
+
+msgid "Free registration — {count} {passes} will be issued, one per entry."
+msgstr "免費登記 — 將會發出 {count} {passes}，每個名額一張。"
+
+msgid "Registration"
+msgstr "登記"
+
+msgid "REG"
+msgstr "登記"
+
+msgid "TBD"
+msgstr "待定"
+
+msgid "Back to Home"
+msgstr "返回首頁"
+
+msgid "Thank you for choosing TiketVault."
+msgstr "多謝你選用 TiketVault。"
+
+msgid "Your session expired. Please refresh the page and try again."
+msgstr "你嘅工作階段已過期，請重新載入頁面再試。"
+
+msgid "Booking created! Ref: {reference}"
+msgstr "預訂成功！編號：{reference}"
+
+msgid "Failed to create booking"
+msgstr "建立預訂失敗"
+
+msgid "Your booking reference"
+msgstr "你嘅預訂編號"
+
+msgid "Customer name is required"
+msgstr "必須填寫客戶姓名"
+
+msgid "Email is required"
+msgstr "必須填寫電郵"
+
+msgid "Invalid email format"
+msgstr "電郵格式無效"
+
+msgid "Phone number is required"
+msgstr "必須填寫電話號碼"
+
+msgid "Phone number must be at least 10 digits"
+msgstr "電話號碼最少要有 10 位數字"
+
+# ===========================================================================
+# ✅ NEW — Discounts.js
+# ===========================================================================
+msgid "Discounts"
+msgstr "折扣"
+
+msgid "Manage promotional codes and discounts"
+msgstr "管理推廣碼同折扣"
+
+msgid "Create Discount"
+msgstr "建立折扣"
+
+msgid "Create"
+msgstr "建立"
+
+msgid "Create New Discount"
+msgstr "建立新折扣"
+
+msgid "Edit Discount"
+msgstr "編輯折扣"
+
+msgid "Discount Type"
+msgstr "折扣類型"
+
+msgid "Percentage (%)"
+msgstr "百分比（%）"
+
+msgid "Fixed Amount ({currency})"
+msgstr "固定金額（{currency}）"
+
+msgid "Name (internal)"
+msgstr "名稱（內部）"
+
+msgid "Not shown to customers"
+msgstr "唔會向客戶顯示"
+
+msgid "Min Order Amount ({currency})"
+msgstr "最低訂單金額（{currency}）"
+
+msgid "Max Discount Amount ({currency})"
+msgstr "最高折扣金額（{currency}）"
+
+msgid "Cap on percentage discounts"
+msgstr "百分比折扣嘅上限"
+
+msgid "Global Usage Limit"
+msgstr "總使用次數上限"
+
+msgid "Empty = unlimited"
+msgstr "留空 = 不限"
+
+msgid "Max Uses Per User"
+msgstr "每位用戶使用上限"
+
+msgid "Min Ticket Count"
+msgstr "最低門票數量"
+
+msgid "0 = no minimum"
+msgstr "0 = 冇最低限制"
+
+msgid "Valid From"
+msgstr "生效日期"
+
+msgid "Valid To"
+msgstr "到期日期"
+
+msgid "Applicable Events"
+msgstr "適用活動"
+
+msgid "Leave empty to apply to all your events"
+msgstr "留空即適用於你所有活動"
+
+msgid "First-time buyers only"
+msgstr "只限首次購買"
+
+msgid "Allow stacking with other discounts"
+msgstr "允許與其他折扣疊加"
+
+msgid "Update"
+msgstr "更新"
+
+msgid "Delete Discount"
+msgstr "刪除折扣"
+
+msgid "Are you sure you want to delete the discount code \"{code}\"?"
+msgstr "你確定要刪除折扣碼「{code}」嗎？"
+
+msgid "EXPIRED"
+msgstr "已過期"
+
+msgid "EXHAUSTED"
+msgstr "已用完"
+
+msgid "INACTIVE"
+msgstr "已停用"
+
+msgid "Never"
+msgstr "永不"
+
+msgid "Total Discounts"
+msgstr "折扣總數"
+
+msgid "Discount created successfully!"
+msgstr "折扣建立成功！"
+
+msgid "Discount updated successfully!"
+msgstr "折扣更新成功！"
+
+msgid "Discount deleted successfully"
+msgstr "折扣刪除成功"
+
+msgid "Failed to load discounts"
+msgstr "載入折扣失敗"
+
+msgid "Failed to save discount"
+msgstr "儲存折扣失敗"
+
+msgid "Failed to delete discount"
+msgstr "刪除折扣失敗"
+
+msgid "Discount code copied to clipboard!"
+msgstr "折扣碼已複製！"
+
+msgid "Copy code"
+msgstr "複製代碼"
+
+msgid "No discounts found. Create your first discount!"
+msgstr "搵唔到折扣。建立你第一個折扣啦！"
+
+msgid "Type"
+msgstr "類型"
+
+msgid "Value"
+msgstr "數值"
+
+msgid "Used / Limit"
+msgstr "已用 / 上限"
+
+msgid "Valid Until"
+msgstr "有效至"
+
+msgid "Discount applied: −{amount}"
+msgstr "已套用折扣：−{amount}"
+
+msgid "Failed to validate code"
+msgstr "驗證折扣碼失敗"
+
+msgid "Discount removed"
+msgstr "已移除折扣"
+
+msgid "Discount \"{code}\" is no longer valid: {reason}"
+msgstr "折扣「{code}」已失效：{reason}"
+
+msgid "conditions changed"
+msgstr "條件已變更"
+
+# ===========================================================================
+# ✅ NEW — CancellationPolicies.js
+# ===========================================================================
+msgid "Cancellation Policies"
+msgstr "取消政策"
+
+msgid "Reusable refund rules you can attach to any event"
+msgstr "可重複使用嘅退款規則，可以附加到任何活動"
+
+msgid "New Policy"
+msgstr "新政策"
+
+msgid "No policies yet"
+msgstr "暫時冇政策"
+
+msgid "Create your first cancellation policy. You can attach it to any event."
+msgstr "建立你第一個取消政策，可以附加到任何活動。"
+
+msgid "Create Policy"
+msgstr "建立政策"
+
+msgid "Policy Name *"
+msgstr "政策名稱 *"
+
+msgid "Shown to organizers. Not visible to customers."
+msgstr "向主辦方顯示。唔會向客戶顯示。"
+
+msgid "Refund Tiers"
+msgstr "退款級別"
+
+msgid "Tiers are checked top-down. The first one whose hours threshold is met wins. Enter the hours remaining before the event starts."
+msgstr "級別會由上至下檢查，符合時數門檻嘅第一個級別就會生效。請輸入活動開始前剩餘嘅小時數。"
+
+msgid "Hours before"
+msgstr "活動前小時數"
+
+msgid "Refund %"
+msgstr "退款百分比"
+
+msgid "Label (shown to customer)"
+msgstr "標籤（向客戶顯示）"
+
+msgid "Add tier"
+msgstr "新增級別"
+
+msgid "Flat Cancellation Fee ({currency})"
+msgstr "固定取消手續費（{currency}）"
+
+msgid "Deducted from every refund. 0 for none."
+msgstr "每筆退款都會扣除。0 代表不收費。"
+
+msgid "Customer-facing notes"
+msgstr "客戶可見備註"
+
+msgid "Shown on the booking page. Does not affect calculations."
+msgstr "喺預訂頁面顯示，唔影響計算。"
+
+msgid "Allow partial cancellation (per-ticket)"
+msgstr "允許部分取消（逐張門票）"
+
+msgid "Allow refund after check-in"
+msgstr "允許簽到後退款"
+
+msgid "Use as default policy"
+msgstr "設為預設政策"
+
+msgid "Edit Policy"
+msgstr "編輯政策"
+
+msgid "Delete Policy"
+msgstr "刪除政策"
+
+msgid "DEFAULT"
+msgstr "預設"
+
+msgid "ACTIVE/INACTIVE"
+msgstr "有效/已停用"
+
+msgid "{count} event(s)"
+msgstr "{count} 個活動"
+
+msgid "All-or-nothing cancellation"
+msgstr "全有或全無取消"
+
+msgid "Flexible (2-day cutoff)"
+msgstr "寬鬆（活動前 2 日截止）"
+
+msgid "Standard (7-day cutoff)"
+msgstr "標準（活動前 7 日截止）"
+
+msgid "Strict (14-day cutoff, fee)"
+msgstr "嚴格（活動前 14 日截止，收手續費）"
+
+msgid "Non-refundable"
+msgstr "不設退款"
+
+msgid "Free cancellation up to 2 days before the event."
+msgstr "活動前 2 日可免費取消。"
+
+msgid "Full refund up to 14 days before. ₹50 fee applies to any refund."
+msgstr "活動前 14 日可全額退款。任何退款需收取 ₹50 手續費。"
+
+msgid "All sales are final."
+msgstr "所有交易不設退款。"
+
+msgid "At least one refund tier is required."
+msgstr "最少需要一個退款級別。"
+
+msgid "Tier {index}: hours must be a non-negative number."
+msgstr "級別 {index}：小時數必須係非負數。"
+
+msgid "Tier {index}: hours must be strictly less than the previous tier ({hours} ≥ {prev}). Tiers are ordered most-generous-first."
+msgstr "級別 {index}：小時數必須嚴格細過上一個級別（{hours} ≥ {prev}）。級別必須由最寬鬆排到最嚴格。"
+
+msgid "Tier {index}: refund percent must be between 0 and 100."
+msgstr "級別 {index}：退款百分比必須介乎 0 至 100。"
+
+msgid "Cancellation fee must be a non-negative number."
+msgstr "取消手續費必須係非負數。"
+
+msgid "Policy name is required."
+msgstr "必須填寫政策名稱。"
+
+msgid "Policy created successfully"
+msgstr "政策建立成功"
+
+msgid "Policy updated successfully"
+msgstr "政策更新成功"
+
+msgid "Policy deleted"
+msgstr "政策已刪除"
+
+msgid "Failed to save policy"
+msgstr "儲存政策失敗"
+
+msgid "Failed to delete policy"
+msgstr "刪除政策失敗"
+
+msgid "Failed to load policies"
+msgstr "載入政策失敗"
+
+msgid "Failed to set default"
+msgstr "設定預設政策失敗"
+
+msgid "\"{name}\" is now the default policy"
+msgstr "「{name}」而家係預設政策"
+
+msgid "Set as default"
+msgstr "設為預設"
+
+msgid "This is the default"
+msgstr "呢個係預設政策"
+
+msgid "Applied preset: {label}"
+msgstr "已套用預設：{label}"
+
+msgid "Pick a preset to start, then fine-tune the tiers below."
+msgstr "揀一個預設開始，然後喺下面微調各級別。"
+
+msgid "Events using this policy will keep their existing booking snapshots, but new bookings will have no policy until you attach another one."
+msgstr "使用緊呢個政策嘅活動會保留現有預訂嘅快照，但新預訂會冇政策，直到你附加另一個政策為止。"
+
+msgid "Are you sure you want to delete {name}?"
+msgstr "你確定要刪除「{name}」嗎？"
+
+msgid "Cancellation policy text"
+msgstr "取消政策文字"
+
+# ===========================================================================
+# ✅ NEW — Checkin.js
+# ===========================================================================
+msgid "QR Scanner & Check-in"
+msgstr "QR 掃描及簽到"
+
+msgid "QR Scanner &amp; Check-in"
+msgstr "QR 掃描及簽到"
+
+msgid "Scan and verify tickets at event entrance"
+msgstr "喺活動入口掃描同驗證門票"
+
+msgid "Ticket Scanner"
+msgstr "門票掃描器"
+
+msgid "Manual Code Entry"
+msgstr "手動輸入代碼"
+
+msgid "Verify Ticket"
+msgstr "驗證門票"
+
+msgid "Verifying..."
+msgstr "驗證中..."
+
+msgid "Confirm Check-In"
+msgstr "確認簽到"
+
+msgid "Checking In..."
+msgstr "簽到中..."
+
+msgid "Reset"
+msgstr "重設"
+
+msgid "Recent Check-ins"
+msgstr "最近簽到"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Success"
+msgstr "成功"
+
+msgid "Failed"
+msgstr "失敗"
+
+msgid "Undone"
+msgstr "已撤銷"
+
+msgid "No Check-in History"
+msgstr "冇簽到紀錄"
+
+msgid "Scan tickets to see them here"
+msgstr "掃描門票後會喺度顯示"
+
+msgid "No rows match your filter"
+msgstr "冇符合篩選條件嘅紀錄"
+
+msgid "Ticket"
+msgstr "門票"
+
+msgid "Attendee"
+msgstr "參加者"
+
+msgid "Event"
+msgstr "活動"
+
+msgid "Time"
+msgstr "時間"
+
+msgid "Ready to Scan"
+msgstr "準備掃描"
+
+msgid "Click camera icon or enter code manually"
+msgstr "撳相機圖示，或者手動輸入代碼"
+
+msgid "Camera Scanner"
+msgstr "相機掃描器"
+
+msgid "Place QR code within the frame"
+msgstr "將 QR code 放喺框內"
+
+msgid "Capture"
+msgstr "擷取"
+
+msgid "Check-in opens 30 min before slot start and closes 15 min after slot end."
+msgstr "簽到會喺時段開始前 30 分鐘開放，並喺時段結束後 15 分鐘關閉。"
+
+msgid "Ticket Valid"
+msgstr "門票有效"
+
+msgid "This ticket is valid and ready for check-in"
+msgstr "呢張門票有效，可以簽到"
+
+msgid "Invalid Ticket"
+msgstr "無效門票"
+
+msgid "This ticket is not valid"
+msgstr "呢張門票無效"
+
+msgid "Outside Slot Window"
+msgstr "時段外"
+
+msgid "This ticket is valid, but its slot is not currently open for check-in."
+msgstr "呢張門票有效，但佢嘅時段而家未開放簽到。"
+
+msgid "Already Checked In"
+msgstr "已簽到"
+
+msgid "This ticket has already been checked in"
+msgstr "呢張門票已經簽到咗"
+
+msgid "Already Used"
+msgstr "已使用"
+
+msgid "This ticket has already been used"
+msgstr "呢張門票已經用咗"
+
+msgid "Verification Failed"
+msgstr "驗證失敗"
+
+msgid "Failed to verify ticket. Please try again."
+msgstr "驗證門票失敗，請再試一次。"
+
+msgid "Check-in Successful!"
+msgstr "簽到成功！"
+
+msgid "Check-in successful!"
+msgstr "簽到成功！"
+
+msgid "Check-in Failed"
+msgstr "簽到失敗"
+
+msgid "The server rejected this check-in."
+msgstr "伺服器拒絕咗呢次簽到。"
+
+msgid "Invalid Check-in Time"
+msgstr "簽到時間無效"
+
+msgid "Check-in successful! Ticket checked in."
+msgstr "簽到成功！門票已簽到。"
+
+msgid "Ticket already used"
+msgstr "門票已使用"
+
+msgid "This ticket has already been used."
+msgstr "呢張門票已經用咗。"
+
+msgid "Total Scans"
+msgstr "掃描總數"
+
+msgid "Today"
+msgstr "今日"
+
+msgid "All time check-ins"
+msgstr "所有簽到"
+
+msgid "Today's check-ins"
+msgstr "今日簽到"
+
+msgid "Valid tickets"
+msgstr "有效門票"
+
+msgid "Invalid tickets"
+msgstr "無效門票"
+
+msgid "Failed to load check-in data"
+msgstr "載入簽到資料失敗"
+
+msgid "Search..."
+msgstr "搜尋..."
+
+msgid "Enter ticket code (e.g., TIX1234...)"
+msgstr "輸入門票代碼（例如 TIX1234...）"
+
+msgid "Note: Camera integration requires mobile app"
+msgstr "注意：相機整合需要手機應用程式"
+
+# ===========================================================================
+# CHECK-IN ERRORS (backend)
+# ===========================================================================
+msgid "Too early for this slot. Check-in opens at {time}."
+msgstr "而家仲未到呢個時段嘅簽到時間。簽到會喺 {time} 開始。"
+
+msgid "Too late for this slot. Check-in closed at {time}."
+msgstr "呢個時段嘅簽到時間已經過咗。簽到已喺 {time} 結束。"
+
+msgid "You do not have permission to check in this ticket."
+msgstr "你冇權為呢張門票簽到。"
+
+msgid "This ticket has been {status} and is no longer valid"
+msgstr "呢張門票已經{status}，唔再有效"
+
+msgid "Ticket has already been used"
+msgstr "門票已經用咗"
+
+msgid "Ticket already checked in"
+msgstr "門票已經簽到"
+
+msgid "Ticket code is required"
+msgstr "必須提供門票代碼"
+
+msgid "Invalid ticket code format"
+msgstr "門票代碼格式無效"
+
+msgid "Ticket not found: {code}"
+msgstr "搵唔到門票：{code}"
+
+msgid "Ticket not found."
+msgstr "搵唔到門票。"
+
+msgid "Ticket not found"
+msgstr "搵唔到門票"
+
+msgid "An unexpected error occurred."
+msgstr "發生咗意外錯誤。"
+
+msgid "List of ticket codes is required"
+msgstr "必須提供門票代碼列表"
+
+msgid "Maximum 200 codes per bulk request"
+msgstr "每次批量請求最多 200 個代碼"
+
+msgid "An error occurred processing this ticket."
+msgstr "處理呢張門票時發生錯誤。"
+
+msgid "An error occurred while fetching stats"
+msgstr "攞統計數據時發生錯誤"
+
+msgid "An error occurred while fetching history"
+msgstr "攞簽到紀錄時發生錯誤"
+
+msgid "Event ID is required"
+msgstr "必須提供活動 ID"
+
+msgid "You do not have permission to view stats for this event."
+msgstr "你冇權查看呢個活動嘅統計數據。"
+
+msgid "Only superusers can undo check-ins"
+msgstr "只有超級管理員先可以撤銷簽到"
+
+msgid "No check-in found for this ticket"
+msgstr "呢張門票搵唔到簽到紀錄"
+
+msgid "Cannot undo check-in for a {status} ticket"
+msgstr "無法撤銷{status}門票嘅簽到"
+
+msgid "Check-in undone successfully"
+msgstr "簽到撤銷成功"
+
+# ===========================================================================
+# SCANNER / QR PAYLOAD
+# ===========================================================================
+msgid "Payload must be a JSON object."
+msgstr "Payload 必須係 JSON 物件。"
+
+msgid "Payload is not serializable."
+msgstr "Payload 無法序列化。"
+
+msgid "Payload too large."
+msgstr "Payload 太大。"
+
+msgid "Unsupported schema version: {version!r}."
+msgstr "唔支援嘅 schema 版本：{version!r}。"
+
+msgid "Invalid payload type: {type!r}."
+msgstr "Payload 類型無效：{type!r}。"
+
+msgid "v1 payloads only support type=\"ticket\"."
+msgstr "v1 payload 只支援 type=\"ticket\"。"
+
+msgid "Invalid ticket code."
+msgstr "門票代碼無效。"
+
+msgid "Registration code must have type=\"registration\"."
+msgstr "登記代碼必須係 type=\"registration\"。"
+
+msgid "Ticket code must have type=\"ticket\"."
+msgstr "門票代碼必須係 type=\"ticket\"。"
+
+msgid "Missing signature."
+msgstr "缺少簽名。"
+
+msgid "Unexpected fields: {fields}."
+msgstr "有唔預期嘅欄位：{fields}。"
+
+msgid "Signature mismatch."
+msgstr "簽名唔一致。"
+
+msgid "Server cannot verify signatures: TICKET_SIGNING_SECRET is not configured. Contact the administrator."
+msgstr "伺服器無法驗證簽名：TICKET_SIGNING_SECRET 未設定，請聯絡管理員。"
+
+msgid "Invalid signature."
+msgstr "簽名無效。"
+
+msgid "Invalid payload."
+msgstr "Payload 無效。"
+
+msgid "You do not have permission to verify this ticket."
+msgstr "你冇權驗證呢張門票。"
+
+# ===========================================================================
+# ✅ NEW — Analytics.js
+# ===========================================================================
+msgid "Analytics"
+msgstr "數據分析"
+
+msgid "Track performance and insights"
+msgstr "追蹤表現同洞察"
+
+msgid "Total Events"
+msgstr "活動總數"
+
+msgid "Total Bookings"
+msgstr "預訂總數"
+
+msgid "Revenue"
+msgstr "收入"
+
+msgid "Tickets Issued"
+msgstr "已發門票"
+
+msgid "Conversion Rate"
+msgstr "轉換率"
+
+msgid "Total Check-ins"
+msgstr "簽到總數"
+
+msgid "Revenue & Bookings Overview"
+msgstr "收入及預訂概覽"
+
+msgid "Revenue &amp; Bookings Overview"
+msgstr "收入及預訂概覽"
+
+msgid "Booking Source"
+msgstr "預訂來源"
+
+msgid "Revenue by Event Category"
+msgstr "按活動類別劃分嘅收入"
+
+msgid "Top Performing Events"
+msgstr "表現最佳活動"
+
+msgid "Bookings by Status"
+msgstr "按狀態劃分嘅預訂"
+
+msgid "week"
+msgstr "週"
+
+msgid "month"
+msgstr "月"
+
+msgid "year"
+msgstr "年"
+
+msgid "Export"
+msgstr "匯出"
+
+msgid "Analytics exported"
+msgstr "數據分析已匯出"
+
+msgid "Failed to export analytics"
+msgstr "匯出數據分析失敗"
+
+msgid "Failed to load analytics"
+msgstr "載入數據分析失敗"
+
+msgid "check-ins / tickets issued"
+msgstr "簽到 / 已發門票"
+
+msgid "tickets scanned"
+msgstr "已掃描門票"
+
+msgid "No data for this timeframe"
+msgstr "呢個時間範圍冇數據"
+
+msgid "No data yet"
+msgstr "暫時冇數據"
+
+msgid "No revenue yet"
+msgstr "暫時冇收入"
+
+msgid "No event data available"
+msgstr "暫時冇活動數據"
+
+msgid "No bookings yet"
+msgstr "暫時冇預訂"
+
+msgid "bookings"
+msgstr "個預訂"
+
+# ===========================================================================
+# ✅ NEW — Settings.js / PlatformSettingsTab.js
+# ===========================================================================
+msgid "Settings"
+msgstr "設定"
+
+msgid "Manage your account settings and preferences"
+msgstr "管理你嘅帳戶設定同偏好"
+
+msgid "Profile Settings"
+msgstr "個人資料設定"
+
+msgid "Update your personal information"
+msgstr "更新你嘅個人資料"
+
+msgid "Security Settings"
+msgstr "安全性設定"
+
+msgid "Manage your security preferences"
+msgstr "管理你嘅安全偏好"
+
+msgid "Notification Preferences"
+msgstr "通知偏好"
+
+msgid "Choose what notifications you receive"
+msgstr "選擇你想收到邊啲通知"
+
+msgid "Appearance Settings"
+msgstr "外觀設定"
+
+msgid "Customize the look and feel"
+msgstr "自訂外觀同感覺"
+
+msgid "Language Settings"
+msgstr "語言設定"
+
+msgid "Choose your preferred language"
+msgstr "選擇你偏好嘅語言"
+
+msgid "Platform Settings"
+msgstr "平台設定"
+
+msgid "Currency, region, and branding defaults. Applies to every user."
+msgstr "貨幣、地區同品牌預設，適用於所有用戶。"
+
+msgid "Platform settings are managed by a super admin. You can view them but not modify them."
+msgstr "平台設定由超級管理員管理。你可以查看但唔可以修改。"
+
+msgid "Only a super admin can change platform settings."
+msgstr "只有超級管理員先可以更改平台設定。"
+
+msgid "Current Password"
+msgstr "目前密碼"
+
+msgid "Show passwords"
+msgstr "顯示密碼"
+
+msgid "Save Changes"
+msgstr "儲存變更"
+
+msgid "Update Password"
+msgstr "更新密碼"
+
+msgid "Save Preferences"
+msgstr "儲存偏好"
+
+msgid "Save Theme"
+msgstr "儲存主題"
+
+msgid "Save Language"
+msgstr "儲存語言"
+
+msgid "Save Settings"
+msgstr "儲存設定"
+
+msgid "Theme"
+msgstr "主題"
+
+msgid "Light"
+msgstr "淺色"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "System Default"
+msgstr "跟隨系統"
+
+msgid "Language"
+msgstr "語言"
+
+msgid "Spanish"
+msgstr "西班牙文"
+
+msgid "French"
+msgstr "法文"
+
+msgid "German"
+msgstr "德文"
+
+msgid "Chinese (Simplified)"
+msgstr "中文（簡體）"
+
+msgid "Chinese (Traditional)"
+msgstr "中文（繁體）"
+
+msgid "Japanese"
+msgstr "日文"
+
+msgid "Korean"
+msgstr "韓文"
+
+msgid "Portuguese"
+msgstr "葡萄牙文"
+
+msgid "Russian"
+msgstr "俄文"
+
+msgid "Arabic"
+msgstr "阿拉伯文"
+
+msgid "Hindi"
+msgstr "印地文"
+
+msgid "Italian"
+msgstr "意大利文"
+
+msgid "Dutch"
+msgstr "荷蘭文"
+
+msgid "Profile updated successfully!"
+msgstr "個人資料更新成功！"
+
+msgid "Failed to update profile"
+msgstr "更新個人資料失敗"
+
+msgid "Password updated successfully!"
+msgstr "密碼更新成功！"
+
+msgid "Failed to update password"
+msgstr "更新密碼失敗"
+
+msgid "Notification preferences updated!"
+msgstr "通知偏好已更新！"
+
+msgid "Failed to update preferences"
+msgstr "更新偏好失敗"
+
+msgid "Theme updated successfully!"
+msgstr "主題更新成功！"
+
+msgid "Failed to update theme"
+msgstr "更新主題失敗"
+
+msgid "Language updated successfully!"
+msgstr "語言更新成功！"
+
+msgid "Failed to update language"
+msgstr "更新語言失敗"
+
+msgid "Failed to load settings"
+msgstr "載入設定失敗"
+
+msgid "Platform settings saved"
+msgstr "平台設定已儲存"
+
+msgid "Failed to save settings"
+msgstr "儲存設定失敗"
+
+msgid "Failed to load platform settings"
+msgstr "載入平台設定失敗"
+
+msgid "Saving…"
+msgstr "儲存中…"
+
+msgid "Reload"
+msgstr "重新載入"
+
+msgid "Region & Currency"
+msgstr "地區及貨幣"
+
+msgid "Region &amp; Currency"
+msgstr "地區及貨幣"
+
+msgid "Timezone & Branding"
+msgstr "時區及品牌"
+
+msgid "Timezone &amp; Branding"
+msgstr "時區及品牌"
+
+msgid "Country"
+msgstr "國家"
+
+msgid "Changing the country auto-syncs currency and timezone."
+msgstr "更改國家會自動同步貨幣同時區。"
+
+msgid "Currency"
+msgstr "貨幣"
+
+msgid "Symbol"
+msgstr "符號"
+
+msgid "Locale"
+msgstr "地區設定"
+
+msgid "e.g. en-HK"
+msgstr "例如 en-HK"
+
+msgid "Preview"
+msgstr "預覽"
+
+msgid "How a price renders on events, tickets and refunds."
+msgstr "活動、門票同退款嘅價格顯示方式。"
+
+msgid "Default timezone"
+msgstr "預設時區"
+
+msgid "IANA timezone, e.g. Asia/Hong_Kong"
+msgstr "IANA 時區，例如 Asia/Hong_Kong"
+
+msgid "Organisation name"
+msgstr "機構名稱"
+
+msgid "Organisation email"
+msgstr "機構電郵"
+
+msgid "Email 'from' name"
+msgstr "電郵寄件人名稱"
+
+msgid "Displayed as the sender name on outgoing emails."
+msgstr "喺外送電郵顯示為寄件人名稱。"
+
+msgid "Logo URL"
+msgstr "標誌網址"
+
+msgid "Used in emails and PDFs. Must be a public URL."
+msgstr "用於電郵同 PDF，必須係公開網址。"
+
+msgid "Logo preview"
+msgstr "標誌預覽"
+
+msgid "Organisation logo"
+msgstr "機構標誌"
+
+msgid "Access denied"
+msgstr "存取被拒"
+
+msgid "You do not have permission to view platform settings."
+msgstr "你冇權查看平台設定。"
+
+msgid "Account Information"
+msgstr "帳戶資料"
+
+msgid "Edit profile"
+msgstr "編輯個人資料"
+
+msgid "Save changes"
+msgstr "儲存變更"
+
+msgid "Profile updated successfully."
+msgstr "個人資料更新成功。"
+
+msgid "Failed to update profile."
+msgstr "更新個人資料失敗。"
+
+msgid "Name cannot be empty."
+msgstr "名稱不能為空。"
+
+msgid "Enter your name"
+msgstr "輸入你嘅名稱"
+
+msgid "Username"
+msgstr "用戶名稱"
+
+msgid "Role"
+msgstr "角色"
+
+msgid "EditingUnsupported"
+msgstr "不支援編輯個人資料。"
+
+# ===========================================================================
+# ✅ NEW — Users.js
+# ===========================================================================
+msgid "User Management"
+msgstr "用戶管理"
+
+msgid "Manage all users in the system"
+msgstr "管理系統所有用戶"
+
+msgid "Add User"
+msgstr "新增用戶"
+
+msgid "Total Users"
+msgstr "用戶總數"
+
+msgid "Active Users"
+msgstr "有效用戶"
+
+msgid "Organizers"
+msgstr "主辦方"
+
+msgid "Admins"
+msgstr "管理員"
+
+msgid "All Roles"
+msgstr "所有角色"
+
+msgid "All Status"
+msgstr "所有狀態"
+
+msgid "Search users..."
+msgstr "搜尋用戶..."
+
+msgid "User"
+msgstr "用戶"
+
+msgid "Joined"
+msgstr "加入日期"
+
+msgid "View"
+msgstr "查看"
+
+msgid "Unlock"
+msgstr "解鎖"
+
+msgid "Block"
+msgstr "封鎖"
+
+msgid "Unblock"
+msgstr "解除封鎖"
+
+msgid "Delete"
+msgstr "刪除"
+
+msgid "Edit User"
+msgstr "編輯用戶"
+
+msgid "Create New User"
+msgstr "建立新用戶"
+
+msgid "Username *"
+msgstr "用戶名稱 *"
+
+msgid "Mobile Number *"
+msgstr "手機號碼 *"
+
+msgid "Password *"
+msgstr "密碼 *"
+
+msgid "Confirm Password *"
+msgstr "確認密碼 *"
+
+msgid "First Name"
+msgstr "名字"
+
+msgid "Last Name"
+msgstr "姓氏"
+
+msgid "City"
+msgstr "城市"
+
+msgid "State"
+msgstr "州/省"
+
+msgid "Account Status"
+msgstr "帳戶狀態"
+
+msgid "Inactive"
+msgstr "已停用"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Create User"
+msgstr "建立用戶"
+
+msgid "User Profile"
+msgstr "用戶檔案"
+
+msgid "Staff"
+msgstr "職員"
+
+msgid "Delete User"
+msgstr "刪除用戶"
+
+msgid "This action cannot be undone."
+msgstr "呢個操作無法復原。"
+
+msgid "Are you sure you want to delete the user {username}?"
+msgstr "你確定要刪除用戶「{username}」嗎？"
+
+msgid "This action cannot be undone. All associated data will be permanently deleted."
+msgstr "呢個操作無法復原，所有關聯資料會被永久刪除。"
+
+msgid "Set a new password for {username}."
+msgstr "為 {username} 設定新密碼。"
+
+msgid "Minimum 10 characters"
+msgstr "最少 10 個字元"
+
+msgid "Re-enter password"
+msgstr "再次輸入密碼"
+
+msgid "Resetting…"
+msgstr "重設中…"
+
+msgid "The user will be signed out of every session. Any Axes lockout will also be cleared."
+msgstr "該用戶會被登出所有工作階段，任何 Axes 鎖定亦會被清除。"
+
+msgid "No users found"
+msgstr "搵唔到用戶"
+
+msgid "Try adjusting your search or filters"
+msgstr "請嘗試調整搜尋或篩選條件"
+
+msgid "Showing {shown} of {total} users"
+msgstr "顯示 {total} 個用戶中的 {shown} 個"
+
+msgid "Prev"
+msgstr "上一頁"
+
+msgid "Next"
+msgstr "下一頁"
+
+msgid "Super Admin"
+msgstr "超級管理員"
+
+msgid "Organizer"
+msgstr "主辦方"
+
+msgid "Regular User"
+msgstr "普通用戶"
+
+msgid "Active"
+msgstr "有效"
+
+msgid "Locked"
+msgstr "已鎖定"
+
+msgid "Enter a valid mobile number (7–15 digits)"
+msgstr "請輸入有效嘅手機號碼（7–15 位數字）"
+
+msgid "Please fill all required fields"
+msgstr "請填寫所有必填欄位"
+
+msgid "Mobile number is required"
+msgstr "必須填寫手機號碼"
+
+msgid "User created successfully"
+msgstr "用戶建立成功"
+
+msgid "User updated successfully"
+msgstr "用戶更新成功"
+
+msgid "User deleted successfully"
+msgstr "用戶刪除成功"
+
+msgid "Failed to create user"
+msgstr "建立用戶失敗"
+
+msgid "Failed to update user"
+msgstr "更新用戶失敗"
+
+msgid "Failed to delete user"
+msgstr "刪除用戶失敗"
+
+msgid "Failed to load users"
+msgstr "載入用戶失敗"
+
+msgid "Failed to update user status"
+msgstr "更新用戶狀態失敗"
+
+msgid "Failed to unlock user"
+msgstr "解鎖用戶失敗"
+
+msgid "Failed to reset password"
+msgstr "重設密碼失敗"
+
+msgid "Unlocked {username}"
+msgstr "已解鎖 {username}"
+
+msgid "Password reset."
+msgstr "密碼已重設。"
+
+msgid "User {username} deactivated"
+msgstr "用戶 {username} 已停用"
+
+msgid "User {username} activated"
+msgstr "用戶 {username} 已啟用"
+
+msgid "New Password (optional)"
+msgstr "新密碼（可選）"
+
+msgid "Leave blank to keep current"
+msgstr "留空即保持不變"
+
+# ===========================================================================
+# ✅ NEW — Venues.js / Create.js / Detail.js
+# ===========================================================================
+msgid "Venues"
+msgstr "場地"
+
+msgid "Manage your event venues and locations"
+msgstr "管理你嘅活動場地同位置"
+
+msgid "Add Venue"
+msgstr "新增場地"
+
+msgid "New Venue"
+msgstr "新場地"
+
+msgid "Edit Venue"
+msgstr "編輯場地"
+
+msgid "Add New Venue"
+msgstr "新增場地"
+
+msgid "Venue Name"
+msgstr "場地名稱"
+
+msgid "Venue Type"
+msgstr "場地類型"
+
+msgid "Indoor"
+msgstr "室內"
+
+msgid "Outdoor"
+msgstr "室外"
+
+msgid "Address"
+msgstr "地址"
+
+msgid "Address Line 1"
+msgstr "地址第一行"
+
+msgid "Address Line 2"
+msgstr "地址第二行"
+
+msgid "Postal Code"
+msgstr "郵政編碼"
+
+msgid "Contact Information"
+msgstr "聯絡資料"
+
+msgid "Contact Phone"
+msgstr "聯絡電話"
+
+msgid "Contact Email"
+msgstr "聯絡電郵"
+
+msgid "Has Reserved Seating"
+msgstr "有劃位座位"
+
+msgid "Update Venue"
+msgstr "更新場地"
+
+msgid "Create Venue"
+msgstr "建立場地"
+
+msgid "No venues found"
+msgstr "搵唔到場地"
+
+msgid "Create your first venue"
+msgstr "建立你第一個場地"
+
+msgid "Capacity: {capacity}"
+msgstr "容量：{capacity}"
+
+msgid "Venue created successfully!"
+msgstr "場地建立成功！"
+
+msgid "Venue updated successfully!"
+msgstr "場地更新成功！"
+
+msgid "Venue deleted successfully"
+msgstr "場地刪除成功"
+
+msgid "Failed to load venue details"
+msgstr "載入場地詳情失敗"
+
+msgid "Failed to load venues"
+msgstr "載入場地失敗"
+
+msgid "Failed to save venue"
+msgstr "儲存場地失敗"
+
+msgid "Failed to delete venue"
+msgstr "刪除場地失敗"
+
+msgid "Venue name is required"
+msgstr "必須填寫場地名稱"
+
+msgid "Venue not found"
+msgstr "搵唔到場地"
+
+msgid "Visit Website"
+msgstr "瀏覽網站"
+
+msgid "Reserved Seating"
+msgstr "劃位座位"
+
+msgid "General Admission"
+msgstr "普通入場"
+
+msgid "N/A"
+msgstr "不適用"
+
+msgid "No description provided"
+msgstr "未有提供描述"
+
+# ===========================================================================
+# ✅ NEW — ActiveSessions.js
+# ===========================================================================
+msgid "Active Sessions"
+msgstr "活躍工作階段"
+
+msgid "Who's logged in right now — check before deploying"
+msgstr "而家邊個登入緊 — 部署前請檢查"
+
+msgid "Who&rsquo;s logged in right now — check before deploying"
+msgstr "而家邊個登入緊 — 部署前請檢查"
+
+msgid "Auto-refresh"
+msgstr "自動重新整理"
+
+msgid "Total sessions"
+msgstr "工作階段總數"
+
+msgid "Unique users"
+msgstr "獨立用戶"
+
+msgid "Non-expired"
+msgstr "未過期"
+
+msgid "Distinct accounts"
+msgstr "不同帳戶"
+
+msgid "Active (not idle)"
+msgstr "活躍（非閒置）"
+
+msgid "Recent activity"
+msgstr "最近活動"
+
+msgid "Idle"
+msgstr "閒置"
+
+msgid "≥{n} min silent"
+msgstr "≥{n} 分鐘無活動"
+
+msgid "Search by name, email, or IP…"
+msgstr "按姓名、電郵或 IP 搜尋…"
+
+msgid "Idle threshold"
+msgstr "閒置門檻"
+
+msgid "10 min"
+msgstr "10 分鐘"
+
+msgid "30 min"
+msgstr "30 分鐘"
+
+msgid "1 hour"
+msgstr "1 小時"
+
+msgid "2 hours"
+msgstr "2 小時"
+
+msgid "Idle only"
+msgstr "只顯示閒置"
+
+msgid "Anon"
+msgstr "匿名"
+
+msgid "Last activity"
+msgstr "最近活動"
+
+msgid "Expires in"
+msgstr "剩餘有效期"
+
+msgid "IP"
+msgstr "IP"
+
+msgid "Device"
+msgstr "裝置"
+
+msgid "No matching sessions"
+msgstr "搵唔到相符工作階段"
+
+msgid "Last updated: {time}"
+msgstr "最後更新：{time}"
+
+msgid "· auto-refreshing every 30s"
+msgstr "· 每 30 秒自動重新整理"
+
+msgid "session"
+msgid_plural "sessions"
+msgstr[0] "個工作階段"
+
+msgid "is idle"
+msgid_plural "are idle"
+msgstr[0] "個閒置"
+
+msgid "{count} session{s} {verb} idle (no activity for ≥{idle} min). These are safe to deploy over."
+msgstr "{count} 個工作階段{verb}閒置（≥{idle} 分鐘無活動）。可以安全部署。"
+
+msgid "No active Django Admin sessions. Note: JWT API users are not tracked here."
+msgstr "冇活躍嘅 Django Admin 工作階段。注意：JWT API 用戶唔會喺度追蹤。"
+
+msgid "Failed to load active sessions"
+msgstr "載入活躍工作階段失敗"
+
+msgid "Anonymous"
+msgstr "匿名"
+
+msgid "Unknown"
+msgstr "未知"
+
+# ===========================================================================
+# ✅ NEW — E-Ticket.js
+# ===========================================================================
+msgid "Show Date"
+msgstr "演出日期"
+
+msgid "Show Time"
+msgstr "演出時間"
+
+msgid "Seat(s)"
+msgstr "座位"
+
+msgid "Order No:"
+msgstr "訂單編號："
+
+msgid "Transaction:"
+msgstr "交易編號："
+
+msgid "Tier:"
+msgstr "票種："
+
+msgid "Download"
+msgstr "下載"
+
+msgid "Print"
+msgstr "列印"
+
+msgid "Email"
+msgstr "電郵"
+
+msgid "No QR"
+msgstr "冇 QR code"
+
+msgid "Ticket {n} of {m}"
+msgstr "第 {n} 張，共 {m} 張"
+
+msgid "Online ticketing is completed"
+msgstr "網上購票已完成"
+
+msgid "Please show this QR code for admission"
+msgstr "請出示呢個 QR code 入場"
+
+msgid "Ticket downloaded!"
+msgstr "門票已下載！"
+
+msgid "Ticket sent to email!"
+msgstr "門票已發送到電郵！"
+
+msgid "No valid ticket found"
+msgstr "搵唔到有效門票"
+
+msgid "e-Ticket"
+msgstr "電子門票"
+
+# ===========================================================================
+# ✅ NEW — EventCard.js
+# ===========================================================================
+msgid "Register Free"
+msgstr "免費登記"
+
+msgid "Register"
+msgstr "登記"
+
+msgid "From"
+msgstr "由"
+
+msgid "Admission"
+msgstr "入場"
+
+msgid "Free"
+msgstr "免費"
+
+msgid "Online Event"
+msgstr "線上活動"
+
+msgid "at"
+msgstr "時間"
+
+msgid "Only {count} left"
+msgstr "僅剩 {count} 個"
+
+msgid "{count} seat"
+msgid_plural "{count} seats"
+msgstr[0] "{count} 個座位"
+
+msgid "Registration open"
+msgstr "開放登記"
+
+msgid "Check availability"
+msgstr "查詢可用性"
+
+msgid "View Ticket Tiers"
+msgstr "查看票種"
+
+msgid "Hide Ticket Tiers"
+msgstr "隱藏票種"
+
+msgid "No tiers configured."
+msgstr "尚未設定票種。"
+
+msgid "Free Reg"
+msgstr "免費登記"
+
+msgid "Paid Reg"
+msgstr "付費登記"
+
+msgid "+{count} more date"
+msgid_plural "+{count} more dates"
+msgstr[0] "另有 {count} 個日期"
+
+# ===========================================================================
+# ✅ NEW — GuestOrRegisterGate.js
+# ===========================================================================
+msgid "Create an account"
+msgstr "建立帳戶"
+
+msgid "Save time on future bookings, track your tickets from any device, and get instant access to e-tickets and check-in history."
+msgstr "慳返下次預訂嘅時間，喺任何裝置追蹤你嘅門票，並即時查閱電子門票同簽到紀錄。"
+
+msgid "View all your bookings in one place"
+msgstr "喺同一個地方查看你所有預訂"
+
+msgid "Resend tickets to yourself anytime"
+msgstr "隨時重新發送門票俾自己"
+
+msgid "Faster checkout on your next event"
+msgstr "下次活動結帳更快"
+
+msgid "Register Now"
+msgstr "立即登記"
+
+msgid "Already have an account? Log in"
+msgstr "已有帳戶？登入"
+
+msgid "Continue as guest"
+msgstr "以訪客身份繼續"
+
+msgid "Skip the account and go straight to the booking. You'll receive your ticket by email, and you can look up your booking later with the reference number we send you."
+msgstr "跳過建立帳戶，直接去預訂。你會透過電郵收到門票，之後可以用我哋發送嘅預訂編號查閱你嘅預訂。"
+
+msgid "No account required"
+msgstr "毋須帳戶"
+
+msgid "Tickets delivered to your email"
+msgstr "門票發送到你嘅電郵"
+
+msgid "Use your booking reference to look up later"
+msgstr "用你嘅預訂編號日後查閱"
+
+msgid "Continue as Guest"
+msgstr "以訪客身份繼續"
+
+msgid "No event selected. Please go back and choose an event first."
+msgstr "未選擇活動。請先返回並揀選活動。"
+
+msgid "You can always create an account later — your guest bookings will be linked to it automatically once you sign up with the same email address."
+msgstr "你之後隨時可以建立帳戶 — 只要你用同一個電郵地址登記，你嘅訪客預訂就會自動連結到該帳戶。"
+
+msgid "Register for this free event"
+msgstr "登記呢個免費活動"
+
+msgid "No payment required. You can register as a guest or create an account."
+msgstr "毋須付款。你可以以訪客身份登記，或者建立帳戶。"
+
+msgid "Register for this event"
+msgstr "登記呢個活動"
+
+msgid "Create an account or continue as a guest to complete your registration."
+msgstr "建立帳戶或以訪客身份繼續，以完成你嘅登記。"
+
+msgid "Book tickets for this event"
+msgstr "預訂呢個活動嘅門票"
+
+msgid "Create an account or continue as a guest to complete your booking."
+msgstr "建立帳戶或以訪客身份繼續，以完成你嘅預訂。"
+
+msgid "Continue to booking"
+msgstr "繼續前往預訂"
+
+msgid "Create an account or continue as a guest."
+msgstr "建立帳戶或以訪客身份繼續。"
+
+msgid "You are already logged in. Click \"Sign In\" to continue to dashboard."
+msgstr "你已經登入。撳「登入」繼續前往儀表板。"
+
+msgid "Login successful!"
+msgstr "登入成功！"
+
+msgid "Login failed. Please try again."
+msgstr "登入失敗，請再試一次。"
+
+msgid "Demo Credentials (Dev Only)"
+msgstr "示範憑證（僅限開發）"
+
+msgid "Credentials loaded: {email}"
+msgstr "已載入憑證：{email}"
+
+msgid "Registration successful! Please log in."
+msgstr "註冊成功！請登入。"
+
+msgid "Registration failed. Please try again."
+msgstr "註冊失敗，請再試一次。"
+
+msgid "Create your account"
+msgstr "建立你嘅帳戶"
+
+msgid "Sign up to book tickets in seconds"
+msgstr "註冊即可數秒完成訂票"
+
+msgid "Mobile Number"
+msgstr "手機號碼"
+
+msgid "7–15 digits. Used for WhatsApp ticket delivery."
+msgstr "7–15 位數字。用於 WhatsApp 門票發送。"
+
+msgid "Minimum 10 characters."
+msgstr "最少 10 個字元。"
+
+msgid "Confirm Password"
+msgstr "確認密碼"
+
+msgid "Create Account"
+msgstr "建立帳戶"
+
+msgid "Already have an account?"
+msgstr "已有帳戶？"
+
+msgid "Log in"
+msgstr "登入"
+
+msgid "No account? Register"
+msgstr "未有帳戶？註冊"
+
+msgid "Don't have an account?"
+msgstr "未有帳戶？"
+
+msgid "Already logged in"
+msgstr "已登入"
+
+msgid "Login"
+msgstr "登入"
+
+msgid "Forgot Password?"
+msgstr "忘記密碼？"
+
+msgid "Sign In"
+msgstr "登入"
+
+msgid "Sign in to manage your events"
+msgstr "登入以管理你嘅活動"
+
+msgid "Enter your email"
+msgstr "輸入你嘅電郵"
+
+msgid "Enter your email address"
+msgstr "輸入你嘅電郵地址"
+
+msgid "Password"
+msgstr "密碼"
+
+# ===========================================================================
+# ✅ NEW — Navbar / Sidebar / Layout / LanguageSwitcher / common chrome
+# ===========================================================================
+msgid "Dashboard"
+msgstr "儀表板"
+
+msgid "Events"
+msgstr "活動"
+
+msgid "QR Scanner"
+msgstr "QR 掃描器"
+
+msgid "Logout"
+msgstr "登出"
+
+msgid "Profile"
+msgstr "個人資料"
+
+msgid "Main"
+msgstr "主要"
+
+msgid "Management"
+msgstr "管理"
+
+msgid "Admin"
+msgstr "系統"
+
+msgid "Toggle navigation menu"
+msgstr "切換導覽選單"
+
+msgid "User menu"
+msgstr "用戶選單"
+
+msgid "Close menu"
+msgstr "關閉選單"
+
+msgid "Expand sidebar"
+msgstr "展開側邊欄"
+
+msgid "Collapse sidebar"
+msgstr "收合側邊欄"
+
+msgid "Are you sure you want to logout?"
+msgstr "你確定要登出嗎？"
+
+msgid "Change language"
+msgstr "更改語言"
+
+msgid "Loading..."
+msgstr "載入中..."
+
+msgid "Retry"
+msgstr "重試"
+
+msgid "An unexpected error occurred"
+msgstr "發生意外錯誤"
+
+# ===========================================================================
+# ✅ NEW — Landing.js
+# ===========================================================================
+msgid "Find Your Next"
+msgstr "尋找您嘅下一個"
+
+msgid "Experience"
+msgstr "精彩體驗"
+
+msgid "Discover concerts, sports, theater, and more. Book tickets in seconds with instant confirmation and e-ticket delivery."
+msgstr "探索音樂會、體育、劇場等精彩活動。數秒內完成訂票，即時確認並以電子方式送達門票。"
+
+msgid "Login to Book Tickets"
+msgstr "登入以訂票"
+
+msgid "Go to Dashboard"
+msgstr "前往儀表板"
+
+msgid "Search by event name, venue, or city..."
+msgstr "按活動名稱、場地或城市搜尋..."
+
+msgid "Upcoming Events"
+msgstr "即將舉行的活動"
+
+msgid "All Events"
+msgstr "所有活動"
+
+msgid "No events available yet"
+msgstr "暫時沒有活動"
+
+msgid "No matching events"
+msgstr "沒有符合的活動"
+
+msgid "Check back soon — new events are added regularly."
+msgstr "請稍後再回來 — 新活動會定期加入。"
+
+msgid "Try adjusting your search or choosing a different category."
+msgstr "請嘗試調整搜尋或選擇其他類別。"
+
+msgid "Clear filters"
+msgstr "清除篩選"
+
+msgid "{count} event found"
+msgid_plural "{count} events found"
+msgstr[0] "找到 {count} 個活動"
+
+msgid "Live · {count} Event Available"
+msgid_plural "Live · {count} Events Available"
+msgstr[0] "現正進行 · {count} 個活動"
+
+msgid "Cities"
+msgstr "城市"
+
+msgid "Booking"
+msgstr "訂票"
+
+msgid "Admin Login"
+msgstr "管理員登入"
+
+msgid "TiKetVault. All rights reserved."
+msgstr "TiKetVault 版權所有。"
+
+msgid "Could not load events. Please try again later."
+msgstr "無法載入活動。請稍後再試。"
+
+msgid "Failed to load events."
+msgstr "載入活動失敗。"
+
+# ===========================================================================
+# ✅ NEW — Unauthorized.js
+# ===========================================================================
+msgid "Access Denied"
+msgstr "存取被拒"
+
+msgid "You don't have permission to access this page. Please contact your administrator if you believe this is a mistake."
+msgstr "你冇權存取呢個頁面。如果你認為係錯誤，請聯絡你嘅管理員。"
+
+# ===========================================================================
+# ✅ NEW — Categories / Event types / Templates (constants)
+# ===========================================================================
+msgid "Concert"
+msgstr "音樂會"
+
+msgid "Sports"
+msgstr "體育"
+
+msgid "Theater"
+msgstr "劇場"
+
+msgid "Conference"
+msgstr "會議"
+
+msgid "Workshop"
+msgstr "工作坊"
+
+msgid "Party"
+msgstr "派對"
+
+msgid "Dining"
+msgstr "餐飲"
+
+msgid "Festival"
+msgstr "節慶"
+
+msgid "Exhibition"
+msgstr "展覽"
+
+msgid "Community"
+msgstr "社區"
+
+msgid "Virtual"
+msgstr "虛擬"
+
+msgid "Other"
+msgstr "其他"
+
+msgid "Single Day"
+msgstr "單日"
+
+msgid "Multi Day"
+msgstr "多日"
+
+msgid "Recurring"
+msgstr "重複"
+
+msgid "Hybrid"
+msgstr "混合"
+
+msgid "Announcement"
+msgstr "公告"
+
+msgid "Flyer"
+msgstr "傳單"
+
+msgid "Social Media"
+msgstr "社交媒體"
+
+msgid "Invitation"
+msgstr "邀請函"
+
+msgid "Certificate"
+msgstr "證書"
+
+msgid "Full refund"
+msgstr "全額退款"
+
+msgid "No refund"
+msgstr "不設退款"
+
+msgid "Unlimited"
+msgstr "不限"
+
+# ===========================================================================
+# DASHBOARD / ANALYTICS / SETTINGS / TEMPLATES / SESSIONS (backend)
+# ===========================================================================
+msgid "Only super admins can view active sessions."
+msgstr "只有超級管理員先可以查看活躍工作階段。"
+
+msgid "Only super admins can change system settings."
+msgstr "只有超級管理員先可以更改系統設定。"
+
+msgid "Image file is required"
+msgstr "必須提供圖片檔案"
+
+msgid "Template type is required"
+msgstr "必須提供範本類型"
+
+msgid "Invalid template type: \"{slug}\". Valid types: {valid}"
+msgstr "範本類型無效：「{slug}」。可用類型：{valid}"
+
+msgid "File size exceeds the maximum of {mb} MB."
+msgstr "檔案大細超過上限 {mb} MB。"
+
+msgid "config must be valid JSON."
+msgstr "config 必須係有效 JSON。"
+
+msgid "config must be a JSON object."
+msgstr "config 必須係 JSON 物件。"
+
+msgid "config is not JSON-serialisable: {exc}"
+msgstr "config 無法序列化為 JSON：{exc}"
+
+msgid "config is too large ({bytes} bytes); maximum is {max} bytes."
+msgstr "config 太大（{bytes} bytes），上限係 {max} bytes。"
+
+msgid "config.fields must be an object."
+msgstr "config.fields 必須係物件。"
+
+msgid "An unexpected error occurred while uploading."
+msgstr "上載時發生咗意外錯誤。"
+
+msgid "You do not have permission to view templates for this event."
+msgstr "你冇權查看呢個活動嘅範本。"
+
+msgid "You do not have permission to add templates to this event."
+msgstr "你冇權為呢個活動新增範本。"
+
+msgid "event_id is required"
+msgstr "必須提供 event_id"
+
+msgid "Could not read the uploaded file as an image. It may be corrupted or in an unsupported format."
+msgstr "無法將上載嘅檔案讀取為圖片，可能已經損壞或者格式唔支援。"
+
+msgid "Image is smaller than recommended for \"{slug}\" ({w}×{h}; recommended ≥ {minW}×{minH}). {hint}"
+msgstr "「{slug}」嘅圖片細過建議大細（{w}×{h}；建議 ≥ {minW}×{minH}）。{hint}"
+
+msgid "Image is larger than recommended for \"{slug}\" ({w}×{h}; recommended ≤ {maxW}×{maxH}). {hint}"
+msgstr "「{slug}」嘅圖片大過建議大細（{w}×{h}；建議 ≤ {maxW}×{maxH}）。{hint}"
+
+msgid "Aspect ratio for \"{slug}\" is {ratio}:1 (target ≈{target}:1, ±{pct}%). {hint}"
+msgstr "「{slug}」嘅長寬比係 {ratio}:1（目標 ≈{target}:1，±{pct}%）。{hint}"
+
+msgid "Unsupported currency code: {value!r}. Choose one from the catalog."
+msgstr "唔支援嘅貨幣代碼：{value!r}。請從目錄揀一個。"
+
+# ===========================================================================
+# CANCELLATION POLICY VALIDATION (backend)
+# ===========================================================================
+msgid "rules must be a JSON object."
+msgstr "rules 必須係 JSON 物件。"
+
+msgid "Unsupported policy version: {version!r}. Expected {expected}."
+msgstr "唔支援嘅政策版本：{version!r}。預期係 {expected}。"
+
+msgid "refund_tiers must be a non-empty list."
+msgstr "refund_tiers 必須係一個非空列表。"
+
+msgid "At most {max} refund tiers are allowed."
+msgstr "最多只可以設定 {max} 個退款級別。"
+
+msgid "Tier {index} must be an object."
+msgstr "級別 {index} 必須係物件。"
+
+msgid "Tier {index}: min_hours_before must be a number."
+msgstr "級別 {index}：min_hours_before 必須係數字。"
+
+msgid "Tier {index}: min_hours_before must be non-negative."
+msgstr "級別 {index}：min_hours_before 唔可以係負數。"
+
+msgid "Tier {index}: min_hours_before must be strictly less than the previous tier ({hours} >= {prev}). Tiers must be ordered most-generous-first."
+msgstr "級別 {index}：min_hours_before 必須嚴格細過上一個級別（{hours} >= {prev}）。級別必須由最寬鬆排到最嚴格。"
+
+msgid "Tier {index}: refund_percent must be a number."
+msgstr "級別 {index}：refund_percent 必須係數字。"
+
+msgid "Tier {index}: refund_percent must be between 0 and 100."
+msgstr "級別 {index}：refund_percent 必須喺 0 到 100 之間。"
+
+msgid "Tier {index}: label must be a string if provided."
+msgstr "級別 {index}：如果有提供 label，必須係字串。"
+
+msgid "cancellation_fee must be a number."
+msgstr "cancellation_fee 必須係數字。"
+
+msgid "cancellation_fee must be non-negative."
+msgstr "cancellation_fee 唔可以係負數。"
+
+msgid "{flag} must be a boolean."
+msgstr "{flag} 必須係布林值。"
+
+msgid "notes must be a string if provided."
+msgstr "如果有提供 notes，必須係字串。"
+
+msgid "This organizer already has a default policy."
+msgstr "呢個主辦方已經有一個預設政策。"
+
+# ===========================================================================
+# CANCELLATION POLICY — describe_policy() output
+# ===========================================================================
+msgid "Any time before the event"
+msgstr "活動開始前任何時間"
+
+msgid "At least {hours} hours before"
+msgstr "最少 {hours} 個鐘之前"
+
+msgid "{days} day or more before"
+msgid_plural "{days} days or more before"
+msgstr[0] "{days} 日或之前"
+
+msgid "no refund"
+msgstr "唔退款"
+
+msgid "full refund"
+msgstr "全額退款"
+
+msgid "{percent}% refund"
+msgstr "{percent}% 退款"
+
+msgid "({label})"
+msgstr "（{label}）"
+
+msgid "A flat cancellation fee of {amount} applies to any refund."
+msgstr "任何退款都會收取 {amount} 嘅手續費。"
+
+msgid "Cancellation is all-or-nothing — the whole booking must be cancelled."
+msgstr "取消係全有或全無 — 必須取消整個預訂。"
+
+# ===========================================================================
+# EMAIL SUBJECTS
+# ===========================================================================
+msgid "Payment Received"
+msgstr "已收到付款"
+
+msgid "Booking Confirmed"
+msgstr "預訂已確認"
+
+msgid "Booking Cancelled"
+msgstr "預訂已取消"
+
+msgid "Booking Refunded"
+msgstr "預訂已退款"
+
+msgid "Your Tickets for {event}"
+msgstr "你嘅 {event} 門票"
+
+msgid "Your E-Ticket for {event}"
+msgstr "你嘅 {event} 電子門票"
+
+msgid "Registration Confirmed for {event}"
+msgstr "已確認 {event} 嘅登記"
+
+msgid "{count} passes confirmed — {event}"
+msgid_plural "{count} passes confirmed — {event}"
+msgstr[0] "已確認 {count} 張通行證 — {event}"
+
+# ===========================================================================
+# EMAIL TEMPLATE — booking_cancelled.html
+# ===========================================================================
+msgid "Hi {name},"
+msgstr "{name} 你好，"
+
+msgid "Your booking <strong>{reference}</strong> has been successfully cancelled."
+msgstr "你嘅預訂 <strong>{reference}</strong> 已經成功取消。"
+
+msgid "Booking Reference"
+msgstr "預訂編號"
+
+msgid "If you have any questions, please contact support."
+msgstr "如果有任何問題，請聯絡客戶服務。"
+
+msgid "© {year} TiketVault. All rights reserved."
+msgstr "© {year} TiketVault。版權所有。"
+
+# ===========================================================================
+# EMAIL TEMPLATE — booking_confirmation.html
+# ===========================================================================
+msgid "Booking Confirmed!"
+msgstr "預訂已確認！"
+
+msgid "Hello {name}!"
+msgstr "{name} 你好！"
+
+msgid "Your booking has been successfully confirmed. Here are your details:"
+msgstr "你嘅預訂已經成功確認，以下係你嘅資料："
+
+msgid "Date"
+msgstr "日期"
+
+msgid "Total Amount"
+msgstr "總金額"
+
+msgid "📌 Next Steps:"
+msgstr "📌 下一步："
+
+msgid "Your official E-Tickets will be sent in a separate email shortly."
+msgstr "我哋會好快喺另一封電郵發送正式電子門票俾你。"
+
+msgid "Keep your booking reference safe."
+msgstr "請好好保存你嘅預訂編號。"
+
+# ===========================================================================
+# EMAIL TEMPLATE — booking_refunded.html
+# ===========================================================================
+msgid "Your booking <strong>{reference}</strong> has been successfully refunded."
+msgstr "你嘅預訂 <strong>{reference}</strong> 已經成功退款。"
+
+msgid "Refund Amount"
+msgstr "退款金額"
+
+# ===========================================================================
+# EMAIL TEMPLATE — registration_confirmation.html
+# ===========================================================================
+msgid "Registration Confirmation - TiketVault"
+msgstr "登記確認 - TiketVault"
+
+msgid "🎉 You're Registered!"
+msgstr "🎉 你已經成功登記！"
+
+msgid "✅ Registration Confirmed"
+msgstr "✅ 登記已確認"
+
+msgid "Your Registration"
+msgstr "你嘅登記"
+
+msgid "Primary Registrant"
+msgstr "主要登記人"
+
+msgid "📎 Your printable pass(es) attached to this email."
+msgstr "📎 你嘅可列印通行證已經附喺呢封電郵。"
+
+msgid "Open the attached PDF/PNG and scan the QR code at the entrance."
+msgstr "打開附件 PDF/PNG，喺入口掃描 QR code。"
+
+msgid "FREE REGISTRATION"
+msgstr "免費登記"
+
+msgid "CONFIRMED"
+msgstr "已確認"
+
+msgid "pass"
+msgid_plural "passes"
+msgstr[0] "張通行證"
+
+msgid "📅 Event Date"
+msgstr "📅 活動日期"
+
+msgid "⏰ Time"
+msgstr "⏰ 時間"
+
+msgid "📍 Venue"
+msgstr "📍 場地"
+
+msgid "🎫 Booking Ref"
+msgstr "🎫 預訂編號"
+
+msgid "💡 Instructions:"
+msgstr "💡 指示："
+
+msgid "Open the attached pass on your mobile device or print it"
+msgstr "喺手機打開附件通行證，或者列印出嚟"
+
+msgid "Show the QR code at the entrance for entry"
+msgstr "喺入口出示 QR code 入場"
+
+msgid "Each pass is valid for one person. You have {count} passes, one for each attendee."
+msgstr "每張通行證只限一人使用。你有 {count} 張通行證，每位參加者一張。"
+
+msgid "Your pass is valid for one person only"
+msgstr "你嘅通行證只限一人使用"
+
+msgid "This is an automated message. Please do not reply."
+msgstr "呢個係自動發送嘅訊息，請唔好回覆。"
+
+msgid "© {year} TicketVault. All rights reserved."
+msgstr "© {year} TicketVault。版權所有。"
+
+# ===========================================================================
+# EMAIL TEMPLATE — ticket_email.html
+# ===========================================================================
+msgid "Your E-Ticket - TicketVault"
+msgstr "你嘅電子門票 - TicketVault"
+
+msgid "E-TICKET"
+msgstr "電子門票"
+
+msgid "GENERAL ADMISSION"
+msgstr "普通入場"
+
+msgid "⏰ Allotted Slot"
+msgstr "⏰ 已分配時段"
+
+msgid "Show your tickets on your mobile device or print them"
+msgstr "喺手機出示你嘅門票，或者列印出嚟"
+
+msgid "Scan the QR code at the entrance for entry"
+msgstr "喺入口掃描 QR code 入場"
+
+msgid "Each ticket is valid for one person only"
+msgstr "每張門票只限一人使用"
+
+# ===========================================================================
+# WHATSAPP MESSAGES — message_service.py / whatsapp_service.py
+# ===========================================================================
+msgid "✅ *Booking Confirmed!*"
+msgstr "✅ *預訂已確認！*"
+
+msgid "*Booking Reference:*"
+msgstr "*預訂編號：*"
+
+msgid "*Event:*"
+msgstr "*活動：*"
+
+msgid "*Date:*"
+msgstr "*日期：*"
+
+msgid "*Time:*"
+msgstr "*時間：*"
+
+msgid "*Slot:*"
+msgstr "*時段：*"
+
+msgid "*Allocation:*"
+msgstr "*分配：*"
+
+msgid "*Venue:*"
+msgstr "*場地：*"
+
+msgid "*Location:*"
+msgstr "*地點：*"
+
+msgid "*Tickets Details:*"
+msgstr "*門票詳情：*"
+
+msgid "*Total Amount:*"
+msgstr "*總金額：*"
+
+msgid "You will receive your tickets shortly."
+msgstr "我哋會好快發送門票俾你。"
+
+msgid "Thank you for booking with TicketVolt! 🎫"
+msgstr "多謝你使用 TicketVolt 訂票！🎫"
+
+msgid "⏰ *Event Reminder!*"
+msgstr "⏰ *活動提醒！*"
+
+msgid "Don't forget your event tomorrow!"
+msgstr "唔好唔記得聽日嘅活動！"
+
+msgid "Open your PDF ticket and scan the QR code at the entrance."
+msgstr "打開你嘅 PDF 門票，喺入口掃描 QR code。"
+
+msgid "See you there! 🎉"
+msgstr "到時見！🎉"
+
+msgid "✅ *Check-in Successful!*"
+msgstr "✅ *簽到成功！*"
+
+msgid "Thank you for attending! 🎉"
+msgstr "多謝你出席！🎉"
+
+msgid "🎫 *Booking Confirmation!*"
+msgstr "🎫 *預訂確認！*"
+
+msgid "📌 *Next Steps:*"
+msgstr "📌 *下一步：*"
+
+msgid "Share your booking reference at the venue"
+msgstr "喺場地出示你嘅預訂編號"
+
+msgid "Complete payment at the counter"
+msgstr "喺櫃檯完成付款"
+
+msgid "You'll receive your tickets after payment confirmation"
+msgstr "確認付款之後你就會收到門票"
+
+msgid "🔐 *Keep this message safe.*"
+msgstr "🔐 *請好好保存呢個訊息。*"
+
+msgid "🎫 *Ticket Confirmation*"
+msgstr "🎫 *門票確認*"
+
+msgid "*How to use:*"
+msgstr "*使用方法：*"
+
+msgid "Open the PDF attached to this message"
+msgstr "打開呢個訊息嘅 PDF 附件"
+
+msgid "Show the QR code at the entrance"
+msgstr "喺入口出示 QR code"
+
+msgid "Enjoy the event! 🎉"
+msgstr "盡情享受活動啦！🎉"
+
+msgid "🔐 *Keep this message and PDF safe.*"
+msgstr "🔐 *請好好保存呢個訊息同 PDF。*"
+
+msgid "✅ *Slot Confirmed!*"
+msgstr "✅ *時段已確認！*"
+
+msgid "🔄 *Slot Re-allocated!*"
+msgstr "🔄 *時段已重新分配！*"
+
+msgid "Your slot for *{event}* has been {status}."
+msgstr "你喺 *{event}* 嘅時段已經{status}。"
+
+msgid "Please arrive at the venue on time with your ticket QR code."
+msgstr "請準時帶同你嘅門票 QR code 到達場地。"
+
+msgid "Thank you for choosing TicketVolt! 🎉"
+msgstr "多謝你選用 TicketVolt！🎉"
+
+msgid "📱 *WhatsApp Help*"
+msgstr "📱 *WhatsApp 說明*"
+
+msgid "Commands:"
+msgstr "指令："
+
+msgid "/bookings - View my bookings"
+msgstr "/bookings - 查看我嘅預訂"
+
+msgid "/ticket [code] - Get ticket info"
+msgstr "/ticket [code] - 查詢門票資料"
+
+msgid "/support - Contact support"
+msgstr "/support - 聯絡客戶服務"
+
+msgid "/help - Show this menu"
+msgstr "/help - 顯示呢個選單"
+
+msgid "Thank you for using TicketVolt! 🎫"
+msgstr "多謝你使用 TicketVolt！🎫"
+
+msgid "📋 *Bookings*"
+msgstr "📋 *預訂*"
+
+msgid "To view your bookings, please visit:"
+msgstr "想查看你嘅預訂，請瀏覽："
+
+msgid "Or reply with your booking reference number."
+msgstr "或者回覆你嘅預訂編號。"
+
+msgid "You selected: {value}"
+msgstr "你揀咗：{value}"
+
+msgid "No tickets found"
+msgstr "搵唔到門票"
+
+msgid "No valid phone number"
+msgstr "冇有效電話號碼"
+
+msgid "No valid phone number for booking: {reference}"
+msgstr "預訂 {reference} 冇有效電話號碼"
+
+msgid "No phone number available"
+msgstr "冇可用電話號碼"
+
+msgid "Invalid phone number: {number}"
+msgstr "電話號碼無效：{number}"
+
+msgid "Gateway connection failed"
+msgstr "無法連接 WhatsApp 網關"
+
+msgid "Gateway timeout"
+msgstr "WhatsApp 網關逾時"
+
+msgid "All PDF sending methods failed"
+msgstr "所有 PDF 發送方法都失敗"
+
+msgid "All QR image sending methods failed"
+msgstr "所有 QR 圖片發送方法都失敗"
+
+# ===========================================================================
+# ✅ NEW — Misc frontend chrome
+# ===========================================================================
+msgid "Save"
+msgstr "儲存"
+
+msgid "Confirm"
+msgstr "確認"
+
+msgid "Back"
+msgstr "返回"
+
+msgid "Refresh"
+msgstr "重新整理"
+
+msgid "Search"
+msgstr "搜尋"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "No"
+msgstr "否"
+
+msgid "New"
+msgstr "新"
+
+msgid "Upload"
+msgstr "上載"
+
+msgid "Clear"
+msgstr "清除"
+
+msgid "Back to Events"
+msgstr "返回活動"
+
+msgid "Back to Venues"
+msgstr "返回場地"
+
+msgid "Back to Dashboard"
+msgstr "返回儀表板"
+
+msgid "Sign Out"
+msgstr "登出"
+
+msgid "Log out"
+msgstr "登出"
+
+# ===========================================================================
+# MISC (backend)
+# ===========================================================================
+msgid "Unauthorized"
+msgstr "未授權"
+
+msgid "Task execution failed"
+msgstr "任務執行失敗"

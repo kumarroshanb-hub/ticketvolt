@@ -9,7 +9,7 @@ from django.db import transaction
 from django.db.models import F, Q, Count, Case, When, Value, IntegerField, Sum
 from django.contrib.auth.models import User
 from django.core.mail import send_mail, EmailMultiAlternatives
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, PermissionDenied
 from django.conf import settings
 from django.template.loader import render_to_string
 from ..utils.money import format_money
@@ -22,10 +22,14 @@ import base64
 import json
 import re
 import copy
+from ..services import booking_emails
 
 from ticket_bookings.models import (
     Booking, Ticket, Event, TicketTier,
-    Session, CheckInLog
+    Session, CheckInLog,
+)
+from ticket_bookings.models_tenancy import (
+    Organization, OrganizationMembership,
 )
 from .serializers import (
     BookingSerializer,
@@ -34,9 +38,17 @@ from .serializers import (
     BookingDetailSerializer,
     TicketSerializer,
     CheckInLogSerializer,
-    UserSerializer
+    UserSerializer,
 )
-from core.permissions import IsOrganizerOrAdmin
+from ..services.tenancy import (
+    is_platform_admin,
+    user_org_ids,
+    user_operator_org_ids,
+    visible_bookings,
+    visible_events,
+    can_manage_org,
+    can_operate_org,
+)
 
 from .ticket_generator import TicketGenerator
 from .ticket_combiner import TicketCombiner
@@ -54,45 +66,13 @@ from ..constants import BookingStatus, TicketStatus
 logger = logging.getLogger(__name__)
 
 
-def _is_organizer(user):
-    return (
-        (hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False))
-        or hasattr(user, 'organizer')
-    )
-
-
-# ============================================================
-# DIAGNOSTIC EMAIL SENDER
-# ============================================================
-def _safe_send_email(email_message, context_label=''):
-    try:
-        sent = email_message.send(fail_silently=False)
-        if sent == 1:
-            logger.info(f"📧 [{context_label}] SMTP accepted 1 email → {email_message.to}")
-            return True
-        logger.warning(f"📧 [{context_label}] SMTP returned {sent} (unexpected). Recipients: {email_message.to}")
-        return False
-    except Exception as exc:
-        logger.exception(f"📧 [{context_label}] SMTP FAILURE: {type(exc).__name__}: {exc} | Recipients: {email_message.to}")
-        return False
 
 
 def _with_total_display(serializer_data, booking):
-    """
-    Attach `total_display` to a serialized booking dict for downstream
-    consumers (WhatsApp gateway, email templates, frontend) that must not
-    format money themselves.
-
-    `serializer_data` may be a DRF `ReturnDict` (dict subclass) — we copy it
-    into a plain dict so callers can freely `.pop()` / add keys without
-    mutating the serializer's cached representation.
-    """
     data = dict(serializer_data)
     try:
         data['total_display'] = format_money(booking.total_amount)
     except Exception:
-        # format_money should never fail, but never break the response
-        # path because of a money-formatting edge case.
         logger.exception(
             "Failed to format total_display for booking %s; falling back to string",
             getattr(booking, 'booking_reference', '<unknown>'),
@@ -128,16 +108,13 @@ assert set(BULK_ACTION_MAP.values()) <= BULK_ACTION_HANDLERS, (
 
 
 class IsAdminOrOrganizer(permissions.BasePermission):
+    """Platform admin, or manager of at least one organization."""
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        if request.user.is_staff or request.user.is_superuser:
+        if is_platform_admin(request.user):
             return True
-        if _is_organizer(request.user):
-            return True
-        if hasattr(request.user, 'organizer'):
-            return True
-        return False
+        return bool(user_org_ids(request.user))
 
 
 class BookingViewSet(viewsets.ModelViewSet):
@@ -160,7 +137,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             'mark_payment_received', 'issue_tickets',
             'cancel_booking', 'refund_booking', 'regenerate_ticket_qr',
             'for_confirm_payment', 'for_mark_payment', 'for_issue_tickets',
-            'bulk_action_counts', 'confirm_payment', 'refund', 'apply_discount'
+            'bulk_action_counts', 'confirm_payment', 'refund', 'apply_discount',
         ]
         if self.action == 'validate_discount':
             return [permissions.AllowAny()]
@@ -239,13 +216,6 @@ class BookingViewSet(viewsets.ModelViewSet):
     # ============================================================
 
     def _resolve_free_registration_entries(self, event, data):
-        """
-        Validate and normalise metadata.entries / metadata.attendees for a
-        free-registration booking.
-
-        Returns (entries: int, attendees: list[dict], error: str | None).
-        `error` is a user-facing string when the payload is invalid.
-        """
         metadata = data.get('metadata') or {}
         if not isinstance(metadata, dict):
             return 0, [], 'metadata must be an object.'
@@ -288,8 +258,6 @@ class BookingViewSet(viewsets.ModelViewSet):
             normalised.append({'name': name, 'email': email, 'phone': phone})
 
         if not normalised:
-            # Caller didn't send attendees; issue a single pass for the
-            # lead customer.
             normalised = [{
                 'name': (data.get('customer_name') or '').strip() or 'Guest',
                 'email': (data.get('customer_email') or '').strip(),
@@ -300,14 +268,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         return entries, normalised, None
 
     def _create_free_registration(self, request, event, data):
-        """
-        Free registration: RSVP, auto-confirmed, no payment.
-
-        Supports N entries per booking. Each entry becomes its own
-        `Ticket` row with a REG-prefixed unique code and its own QR.
-        All passes share the booking's session so slot-capacity
-        accounting stays correct.
-        """
         from decimal import Decimal
 
         sessions = list(event.sessions.filter(is_active=True))
@@ -342,8 +302,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 booking.discount_code = ''
 
                 if session_id:
-                    # Reserve `entries` seats, not 1, so slot capacity
-                    # accounting matches the number of passes issued.
                     locked_session, err = reserve_session_seats(
                         session_id, entries, event=event,
                     )
@@ -371,12 +329,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                     )
 
         except ValidationError as exc:
-            # ✅ FIX [DUP-EMAIL]: return the field-keyed shape
-            # ({'customer_email': ['...']}, {'metadata': {...}}, …) at
-            # the TOP LEVEL of the response body, so the frontend can
-            # read `error.response.data.customer_email` and focus the
-            # offending field. Only plain-string details get wrapped
-            # under 'error' — those are not field-addressable.
             detail = exc.detail if hasattr(exc, 'detail') else str(exc)
             if isinstance(detail, dict):
                 return Response(detail, status=status.HTTP_400_BAD_REQUEST)
@@ -394,7 +346,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            email_result = self._send_registration_confirmation(booking)
+            email_result = booking_emails.send_registration_confirmation(booking)
             logger.info(
                 '📧 Registration confirmation for %s: success=%s, attachments=%s, formats=%s, passes=%d',
                 booking.booking_reference,
@@ -411,7 +363,6 @@ class BookingViewSet(viewsets.ModelViewSet):
             )
 
         response_serializer = self.get_serializer(booking)
-        # ✅ FIX: attach server-formatted total for downstream consumers.
         payload = _with_total_display(response_serializer.data, booking)
         payload['registration_passes'] = [
             {
@@ -423,18 +374,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             }
             for t in registration_passes
         ]
-        # Backwards-compatible single-pass field (first pass).
         payload['registration_pass'] = payload['registration_passes'][0]
         return Response(payload, status=status.HTTP_201_CREATED)
 
     def _issue_registration_passes(self, booking, event, attendees):
-        """
-        Issue one Registration pass per attendee entry.
-
-        Always returns a non-empty list of saved, active Tickets — or raises.
-        Never returns None. If the caller passes an empty list, a single
-        pass for the lead customer is created (defensive fallback).
-        """
         if not attendees:
             attendees = [{
                 'name': booking.customer_name or 'Guest',
@@ -480,7 +423,6 @@ class BookingViewSet(viewsets.ModelViewSet):
 
             passes.append(ticket)
 
-        # Update counters once, after all passes succeed.
         tier.quantity_sold += len(passes)
         tier.save(update_fields=['quantity_sold'])
         event.total_tickets_sold += len(passes)
@@ -499,252 +441,6 @@ class BookingViewSet(viewsets.ModelViewSet):
             len(passes), booking.booking_reference, event.id, tier.name,
         )
         return passes
-
-    def _send_registration_confirmation(self, booking):
-        """
-        Send the confirmation email for a free-registration booking.
-
-        Attaches one PDF/PNG per active pass (honouring the event's
-        `ticket_format`). If the event has `combine_tickets=True`, the
-        passes are merged into a single combined file.
-        """
-        from django.core.mail import EmailMultiAlternatives
-        from django.template.loader import render_to_string
-        from django.utils.html import strip_tags
-
-        if not booking.customer_email:
-            logger.info('No customer email on %s — skipping confirmation.', booking.booking_reference)
-            return {
-                'success': False,
-                'message': 'No customer email on booking.',
-                'attachments': 0,
-                'formats': '',
-            }
-
-        passes = list(booking.tickets.filter(status='active'))
-        if not passes:
-            logger.error(
-                '❌ Cannot send confirmation for %s: no active ticket exists. '
-                '_issue_registration_passes should guarantee a pass — check the create transaction.',
-                booking.booking_reference,
-            )
-            raise RuntimeError(f'No active ticket for booking {booking.booking_reference}')
-
-        is_free = booking.event.event_flow == 'free_registration'
-        event = booking.event
-
-        # Inline QR — for the first pass only. Template ignores it, but
-        # kept for backwards compatibility.
-        first_qr_base64 = None
-        try:
-            import base64
-            import qrcode
-            from io import BytesIO
-            from ..services.qr_payload import serialise_ticket_qr_payload
-
-            payload = serialise_ticket_qr_payload(passes[0])
-            qr = qrcode.QRCode(
-                version=None,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=3,
-                border=1,
-            )
-            qr.add_data(payload)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color='black', back_color='white')
-            buf = BytesIO()
-            img.save(buf, format='PNG', optimize=True)
-            first_qr_base64 = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
-        except Exception:
-            logger.warning(
-                'Could not generate inline QR (non-fatal — template does not render it): '
-                'booking=%s',
-                booking.booking_reference,
-            )
-
-        display_date = booking.session.start_time if booking.session else event.start_date
-
-        context = {
-            'booking': booking,
-            'event': event,
-            'tickets': passes,
-            'ticket': passes[0],
-            'first_qr_base64': first_qr_base64,
-            'display_date': display_date,
-            'is_free': is_free,
-            'pass_count': len(passes),
-        }
-
-        subject = (
-            f"You're registered for {event.title}"
-            if is_free else
-            f'Registration confirmed for {event.title}'
-        )
-        if len(passes) > 1:
-            subject = f"{len(passes)} passes confirmed — {event.title}"
-
-        try:
-            html_content = render_to_string('emails/registration_confirmation.html', context)
-        except Exception:
-            logger.warning(
-                'registration_confirmation.html missing; falling back to ticket_email.html',
-            )
-            html_content = render_to_string('emails/ticket_email.html', context)
-
-        text_content = strip_tags(html_content)
-
-        ticket_format = (getattr(event, 'ticket_format', None) or 'pdf').lower()
-        combine = bool(getattr(event, 'combine_tickets', False))
-        per_page = int(getattr(event, 'tickets_per_page', 4) or 4)
-        want_pdf = ticket_format in ('pdf', 'both')
-        want_png = ticket_format in ('png', 'both')
-
-        opened_buffers = []
-        attachments = []
-        format_names = []
-
-        try:
-            generator = TicketGenerator()
-            combiner = TicketCombiner()
-
-            # ---- Per-pass buffers ----
-            pass_buffers = []
-            for ticket in passes:
-                if want_pdf:
-                    pdf_buf = generator.generate_ticket_pdf(ticket, booking, event)
-                    if pdf_buf:
-                        opened_buffers.append(pdf_buf)
-                        pass_buffers.append({'ticket': ticket, 'buffer': pdf_buf, 'format': 'pdf'})
-                    else:
-                        logger.warning('TicketGenerator returned no PDF for %s', ticket.unique_code)
-                if want_png:
-                    png_buf = generator.generate_ticket_png(ticket, booking, event)
-                    if png_buf:
-                        opened_buffers.append(png_buf)
-                        pass_buffers.append({'ticket': ticket, 'buffer': png_buf, 'format': 'png'})
-                    else:
-                        logger.warning('TicketGenerator returned no PNG for %s', ticket.unique_code)
-
-            if want_pdf:
-                format_names.append('PDF')
-            if want_png:
-                format_names.append('PNG')
-
-            # ---- Combined file (if requested) ----
-            combined_attachments = []
-            combined_failed = False
-            if combine and len(passes) > 1:
-                pdf_entries = [e for e in pass_buffers if e['format'] == 'pdf']
-                png_entries = [e for e in pass_buffers if e['format'] == 'png']
-
-                if pdf_entries:
-                    try:
-                        combine_input = []
-                        for e in pdf_entries:
-                            if not self._seek_buffer(e['buffer']):
-                                raise ValueError('PDF buffer not readable')
-                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
-                        combined_pdf = combiner.combine_to_pdf(
-                            combine_input, booking, tickets_per_page=per_page,
-                        )
-                    except Exception as exc:
-                        logger.error('❌ combine_to_pdf failed: %s', exc)
-                        combined_pdf = None
-                        combined_failed = True
-
-                    if combined_pdf:
-                        opened_buffers.append(combined_pdf)
-                        raw = self._read_buffer_bytes(combined_pdf)
-                        if raw is not None:
-                            combined_attachments.append((
-                                f'passes_{booking.booking_reference}.pdf', raw, 'application/pdf',
-                            ))
-                        else:
-                            combined_failed = True
-
-                if png_entries:
-                    try:
-                        combine_input = []
-                        for e in png_entries:
-                            if not self._seek_buffer(e['buffer']):
-                                raise ValueError('PNG buffer not readable')
-                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
-                        combined_png = combiner.combine_to_paginated_image(
-                            combine_input, booking, tickets_per_page=per_page,
-                            output_format='PNG',
-                        )
-                    except Exception as exc:
-                        logger.error('❌ combine_to_paginated_image failed: %s', exc)
-                        combined_png = None
-                        combined_failed = True
-
-                    if combined_png:
-                        opened_buffers.append(combined_png)
-                        raw = self._read_buffer_bytes(combined_png)
-                        if raw is not None:
-                            combined_attachments.append((
-                                f'passes_{booking.booking_reference}.png', raw, 'image/png',
-                            ))
-                        else:
-                            combined_failed = True
-
-            use_combined = combine and len(passes) > 1 and bool(combined_attachments) and not combined_failed
-
-            if use_combined:
-                attachments.extend(combined_attachments)
-            else:
-                for entry in pass_buffers:
-                    ticket = entry['ticket']
-                    raw = self._read_buffer_bytes(entry['buffer'])
-                    if raw is None:
-                        continue
-                    if entry['format'] == 'pdf':
-                        attachments.append((
-                            f'pass_{ticket.unique_code}.pdf', raw, 'application/pdf',
-                        ))
-                    else:
-                        attachments.append((
-                            f'pass_{ticket.unique_code}.png', raw, 'image/png',
-                        ))
-
-            email = EmailMultiAlternatives(
-                subject=subject,
-                body=text_content,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                to=[booking.customer_email],
-            )
-            email.attach_alternative(html_content, 'text/html')
-
-            for filename, raw, mimetype in attachments:
-                email.attach(filename, raw, mimetype)
-
-            if not attachments:
-                logger.warning(
-                    'No attachments generated for registration confirmation '
-                    '(booking=%s, format=%s, passes=%d)',
-                    booking.booking_reference, ticket_format, len(passes),
-                )
-
-            sent_ok = _safe_send_email(email, context_label='registration_confirmation')
-
-            return {
-                'success': sent_ok,
-                'message': (
-                    f'Registration passes sent to {booking.customer_email}.'
-                    if sent_ok else
-                    'Registration confirmation email failed (see logs).'
-                ),
-                'attachments': len(attachments),
-                'formats': '+'.join(format_names),
-                'passes': len(passes),
-            }
-
-        finally:
-            for buf in opened_buffers:
-                try:
-                    buf.close()
-                except Exception:
-                    pass
 
     # ============================================================
     # CREATE
@@ -770,11 +466,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                     return Response({'error': 'This event is not available for booking'}, status=status.HTTP_400_BAD_REQUEST)
                 if event_obj.end_date and event_obj.end_date < timezone.now():
                     return Response({'error': 'This event has already ended'}, status=status.HTTP_400_BAD_REQUEST)
-                is_staff_or_super = (
+
+                caller_can_operate = (
                     request.user.is_authenticated
-                    and (request.user.is_staff or request.user.is_superuser)
+                    and can_operate_org(request.user, event_obj.organization)
                 )
-                if not event_obj.is_public and not is_staff_or_super:
+                if not event_obj.is_public and not caller_can_operate:
                     return Response({'error': 'This event is not available for public booking'}, status=status.HTTP_400_BAD_REQUEST)
             except Event.DoesNotExist:
                 return Response({'error': 'Event not found'}, status=status.HTTP_400_BAD_REQUEST)
@@ -823,7 +520,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 self.perform_create(serializer)
 
                 headers = self.get_success_headers(serializer.data)
-                # ✅ FIX: attach server-formatted total for downstream consumers.
                 response_data = _with_total_display(serializer.data, serializer.instance)
                 response = Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
 
@@ -845,13 +541,6 @@ class BookingViewSet(viewsets.ModelViewSet):
     # RETRIEVE
     # ============================================================
     def retrieve(self, request, *args, **kwargs):
-        """
-        Return a single booking with `total_display` attached.
-
-        Overriding `retrieve` (rather than modifying the serializer) keeps
-        the permission semantics identical: `self.get_object()` still runs
-        the same per-user / per-organizer check.
-        """
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         return Response(_with_total_display(serializer.data, instance))
@@ -866,27 +555,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         )
         return True
 
-    def _send_partial_cancellation_email(self, booking, *, cancelled_ids, refund_amount, fully_cancelled):
-        from django.core.mail import EmailMultiAlternatives
-        from ..utils.money import format_money
-
-        if fully_cancelled:
-            subject = f'Booking Cancelled - {booking.booking_reference}'
-            intro = 'Your entire booking has been cancelled.'
-        else:
-            subject = f'Tickets Cancelled - {booking.booking_reference}'
-            intro = f'{len(cancelled_ids)} ticket(s) on your booking have been cancelled.'
-        html = f"""
-        <p>Hi {booking.customer_name},</p>
-        <p>{intro}</p>
-        <p><strong>Refund amount:</strong> {format_money(refund_amount)}</p>
-        <p><strong>Booking reference:</strong> {booking.booking_reference}</p>
-        <p>If you did not request this, please contact support.</p>
-        """
-        email = EmailMultiAlternatives(subject, '', settings.DEFAULT_FROM_EMAIL, [booking.customer_email])
-        email.attach_alternative(html, 'text/html')
-        _safe_send_email(email, context_label='partial_cancellation')
-
     @action(detail=True, methods=['post'])
     def cancel_tickets(self, request, pk=None):
         booking = self.get_object()
@@ -897,8 +565,11 @@ class BookingViewSet(viewsets.ModelViewSet):
             return Response({'error': 'ticket_ids must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
         reason = (request.data.get('reason') or '').strip()
         allow_used = bool(request.data.get('allow_used', False))
-        if allow_used and not (request.user.is_staff or request.user.is_superuser):
-            return Response({'error': 'Only staff may cancel checked-in tickets'}, status=status.HTTP_403_FORBIDDEN)
+        if allow_used and not can_manage_org(request.user, booking.event.organization):
+            return Response(
+                {'error': 'Only a manager of this organization may cancel checked-in tickets'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         try:
             result = cancel_tickets(booking=booking, ticket_ids=ticket_ids, actor=request.user, reason=reason, allow_used=allow_used)
         except CancellationError as exc:
@@ -914,7 +585,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         if result['cancelled_ticket_ids']:
             try:
-                self._send_partial_cancellation_email(
+                booking_emails.send_partial_cancellation_email(
                     booking,
                     cancelled_ids=result['cancelled_ticket_ids'],
                     refund_amount=result['refund_amount_added'],
@@ -1005,9 +676,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                 event = Event.objects.get(id=event_id)
             except Event.DoesNotExist:
                 return Response({'valid': False, 'reason': 'Event not found.'}, status=status.HTTP_400_BAD_REQUEST)
-            if not (request.user.is_staff or request.user.is_superuser):
-                if discount.organizer_id != event.organizer_id:
-                    return Response({'valid': False, 'reason': 'This code is not valid for this event.'}, status=status.HTTP_200_OK)
+            # Cross-tenant safety: the discount must be from the same org
+            # as the event.
+            if discount.organization_id != event.organization_id:
+                return Response({'valid': False, 'reason': 'This code is not valid for this event.'}, status=status.HTTP_200_OK)
             scoped_ids = list(discount.applicable_events.values_list('id', flat=True))
             if scoped_ids and event.id not in scoped_ids:
                 return Response({'valid': False, 'reason': 'This code is not valid for this event.'}, status=status.HTTP_200_OK)
@@ -1095,73 +767,46 @@ class BookingViewSet(viewsets.ModelViewSet):
         return BookingSerializer
 
     def get_queryset(self):
-        user = self.request.user
-        if not user or not user.is_authenticated:
-            return Booking.objects.none()
-        if user.is_superuser or user.is_staff:
-            return Booking.objects.all().order_by('-created_at')
-        is_organizer = False
-        if _is_organizer(user):
-            is_organizer = True
-        if is_organizer:
-            return Booking.objects.filter(event__organizer=user).order_by('-created_at')
-        return Booking.objects.filter(user=user).order_by('-created_at')
+        return visible_bookings(self.request.user)
 
     def get_object(self):
         obj = super().get_object()
         user = self.request.user
-        if user.is_superuser or user.is_staff:
+        if is_platform_admin(user):
             return obj
-        # ✅ Object-level check: owner OR organizer of THIS event only.
         if obj.user_id == user.id:
             return obj
-        if obj.event and obj.event.organizer_id == user.id:
+        if obj.event and can_operate_org(user, obj.event.organization):
             return obj
         from rest_framework.exceptions import PermissionDenied
         raise PermissionDenied("You do not have permission to access this booking.")
 
     @action(detail=False, methods=['get'])
     def for_confirm_payment(self, request):
-        user = request.user
-        is_organizer = False
-        if _is_organizer(user):
-            is_organizer = True
-        if hasattr(user, 'organizer'):
-            is_organizer = True
-        if user.is_superuser or user.is_staff:
-            queryset = Booking.objects.all()
-        elif is_organizer:
-            queryset = Booking.objects.filter(event__organizer=user)
-        else:
-            queryset = Booking.objects.filter(user=user)
-        queryset = queryset.filter(status__in=['pending', 'processing']).annotate(
-            active_ticket_count=Count(Case(When(tickets__status='active', then=1), output_field=IntegerField()))
+        queryset = visible_bookings(request.user).filter(
+            status__in=['pending', 'processing']
+        ).annotate(
+            active_ticket_count=Count(
+                Case(When(tickets__status='active', then=1), output_field=IntegerField())
+            )
         ).filter(active_ticket_count=0).order_by('-created_at')
         serializer = BookingAdminSerializer(queryset, many=True)
         return Response({
             'action': 'confirm_payment_and_issue',
             'description': 'Bookings eligible for Confirm Payment & Issue Tickets',
             'count': queryset.count(),
-            'bookings': serializer.data
+            'bookings': serializer.data,
         })
 
     @action(detail=False, methods=['get'])
     def for_mark_payment(self, request):
-        user = request.user
-        is_organizer = False
-        if _is_organizer(user):
-            is_organizer = True
-        if hasattr(user, 'organizer'):
-            is_organizer = True
-        if user.is_superuser or user.is_staff:
-            queryset = Booking.objects.all()
-        elif is_organizer:
-            queryset = Booking.objects.filter(event__organizer=user)
-        else:
-            queryset = Booking.objects.filter(user=user)
-        queryset = queryset.filter(status__in=['pending', 'processing']).annotate(
-            active_ticket_count=Count(Case(When(tickets__status='active', then=1), output_field=IntegerField())),
-            total_ticket_count=Count('tickets')
+        queryset = visible_bookings(request.user).filter(
+            status__in=['pending', 'processing']
+        ).annotate(
+            active_ticket_count=Count(
+                Case(When(tickets__status='active', then=1), output_field=IntegerField())
+            ),
+            total_ticket_count=Count('tickets'),
         ).order_by('-created_at')
         serializer = BookingAdminSerializer(queryset, many=True)
         return Response({
@@ -1169,58 +814,46 @@ class BookingViewSet(viewsets.ModelViewSet):
             'description': 'Bookings eligible for Mark Payment Received',
             'count': queryset.count(),
             'bookings': serializer.data,
-            'note': 'This action will mark payment as received without generating tickets'
+            'note': 'This action will mark payment as received without generating tickets',
         })
 
     @action(detail=False, methods=['get'])
     def for_issue_tickets(self, request):
-        user = request.user
-        is_organizer = False
-        if _is_organizer(user):
-            is_organizer = True
-        if hasattr(user, 'organizer'):
-            is_organizer = True
-        if user.is_superuser or user.is_staff:
-            queryset = Booking.objects.all()
-        elif is_organizer:
-            queryset = Booking.objects.filter(event__organizer=user)
-        else:
-            queryset = Booking.objects.filter(user=user)
-        queryset = queryset.filter(status__in=['paid', 'confirmed']).annotate(
-            active_ticket_count=Count(Case(When(tickets__status='active', then=1), output_field=IntegerField()))
+        queryset = visible_bookings(request.user).filter(
+            status__in=['paid', 'confirmed']
+        ).annotate(
+            active_ticket_count=Count(
+                Case(When(tickets__status='active', then=1), output_field=IntegerField())
+            )
         ).filter(active_ticket_count=0).order_by('-created_at')
         serializer = BookingAdminSerializer(queryset, many=True)
         return Response({
             'action': 'issue_tickets',
-            'description': 'Bookings eligible for Issue Tickets (Paid status, no active tickets)',
+            'description': 'Bookings eligible for Issue Tickets',
             'count': queryset.count(),
             'bookings': serializer.data,
-            'note': 'These bookings are already paid and ready for ticket issuance'
         })
 
     @action(detail=False, methods=['get'])
     def bulk_action_counts(self, request):
-        user = request.user
-        is_organizer = False
-        if _is_organizer(user):
-            is_organizer = True
-        if hasattr(user, 'organizer'):
-            is_organizer = True
-        if user.is_superuser or user.is_staff:
-            base_queryset = Booking.objects.all()
-        elif is_organizer:
-            base_queryset = Booking.objects.filter(event__organizer=user)
-        else:
-            base_queryset = Booking.objects.filter(user=user)
-        confirm_payment_count = base_queryset.filter(status__in=['pending', 'processing'], tickets__isnull=True).count()
-        mark_payment_count = base_queryset.filter(status__in=['pending', 'processing']).count()
-        issue_tickets_count = base_queryset.filter(status__in=['paid', 'confirmed']).annotate(
-            active_ticket_count=Count(Case(When(tickets__status='active', then=1), output_field=IntegerField()))
+        base_queryset = visible_bookings(request.user)
+        confirm_payment_count = base_queryset.filter(
+            status__in=['pending', 'processing'], tickets__isnull=True,
+        ).count()
+        mark_payment_count = base_queryset.filter(
+            status__in=['pending', 'processing'],
+        ).count()
+        issue_tickets_count = base_queryset.filter(
+            status__in=['paid', 'confirmed'],
+        ).annotate(
+            active_ticket_count=Count(
+                Case(When(tickets__status='active', then=1), output_field=IntegerField())
+            )
         ).filter(active_ticket_count=0).count()
         return Response({
             'confirm_payment_and_issue': {'count': confirm_payment_count, 'description': 'Pending bookings ready for payment confirmation and ticket issuance'},
             'mark_payment_received': {'count': mark_payment_count, 'description': 'Pending bookings ready for payment confirmation only'},
-            'issue_tickets': {'count': issue_tickets_count, 'description': 'Paid bookings ready for ticket issuance'}
+            'issue_tickets': {'count': issue_tickets_count, 'description': 'Paid bookings ready for ticket issuance'},
         })
 
     @action(detail=False, methods=['post'])
@@ -1292,27 +925,25 @@ class BookingViewSet(viewsets.ModelViewSet):
         if len(booking_ids) > MAX_BULK:
             return Response({'error': f'Maximum {MAX_BULK} bookings per bulk action.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        bookings = []
-        not_found = []
-        permission_denied = []
-        for booking_id in booking_ids:
-            try:
-                booking = Booking.objects.get(id=booking_id)
-            except (Booking.DoesNotExist, ValueError, ValidationError):
-                not_found.append({'booking_id': booking_id, 'reason': 'Booking not found'})
-                continue
-            if self._can_manage_booking(request.user, booking):
-                bookings.append(booking)
-            else:
-                permission_denied.append({'booking_id': booking_id, 'reference': booking.booking_reference, 'reason': 'Permission denied'})
-
-        if not bookings:
+        # Cross-tenant safety: only operate on bookings the caller can see.
+        scoped = visible_bookings(request.user).filter(id__in=booking_ids)
+        allowed_ids = {str(b.id) for b in scoped}
+        permission_denied = [
+            {'booking_id': bid, 'reason': 'Permission denied'}
+            for bid in booking_ids if bid not in allowed_ids
+        ]
+        missing = [
+            {'booking_id': bid, 'reason': 'Booking not found'}
+            for bid in booking_ids if bid not in allowed_ids
+        ]
+        if not allowed_ids:
             return Response({
                 'status': 'failed',
                 'message': 'No valid bookings found',
-                'errors': {'not_found': not_found, 'permission_denied': permission_denied},
+                'errors': {'not_found': missing, 'permission_denied': permission_denied},
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        bookings = list(scoped)
         validation_results = self._validate_bookings_for_action(bookings, backend_action)
         if validation_results['invalid']:
             return Response({
@@ -1374,105 +1005,114 @@ class BookingViewSet(viewsets.ModelViewSet):
         for booking in bookings:
             is_valid = True
             validation_errors = []
-            if action == 'confirm_payment':
-                if booking.status not in ['pending', 'processing']:
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': f'Booking must be pending or processing. Current status: {booking.status}'})
-                if booking.status == 'cancelled':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Cannot confirm payment for cancelled booking'})
-                if booking.status == 'refunded':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Cannot confirm payment for refunded booking'})
-                if booking.status == 'completed':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Booking is already completed'})
-                if booking.paid_at:
-                    is_valid = False
-                    validation_errors.append({'field': 'paid_at', 'message': 'Payment already confirmed at ' + booking.paid_at.strftime('%Y-%m-%d %H:%M')})
-            elif action == 'confirm_payment_and_issue':
-                if booking.status not in ['pending', 'processing']:
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': f'Booking must be pending or processing. Current status: {booking.status}'})
-                if booking.status == 'cancelled':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Cannot process cancelled booking'})
-                if booking.status == 'refunded':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Cannot process refunded booking'})
-                if booking.status == 'completed':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Booking is already completed'})
-                if is_valid:
-                    existing_tickets = booking.tickets.filter(status='active')
-                    if existing_tickets.exists():
-                        is_valid = False
-                        ticket_details = [{'ticket_code': t.unique_code, 'tier_name': t.tier.name if t.tier else 'Unknown', 'attendee_name': t.attendee_name or 'Guest', 'status': t.status} for t in existing_tickets]
-                        validation_errors.append({'field': 'tickets', 'message': f'This booking already has {existing_tickets.count()} active ticket(s). New tickets cannot be issued.', 'ticket_details': ticket_details})
-                if booking.paid_at:
-                    validation_errors.append({'field': 'paid_at', 'message': f'Payment already confirmed at {booking.paid_at.strftime("%Y-%m-%d %H:%M")}. Use "Issue Tickets" action instead.'})
-            elif action == 'issue_tickets':
-                if booking.status not in ['paid', 'confirmed']:
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': f'Booking must be paid or confirmed. Current status: {booking.status}'})
-                if booking.status == 'completed':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Booking is already completed. Tickets have been fully used.'})
-                if is_valid:
-                    existing_tickets = booking.tickets.filter(status='active')
-                    if existing_tickets.exists():
-                        is_valid = False
-                        ticket_details = [{'ticket_code': t.unique_code, 'tier_name': t.tier.name if t.tier else 'Unknown', 'attendee_name': t.attendee_name or 'Guest', 'status': t.status} for t in existing_tickets]
-                        validation_errors.append({'field': 'tickets', 'message': f'This booking already has {existing_tickets.count()} active ticket(s). New tickets cannot be issued.', 'ticket_details': ticket_details})
-            elif action == 'regenerate_ticket_qr':
-                if booking.status not in ['paid', 'confirmed']:
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': f'Booking must be paid or confirmed. Current status: {booking.status}'})
-                if is_valid:
-                    if not booking.tickets.filter(status='active').exists():
-                        is_valid = False
-                        validation_errors.append({'field': 'tickets', 'message': 'No active tickets found to regenerate QR codes'})
-            elif action == 'cancel_booking':
-                if booking.status in ['cancelled', 'refunded', 'completed']:
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': f'Booking is already {booking.status}'})
-            elif action == 'refund_booking':
-                if booking.status not in ['paid', 'confirmed']:
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': f'Only paid or confirmed bookings can be refunded. Current status: {booking.status}'})
-                if booking.status == 'refunded':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Booking is already refunded'})
-                if booking.status == 'completed':
-                    is_valid = False
-                    validation_errors.append({'field': 'status', 'message': 'Cannot refund a completed booking (all tickets already used)'})
-            if is_valid and not booking.event:
+            if not self._can_manage_booking(self.request.user, booking):
                 is_valid = False
-                validation_errors.append({'field': 'event', 'message': 'Booking has no associated event'})
-            if is_valid and booking.event and booking.event.status == 'cancelled':
-                is_valid = False
-                validation_errors.append({'field': 'event_status', 'message': 'Cannot process booking for cancelled event'})
-            if is_valid:
-                valid.append(str(booking.id))
-            else:
-                invalid.append({
-                    'booking_id': str(booking.id),
-                    'reference': booking.booking_reference,
-                    'customer_name': booking.customer_name,
-                    'current_status': booking.status,
-                    'ticket_count': booking.tickets.count(),
-                    'active_ticket_count': booking.tickets.filter(status='active').count(),
-                    'used_ticket_count': booking.tickets.filter(status='used').count(),
-                    'errors': validation_errors,
+                validation_errors.append({
+                    'field': 'permission',
+                    'message': 'You do not have permission to perform this action on this booking.',
                 })
+            if is_valid:
+                if action == 'confirm_payment':
+                    if booking.status not in ['pending', 'processing']:
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': f'Booking must be pending or processing. Current status: {booking.status}'})
+                    if booking.status == 'cancelled':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Cannot confirm payment for cancelled booking'})
+                    if booking.status == 'refunded':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Cannot confirm payment for refunded booking'})
+                    if booking.status == 'completed':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Booking is already completed'})
+                    if booking.paid_at:
+                        is_valid = False
+                        validation_errors.append({'field': 'paid_at', 'message': 'Payment already confirmed at ' + booking.paid_at.strftime('%Y-%m-%d %H:%M')})
+                elif action == 'confirm_payment_and_issue':
+                    if booking.status not in ['pending', 'processing']:
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': f'Booking must be pending or processing. Current status: {booking.status}'})
+                    if booking.status == 'cancelled':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Cannot process cancelled booking'})
+                    if booking.status == 'refunded':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Cannot process refunded booking'})
+                    if booking.status == 'completed':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Booking is already completed'})
+                    if is_valid:
+                        existing_tickets = booking.tickets.filter(status='active')
+                        if existing_tickets.exists():
+                            is_valid = False
+                            ticket_details = [{'ticket_code': t.unique_code, 'tier_name': t.tier.name if t.tier else 'Unknown', 'attendee_name': t.attendee_name or 'Guest', 'status': t.status} for t in existing_tickets]
+                            validation_errors.append({'field': 'tickets', 'message': f'This booking already has {existing_tickets.count()} active ticket(s). New tickets cannot be issued.', 'ticket_details': ticket_details})
+                    if booking.paid_at:
+                        validation_errors.append({'field': 'paid_at', 'message': f'Payment already confirmed at {booking.paid_at.strftime("%Y-%m-%d %H:%M")}. Use "Issue Tickets" action instead.'})
+                elif action == 'issue_tickets':
+                    if booking.status not in ['paid', 'confirmed']:
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': f'Booking must be paid or confirmed. Current status: {booking.status}'})
+                    if booking.status == 'completed':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Booking is already completed. Tickets have been fully used.'})
+                    if is_valid:
+                        existing_tickets = booking.tickets.filter(status='active')
+                        if existing_tickets.exists():
+                            is_valid = False
+                            ticket_details = [{'ticket_code': t.unique_code, 'tier_name': t.tier.name if t.tier else 'Unknown', 'attendee_name': t.attendee_name or 'Guest', 'status': t.status} for t in existing_tickets]
+                            validation_errors.append({'field': 'tickets', 'message': f'This booking already has {existing_tickets.count()} active ticket(s). New tickets cannot be issued.', 'ticket_details': ticket_details})
+                elif action == 'regenerate_ticket_qr':
+                    if booking.status not in ['paid', 'confirmed']:
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': f'Booking must be paid or confirmed. Current status: {booking.status}'})
+                    if is_valid:
+                        if not booking.tickets.filter(status='active').exists():
+                            is_valid = False
+                            validation_errors.append({'field': 'tickets', 'message': 'No active tickets found to regenerate QR codes'})
+                elif action == 'cancel_booking':
+                    if booking.status in ['cancelled', 'refunded', 'completed']:
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': f'Booking is already {booking.status}'})
+                elif action == 'refund_booking':
+                    if booking.status not in ['paid', 'confirmed']:
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': f'Only paid or confirmed bookings can be refunded. Current status: {booking.status}'})
+                    if booking.status == 'refunded':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Booking is already refunded'})
+                    if booking.status == 'completed':
+                        is_valid = False
+                        validation_errors.append({'field': 'status', 'message': 'Cannot refund a completed booking (all tickets already used)'})
+                if is_valid and not booking.event:
+                    is_valid = False
+                    validation_errors.append({'field': 'event', 'message': 'Booking has no associated event'})
+                if is_valid and booking.event and booking.event.status == 'cancelled':
+                    is_valid = False
+                    validation_errors.append({'field': 'event_status', 'message': 'Cannot process booking for cancelled event'})
+                if is_valid:
+                    valid.append(str(booking.id))
+                else:
+                    invalid.append({
+                        'booking_id': str(booking.id),
+                        'reference': booking.booking_reference,
+                        'customer_name': booking.customer_name,
+                        'current_status': booking.status,
+                        'ticket_count': booking.tickets.count(),
+                        'active_ticket_count': booking.tickets.filter(status='active').count(),
+                        'used_ticket_count': booking.tickets.filter(status='used').count(),
+                        'errors': validation_errors,
+                    })
         return {'valid': valid, 'invalid': invalid}
 
     def _can_manage_booking(self, user, booking):
-        if user.is_superuser or user.is_staff:
+        if is_platform_admin(user):
             return True
-        if _is_organizer(user):
-            return booking.event.organizer_id == user.id
-        return booking.user_id == user.id
+        if booking.user_id == user.id:
+            return True
+        if booking.event and can_manage_org(user, booking.event.organization):
+            return True
+        return False
 
     def _confirm_payment_for_booking(self, booking):
         if booking.status in ['paid', 'confirmed', 'completed']:
@@ -1485,7 +1125,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.paid_at = timezone.now()
         booking.save()
         try:
-            self._send_payment_confirmation_email(booking)
+            booking_emails.send_payment_confirmation(booking)
         except Exception as e:
             logger.warning(f"⚠️ Payment confirmation email failed (not blocking): {str(e)}")
         return {'success': 'Payment confirmed successfully', 'tickets_generated': 0, 'note': 'No tickets were generated. Use "Issue Tickets" action separately if needed.'}
@@ -1765,7 +1405,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         final_ticket_count = booking.tickets.count()
 
         try:
-            email_result = self._send_tickets_email(booking, allocation_message)
+            email_result = booking_emails.send_tickets(booking, allocation_message)
         except Exception as e:
             logger.warning(f"⚠️ Tickets email failed (not blocking): {str(e)}")
             email_result = {'success': False, 'message': str(e)}
@@ -1843,6 +1483,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def issue_tickets(self, request, pk=None):
         booking = self.get_object()
+        if not self._can_manage_booking(request.user, booking):
+            return Response({'status': 'forbidden', 'error': 'You do not have permission to issue tickets for this booking'}, status=status.HTTP_403_FORBIDDEN)
         existing_tickets = booking.tickets.filter(status='active')
         if existing_tickets.exists():
             return Response({
@@ -1959,7 +1601,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         release_session_seats(booking, seats_to_release)
         self._update_event_counts(booking.event)
         try:
-            email_result = self._send_cancellation_email(booking)
+            email_result = booking_emails.send_cancellation_email(booking)
         except Exception as e:
             logger.warning(f"⚠️ Cancellation email failed (not blocking): {str(e)}")
             email_result = {'success': False, 'error': str(e)}
@@ -1979,69 +1621,11 @@ class BookingViewSet(viewsets.ModelViewSet):
         release_session_seats(booking, seats_to_release)
         self._update_event_counts(booking.event)
         try:
-            email_result = self._send_refund_email(booking)
+            email_result = booking_emails.send_refund_email(booking)
         except Exception as e:
             logger.warning(f"⚠️ Refund email failed (not blocking): {str(e)}")
             email_result = {'success': False, 'error': str(e)}
         return {'success': 'Booking refunded successfully', 'seats_released': seats_to_release, 'email_sent': email_result.get('success', False)}
-
-    def _send_payment_confirmation_email(self, booking):
-        from django.core.mail import EmailMultiAlternatives
-        from django.template.loader import render_to_string
-        from django.utils.html import strip_tags
-        from ..utils.money import format_money
-        try:
-            if not booking.customer_email:
-                return {'success': False, 'message': 'No customer email on booking.'}
-            context = {
-                'booking': booking,
-                'event': booking.event,
-                'customer_name': booking.customer_name,
-                'total_display': format_money(booking.total_amount),
-            }
-            html_content = render_to_string('emails/booking_confirmation.html', context)
-            text_content = strip_tags(html_content)
-            subject = f'✅ Payment Received - {booking.booking_reference}'
-            email = EmailMultiAlternatives(subject=subject, body=text_content, from_email=settings.DEFAULT_FROM_EMAIL, to=[booking.customer_email])
-            email.attach_alternative(html_content, 'text/html')
-            sent_ok = _safe_send_email(email, context_label='payment_confirmation')
-            return {'success': sent_ok, 'message': 'Payment confirmation email sent.' if sent_ok else 'Payment confirmation email failed (see logs).'}
-        except Exception as exc:
-            logger.exception('❌ _send_payment_confirmation_email failed for %s: %s', booking.booking_reference, exc)
-            return {'success': False, 'message': f'Email error: {exc}'}
-
-    def _build_email_html(self, booking, ticket_buffers, format_names, is_combined, attachments, first_qr_base64):
-        from django.template.loader import render_to_string
-        from django.utils.html import strip_tags
-        import base64
-        from io import BytesIO
-        import qrcode
-        from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
-        active_tickets = list(booking.tickets.filter(status='active'))
-        valid_qr = ''
-        if active_tickets:
-            try:
-                first_ticket = active_tickets[0]
-                payload = serialise_ticket_qr_payload(first_ticket)
-                qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=3, border=1)
-                qr.add_data(payload)
-                qr.make(fit=True)
-                img = qr.make_image(fill_color="black", back_color="white")
-                buffered = BytesIO()
-                img.save(buffered, format="PNG", optimize=True)
-                img_str = base64.b64encode(buffered.getvalue()).decode()
-                valid_qr = f"data:image/png;base64,{img_str}"
-            except Exception as exc:
-                logger.error(f"Failed to generate inline QR: {exc}")
-        display_date = booking.session.start_time if booking.session else booking.event.start_date
-        context = {
-            'booking': booking, 'event': booking.event, 'session': booking.session,
-            'display_date': display_date, 'customer_name': booking.customer_name,
-            'tickets': active_tickets, 'first_qr_base64': valid_qr,
-        }
-        html_content = render_to_string('emails/ticket_email.html', context)
-        text_content = strip_tags(html_content)
-        return html_content, text_content
 
     def _seek_buffer(self, buf):
         try:
@@ -2062,181 +1646,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         except Exception:
             return None
 
-    def _send_tickets_email(self, booking, allocation_message=None):
-        from django.core.mail import EmailMultiAlternatives
-        import base64 as _base64
-        opened_buffers = []
-        ticket_buffers = []
-        try:
-            tickets = list(booking.tickets.filter(status='active'))
-            if not tickets:
-                return {'success': False, 'message': 'No active tickets to send.', 'formats': '', 'combined': False, 'attachments': 0}
-            if not booking.customer_email:
-                return {'success': False, 'message': 'No customer email on booking.', 'formats': '', 'combined': False, 'attachments': 0}
-            event = booking.event
-            ticket_format = (getattr(event, 'ticket_format', None) or 'pdf').lower()
-            combine = bool(getattr(event, 'combine_tickets', False))
-            per_page = int(getattr(event, 'tickets_per_page', 4) or 4)
-            generator = TicketGenerator()
-            combiner = TicketCombiner()
-            attachments = []
-            format_names = []
-            want_pdf = ticket_format in ('pdf', 'both')
-            want_png = ticket_format in ('png', 'both')
-            if want_pdf:
-                format_names.append('PDF')
-            if want_png:
-                format_names.append('PNG')
-            for ticket in tickets:
-                if want_pdf:
-                    pdf_buf = generator.generate_ticket_pdf(ticket, booking, event)
-                    if pdf_buf:
-                        opened_buffers.append(pdf_buf)
-                        ticket_buffers.append({'ticket': ticket, 'buffer': pdf_buf, 'format': 'pdf'})
-                if want_png:
-                    png_buf = generator.generate_ticket_png(ticket, booking, event)
-                    if png_buf:
-                        opened_buffers.append(png_buf)
-                        ticket_buffers.append({'ticket': ticket, 'buffer': png_buf, 'format': 'png'})
-            first_qr_base64 = ''
-            combined_attachments = []
-            combined_failed = False
-            if combine:
-                pdf_entries = [e for e in ticket_buffers if e['format'] == 'pdf']
-                png_entries = [e for e in ticket_buffers if e['format'] == 'png']
-                if pdf_entries:
-                    try:
-                        combine_input = []
-                        for e in pdf_entries:
-                            if not self._seek_buffer(e['buffer']):
-                                raise ValueError(f"PDF buffer not readable")
-                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
-                        combined_pdf = combiner.combine_to_pdf(combine_input, booking, tickets_per_page=per_page)
-                    except Exception as exc:
-                        logger.error(f"❌ combine_to_pdf failed: {exc}")
-                        combined_pdf = None
-                        combined_failed = True
-                    if combined_pdf:
-                        opened_buffers.append(combined_pdf)
-                        raw = self._read_buffer_bytes(combined_pdf)
-                        if raw is not None:
-                            combined_attachments.append((f'tickets_{booking.booking_reference}.pdf', raw, 'application/pdf'))
-                        else:
-                            combined_failed = True
-                if png_entries:
-                    try:
-                        combine_input = []
-                        for e in png_entries:
-                            if not self._seek_buffer(e['buffer']):
-                                raise ValueError(f"PNG buffer not readable")
-                            combine_input.append({'buffer': e['buffer'], 'ticket': e['ticket']})
-                        combined_png = combiner.combine_to_paginated_image(combine_input, booking, tickets_per_page=per_page, output_format='PNG')
-                    except Exception as exc:
-                        logger.error(f"❌ combine_to_paginated_image failed: {exc}")
-                        combined_png = None
-                        combined_failed = True
-                    if combined_png:
-                        opened_buffers.append(combined_png)
-                        raw = self._read_buffer_bytes(combined_png)
-                        if raw is not None:
-                            combined_attachments.append((f'tickets_{booking.booking_reference}.png', raw, 'image/png'))
-                        else:
-                            combined_failed = True
-            use_combined = combine and bool(combined_attachments) and not combined_failed
-            if use_combined:
-                attachments.extend(combined_attachments)
-            else:
-                for entry in ticket_buffers:
-                    ticket = entry['ticket']
-                    raw = self._read_buffer_bytes(entry['buffer'])
-                    if raw is None:
-                        continue
-                    if entry['format'] == 'pdf':
-                        attachments.append((f'ticket_{ticket.unique_code}.pdf', raw, 'application/pdf'))
-                    else:
-                        attachments.append((f'ticket_{ticket.unique_code}.png', raw, 'image/png'))
-            if not attachments:
-                logger.warning(f"No attachments generated for booking {booking.booking_reference}, sending email without them.")
-            html_content, text_content = self._build_email_html(booking, ticket_buffers, '+'.join(format_names), use_combined, attachments, first_qr_base64)
-            subject = f'🎫 Your Tickets for {booking.event.title if booking.event else "Event"}'
-            email = EmailMultiAlternatives(subject=subject, body=text_content, from_email=settings.DEFAULT_FROM_EMAIL, to=[booking.customer_email])
-            email.attach_alternative(html_content, 'text/html')
-            for filename, raw, mimetype in attachments:
-                email.attach(filename, raw, mimetype)
-            sent_ok = _safe_send_email(email, context_label='tickets')
-            return {
-                'success': sent_ok,
-                'message': f'Tickets sent to {booking.customer_email}.' if sent_ok else 'Ticket email failed (see logs).',
-                'formats': '+'.join(format_names),
-                'combined': use_combined,
-                'attachments': len(attachments),
-            }
-        except Exception as exc:
-            logger.exception(f'❌ _send_tickets_email failed for {booking.booking_reference}: {exc}')
-            return {'success': False, 'message': f'Email error: {exc}', 'formats': '', 'combined': False, 'attachments': 0}
-        finally:
-            for buf in opened_buffers:
-                try:
-                    buf.close()
-                except Exception:
-                    pass
-
-    def _send_cancellation_email(self, booking):
-        from django.core.mail import EmailMultiAlternatives
-        from django.template.loader import render_to_string
-        from django.utils.html import strip_tags
-        try:
-            if not booking.customer_email:
-                return {'success': False, 'error': 'No customer email.'}
-            context = {'booking': booking, 'event': booking.event, 'customer_name': booking.customer_name, 'refund_amount': booking.refund_amount or 0}
-            try:
-                html_content = render_to_string('emails/booking_cancelled.html', context)
-            except Exception:
-                html_content = (f'<p>Hi {booking.customer_name},</p><p>Your booking <strong>{booking.booking_reference}</strong> has been cancelled.</p><p>Refund amount: ₹{booking.refund_amount or 0}</p>')
-            text_content = strip_tags(html_content)
-            subject = f'❌ Booking Cancelled - {booking.booking_reference}'
-            email = EmailMultiAlternatives(subject=subject, body=text_content, from_email=settings.DEFAULT_FROM_EMAIL, to=[booking.customer_email])
-            email.attach_alternative(html_content, 'text/html')
-            sent_ok = _safe_send_email(email, context_label='cancellation')
-            return {'success': sent_ok, 'error': None if sent_ok else 'Delivery failed (see logs).'}
-        except Exception as exc:
-            logger.exception('❌ _send_cancellation_email failed for %s: %s', booking.booking_reference, exc)
-            return {'success': False, 'error': str(exc)}
-
-    def _send_refund_email(self, booking):
-        from django.core.mail import EmailMultiAlternatives
-        from django.template.loader import render_to_string
-        from django.utils.html import strip_tags
-        from ..utils.money import format_money
-        try:
-            if not booking.customer_email:
-                return {'success': False, 'error': 'No customer email.'}
-            refund_amount = booking.refund_amount or 0
-            context = {
-                'booking': booking,
-                'event': booking.event,
-                'customer_name': booking.customer_name,
-                'refund_amount': refund_amount,
-                'refund_display': format_money(refund_amount),
-            }
-            try:
-                html_content = render_to_string('emails/booking_refunded.html', context)
-            except Exception:
-                html_content = (
-                    f'<p>Hi {booking.customer_name},</p>'
-                    f'<p>Your booking <strong>{booking.booking_reference}</strong> has been refunded.</p>'
-                    f'<p>Refund amount: {format_money(refund_amount)}</p>'
-                )
-            text_content = strip_tags(html_content)
-            subject = f'💸 Booking Refunded - {booking.booking_reference}'
-            email = EmailMultiAlternatives(subject=subject, body=text_content, from_email=settings.DEFAULT_FROM_EMAIL, to=[booking.customer_email])
-            email.attach_alternative(html_content, 'text/html')
-            sent_ok = _safe_send_email(email, context_label='refund')
-            return {'success': sent_ok, 'error': None if sent_ok else 'Delivery failed (see logs).'}
-        except Exception as exc:
-            logger.exception('❌ _send_refund_email failed for %s: %s', booking.booking_reference, exc)
-            return {'success': False, 'error': str(exc)}
-
     @action(detail=True, methods=['get'])
     def status_info(self, request, pk=None):
         pass
@@ -2244,6 +1653,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def confirm_payment_and_issue_tickets(self, request, pk=None):
         booking = self.get_object()
+        if not self._can_manage_booking(request.user, booking):
+            return Response({'status': 'forbidden', 'error': 'You do not have permission to confirm payment for this booking'}, status=status.HTTP_403_FORBIDDEN)
         validation = self._validate_bookings_for_action([booking], 'confirm_payment_and_issue')
         if validation['invalid']:
             return Response({'status': 'validation_failed', 'errors': validation['invalid']}, status=status.HTTP_400_BAD_REQUEST)
@@ -2260,6 +1671,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_payment_received(self, request, pk=None):
         booking = self.get_object()
+        if not self._can_manage_booking(request.user, booking):
+            return Response({'status': 'forbidden', 'error': 'You do not have permission to confirm payment for this booking'}, status=status.HTTP_403_FORBIDDEN)
         validation = self._validate_bookings_for_action([booking], 'confirm_payment')
         if validation['invalid']:
             return Response({'status': 'validation_failed', 'errors': validation['invalid']}, status=status.HTTP_400_BAD_REQUEST)
@@ -2271,6 +1684,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def regenerate_ticket_qr(self, request, pk=None):
         booking = self.get_object()
+        if not self._can_manage_booking(request.user, booking):
+            return Response({'status': 'forbidden', 'error': 'You do not have permission to regenerate QR codes for this booking'}, status=status.HTTP_403_FORBIDDEN)
         tickets = booking.tickets.filter(status='active')
         if not tickets.exists():
             return Response({'error': 'No active tickets found to regenerate QR codes'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2290,6 +1705,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def cancel_booking(self, request, pk=None):
         booking = self.get_object()
+        if not self._can_manage_booking(request.user, booking):
+            return Response({'error': 'You do not have permission to cancel this booking'}, status=status.HTTP_403_FORBIDDEN)
         if booking.status in ['cancelled', 'refunded', 'completed']:
             return Response({'error': f'Booking is already {booking.status}'}, status=status.HTTP_400_BAD_REQUEST)
         event = booking.event
@@ -2300,7 +1717,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         release_session_seats(booking, seats_to_release)
         self._update_event_counts(event)
         try:
-            email_result = self._send_cancellation_email(booking)
+            email_result = booking_emails.send_cancellation(booking)
         except Exception as e:
             logger.warning(f"⚠️ Cancellation email failed (not blocking): {str(e)}")
             email_result = {'success': False, 'error': str(e)}
@@ -2309,6 +1726,8 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def refund_booking(self, request, pk=None):
         booking = self.get_object()
+        if not self._can_manage_booking(request.user, booking):
+            return Response({'error': 'You do not have permission to refund this booking'}, status=status.HTTP_403_FORBIDDEN)
         if booking.status not in ['paid', 'confirmed']:
             return Response({'error': f'Only paid or confirmed bookings can be refunded. Current status: {booking.status}'}, status=status.HTTP_400_BAD_REQUEST)
         if booking.status == 'refunded':
@@ -2323,7 +1742,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         release_session_seats(booking, seats_to_release)
         self._update_event_counts(event)
         try:
-            email_result = self._send_refund_email(booking)
+            email_result = booking_emails.send_refund_email(booking)
         except Exception as e:
             logger.warning(f"⚠️ Refund email failed (not blocking): {str(e)}")
             email_result = {'success': False, 'error': str(e)}
@@ -2369,19 +1788,16 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking = self.get_object()
         discount_code = request.data.get('discount_code')
         user = request.user
-        if not (user.is_staff or user.is_superuser):
-            is_organizer = ((hasattr(user, 'profile') and user.profile.is_organizer) or hasattr(user, 'organizer'))
-            if is_organizer and booking.event.organizer_id != user.id:
-                return Response({'error': 'You cannot apply discounts to this booking'}, status=status.HTTP_403_FORBIDDEN)
-            if not is_organizer and booking.user_id != user.id:
+        if not is_platform_admin(user):
+            if not can_manage_org(user, booking.event.organization) and booking.user_id != user.id:
                 return Response({'error': 'You cannot apply discounts to this booking'}, status=status.HTTP_403_FORBIDDEN)
         if not discount_code:
             return Response({'error': 'discount_code is required'}, status=status.HTTP_400_BAD_REQUEST)
         from ticket_bookings.models import Discount
         try:
             discount = Discount.objects.get(code=discount_code, is_active=True)
-            if not (user.is_staff or user.is_superuser):
-                if discount.organizer_id != user.id:
+            if not is_platform_admin(user):
+                if discount.organization_id != booking.event.organization_id:
                     return Response({'error': 'Invalid discount code'}, status=status.HTTP_404_NOT_FOUND)
             if discount.valid_from and discount.valid_from > timezone.now():
                 return Response({'error': 'Discount is not yet valid'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2426,7 +1842,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         if not tickets.exists():
             return Response({'error': 'No active tickets to resend'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = self._send_tickets_email(booking)
+            result = booking_emails.send_tickets(booking)
             if result.get('success'):
                 return Response({
                     'status': 'success', 'booking_id': str(booking.id), 'reference': booking.booking_reference,

@@ -1,6 +1,9 @@
 // frontend/src/pages/Events/Create.js
 import React from 'react';
-import { Alert, CircularProgress, Grid, Box, Typography } from '@mui/material';
+import {
+    Alert, CircularProgress, Grid, Box, Typography,
+    TextField, MenuItem, Button,
+} from '@mui/material';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import {
@@ -16,9 +19,10 @@ import { useOrganizers } from '../../features/events/useOrganizers';
 
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
+import { useOrg } from '../../context/OrgContext';               // ✅ NEW
 import { ROLES } from '../../constants';
 
-import { StyledPaper } from './components/styled';
+import { StyledPaper, SectionTitle } from './components/styled';
 import { EventBasicInfo } from './components/EventBasicInfo';
 import { OrganizerSelector } from './components/OrganizerSelector';
 import { EventSchedule } from './components/EventSchedule';
@@ -42,6 +46,16 @@ const CreateEvent = () => {
     const { role } = useRole();
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
 
+    // ✅ NEW: tenant context.
+    const {
+        organizations,
+        currentOrgId,
+        setCurrentOrgId,
+        isPlatformAdmin,
+        needsOrganization,
+        loading: orgLoading,
+    } = useOrg();
+
     const venues = useVenues();
     const policies = useCancellationPolicies();
 
@@ -61,7 +75,11 @@ const CreateEvent = () => {
         addTier,
         removeTier,
         updateTier,
-    } = useEventForm(id);
+    } = useEventForm(id, {
+        // ✅ NEW: seed the form's org from the current selection so
+        // single-org admins never have to click the picker.
+        defaultOrganizationId: currentOrgId,
+    });
 
     const templates = useEventTemplates(id);
     const { submit, submitting, error } = useEventSubmit({ id, formData, sessions, tiers });
@@ -70,16 +88,46 @@ const CreateEvent = () => {
     const isRegistrationOnly = ['free_registration', 'paid_registration']
         .includes(formData.event_flow);
 
-    // ✅ FIX: Determine if any tier has sold tickets
+    // Determine if any tier has sold tickets.
     const hasSoldTiers = tiers.some((t) => (t.quantity_sold || 0) > 0);
 
-    if (loading) {
+    if (loading || orgLoading) {
         return (
             <LoadingWrapper>
                 <CircularProgress sx={{ color: C.primary }} />
             </LoadingWrapper>
         );
     }
+
+    // ✅ Block the form when the user has no org — prompt to create one.
+    if (!id && needsOrganization) {
+        return (
+            <PageContainer>
+                <PageHeader>
+                    <PageHeaderLeft>
+                        <PageTitle>Create New Event</PageTitle>
+                    </PageHeaderLeft>
+                </PageHeader>
+                <Alert
+                    severity="warning"
+                    action={
+                        <Button
+                            color="inherit"
+                            size="small"
+                            onClick={() => navigate('/app/organizations')}
+                        >
+                            Create Organization
+                        </Button>
+                    }
+                >
+                    You need to belong to an organization before creating events.
+                    Create one now — you'll become its owner automatically.
+                </Alert>
+            </PageContainer>
+        );
+    }
+
+    const showOrgPicker = isPlatformAdmin || organizations.length > 1;
 
     return (
         <PageContainer>
@@ -94,15 +142,48 @@ const CreateEvent = () => {
             <StyledPaper>
                 <form onSubmit={submit}>
                     <Grid container spacing={3}>
+                        {/* ✅ NEW: organization picker for admins and
+                            multi-org users. Single-org users skip this —
+                            the backend infers it from their membership. */}
+                        {showOrgPicker && (
+                            <>
+                                <Grid item xs={12}>
+                                    <SectionTitle variant="h6">Organization</SectionTitle>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        select
+                                        label="Organization"
+                                        name="organization_id"
+                                        value={formData.organization_id || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            handleChange({
+                                                target: { name: 'organization_id', value: val },
+                                            });
+                                            setCurrentOrgId(val);
+                                        }}
+                                        required
+                                        helperText="The tenant this event belongs to."
+                                    >
+                                        {organizations.map((org) => (
+                                            <MenuItem key={org.id} value={org.id}>
+                                                {org.name}
+                                            </MenuItem>
+                                        ))}
+                                    </TextField>
+                                </Grid>
+                            </>
+                        )}
+
                         <EventBasicInfo
                             formData={formData}
                             onChange={handleChange}
                             venues={venues}
                         />
 
-                        {/* ✅ NEW: admins may tag the event to an organizer.
-                            Organizers skip this entirely — the backend
-                            auto-links them to the event they create. */}
+                        {/* Admin-only: assign event to a specific organizer. */}
                         {isAdmin && (
                             <OrganizerSelector
                                 value={formData.organizer_id}
@@ -138,7 +219,8 @@ const CreateEvent = () => {
                             onUpdate={updateSession}
                         />
 
-                        {/* ✅ FIX: Render TiersEditor if NOT a free event, OR if it is free but has sold tickets */}
+                        {/* Render TiersEditor if not a free event, or if a
+                            free event already has sold tiers (locked). */}
                         {(!isFreeRegistration || hasSoldTiers) && (
                             <TiersEditor
                                 tiers={tiers}
@@ -146,7 +228,7 @@ const CreateEvent = () => {
                                 onRemove={removeTier}
                                 onUpdate={updateTier}
                                 label={isRegistrationOnly ? 'Registration Fees' : 'Ticket Tiers'}
-                                hideActions={isFreeRegistration} // Lock it down if it's a free event
+                                hideActions={isFreeRegistration}
                             />
                         )}
 

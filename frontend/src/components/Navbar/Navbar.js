@@ -13,6 +13,7 @@ import {
 } from '@mui/icons-material';
 import { theme } from '../../theme/tokens';
 import LanguageSwitcher from '../LanguageSwitcher';
+import { ROLES } from '../../constants';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -180,6 +181,7 @@ const RoleBadge = styled.span`
             case 'super_admin': return `${C.success}1A`;
             case 'admin':       return `${C.info}1A`;
             case 'organizer':   return `${C.warning}1A`;
+            case 'staff':       return `${C.secondary}1A`;      // ✅ NEW
             default:            return C.bgInput;
         }
     }};
@@ -188,6 +190,7 @@ const RoleBadge = styled.span`
             case 'super_admin': return C.successDark;
             case 'admin':       return C.infoDark;
             case 'organizer':   return C.warningDark;
+            case 'staff':       return C.secondaryDark;         // ✅ NEW
             default:            return C.textSecondary;
         }
     }};
@@ -364,6 +367,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         if (isSuperAdmin) return t('roles.superAdmin');                // ✅ FIX
         if (isAdmin) return t('roles.admin');
         if (isOrganizer) return t('roles.organizer');
+        if (role === ROLES.STAFF) return t('roles.staff');   // ✅ NEW
         return t('roles.user');
     };
 
@@ -422,7 +426,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                 <UserRole>{getRoleLabel()}</UserRole>
                             </UserDetails>
                             <RoleBadge role={role}>
-                                {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : '👤'}
+                                {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : role === ROLES.STAFF ? '🎟️' : '👤'}
                             </RoleBadge>
                             <Chevron $open={menuOpen} />
                         </UserInfo>

@@ -31,21 +31,18 @@ export const RoleProvider = ({ children }) => {
             // The API returns: { role: 'super_admin' | 'admin' | 'organizer' | 'user' }
             let userRole = ROLES.USER;
             
-            // ✅ First priority: Use the role field from the API
+            // ✅ Bug 24: Trust the API role only. No is_staff / is_superuser
+            // legacy fallbacks — those fields conflate Django staff (a boolean
+            // for admin-site access) with the app's STAFF role.
             if (user.role && Object.values(ROLES).includes(user.role)) {
                 userRole = user.role;
                 console.log(`✅ Using role from API: ${userRole}`);
-            } 
-            // ✅ Fallback: Determine from user properties (backward compatibility)
-            else if (user.is_superuser) {
-                userRole = ROLES.SUPER_ADMIN;
-                console.log(`⚠️ Fallback: is_superuser -> ${userRole}`);
-            } else if (user.is_staff) {
-                userRole = ROLES.ADMIN;
-                console.log(`⚠️ Fallback: is_staff -> ${userRole}`);
-            } else if (user.is_organizer) {
-                userRole = ROLES.ORGANIZER;
-                console.log(`⚠️ Fallback: is_organizer -> ${userRole}`);
+            } else {
+                console.warn(
+                    `⚠️ RoleProvider: user.role is missing or unrecognized ` +
+                    `(got ${JSON.stringify(user.role)}); defaulting to USER. ` +
+                    `The backend /me endpoint should always return a 'role' field.`
+                );
             }
             
             setRole(userRole);
@@ -69,6 +66,7 @@ export const RoleProvider = ({ children }) => {
     const isSuperAdmin = role === ROLES.SUPER_ADMIN;
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
     const isOrganizer = role === ROLES.ORGANIZER || isAdmin;
+    const isStaff = role === ROLES.STAFF;      // ✅ NEW — Bug 23
 
     const value = {
         role,
@@ -78,6 +76,7 @@ export const RoleProvider = ({ children }) => {
         isSuperAdmin,
         isAdmin,
         isOrganizer,
+        isStaff, // ✅ NEW — Bug 23
         isUser: true, // All authenticated users are at least users
     };
 

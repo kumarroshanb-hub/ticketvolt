@@ -20,6 +20,7 @@ import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
 import { useSettings } from '../../context/SettingsContext';
+import { useOrg } from '../../context/OrgContext';               // ✅ NEW
 import {
     getCountryOptionsWithDefault,
     normaliseCountryName,
@@ -84,6 +85,16 @@ const CreateVenue = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const { settings } = useSettings();
 
+    // ✅ NEW: tenant context
+    const {
+        organizations,
+        currentOrgId,
+        setCurrentOrgId,
+        isPlatformAdmin,
+        loading: orgLoading,
+        needsOrganization,
+    } = useOrg();
+
     // ✅ Platform-level default country — dropdowns follow it.
     const platformCountry = useMemo(() => {
         const normalised = normaliseCountryName(settings?.country);
@@ -113,10 +124,24 @@ const CreateVenue = () => {
         contact_email: '',
         has_reserved_seating: false,
         is_active: true,
+        // ✅ NEW: which tenant this venue belongs to
+        organization_id: '',
     }));
 
-    // ✅ Keep the form's country in sync when platform default loads
-    // after the first render (SettingsContext fetches asynchronously).
+    // ✅ Seed organization_id from context. Single-org users never see
+    // the picker, so we must auto-populate it.
+    useEffect(() => {
+        setFormData((prev) => {
+            if (prev.organization_id) return prev;
+            if (currentOrgId) return { ...prev, organization_id: currentOrgId };
+            if (organizations.length === 1) {
+                return { ...prev, organization_id: organizations[0].id };
+            }
+            return prev;
+        });
+    }, [currentOrgId, organizations]);
+
+    // ✅ Keep country in sync when platform default loads after first render.
     useEffect(() => {
         setFormData((prev) => {
             if (prev.country && prev.country !== '') return prev;
@@ -162,6 +187,9 @@ const CreateVenue = () => {
                 contact_email: data.contact_email || '',
                 has_reserved_seating: data.has_reserved_seating || false,
                 is_active: data.is_active !== undefined ? data.is_active : true,
+                // ✅ Preserve the venue's current org so edits don't
+                // accidentally reassign it.
+                organization_id: data.organization || currentOrgId || '',
             });
         } catch (error) {
             console.error('Failed to load venue:', error);
@@ -191,9 +219,20 @@ const CreateVenue = () => {
                 return;
             }
 
+            // ✅ Multi-tenancy: refuse to submit without an org.
+            if (!formData.organization_id) {
+                setError(
+                    organizations.length > 1
+                        ? 'Please select the organization this venue belongs to.'
+                        : 'You need to create an organization before adding venues.'
+                );
+                setSubmitting(false);
+                return;
+            }
+
             const venueData = {
                 ...formData,
-                capacity: formData.capacity ? parseInt(formData.capacity) : null,
+                capacity: formData.capacity ? parseInt(formData.capacity, 10) : null,
             };
 
             if (id) {
@@ -228,7 +267,7 @@ const CreateVenue = () => {
         setSubmitting(false);
     };
 
-    if (loading) {
+    if (loading || orgLoading) {
         return (
             <PageContainer>
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
@@ -237,6 +276,36 @@ const CreateVenue = () => {
             </PageContainer>
         );
     }
+
+    // ✅ Block the form when the user has no org — prompt to create one.
+    if (needsOrganization) {
+        return (
+            <PageContainer>
+                <PageHeader>
+                    <PageHeaderLeft>
+                        <PageTitle>Add New Venue</PageTitle>
+                    </PageHeaderLeft>
+                </PageHeader>
+                <Alert
+                    severity="warning"
+                    action={
+                        <Button
+                            color="inherit"
+                            size="small"
+                            onClick={() => navigate('/app/organizations')}
+                        >
+                            Create Organization
+                        </Button>
+                    }
+                >
+                    You need to belong to an organization before creating venues.
+                    Create one now — you'll become its owner automatically.
+                </Alert>
+            </PageContainer>
+        );
+    }
+
+    const showOrgPicker = isPlatformAdmin || organizations.length > 1;
 
     return (
         <PageContainer>
@@ -251,6 +320,42 @@ const CreateVenue = () => {
             <StyledPaper>
                 <form onSubmit={handleSubmit}>
                     <Grid container spacing={isMobile ? 2 : 3}>
+                        {/* ✅ NEW: Organization picker for multi-org users
+                            and platform admins. Single-org users see the
+                            auto-selected org in the helper text only. */}
+                        {showOrgPicker && (
+                            <>
+                                <Grid item xs={12}>
+                                    <SectionTitle variant="h6">Organization</SectionTitle>
+                                    <Divider sx={{ borderColor: 'divider' }} />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <StyledTextField
+                                        fullWidth select
+                                        label="Organization"
+                                        name="organization_id"
+                                        value={formData.organization_id || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setFormData((prev) => ({
+                                                ...prev,
+                                                organization_id: val,
+                                            }));
+                                            setCurrentOrgId(val);
+                                        }}
+                                        required
+                                        helperText="The tenant this venue belongs to."
+                                    >
+                                        {organizations.map((org) => (
+                                            <MenuItem key={org.id} value={org.id}>
+                                                {org.name}
+                                            </MenuItem>
+                                        ))}
+                                    </StyledTextField>
+                                </Grid>
+                            </>
+                        )}
+
                         <Grid item xs={12}>
                             <SectionTitle variant="h6">Basic Information</SectionTitle>
                             <Divider sx={{ borderColor: 'divider' }} />

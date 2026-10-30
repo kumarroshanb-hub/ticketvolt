@@ -14,20 +14,19 @@ from .api.user_api import UserViewSet
 from .api.cancellation_policy_api import CancellationPolicyViewSet
 from .api.settings_api import SystemSettingsView
 
-# ✅ NEW: SuperAdmin-only active-sessions endpoint
+# ✅ NEW: organization (tenant) API — enables the bootstrap flow.
+from .api.organization_api import OrganizationViewSet
+
+# SuperAdmin-only active-sessions endpoint
 from .api.active_sessions_api import ActiveSessionsView
 
 # Scanner views.
-# - checkin_verify / checkin_perform: signed-payload (mobile app)
-# - checkin_manual_verify / checkin_manual: bare-code (admin web UI)
-# - checkin_history: shared
 from .views import (
     checkin_verify,
     checkin_perform,
     checkin_history,
     checkin_manual_verify,
     checkin_manual,
-    # ✅ Cron views
     run_scheduled_tasks,
     cron_health,
 )
@@ -46,19 +45,19 @@ router.register(
     CancellationPolicyViewSet,
     basename='cancellation-policy',
 )
+# ✅ NEW: organizations (tenants)
+router.register(
+    r'organizations',
+    OrganizationViewSet,
+    basename='organization',
+)
 
 urlpatterns = [
     # ============ CRON ENDPOINTS ============
-    # ✅ GitHub Actions hits these on a schedule instead of running a
-    #    paid Celery Beat worker. See ticket_bookings/views.py for the
-    #    security model.
     path('cron/health/', cron_health, name='cron-health'),
     path('cron/run-tasks/', run_scheduled_tasks, name='cron-run-tasks'),
 
     # ============ ADMIN: ACTIVE SESSIONS ============
-    # ✅ NEW: SuperAdmin-only. Powers the "Active Sessions" page in the
-    #    admin UI so the operator can see who is logged in before
-    #    deploying. Resolved full path: /api/admin/active-sessions/
     path(
         'admin/active-sessions/',
         ActiveSessionsView.as_view(),
@@ -68,13 +67,10 @@ urlpatterns = [
     # ============ SCANNER ENDPOINTS ============
     # Order matters: Django matches top-to-bottom, so the more specific
     # paths must come before the bare `checkin/` prefix.
-    #
-    # Signed-payload endpoints (mobile app):
     path('checkin/verify/', checkin_verify, name='checkin-verify'),
     path('checkin/history/', checkin_history, name='checkin-history'),
     path('checkin/', checkin_perform, name='checkin'),
 
-    # Manual-entry endpoints (admin web UI):
     path('checkin/manual-verify/', checkin_manual_verify, name='checkin-manual-verify'),
     path('checkin/manual/', checkin_manual, name='checkin-manual'),
 
@@ -166,7 +162,8 @@ urlpatterns = [
         'events/public/',
         EventViewSet.as_view({'get': 'public'}),
         name='events-public',
-    ),
+    )
+    ,
     path(
         'events/public/<uuid:pk>/',
         EventViewSet.as_view({'get': 'public_detail'}),

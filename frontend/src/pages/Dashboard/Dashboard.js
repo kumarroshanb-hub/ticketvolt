@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Paper,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-    CircularProgress, useMediaQuery, useTheme, Divider,
+    CircularProgress, useMediaQuery, useTheme, Divider, Button,
 } from '@mui/material';
 import {
     Event as EventIcon,
@@ -11,11 +11,14 @@ import {
     ConfirmationNumber as TicketIcon,
     AttachMoney as MoneyIcon,
     Refresh as RefreshIcon,
+    Business as BusinessIcon,
+    ArrowForward as ArrowForwardIcon,
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';                   // ✅ NEW
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useSettings } from '../../context/SettingsContext';
+import { useOrg } from '../../context/OrgContext';                  // ✅ NEW
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -291,12 +294,84 @@ const MobileBookingCard = ({ booking, onClick }) => {
 };
 
 // ============================================
+// ORGANIZATION BANNER (BUG 8)
+// Shown only while the user has no organization yet.
+// ============================================
+const NeedsOrganizationBanner = () => {
+    const { t } = useTranslation();
+    const navigate = useNavigate();
+
+    return (
+        <Paper
+            elevation={0}
+            sx={{
+                mb: 3,
+                p: { xs: 2, sm: 2.5 },
+                borderRadius: 2,
+                border: `1px solid ${C.primary}40`,
+                backgroundColor: `${C.primary}08`,
+                display: 'flex',
+                flexDirection: { xs: 'column', sm: 'row' },
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                gap: { xs: 1.5, sm: 2 },
+            }}
+        >
+            <Box
+                sx={{
+                    backgroundColor: `${C.primary}15`,
+                    borderRadius: '50%',
+                    p: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                }}
+            >
+                <BusinessIcon sx={{ color: C.primary }} />
+            </Box>
+
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography
+                    variant="subtitle1"
+                    sx={{ fontWeight: 700, color: C.textPrimary, lineHeight: 1.3 }}
+                >
+                    {t('dashboard.needsOrganizationTitle')}
+                </Typography>
+                <Typography
+                    variant="body2"
+                    sx={{ color: C.textSecondary, mt: 0.25 }}
+                >
+                    {t('dashboard.needsOrganizationBody')}
+                </Typography>
+            </Box>
+
+            <Button
+                variant="contained"
+                size="small"
+                endIcon={<ArrowForwardIcon />}
+                onClick={() => navigate('/app/organizations')}
+                sx={{
+                    flexShrink: 0,
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    alignSelf: { xs: 'stretch', sm: 'auto' },
+                }}
+            >
+                {t('dashboard.needsOrganizationCta')}
+            </Button>
+        </Paper>
+    );
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 const Dashboard = () => {
     const { user } = useAuth();
     const { role } = useRole();
     const { formatMoney } = useSettings();
+    const { needsOrganization } = useOrg();                         // ✅ NEW
     const { t } = useTranslation();                                 // ✅ NEW
     const navigate = useNavigate();
     const theme = useTheme();
@@ -377,6 +452,9 @@ const Dashboard = () => {
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
+
+            {/* BUG 8: onboarding CTA for users without an organization */}
+            {needsOrganization && <NeedsOrganizationBanner />}
 
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>

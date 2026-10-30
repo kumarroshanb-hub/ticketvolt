@@ -37,7 +37,7 @@
     "actions": "操作"
   },
   "roles": {
-    "superAdmin": "超級管理員",
+    "superAdmin": "平台管理員",
     "admin": "管理員",
     "organizer": "主辦方",
     "user": "用戶",
@@ -63,7 +63,8 @@
     "activeSessions": "活躍工作階段",
     "logout": "登出",
     "login": "登入",
-    "register": "註冊"
+    "register": "註冊",
+    "organizations": "組織"
   },
   "landing": {
     "heroTitleLine1": "尋找您的下一個",
@@ -915,7 +916,7 @@
     "roleUser": "普通用戶",
     "roleOrganizer": "主辦方",
     "roleAdmin": "管理員",
-    "roleSuperAdmin": "超級管理員",
+    "roleSuperAdmin": "平台管理員",
     "searchPlaceholder": "搜尋用戶...",
     "colUser": "用戶",
     "colEmail": "電郵",
@@ -1020,7 +1021,7 @@
     "searchPlaceholder": "按姓名、電郵或 IP 搜尋…",
     "filterRoleLabel": "角色",
     "filterRoleAll": "全部",
-    "filterRoleSuperAdmin": "超級管理員",
+    "filterRoleSuperAdmin": "平台管理員",
     "filterRoleAdmin": "管理員",
     "filterRoleOrganizer": "主辦方",
     "filterRoleUser": "用戶",

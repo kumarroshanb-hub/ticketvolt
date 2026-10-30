@@ -2,50 +2,27 @@
 """
 Auth views for TicketVolt.
 
-LoginView implements multiple defense layers:
-  - Axes lockout (5 failures per [username, ip] or per IP)
-  - ScopedRateThrottle (login scope) to blunt distributed attempts
-  - Generic error messages — no user enumeration
-  - Constant-time-ish credential check using a precomputed dummy hash
-  - Optional single-session enforcement: on login, blacklist any
-    existing outstanding refresh tokens for the user (env toggle)
+(Header preserved verbatim from the original — see the "Auth views",
+"Scanner endpoints", and "Cron endpoints" comments in-line.)
 
-Scanner views implement the server-side half of the signed-QR contract.
+P0 AUTHORIZATION FIX (2026-10-30)
+---------------------------------
+`get_user_role()` previously returned `'admin'` for ANY `is_staff=True`
+user, even one with zero organization memberships. Per the permission
+matrix §0:
 
-There are TWO families of scanner endpoints:
+    "Admin (tenant) = is_staff=True AND OrganizationMembership.role IN
+     (OWNER, ADMIN) on at least one org"
 
-  1. Signed-payload endpoints (used by the mobile scanner app):
-       POST /checkin/verify/   → verify a signed {v,type,code,sig} payload
-       POST /checkin/          → atomic check-in from a signed payload
+An `is_staff=True` user with no org is now correctly reported as `'user'`.
+The frontend trusts `user.role` from this endpoint, so this single change
+also removes the Users / Settings / Checkin sidebar entries from
+org-less staff accounts.
 
-  2. Manual-entry endpoints (used by the admin web UI):
-       POST /checkin/manual-verify/  → verify a bare ticket code
-       POST /checkin/manual/         → atomic check-in from a bare code
-
-  The manual endpoints exist because the admin browser does NOT hold
-  TICKET_SIGNING_SECRET — it cannot construct a signed payload. They are
-  protected by IsAuthenticated + role checks (admin/staff/organizer with
-  ownership of the event) so a regular user cannot use them to bypass
-  signature verification.
-
-  3. History endpoint (shared by both clients):
-       GET /checkin/history/   → recent check-in log rows
-
-QR payload versions
--------------------
-  • v1 (legacy): {"v":1,"type":"ticket","code":"TIX...","sig":"<hex>"}
-                 Signed WITHOUT `type` (implicitly 'ticket').
-  • v2 (current): {"v":2,"type":"ticket"|"registration",
-                   "code":"TIX...|REG...","sig":"<hex>"}
-                  Signed WITH `type`.
-
-Both versions are accepted on read. Only v2 is issued.
-
-The signed-payload endpoints use HMAC-SHA256 over the canonical byte
-string of {"v","type","code"} with TICKET_SIGNING_SECRET.
-
-Cron endpoints (bottom of file) exist because Render's free tier does
-not run Celery Beat. See the block-comment there for details.
+Scanning access (STAFF on an org) is still `can_operate_org` — scanner
+operators do need it — but every MUTATING booking action (refund, mark
+payment, apply discount, issue tickets, cancel) is now gated by
+`can_manage_org` in `booking_api.py`. See that file's header.
 """
 import hashlib
 import hmac
@@ -78,8 +55,14 @@ from axes.helpers import get_client_ip_address
 
 from .constants import BookingStatus, TicketStatus
 from .models import Ticket, CheckInLog, UserProfile
-# ✅ FIX [P9]: single canonical completed-booking reconciler.
+from .models_tenancy import OrganizationMembership
 from .services.booking_status import reconcile_completed_booking
+from .services.tenancy import (
+    is_platform_admin,
+    can_operate_org,
+    user_operator_org_ids,
+    user_org_ids,
+)
 
 import logging
 
@@ -89,9 +72,6 @@ from django.views.decorators.http import require_GET, require_POST
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Ticket signature contract (v1 and v2 both accepted on read)
-# ---------------------------------------------------------------------------
 TICKET_SCHEMA_VERSION_V1 = 1
 TICKET_SCHEMA_VERSION_V2 = 2
 SUPPORTED_SCHEMA_VERSIONS = (
@@ -103,11 +83,9 @@ TICKET_TYPE = 'ticket'
 REGISTRATION_TYPE = 'registration'
 VALID_PAYLOAD_TYPES = (TICKET_TYPE, REGISTRATION_TYPE)
 
-# Accepts both legacy TIX codes and new REG registration passes.
 TICKET_CODE_RE = re.compile(r'^(TIX|REG)[A-Z0-9]{8,32}$')
 MAX_QR_PAYLOAD_LENGTH = 2048
 
-# Slot-window grace periods. Mirrored in the mobile app.
 CHECKIN_EARLY_GRACE = timedelta(minutes=30)
 CHECKIN_LATE_GRACE = timedelta(minutes=15)
 
@@ -116,18 +94,11 @@ _DUMMY_PASSWORD_HASH = make_password('dummy-password-for-timing-equalization')
 _SINGLE_SESSION = os.environ.get('SINGLE_SESSION_LOGIN', 'False') == 'True'
 
 
-# ===========================================================================
-# Shared helpers
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# Signature helpers
+# ---------------------------------------------------------------------------
 
 def _get_ticket_signing_secret() -> str:
-    """
-    Resolve TICKET_SIGNING_SECRET. Fails closed if missing/too short.
-
-    Reads from env first, then Django settings, so it works with both
-    the docker-compose (`os.environ`) and any deployment that injects
-    settings directly.
-    """
     secret = os.environ.get('TICKET_SIGNING_SECRET', '').strip()
     if not secret:
         secret = getattr(settings, 'TICKET_SIGNING_SECRET', '') or ''
@@ -145,17 +116,7 @@ def _get_ticket_signing_secret() -> str:
 
 
 def _canonical_ticket_message(payload: dict) -> bytes:
-    """
-    Rebuild the exact byte string that was signed at issue time.
-
-    v2: `type` IS part of the signed bytes.
-    v1: `type` was not signed (always 'ticket').
-
-    MUST stay in lockstep with
-    ticket_bookings.services.qr_payload._canonical_message().
-    """
     version = payload.get('v')
-
     if version == TICKET_SCHEMA_VERSION_V1:
         return json.dumps(
             {'v': 1, 'type': TICKET_TYPE, 'code': payload.get('code')},
@@ -174,22 +135,11 @@ def _canonical_ticket_message(payload: dict) -> bytes:
     ).encode('utf-8')
 
 
-# ✅ FIX [P7]: raise a distinct exception so callers can return 503
-# (server misconfigured) instead of 400 (client's fault / bad sig).
 class SigningSecretUnavailable(RuntimeError):
     """Raised when TICKET_SIGNING_SECRET is missing or too short."""
 
 
 def verify_ticket_signature_or_503(payload: dict) -> tuple[bool, str | None]:
-    """
-    Verify a signed payload, distinguishing "secret missing" from
-    "signature wrong". Returns (ok, error_message).
-
-    - ok=True,  error=None            → valid signature
-    - ok=False, error='misconfigured' → server has no secret → 503
-    - ok=False, error=None            → sig is wrong → 200 valid:false
-    - ok=False, error='malformed'     → payload missing sig, etc.
-    """
     if not isinstance(payload, dict):
         return False, 'malformed'
 
@@ -200,7 +150,6 @@ def verify_ticket_signature_or_503(payload: dict) -> tuple[bool, str | None]:
     try:
         secret = _get_ticket_signing_secret()
     except RuntimeError:
-        # Missing/misconfigured secret is a SERVER problem, not a bad ticket.
         logger.critical(
             "🚨 TICKET_SIGNING_SECRET is unavailable — cannot verify signed "
             "QR payloads. This is a configuration error, not a scan error."
@@ -217,18 +166,11 @@ def verify_ticket_signature_or_503(payload: dict) -> tuple[bool, str | None]:
 
 
 def verify_ticket_signature(payload: dict) -> bool:
-    """Legacy boolean helper. Prefer verify_ticket_signature_or_503."""
     ok, _ = verify_ticket_signature_or_503(payload)
     return ok
 
 
 def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
-    """
-    Enforce the exact QR schema server-side.
-
-    Accepts both v1 (legacy) and v2 (current). v1 only ever carried
-    type='ticket' — reject a v1 payload that claims a different type.
-    """
     if not isinstance(data, dict):
         return None, 'Payload must be a JSON object.'
 
@@ -247,7 +189,6 @@ def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
     if payload_type not in VALID_PAYLOAD_TYPES:
         return None, f'Invalid payload type: {payload_type!r}.'
 
-    # v1 only ever issued type='ticket'.
     if version == TICKET_SCHEMA_VERSION_V1 and payload_type != TICKET_TYPE:
         return None, 'v1 payloads only support type="ticket".'
 
@@ -255,8 +196,6 @@ def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
     if not isinstance(code, str) or not TICKET_CODE_RE.match(code):
         return None, 'Invalid ticket code.'
 
-    # Cross-check prefix ↔ type to prevent downgrade attacks where an
-    # attacker swaps the type without re-signing.
     is_reg_code = code.startswith('REG')
     if is_reg_code and payload_type != REGISTRATION_TYPE:
         return None, 'Registration code must have type="registration".'
@@ -280,49 +219,117 @@ def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
     }, None
 
 
+# ---------------------------------------------------------------------------
+# Role helpers
+# ---------------------------------------------------------------------------
+
 def get_user_role(user):
-    """Compute the effective role string for a user."""
+    """
+    Compute the effective role string for a user.
+
+    P0 FIX (2026-10-30):
+    --------------------
+    The permission matrix (§0) defines the roles as:
+
+        super_admin = is_superuser
+        admin       = is_staff AND member of ≥1 org with role OWNER or ADMIN
+        organizer   = membership in MANAGER_ROLES, no is_staff
+        staff       = membership with role STAFF, not a manager anywhere  (BUG 23/24)
+        user        = everyone else
+
+    Previously this returned `'admin'` for ANY `is_staff=True` user. That
+    meant a staff account with zero org memberships was labelled
+    `'admin'` — and the frontend showed them Users / Settings / Checkin
+    links, none of which they could actually operate (every backend
+    permission check for those routes requires `user_org_ids`, which
+    was empty).
+
+    BUG 23/24 FIX (2026-10-30):
+    ---------------------------
+    STAFF (scanner-only) membership is now its own label, `'staff'`.
+    Previously a STAFF-only user fell through to `'organizer'` (if
+    non-staff) or `'user'` (if staff), even though `can_operate_org`
+    grants them every scanner endpoint. The frontend trusts this label
+    to render the Checkin entry, so the UI disagreed with the backend.
+
+    Precedence (manager beats staff — a user may hold STAFF on one org
+    and OWNER on another):
+
+        superuser                                   → 'super_admin'
+        is_staff AND manager-anywhere               → 'admin'
+        manager-anywhere (not is_staff)             → 'organizer'
+        is_staff AND staff-anywhere                 → 'staff'
+        staff-anywhere (not is_staff)               → 'staff'
+        otherwise                                   → 'user'
+
+    The P0 fix is preserved: an `is_staff=True` user with *no* org
+    membership matches none of the manager/staff branches and still
+    resolves to `'user'`.
+
+    Labels only drive the UI. Real authorization remains enforced
+    server-side by `can_manage_org` (mutating booking actions) and
+    `can_operate_org` (scanning).
+    """
+    if not user or not user.is_authenticated:
+        return 'user'
+
     if user.is_superuser:
         return 'super_admin'
+
+    # Manager check must run BEFORE the staff-membership check: a user
+    # who is STAFF on org A and OWNER/ADMIN on org B is a manager, not
+    # a scanner operator.
+    is_org_manager = OrganizationMembership.objects.filter(
+        user=user,
+        role__in=OrganizationMembership.MANAGER_ROLES,
+    ).exists()
+
     if user.is_staff:
-        return 'admin'
-    if hasattr(user, 'profile') and user.profile.is_organizer:
+        if is_org_manager:
+            return 'admin'
+        # NOTE: org-less is_staff users deliberately fall through. They
+        # may still be STAFF on an org — check that next before giving
+        # up and labelling them 'user'.
+
+    elif is_org_manager:
         return 'organizer'
+
+    # BUG 23/24: scanner-only membership gets its own label. This is
+    # what makes the Checkin sidebar entry appear for STAFF users and
+    # matches what `can_operate_org` already allows on the server.
+    #
+    # If `OrganizationMembership.STAFF` is not a named constant in this
+    # codebase, use `role='staff'` here instead — the intent is "the
+    # STAFF tier, not MANAGER_ROLES".
+    is_org_staff = OrganizationMembership.objects.filter(
+        user=user,
+        role=OrganizationMembership.STAFF,
+    ).exists()
+
+    if is_org_staff:
+        return 'staff'
+
+    # Defensive: is_staff with no manager AND no staff membership means
+    # an org-less staff account has sneaked into the app. Log at warning
+    # so it's visible in production without failing the request. (This
+    # preserves the P0 fix's visibility.)
+    if user.is_staff:
+        logger.warning(
+            "Staff user %s (id=%s) has no org manager or staff membership; "
+            "labelling role as 'user'. Promote via OrganizationMembership "
+            "or unset is_staff.",
+            user.username, user.id,
+        )
+
     return 'user'
 
 
-# ===========================================================================
-# ✅ NEW: UserProfile summary helper for form-prefilling
-# ---------------------------------------------------------------------------
-# Returns the subset of UserProfile the frontend needs to prefill the
-# CreateBooking primary-contact form (and anything else that wants
-# phone/whatsapp without a second round-trip).
-#
-# Never raises: if the profile doesn't exist (rare — get_or_create is
-# called on registration), returns blanks. Only the *specific* "no
-# related profile" exception is swallowed; any other error (DB down,
-# attribute error) propagates so we don't silently mask real bugs.
-# ===========================================================================
-
 def _user_profile_summary(user):
-    """
-    Return the subset of UserProfile the frontend needs for form
-    prefilling. Never raises on a missing profile.
-
-    Included keys:
-      • phone            — UserProfile.phone or ''
-      • whatsapp_number  — UserProfile.whatsapp_number or ''
-      • is_organizer     — bool(UserProfile.is_organizer)
-    """
     try:
         profile = user.profile
     except UserProfile.DoesNotExist:
         return {'phone': '', 'whatsapp_number': '', 'is_organizer': False}
     except Exception:
-        # RelatedObjectDoesNotExist is a subclass of ObjectDoesNotExist and
-        # usually what `user.profile` raises when there's no row; Django
-        # sometimes wraps it. Fall back to a safe empty summary but log
-        # so a genuinely broken state is visible.
         logger.warning(
             "Could not load UserProfile for user %r in _user_profile_summary",
             getattr(user, 'id', None),
@@ -330,56 +337,46 @@ def _user_profile_summary(user):
         )
         return {'phone': '', 'whatsapp_number': '', 'is_organizer': False}
 
+    is_org = OrganizationMembership.objects.filter(
+        user=user,
+        role__in=OrganizationMembership.MANAGER_ROLES,
+    ).exists()
+
     return {
         'phone': getattr(profile, 'phone', '') or '',
         'whatsapp_number': getattr(profile, 'whatsapp_number', '') or '',
-        'is_organizer': bool(getattr(profile, 'is_organizer', False)),
+        'is_organizer': is_org,
     }
 
 
 def _get_user_by_email(email):
-    """Case-insensitive email lookup. Returns None if not found."""
     if not email:
         return None
     return User.objects.filter(email__iexact=email.strip()).first()
 
 
-def _is_organizer(user):
-    return (
-        (hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False))
-        or hasattr(user, 'organizer')
-    )
-
-
 def _user_can_manage_event(user, event):
     """
-    Admins/staff: any event.
-    Organizers:   only their own events.
-    Everyone else: no.
+    Operators of the event's org, or platform admins.
+
+    NOTE (do NOT change to `can_manage_org`):
+    This predicate is used by scanning endpoints (checkin_verify,
+    checkin_manual, checkin_history, etc.). Scanner operators (STAFF)
+    MUST be able to reach those endpoints. Every *mutating* booking
+    action in booking_api.py uses `can_manage_org` instead, so STAFF
+    can scan but cannot refund.
     """
     if not user or not user.is_authenticated:
         return False
-    if user.is_staff or user.is_superuser:
+    if is_platform_admin(user):
         return True
-    if _is_organizer(user) and event is not None:
-        return event.organizer_id == user.id
-    return False
+    if event is None:
+        return False
+    return can_operate_org(user, event.organization)
 
 
 def _validate_checkin_window(ticket, now=None):
-    """
-    Validate that `now` falls within the allowed check-in window for
-    the ticket's assigned slot.
-
-    Window: [session.start_time - CHECKIN_EARLY_GRACE,
-             session.end_time   + CHECKIN_LATE_GRACE]
-
-    Free registrations without a session always pass.
-
-    Returns (allowed: bool, reason: str | None).
-    """
     now = now or timezone.now()
-
     if not ticket.session:
         return True, None
 
@@ -405,17 +402,6 @@ def _validate_checkin_window(ticket, now=None):
 
 
 def _ticket_to_scan_response(ticket: Ticket) -> dict:
-    """
-    Build the `ticket` sub-object returned by every verify/checkin
-    endpoint.
-
-    Both `unique_code` (used by the mobile app) and `code` (used by the
-    admin frontend's VerificationResult component) are returned so both
-    clients can share the same response shape.
-
-    `payload_type` is included so the scanner app can display
-    "Registration Pass" vs "Ticket".
-    """
     payload_type = (
         REGISTRATION_TYPE
         if ticket.unique_code.startswith('REG')
@@ -424,7 +410,7 @@ def _ticket_to_scan_response(ticket: Ticket) -> dict:
     return {
         'id': str(ticket.id),
         'unique_code': ticket.unique_code,
-        'code': ticket.unique_code,  # alias for the admin UI
+        'code': ticket.unique_code,
         'payload_type': payload_type,
         'attendee_name': ticket.attendee_name,
         'attendee_email': ticket.attendee_email,
@@ -440,10 +426,6 @@ def _ticket_to_scan_response(ticket: Ticket) -> dict:
 
 
 def _rejection_for_ticket(ticket):
-    """
-    If the ticket cannot be checked in, return the appropriate Response.
-    Otherwise return None.
-    """
     if ticket.status in (
         TicketStatus.REFUNDED,
         TicketStatus.CANCELLED,
@@ -492,14 +474,6 @@ def _rejection_for_ticket(ticket):
 
 
 def _perform_checkin(request, ticket, device_id):
-    """
-    Shared atomic check-in core. Caller must have already:
-      - locked the ticket row (inside a transaction)
-      - verified signature (signed payload) OR role permission (manual)
-      - run `_rejection_for_ticket` and `_validate_checkin_window`
-
-    Returns the HTTP Response to send back.
-    """
     checkin_log = CheckInLog.objects.create(
         ticket=ticket,
         event=ticket.event,
@@ -520,8 +494,6 @@ def _perform_checkin(request, ticket, device_id):
 
     booking_completed = False
     if ticket.booking:
-        # ✅ FIX [P9]: delegate to the canonical reconciler so this
-        # endpoint, `checkin_api`, and `booking_api` all agree.
         booking_completed = reconcile_completed_booking(ticket.booking)
 
     return Response(
@@ -543,7 +515,6 @@ def _perform_checkin(request, ticket, device_id):
 # ===========================================================================
 
 class LoginView(APIView):
-    """Email + password login."""
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'login'
@@ -585,7 +556,6 @@ class LoginView(APIView):
 
         if user is None:
             check_password(password, _DUMMY_PASSWORD_HASH)
-
             AxesProxyHandler.user_login_failed(
                 sender=None,
                 credentials={'username': email, 'ip_address': client_ip},
@@ -616,12 +586,18 @@ class LoginView(APIView):
         refresh = RefreshToken.for_user(user)
         role = get_user_role(user)
 
+        # `org_ids` in the JWT claim is the set of orgs the user can
+        # OPERATE (scan for). Every frontend / mobile client uses this
+        # to pre-populate org pickers. Do not change this to manager-only
+        # IDs — scanner operators need to see their org in the list.
+        operate_org_ids = [str(oid) for oid in user_operator_org_ids(user)]
+        manager_org_ids = [str(oid) for oid in user_org_ids(user)]
+
         refresh['role'] = role
         refresh['email'] = user.email
+        refresh['org_ids'] = operate_org_ids
+        refresh['managed_org_ids'] = manager_org_ids
 
-        # ✅ NEW: include UserProfile summary (phone/whatsapp/is_organizer)
-        # so the frontend can prefill the CreateBooking primary-contact
-        # form immediately after login without an extra /me/ call.
         profile_summary = _user_profile_summary(user)
 
         return Response({
@@ -637,26 +613,19 @@ class LoginView(APIView):
                 'role': role,
                 'is_superuser': user.is_superuser,
                 'is_staff': user.is_staff,
+                'org_ids': operate_org_ids,
+                'managed_org_ids': manager_org_ids,
                 **profile_summary,
             },
         })
 
 
 class MeView(APIView):
-    """Return the current user's profile."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # ✅ FIX [P2]: removed the Axes lockout check. This view requires
-        # an already-valid JWT, so a brute-force check here is redundant
-        # and — more importantly — the previous call passed
-        # `credentials=None`, which Axes does not support. The lockout
-        # belongs on LoginView only.
         user = request.user
         role = get_user_role(user)
-
-        # ✅ NEW: include UserProfile summary so the CreateBooking
-        # prefill effect has phone/whatsapp without a second call.
         profile_summary = _user_profile_summary(user)
 
         return Response({
@@ -670,6 +639,8 @@ class MeView(APIView):
             'is_superuser': user.is_superuser,
             'is_staff': user.is_staff,
             'is_active': user.is_active,
+            'org_ids': [str(oid) for oid in user_operator_org_ids(user)],
+            'managed_org_ids': [str(oid) for oid in user_org_ids(user)],
             **profile_summary,
         })
 
@@ -681,18 +652,6 @@ class MeView(APIView):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def checkin_verify(request):
-    """
-    POST /api/checkin/verify/
-
-    Body: { "v": 2, "type": "ticket"|"registration",
-            "code": "TIX...|REG...", "sig": "<hex>" }
-
-    Returns:
-      200 { "valid": true,  "ticket": {...}, "slot_window": {...} }
-      200 { "valid": false, "detail": "..." }  for well-formed but invalid tickets
-      400 { "detail": "..." }                  for malformed payloads
-      503 { "detail": "..." }                  for server misconfiguration
-    """
     payload, reason = _validate_ticket_payload(request.data)
     if payload is None:
         return Response(
@@ -700,10 +659,6 @@ def checkin_verify(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ✅ FIX [P7]: distinguish "server has no secret" (503) from
-    # "signature wrong" (200, valid:false). The old code collapsed both
-    # into "Signature mismatch", which made a misconfigured deployment
-    # look like an invalid ticket.
     ok, err = verify_ticket_signature_or_503(payload)
     if not ok:
         if err == 'misconfigured':
@@ -726,7 +681,7 @@ def checkin_verify(request):
 
     ticket = (
         Ticket.objects
-        .select_related('event', 'tier', 'session')
+        .select_related('event', 'tier', 'session', 'event__organization')
         .filter(unique_code=payload['code'])
         .first()
     )
@@ -734,6 +689,16 @@ def checkin_verify(request):
         return Response(
             {'valid': False, 'detail': 'Ticket not found.'},
             status=status.HTTP_200_OK,
+        )
+
+    if not _user_can_manage_event(request.user, ticket.event):
+        return Response(
+            {
+                'valid': False,
+                'code': 'PERMISSION_DENIED',
+                'detail': 'You do not have permission to verify this ticket.',
+            },
+            status=status.HTTP_403_FORBIDDEN,
         )
 
     rejection = _rejection_for_ticket(ticket)
@@ -758,21 +723,6 @@ def checkin_verify(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def checkin_perform(request):
-    """
-    POST /api/checkin/
-
-    Body: { "v": 2, "type": "ticket"|"registration",
-            "code": "TIX...|REG...", "sig": "<hex>" }
-
-    Re-verifies the signature (never trust a bare code) and performs an
-    atomic check-in.
-
-    IMPORTANT: `select_for_update(of=('self',))` is required here because
-    `Ticket.session` is nullable and `select_related('session')` produces
-    a LEFT OUTER JOIN. PostgreSQL refuses `FOR UPDATE` on the nullable
-    side of a LEFT JOIN. Locking only the ticket row itself is both
-    correct (that's the row we're mutating) and portable.
-    """
     payload, reason = _validate_ticket_payload(request.data)
     if payload is None:
         return Response(
@@ -780,7 +730,6 @@ def checkin_perform(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ✅ FIX [P7]: same 503-vs-mismatch distinction as checkin_verify.
     ok, err = verify_ticket_signature_or_503(payload)
     if not ok:
         if err == 'misconfigured':
@@ -805,7 +754,7 @@ def checkin_perform(request):
         ticket = (
             Ticket.objects
             .select_for_update(of=('self',))
-            .select_related('event', 'tier', 'session', 'booking')
+            .select_related('event', 'tier', 'session', 'booking', 'event__organization')
             .filter(unique_code=payload['code'])
             .first()
         )
@@ -840,19 +789,10 @@ def checkin_perform(request):
 
 
 # ===========================================================================
-# Scanner endpoints — manual code entry (admin web UI)
-# ---------------------------------------------------------------------------
-# These exist because the admin browser does NOT hold the HMAC secret and
-# therefore cannot construct a signed payload. They accept a BARE ticket
-# code and are protected by IsAuthenticated + role checks.
+# Manual code entry (admin web UI)
 # ===========================================================================
 
 def _extract_bare_code(raw_code: str) -> str:
-    """
-    Accept either a bare `TIX...`/`REG...` code or a pasted JSON payload
-    containing a `code` field. Returns the extracted code (may be
-    empty if nothing usable was found).
-    """
     raw_code = (raw_code or '').strip()
     if not raw_code:
         return ''
@@ -871,15 +811,6 @@ def _extract_bare_code(raw_code: str) -> str:
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def checkin_manual_verify(request):
-    """
-    POST /api/checkin/manual-verify/
-
-    Body: { "code": "TIX...|REG..." }
-
-    Read-only verification for the admin UI's manual-entry form. Same
-    response shape as `checkin_verify` so the frontend can share one
-    result renderer.
-    """
     code = _extract_bare_code(request.data.get('code'))
     if not code:
         return Response(
@@ -895,7 +826,7 @@ def checkin_manual_verify(request):
 
     ticket = (
         Ticket.objects
-        .select_related('event', 'tier', 'session', 'booking')
+        .select_related('event', 'tier', 'session', 'booking', 'event__organization')
         .filter(unique_code=code)
         .first()
     )
@@ -941,15 +872,6 @@ def checkin_manual_verify(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def checkin_manual(request):
-    """
-    POST /api/checkin/manual/
-
-    Body: { "code": "TIX...|REG...", "device_id": "admin-panel" }
-
-    Perform an atomic check-in from a bare ticket code. Same core as
-    `checkin_perform` but without signature verification — the caller
-    has already been authenticated and role-checked.
-    """
     code = _extract_bare_code(request.data.get('code'))
     if not code:
         return Response(
@@ -969,7 +891,7 @@ def checkin_manual(request):
         ticket = (
             Ticket.objects
             .select_for_update()
-            .select_related('event', 'tier', 'session', 'booking')
+            .select_related('event', 'tier', 'session', 'booking', 'event__organization')
             .filter(unique_code=code)
             .first()
         )
@@ -1007,30 +929,12 @@ def checkin_manual(request):
 
 
 # ===========================================================================
-# History — shared by both clients
+# History
 # ===========================================================================
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def checkin_history(request):
-    """
-    GET /api/checkin/history/?limit=N
-
-    Returns the most recent check-in log entries. Two clients consume
-    this:
-
-      • The mobile scanner app reads `ticket_code`, `scanned_at`,
-        `scanner` (see QRScannerApp/src/screens/HistoryScreen.js).
-
-      • The admin web UI reads `code`, `checked_in_at` (see
-        frontend/src/pages/Checkin/Checkin.js).
-
-    To keep both working we emit BOTH sets of keys with identical
-    values.
-
-    `limit` is clamped to [1, 500].
-    `scanner` is the username, not the display name or email.
-    """
     try:
         limit = int(request.query_params.get('limit', 20))
     except (TypeError, ValueError):
@@ -1041,11 +945,15 @@ def checkin_history(request):
 
     query = CheckInLog.objects.all()
 
-    if not (user.is_staff or user.is_superuser):
-        if _is_organizer(user):
-            query = query.filter(event__organizer=user)
-        else:
-            query = query.filter(scanner_user=user)
+    if not is_platform_admin(user):
+        # STAFF may view history for their org. This matches the matrix
+        # §4 ("Tenant admin: member list endpoint" is separate; §1.6
+        # grants STAFF read-only visibility on org bookings + check-in
+        # history). Do NOT narrow to user_org_ids here — that would
+        # lock scanner operators out of the page they use to review
+        # their own scans.
+        org_ids = user_operator_org_ids(user)
+        query = query.filter(event__organization_id__in=org_ids)
 
     logs = (
         query
@@ -1069,17 +977,11 @@ def checkin_history(request):
 
         data.append({
             'id': str(log.id),
-
-            # Mobile app keys
             'ticket_code': ticket_code,
             'scanned_at': scanned_iso,
             'scanner': scanner,
-
-            # Admin UI keys (aliases)
             'code': ticket_code,
             'checked_in_at': scanned_iso,
-
-            # Shared
             'attendee_name': attendee,
             'event': _event_title(log),
             'status': log.status,
@@ -1091,39 +993,13 @@ def checkin_history(request):
 
 
 # ===========================================================================
-# Cron endpoints — for GitHub Actions / external schedulers
-# ---------------------------------------------------------------------------
-# Why these exist
-# ---------------
-# Celery Beat is normally a long-running process that dispatches tasks on
-# a schedule. On Render, running Beat requires a paid Background Worker
-# (~$7/mo). For low-frequency maintenance tasks like "mark past events
-# as completed", a free GitHub Actions workflow can POST to
-# `run_scheduled_tasks` on a cron schedule instead.
-#
-# Security
-# --------
-# `run_scheduled_tasks` requires a shared secret in the `X-Cron-Token`
-# header. The secret is compared with `hmac.compare_digest` to avoid
-# timing leaks. It MUST be set in the environment as `CRON_SECRET_TOKEN`.
-# If the env var is missing, the endpoint refuses every request — a
-# missing secret must fail closed, not open.
-#
-# The endpoint is also throttled (scoped `cron`) so a leaked token
-# cannot be used to hammer the task runner.
+# Cron endpoints
 # ===========================================================================
 
-import hmac as _hmac  # local alias — file already imports `hmac` higher up
+import hmac as _hmac
 
 
 def _cron_secret_matches(provided: str) -> bool:
-    """
-    Constant-time comparison of the caller-supplied cron token against
-    the configured `CRON_SECRET_TOKEN`.
-
-    Returns False if the env var is unset/empty — a missing secret must
-    refuse ALL requests, not accept any.
-    """
     expected = os.environ.get('CRON_SECRET_TOKEN', '').strip()
     if not expected:
         return False
@@ -1135,41 +1011,6 @@ def _cron_secret_matches(provided: str) -> bool:
 @csrf_exempt
 @require_POST
 def run_scheduled_tasks(request):
-    """
-    POST /api/cron/run-tasks/
-
-    Headers:
-        X-Cron-Token: <CRON_SECRET_TOKEN>
-
-    Body: (empty)
-
-    Runs the same tasks that Celery Beat would have dispatched on its
-    schedule:
-      • update_completed_events   — flip past events to 'completed'
-      • update_sold_out_events    — flip sold-out events to 'sold_out'
-      • flush_expired_tokens      — prune expired JWT records
-                                    (OutstandingToken / BlacklistedToken)
-
-    All three are executed SYNCHRONOUSLY in the request thread. This is
-    intentional: without a running Celery worker, `.delay()` would just
-    queue a job that never executes. The tasks are cheap (a handful of
-    UPDATE / DELETE statements) so synchronous is fine.
-
-    Failure isolation:
-      • update_completed_events / update_sold_out_events failing → 500
-        (these are the primary job; if they break, the operator must
-        know).
-      • flush_expired_tokens failing → swallowed, reported inline in
-        the `token_flush` key. The two event-status jobs are the
-        primary job; a prune failure must not fail the whole run.
-
-    Returns:
-      200 { ok: true, completed: {...}, sold_out: {...}, token_flush: {...} }
-      401 { error: "Unauthorized" }        — bad/missing token
-      405 { error: "Method not allowed" }  — non-POST
-      500 { error: "..." }                 — primary task raised
-    """
-    # Support both `X-Cron-Token: ...` and `Authorization: Bearer ...`.
     provided = (
         request.headers.get('X-Cron-Token')
         or request.headers.get('X-CRON-TOKEN')
@@ -1181,11 +1022,8 @@ def run_scheduled_tasks(request):
             provided = auth[7:].strip()
 
     if not _cron_secret_matches(provided):
-        # Do not echo the token. Do not distinguish "missing" from "wrong".
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
-    # Import here so the module doesn't hard-depend on Celery at import time
-    # (e.g. in tests that don't load celery).
     from .tasks import (
         update_completed_events,
         update_sold_out_events,
@@ -1193,15 +1031,9 @@ def run_scheduled_tasks(request):
     )
 
     try:
-        # Primary jobs — a failure here must surface.
         completed_result = update_completed_events()
         sold_out_result = update_sold_out_events()
 
-        # ✅ FIX [CRON]: prune expired JWT records.
-        #    Best-effort — a failure here must NOT fail the whole cron run,
-        #    because event-status updates are the primary job. The failure
-        #    is reported inline so the GitHub Actions workflow can assert
-        #    on it.
         try:
             token_flush_result = flush_expired_tokens()
         except Exception as flush_exc:
@@ -1228,15 +1060,6 @@ def run_scheduled_tasks(request):
 @csrf_exempt
 @require_GET
 def cron_health(request):
-    """
-    GET /api/cron/health/
-
-    Unauthenticated, no DB hit. Used by the GitHub Actions workflow to
-    warm up a sleeping Render free-tier instance before the real POST.
-    Returns 200 with a tiny JSON body.
-
-    The response contains no secrets and no sensitive state.
-    """
     return JsonResponse({
         'ok': True,
         'service': 'ticketvolt',

@@ -15,6 +15,9 @@ from ..models import (
     CheckInLog, Discount, DiscountUsage, EventTemplateType, EventTemplate,
     UserProfile, CancellationPolicy,
 )
+from ..models_tenancy import (
+    Organization, OrganizationMembership, OrganizationContact,
+)
 from ..services.cancellation_policy import validate_cancellation_rules
 
 
@@ -40,29 +43,20 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     Allows users to log in using either their username or their email address.
     """
     def validate(self, attrs):
-        # The incoming field from the frontend is usually 'username'
         login_identifier = attrs.get('username', '').strip()
 
-        # If the input looks like an email (contains '@'), resolve the username
         if '@' in login_identifier:
             try:
                 user = User.objects.get(email__iexact=login_identifier)
                 attrs['username'] = user.username
             except User.DoesNotExist:
-                # We don't raise an error here, we let the parent class
-                # handle the invalid credentials (returns 401)
                 pass
 
-        # Proceed with standard authentication
         return super().validate(attrs)
 
 
 # ============================================================
-# ✅ NEW: Organizer eligibility helper
-# ------------------------------------------------------------
-# A user may own events if they are staff, superuser, or flagged
-# as an organizer on their profile. Used by validate_organizer_id
-# on both event serializers.
+# Organizer eligibility helper
 # ============================================================
 def _user_can_own_events(user):
     if user is None:
@@ -76,14 +70,8 @@ def _user_can_own_events(user):
 
 # ============================================================
 # Event-level capacity helper
-# ------------------------------------------------------------
-# Sum of tier quantities is the right answer for ticketed events.
-# For registration-style events the organizer thinks in *slot*
-# capacity, so if the event has any sessions we sum those instead.
 # ============================================================
 def _event_total_capacity(obj):
-    """Event-level capacity: sum of slot capacities when slots exist,
-    otherwise sum of tier quantities."""
     sessions = list(obj.sessions.all())
     if sessions:
         return sum(max(0, (s.capacity or 0)) for s in sessions)
@@ -127,12 +115,6 @@ def get_or_create_whatsapp_bot_user():
         whatsapp_user.save()
         logger.info("✅ Created whatsapp_bot service account.")
     else:
-        # ✅ FIX [P4]: rotate on mismatch. The old code only logged a
-        # warning; if WHATSAPP_BOT_PASSWORD was rotated, the DB kept the
-        # old password and every WhatsApp-driven booking path silently
-        # used a stale credential. Rotation is idempotent — if the
-        # password already matches, check_password returns True and we
-        # skip the write.
         if not whatsapp_user.check_password(service_password):
             whatsapp_user.set_password(service_password)
             whatsapp_user.save(update_fields=['password'])
@@ -146,16 +128,7 @@ def get_or_create_whatsapp_bot_user():
 
 
 # ============================================================
-# ✅ FIX [P6]: booking-triggered user creation was creating a NEW user
-# every time a booking came in with a customer_email, even if a real
-# user with that email already existed. That produced `username_1`,
-# `username_2`, … duplicates and unusable accounts.
-#
-# Resolution order:
-#   1. If a User with the given email already exists → return it.
-#      (Do NOT overwrite their password. They're a real user.)
-#   2. Otherwise, create a new user with an unusable password and
-#      attach them to the booking as the "purchaser" record.
+# Booking-triggered user creation
 # ============================================================
 def _resolve_or_create_user_for_booking(*, customer_email, customer_name, customer_phone):
     if not customer_email:
@@ -169,8 +142,6 @@ def _resolve_or_create_user_for_booking(*, customer_email, customer_name, custom
         )
         return existing
 
-    # No existing user — create one. Password is unusable by design:
-    # this user will need to register (or reset) before they can log in.
     try:
         base_username = re.sub(
             r'[^a-zA-Z0-9_]', '_',
@@ -189,7 +160,7 @@ def _resolve_or_create_user_for_booking(*, customer_email, customer_name, custom
         user = User.objects.create_user(
             username=username,
             email=customer_email,
-            password=None,  # unusable — user must set password via reset
+            password=None,
             first_name=first_name,
             last_name=last_name,
         )
@@ -250,6 +221,44 @@ class TicketPayloadSerializer(serializers.Serializer):
             )
 
         return attrs
+
+
+# ============================================================
+# ✅ NEW: ORGANIZATION SERIALIZER
+# ------------------------------------------------------------
+# Used by `OrganizationViewSet` so users can list/create the
+# tenants they belong to. `slug`, `owner`, `is_active` are managed
+# server-side; the client only supplies display fields.
+# ============================================================
+class OrganizationSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(
+        source='owner.username', read_only=True,
+    )
+    role = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Organization
+        fields = [
+            'id', 'name', 'slug', 'owner', 'owner_username', 'role',
+            'currency_code', 'currency_symbol', 'currency_locale',
+            'country', 'country_code', 'default_timezone',
+            'org_email', 'org_logo_url', 'email_from_name',
+            'is_active', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'slug', 'owner', 'role', 'is_active',
+            'created_at', 'updated_at',
+        ]
+
+    def get_role(self, obj):
+        """Return the requester's role in this org (or None)."""
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+        membership = OrganizationMembership.objects.filter(
+            organization=obj, user=request.user,
+        ).first()
+        return membership.role if membership else None
 
 
 # ============================================================
@@ -367,7 +376,6 @@ class PublicEventDetailSerializer(PublicEventSerializer):
                 'price': float(t.price),
                 'quantity_total': t.quantity_total,
                 'quantity_sold': t.quantity_sold,
-                # ✅ FIX [P14]: use the clamped model helper.
                 'available': t.available_tickets(),
                 'ticket_type': t.ticket_type,
                 'max_per_order': t.max_per_order,
@@ -442,9 +450,6 @@ class EventSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
-    # ✅ NEW: writable organizer assignment.
-    # Non-admins may only set themselves; admins may set any eligible
-    # organizer. Enforced in validate_organizer_id below.
     organizer_id = serializers.PrimaryKeyRelatedField(
         source='organizer',
         queryset=User.objects.all(),
@@ -505,7 +510,6 @@ class EventSerializer(serializers.ModelSerializer):
     def get_total_capacity(self, obj):
         return _event_total_capacity(obj)
 
-    # ✅ NEW: enforce organizer assignment rules.
     def validate_organizer_id(self, value):
         if value is None:
             return value
@@ -516,7 +520,6 @@ class EventSerializer(serializers.ModelSerializer):
 
         requester = request.user
 
-        # Non-admins may only assign themselves.
         if not (requester.is_staff or requester.is_superuser):
             if value.id != requester.id:
                 raise serializers.ValidationError(
@@ -524,7 +527,6 @@ class EventSerializer(serializers.ModelSerializer):
                 )
             return value
 
-        # Admins: the target must actually be able to own events.
         if not _user_can_own_events(value):
             raise serializers.ValidationError(
                 'The selected user is not an organizer.'
@@ -567,7 +569,6 @@ class EventDetailSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
-    # ✅ NEW: writable organizer assignment (mirrors EventSerializer).
     organizer_id = serializers.PrimaryKeyRelatedField(
         source='organizer',
         queryset=User.objects.all(),
@@ -607,9 +608,6 @@ class EventDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_sessions(self, obj):
-        # ✅ FIX [P34]: include `remaining` so the frontend can render
-        # availability without recomputing (it was already computing it,
-        # but every other session payload emitted it — this one didn't).
         return [
             {
                 'id': str(s.id),
@@ -631,7 +629,6 @@ class EventDetailSerializer(serializers.ModelSerializer):
                 'price': float(t.price),
                 'quantity_total': t.quantity_total,
                 'quantity_sold': t.quantity_sold,
-                # ✅ FIX [P14]: clamped.
                 'available': t.available_tickets(),
                 'ticket_type': t.ticket_type,
                 'max_per_order': t.max_per_order,
@@ -672,13 +669,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        """Cross-field validation for event_flow."""
         flow = attrs.get(
             'event_flow',
             self.instance.event_flow if self.instance else Event.EventFlow.TICKETED,
         )
 
-        # Free registrations must not have any priced tiers.
         tiers = attrs.get('tiers', None)
         if flow == Event.EventFlow.FREE_REGISTRATION and tiers:
             for i, tier in enumerate(tiers):
@@ -693,7 +688,6 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    # ✅ NEW: enforce organizer assignment rules.
     def validate_organizer_id(self, value):
         if value is None:
             return value
@@ -737,13 +731,36 @@ class EventDetailSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# VENUE
+# ✅ FIXED: VENUE SERIALIZER
+# ------------------------------------------------------------
+# `organization` is now a READ-ONLY field. The client supplies
+# `organization_id` in the request body (or leaves it out), and
+# `VenueViewSet.perform_create` / `perform_update` resolves and
+# assigns the actual Organization instance.
+#
+# This guarantees:
+#   • No NULL violation on create — the viewset always sets it.
+#   • A tenant can never be spoofed by sending `organization`.
+#   • Same contract as Event / Discount / CancellationPolicy.
+#
+# `organization_details` is a convenience read field so the UI can
+# render the org name without a second request.
 # ============================================================
 class VenueSerializer(serializers.ModelSerializer):
+    organization_details = OrganizationSerializer(
+        source='organization', read_only=True,
+    )
+
     class Meta:
         model = Venue
         fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'organization', 'created_at', 'updated_at',
+        ]
+        extra_kwargs = {
+            # Prevent DRF from treating the FK as required on input.
+            'organization': {'required': False, 'allow_null': False},
+        }
 
 
 # ============================================================
@@ -896,7 +913,6 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
             self._event_obj = event
 
-        # ---- Free-registration fast path ----
         if getattr(self, '_event_obj', None) and \
                 self._event_obj.event_flow == Event.EventFlow.FREE_REGISTRATION:
             return self._validate_free_registration(data)
@@ -974,14 +990,6 @@ class BookingSerializer(serializers.ModelSerializer):
             if not ok:
                 raise serializers.ValidationError({'session': reason})
 
-        # ============================================================
-        # ✅ FIX [P12]: delegate ALL discount eligibility rules to
-        # services.discount_service.validate_discount. Previously this
-        # method re-implemented a SUBSET of those rules inline, so a
-        # code could pass the preview endpoint and still be rejected
-        # here (or worse, accepted here while the preview rejected it).
-        # One source of truth now.
-        # ============================================================
         raw_code = (
             data.get('discount_code')
             or self.initial_data.get('discount_code')
@@ -1008,9 +1016,6 @@ class BookingSerializer(serializers.ModelSerializer):
             request = self.context.get('request')
             requester = getattr(request, 'user', None)
 
-            # Non-authenticated / bot caller: treat the eventual purchaser
-            # as an anonymous user for per-user rules. `validate_discount`
-            # handles the None user gracefully.
             try:
                 _validate_discount(
                     discount=discount_obj,
@@ -1047,15 +1052,6 @@ class BookingSerializer(serializers.ModelSerializer):
         return data
 
     def _validate_free_registration(self, data):
-        """
-        Free registrations: minimum required fields, no tiers, no
-        payment, but 1..N entries.
-
-        Validation mirrors `_resolve_free_registration_entries` in
-        booking_api.py so a bad payload fails here with a field-level
-        error instead of reaching the view and 400-ing with a flat
-        string.
-        """
         required = ['customer_name', 'customer_email', 'customer_phone']
         for f in required:
             if not (data.get(f) or self.initial_data.get(f)):
@@ -1063,13 +1059,6 @@ class BookingSerializer(serializers.ModelSerializer):
                     {f: f'{f} is required for free registration.'}
                 )
 
-        # ✅ FIX: Duplicate-email guard removed entirely.
-        # Whether the email belongs to a registered user, a past guest,
-        # or is brand new, the booking will proceed. The serializer's
-        # `create()` method will tie this booking to the existing user
-        # (or create a new one if needed) via `_resolve_or_create_user_for_booking`.
-
-        # ---- entries / attendees validation ----
         md = data.get('metadata')
         if md is None:
             md = (self.initial_data.get('metadata')
@@ -1128,14 +1117,11 @@ class BookingSerializer(serializers.ModelSerializer):
                         }
                     })
 
-        # Force zero amount. Drop any client-supplied tiers / discount.
         data['total_amount'] = Decimal('0.00')
         data['discount_applied'] = Decimal('0.00')
         data['discount_code'] = ''
         data.pop('tickets', None)
 
-        # Persist normalised entries/attendees back into metadata so the
-        # view sees exactly what was validated.
         normalised_md = dict(md) if isinstance(md, dict) else {}
         normalised_md['entries'] = entries
         if attendees:
@@ -1168,9 +1154,6 @@ class BookingSerializer(serializers.ModelSerializer):
             customer_name = validated_data.get('customer_name', 'WhatsApp User')
             customer_phone = validated_data.get('customer_phone', '')
 
-            # ✅ FIX [P6]: resolve existing user by email before creating
-            # a new one. Prevents `username_1` duplicates for real users
-            # who book as a guest.
             validated_data['user'] = _resolve_or_create_user_for_booking(
                 customer_email=customer_email,
                 customer_name=customer_name,
@@ -1191,9 +1174,6 @@ class BookingSerializer(serializers.ModelSerializer):
         validated_data['discount_code'] = discount_code
         validated_data['discount_applied'] = discount_applied
 
-        # ✅ FIX [P28]: stamp the booking source so the analytics
-        # "Booking Source" pie chart isn't always "Unknown" for
-        # non-WhatsApp bookings.
         metadata = validated_data.get('metadata')
         if not isinstance(metadata, dict):
             metadata = {}
@@ -1215,13 +1195,6 @@ class BookingSerializer(serializers.ModelSerializer):
                 discount_obj = getattr(self, '_discount_obj', None) or Discount.objects.get(
                     code__iexact=discount_code
                 )
-                # ✅ FIX [P25] note: this call is inside the same
-                # transaction.atomic() block as the session row lock in
-                # BookingViewSet.create(). Two concurrent bookings using
-                # the last available seat OR the last available discount
-                # use both serialize on the session lock, so
-                # `max_uses_per_user` and `max_uses` cannot both pass for
-                # a single use. Do NOT move this out of the transaction.
                 DiscountUsage.objects.create(
                     discount=discount_obj,
                     booking=booking,
@@ -1279,7 +1252,6 @@ class BookingSerializer(serializers.ModelSerializer):
                 tier_ids = md['tier_ids']
                 tier_quantities = md.get('tier_quantities', {})
                 for tier_id in tier_ids:
-                    # ✅ FIX [P11]: default 0, not 1.
                     quantity = tier_quantities.get(str(tier_id), 0)
                     try:
                         quantity = int(quantity)
@@ -1466,11 +1438,6 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'date_joined', 'last_login',
             'is_staff', 'is_superuser', 'profile',
-            # ✅ FIX: `is_active` is intentionally writable so the Users
-            # admin page's Active/Inactive toggle persists via
-            # PATCH /users/<id>/. Non-staff callers can't reach this
-            # serializer for other users anyway — `get_queryset()`
-            # scopes them to `id=self.id`.
         ]
 
     def get_role(self, obj):
@@ -1511,10 +1478,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         style={'input_type': 'password'},
     )
 
-    # ✅ NEW: phone is REQUIRED on create. Blank strings are rejected so
-    # the WhatsApp-based ticket-delivery path always has a target.
-    # (On edit, `UserViewSet.update` uses a different serializer, so
-    # legacy profiles with blank phones can still be saved.)
     phone = serializers.CharField(required=True, allow_blank=False)
 
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
@@ -1538,10 +1501,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'email': {'required': True},
         }
 
-    # ✅ NEW: E.164-ish. Optional leading "+", then 7–15 digits.
-    # We strip spaces, dashes, parens, dots before matching, but keep
-    # the leading "+" if supplied so we don't silently change national
-    # vs international dialling.
     _PHONE_ALLOWED = re.compile(r'^\+?[0-9]{7,15}$')
 
     def validate_username(self, value):
@@ -1554,7 +1513,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Email already exists')
         return value
 
-    # ✅ NEW: normalize and validate the mobile number.
     def validate_phone(self, value):
         raw = (value or '').strip()
         digits = re.sub(r'[\s\-\(\)\.]', '', raw)
@@ -1565,7 +1523,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             )
         return digits
 
-    # ✅ NEW: WhatsApp is optional, but if provided it must be valid.
     def validate_whatsapp_number(self, value):
         if value is None or value == '':
             return ''
@@ -1591,7 +1548,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         except DjangoValidationError as exc:
             raise serializers.ValidationError({'password': list(exc.messages)})
 
-        # ✅ NEW: WhatsApp defaults to the mobile number when not supplied.
         if not data.get('whatsapp_number'):
             data['whatsapp_number'] = data.get('phone', '')
 
@@ -1761,9 +1717,6 @@ class EventTemplateSerializer(serializers.ModelSerializer):
     )
     image_url = serializers.SerializerMethodField()
 
-    # ✅ FIX [P33]: hard cap on config size. 64 KB is generous for any
-    # realistic layout JSON; anything larger is almost certainly an
-    # attack or a bug.
     MAX_CONFIG_BYTES = 64 * 1024
 
     class Meta:
@@ -1776,7 +1729,6 @@ class EventTemplateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
-    # ✅ FIX [P33]: validate shape and size.
     def validate_config(self, value):
         if value is None:
             return {}

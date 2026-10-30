@@ -352,6 +352,7 @@ export const ROLES = {
     SUPER_ADMIN: 'super_admin',
     ADMIN: 'admin',
     ORGANIZER: 'organizer',
+    STAFF: 'staff', 
     USER: 'user',
 };
 
@@ -359,6 +360,7 @@ export const ROLE_LABELS = {
     [ROLES.SUPER_ADMIN]: 'Super Admin',
     [ROLES.ADMIN]: 'Admin',
     [ROLES.ORGANIZER]: 'Organizer',
+    [ROLES.STAFF]: 'Staff',
     [ROLES.USER]: 'User',
 };
 
@@ -366,6 +368,7 @@ export const ROLE_HIERARCHY = {
     [ROLES.SUPER_ADMIN]: 4,
     [ROLES.ADMIN]: 3,
     [ROLES.ORGANIZER]: 2,
+    [ROLES.STAFF]: 2, 
     [ROLES.USER]: 1,
 };
 
@@ -403,6 +406,17 @@ export const ROLE_PERMISSIONS = {
         canManageDiscounts: true,
         canAccessScanner: false,
     },
+        [ROLES.STAFF]: {
+        canManageUsers: false,
+        canManageAllEvents: false,
+        canManageAllBookings: false,
+        canManageOrganizers: false,
+        canManageVenues: false,
+        canViewAnalytics: false,
+        canManageSystem: false,
+        canManageDiscounts: false,
+        canAccessScanner: true,
+    },
     [ROLES.USER]: {
         canManageUsers: false,
         canManageAllEvents: false,
@@ -432,8 +446,14 @@ export const RoleUtils = {
     },
     getAvailableRoles: function(currentRole) {
         var currentLevel = ROLE_HIERARCHY[currentRole] || 0;
+        // ✅ Bug 23: only roles strictly below your level, and never STAFF
+        // unless the caller is explicitly allowed to grant it (admins).
+        var canGrantStaff =
+            currentRole === ROLES.ADMIN || currentRole === ROLES.SUPER_ADMIN;
         return Object.keys(ROLE_HIERARCHY).filter(function(role) {
-            return ROLE_HIERARCHY[role] <= currentLevel;
+            if (role === ROLES.STAFF && !canGrantStaff) return false;
+            if (role === currentRole) return false;
+            return ROLE_HIERARCHY[role] < currentLevel;
         });
     },
 };

@@ -30,58 +30,80 @@ from ..managers import (
     canonical_revenue,
 )
 
+from ..models_tenancy import Organization, OrganizationMembership
+from ..services.tenancy import (
+    can_manage_org,
+    can_manage_event_data,
+    is_platform_admin,
+    user_org_ids,
+    visible_events,
+)
+from rest_framework.exceptions import PermissionDenied
 
-# ---------------------------------------------------------------------------
-# ✅ FIX: shared flow-validation helper.
-# ---------------------------------------------------------------------------
+
 VALID_EVENT_FLOWS = {c[0] for c in Event.EventFlow.choices}
 
 
+# ---------------------------------------------------------------------------
+# Canonical "active ticket" definition
+# ---------------------------------------------------------------------------
+# Single source of truth for what counts as an active (sold) ticket.
+# Used by list(), retrieve(), public() and public_detail() so their numbers
+# cannot drift. A ticket counts as "active" iff:
+#   * its own status is not in EXCLUDED_TICKET_STATUSES, AND
+#   * its booking status is in SOLD_BOOKING_STATUSES.
+# This intentionally excludes tickets on pending/processing bookings, matching
+# the canonical revenue definition (canonical_revenue) and the semantics
+# that a pending booking is not yet a sale.
+def _active_ticket_q():
+    return (
+        ~Q(status__in=EXCLUDED_TICKET_STATUSES)
+        & Q(booking__status__in=SOLD_BOOKING_STATUSES)
+    )
+# For use inside Count('tickets', filter=...) / Sum('tickets__...') on an
+# Event queryset. Because Django resolves the filter from the Event side,
+# every Ticket field must be reached through the `tickets__` / `tickets__booking__`
+# prefix.
+def _active_ticket_q_via_event():
+    return (
+        ~Q(tickets__status__in=EXCLUDED_TICKET_STATUSES)
+        & Q(tickets__booking__status__in=SOLD_BOOKING_STATUSES)
+    )
+
+def _active_ticket_count(event_or_queryset):
+    if hasattr(event_or_queryset, 'tickets'):
+        return event_or_queryset.tickets.filter(_active_ticket_q()).count()
+    return Ticket.objects.filter(
+        _active_ticket_q(), event__in=event_or_queryset,
+    ).count()
+
 def _normalise_event_flow(raw):
-    """
-    Return a valid `Event.EventFlow` value or None if invalid.
-    `None` means "the client did not send one" (caller should use the
-    model default). Any other non-None return means "the client sent
-    this value and it's valid".
-    """
     if raw is None:
         return None
     value = str(raw).strip()
     if not value:
         return None
     if value not in VALID_EVENT_FLOWS:
-        return False  # sentinel: invalid
+        return False
     return value
 
 
-def _is_organizer(user):
-    return (
-        (hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False))
-        or hasattr(user, 'organizer')
-    )
-
-
 def _is_manager(user):
-    """Admins, superadmins, or organizers."""
     if not user or not user.is_authenticated:
         return False
-    return user.is_staff or user.is_superuser or _is_organizer(user)
-
-
-# ✅ NEW: eligibility helper for organizer assignment.
-def _user_can_own_events(user):
-    if user is None:
-        return False
-    if user.is_staff or user.is_superuser:
+    if is_platform_admin(user):
         return True
-    return bool(
-        hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False)
-    )
+    return bool(user_org_ids(user))
 
 
-# ---------------------------------------------------------------------------
-# Effective-status serializer post-processing
-# ---------------------------------------------------------------------------
+def _safe_int(value, default):
+    try:
+        n = int(value)
+        return n if n > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _apply_effective_status(serialized, event_objs, now=None):
     now = now or timezone.now()
 
@@ -92,34 +114,26 @@ def _apply_effective_status(serialized, event_objs, now=None):
 
     if isinstance(serialized, list):
         for i, event_obj in enumerate(event_objs):
-            _patch_one(serialized[i], event_obj)
+            if i < len(serialized):
+                _patch_one(serialized[i], event_obj)
         return serialized
 
     return _patch_one(serialized, event_objs)
 
 
-# ---------------------------------------------------------------------------
-# Shared prefetch list — every public read path uses this so
-# `get_template_images()` doesn't trigger an N+1 per event.
-# ---------------------------------------------------------------------------
 _PUBLIC_PREFETCH = ('tiers', 'sessions', 'templates__template_type')
 
 
 class EventViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for Event management.
-    """
     queryset = Event.objects.all()
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'public_read'
 
-    # ---------------- permissions ----------------
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'public', 'public_detail'):
             return [AllowAny()]
         return [IsAuthenticated()]
 
-    # ---------------- serializer selection ----------------
     def get_serializer_class(self):
         user = self.request.user
         manager = _is_manager(user)
@@ -134,80 +148,34 @@ class EventViewSet(viewsets.ModelViewSet):
             return EventDetailSerializer if manager else PublicEventDetailSerializer
         return EventDetailSerializer
 
-    # ---------------- queryset scoping ----------------
     def get_queryset(self):
-        user = self.request.user
-        now = timezone.now()
+        return visible_events(self.request.user)
 
-        if not user or not user.is_authenticated:
-            return Event.objects.filter(
-                status__in=['active', 'published'],
-                is_public=True,
-                end_date__gte=now,
-            )
-
-        if user.is_staff or user.is_superuser:
-            return Event.objects.all()
-
-        if _is_organizer(user):
-            their_upcoming = Event.objects.filter(
-                organizer=user,
-                end_date__gte=now,
-            )
-            upcoming_public = Event.objects.filter(
-                status__in=['active', 'published'],
-                is_public=True,
-                end_date__gte=now,
-            )
-            return (their_upcoming | upcoming_public).distinct()
-
-        return Event.objects.filter(
-            status__in=['active', 'published'],
-            is_public=True,
-            end_date__gte=now,
-        )
-
-    # ---------------- helpers ----------------
     @staticmethod
     def _parse_dt(value):
-        """
-        Parse a datetime string from the frontend into an AWARE datetime.
-        Accepts:
-          • None                  → None
-          • already a datetime    → returned (naive converted to aware)
-          • ISO string            → parsed to aware
-          • anything else         → returns the original value unchanged
-        """
         if value is None:
             return None
-
         if isinstance(value, datetime):
             if timezone.is_naive(value):
                 return timezone.make_aware(value, timezone.get_current_timezone())
             return value
-
         raw = str(value).strip()
         if not raw:
             return None
-
         if raw.endswith('Z'):
             raw = raw[:-1] + '+00:00'
-
         try:
             parsed = datetime.fromisoformat(raw)
         except (ValueError, TypeError):
             return value
-
         if timezone.is_naive(parsed):
             parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
-
         return parsed
 
     @staticmethod
     def _resolve_cancellation_policy(user, policy_id):
         if not policy_id:
             return None, None
-
         try:
             policy = CancellationPolicy.objects.get(id=policy_id)
         except (CancellationPolicy.DoesNotExist, ValueError):
@@ -215,35 +183,20 @@ class EventViewSet(viewsets.ModelViewSet):
                 {'cancellation_policy_id': 'Policy not found.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        if not (user.is_staff or user.is_superuser):
-            if policy.organizer_id != user.id:
-                return None, Response(
-                    {'cancellation_policy_id':
-                     'You can only attach your own cancellation policies.'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
+        if not can_manage_org(user, policy.organization):
+            return None, Response(
+                {'cancellation_policy_id':
+                 'You can only attach your own cancellation policies.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return policy, None
 
-    # ✅ NEW: resolve the target organizer for a create/update request.
-    # Returns (target_organizer, error_response_or_None).
     @staticmethod
     def _resolve_target_organizer(request_user, raw_organizer_id, *, fallback):
-        """
-        Determine which organizer should own the event.
-
-        Rules:
-          • No `organizer_id` supplied → fallback (self for create, current
-            owner for update).
-          • Non-admin supplied a value  → must be self, else 403.
-          • Admin supplied a value      → target must exist and be eligible.
-        """
         if raw_organizer_id in (None, '', 'null'):
             return fallback, None
 
-        # Non-admins may only assign themselves.
-        if not (request_user.is_staff or request_user.is_superuser):
+        if not is_platform_admin(request_user):
             if str(raw_organizer_id) != str(request_user.id):
                 return None, Response(
                     {'organizer_id':
@@ -252,7 +205,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
             return request_user, None
 
-        # Admin path — validate the target.
         try:
             candidate = User.objects.get(id=raw_organizer_id)
         except (User.DoesNotExist, ValueError, TypeError):
@@ -260,49 +212,60 @@ class EventViewSet(viewsets.ModelViewSet):
                 {'organizer_id': 'Organizer not found.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        if not _user_can_own_events(candidate):
-            return None, Response(
-                {'organizer_id': 'The selected user is not an organizer.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         return candidate, None
 
-    # ---------------- CREATE ----------------
+    def _resolve_organization(self, user, raw_org_id):
+        if raw_org_id not in (None, '', 'null'):
+            try:
+                organization = Organization.objects.get(id=raw_org_id)
+            except (Organization.DoesNotExist, ValueError, TypeError):
+                return None, Response(
+                    {'organization_id': 'Organization not found.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not can_manage_org(user, organization):
+                return None, Response(
+                    {'organization_id':
+                     'You do not have permission to create events in this organization.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return organization, None
+
+        orgs = user_org_ids(user)
+        if not orgs:
+            return None, Response(
+                {'organization_id':
+                 'You are not an organizer of any organization. '
+                 'Create an organization first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(orgs) == 1:
+            return Organization.objects.get(id=orgs[0]), None
+        return None, Response(
+            {'organization_id':
+             'You manage multiple organizations; organization_id is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    @staticmethod
+    def _default_organizer_for(user, organization):
+        """Pick the default organizer when organizer_id is omitted.
+
+        Bug 5 fix: a platform superuser is not necessarily a member of the
+        organization. Defaulting them as organizer would break the invariant
+        that ``event.organizer`` is a member of ``event.organization``.
+
+        - Platform superuser      -> ``organization.owner`` (member by
+                                     construction).
+        - Regular org admin       -> ``user`` (preserves existing UX; the
+                                     membership check downstream still
+                                     validates it).
+        """
+        if is_platform_admin(user):
+            return organization.owner
+        return user
+
     def create(self, request, *args, **kwargs):
-        """
-        POST /api/events/
-
-        ✅ FIX [EVT-CREATE-FLOW]:
-        The previous implementation built `Event.objects.create(...)` from
-        an explicit list of fields and forgot `event_flow`. Because the
-        model declares `default=Event.EventFlow.TICKETED`, every event
-        created via the API — including events the organizer explicitly
-        marked as "Free Registration" — was persisted as `ticketed`.
-
-        That in turn meant:
-          • No General Registration tier was auto-created.
-          • Every read endpoint faithfully reported `event_flow: 'ticketed'`.
-          • EventCard rendered "Book Tickets" instead of "Register Free".
-          • CreateBooking rendered the Choose Tickets step, found zero
-            tiers, and blocked Next with "Please select at least one ticket".
-
-        This method now:
-          1. Validates `event_flow` against Event.EventFlow.choices.
-          2. Persists it (falling back to the model default only when the
-             client did not send it at all).
-          3. Wraps event + tier creation in one transaction.atomic() so a
-             mid-flight failure cannot leave a free-registration event
-             without its auto-created General Registration tier.
-          4. Rejects free-registration events that try to carry priced
-             tiers — the two concepts are mutually exclusive.
-
-        ✅ NEW [EVT-ORGANIZER-TAGGING]:
-        Admins may explicitly assign the event to another organizer via
-        `organizer_id`. Organizers always own the events they create;
-        they cannot assign to anyone else.
-        """
         user = request.user
         if not _is_manager(user):
             return Response(
@@ -312,11 +275,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
         data = request.data
 
-        # ---------- Validate event_flow (✅ FIX [EVT-CREATE-FLOW]) ----------
-        # _normalise_event_flow returns:
-        #   None  → client didn't send it → use model default
-        #   False → client sent an INVALID value → 400
-        #   str   → client sent a valid value → persist it
         raw_flow = data.get('event_flow')
         normalised_flow = _normalise_event_flow(raw_flow)
         if normalised_flow is False:
@@ -330,14 +288,12 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Default for the "not sent" case is the model default.
         event_flow_to_save = (
             normalised_flow
             if normalised_flow is not None
             else Event.EventFlow.TICKETED
         )
 
-        # ---------- Reject priced tiers on free-registration events ----------
         if event_flow_to_save == Event.EventFlow.FREE_REGISTRATION:
             incoming_tiers = data.get('tiers') or []
             for i, tier in enumerate(incoming_tiers):
@@ -358,33 +314,69 @@ class EventViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-        # ---------- Resolve target organizer (✅ NEW) ----------
-        target_organizer, org_err = self._resolve_target_organizer(
-            user, data.get('organizer_id'), fallback=user,
+        organization, org_err = self._resolve_organization(
+            user, data.get('organization_id'),
         )
         if org_err is not None:
             return org_err
 
-        # ---------- Venue ----------
+        # ------------------------------------------------------------------
+        # Bug 5 fix: default organizer + membership invariant.
+        #
+        # - When organizer_id is omitted, fall back to a user who is
+        #   guaranteed to be a member of `organization`:
+        #     * platform superuser -> organization.owner
+        #     * everyone else      -> request.user (unchanged UX)
+        # - The membership check below now runs for ALL callers, including
+        #   platform superusers. A superuser who needs a different organizer
+        #   must pass organizer_id of a real member (or add membership
+        #   first). Defaulting the superuser themselves as organizer is no
+        #   longer possible, because it violated the invariant.
+        # ------------------------------------------------------------------
+        default_organizer = self._default_organizer_for(user, organization)
+
+        target_organizer, target_err = self._resolve_target_organizer(
+            user, data.get('organizer_id'), fallback=default_organizer,
+        )
+        if target_err is not None:
+            return target_err
+
+        # Invariant: event.organizer MUST be a member of event.organization.
+        # Enforced unconditionally (superusers included).
+        if not OrganizationMembership.objects.filter(
+            organization=organization, user=target_organizer,
+        ).exists():
+            if is_platform_admin(user):
+                message = (
+                    'The specified organizer is not a member of this '
+                    'organization. Add an OrganizationMembership for them '
+                    'first, or omit organizer_id to default to the '
+                    'organization owner.'
+                )
+            else:
+                message = 'Organizer is not a member of this organization.'
+            return Response(
+                {'organizer_id': message},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         venue = None
         venue_id = data.get('venue_id')
         if venue_id:
             try:
-                venue = Venue.objects.get(id=venue_id)
+                venue = Venue.objects.get(id=venue_id, organization=organization)
             except (Venue.DoesNotExist, ValueError):
                 return Response(
-                    {'venue_id': 'Venue not found.'},
+                    {'venue_id': 'Venue not found in this organization.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # ---------- Cancellation policy ----------
         cancellation_policy, err = self._resolve_cancellation_policy(
             user, data.get('cancellation_policy_id')
         )
         if err is not None:
             return err
 
-        # ---------- Dates ----------
         start_date = self._parse_dt(data.get('start_date'))
         end_date = self._parse_dt(data.get('end_date'))
 
@@ -394,20 +386,19 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---------- Atomic create (event + auto-tier) ----------
-        # ✅ FIX [EVT-CREATE-FLOW]: event + its auto-created General
-        # Registration tier must land together, or not at all.
+        tickets_per_page = _safe_int(data.get('tickets_per_page', 4), 4)
+
         try:
             with transaction.atomic():
                 event = Event.objects.create(
-                    organizer=target_organizer,  # ✅ FIX: may be another organizer
+                    organization=organization,
+                    organizer=target_organizer,
                     title=data.get('title', 'Untitled'),
                     description=data.get('description', ''),
                     short_description=data.get('short_description', ''),
                     event_type=data.get('event_type', 'single'),
                     category=data.get('category', 'other'),
-                    # ✅ THE FIX — persist the client-supplied flow.
-                    event_flow=data.get('event_flow', Event.EventFlow.TICKETED),
+                    event_flow=event_flow_to_save,
                     start_date=start_date,
                     end_date=end_date,
                     timezone=data.get('timezone', 'Asia/Kolkata'),
@@ -417,32 +408,25 @@ class EventViewSet(viewsets.ModelViewSet):
                     is_public=data.get('is_public', True),
                     ticket_format=data.get('ticket_format', 'pdf'),
                     combine_tickets=bool(data.get('combine_tickets', False)),
-                    tickets_per_page=max(1, int(data.get('tickets_per_page', 4) or 4)),
+                    tickets_per_page=max(1, tickets_per_page),
                     cancellation_policy=cancellation_policy,
                     cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
                 )
 
-                # ----- Free registrations: auto-create a General tier -----
                 tiers_created = 0
                 if event.event_flow == Event.EventFlow.FREE_REGISTRATION:
                     TicketTier.objects.create(
                         event=event,
                         name='General Registration',
                         price=0,
-                        quantity_total=int(
-                            data.get('capacity')
-                            or event.max_tickets_per_order
-                            or 1000
+                        quantity_total=_safe_int(
+                            data.get('capacity') or event.max_tickets_per_order,
+                            1000,
                         ),
                         ticket_type='ga',
                     )
                     tiers_created = 1
-                    logger.info(
-                        '✅ Free-registration event %s: auto-created General tier',
-                        event.id,
-                    )
 
-                # ----- Sessions -----
                 sessions_created = 0
                 for session_data in data.get('sessions', []) or []:
                     s_start = self._parse_dt(session_data.get('start_time'))
@@ -453,11 +437,10 @@ class EventViewSet(viewsets.ModelViewSet):
                         event=event,
                         start_time=s_start,
                         end_time=s_end,
-                        capacity=int(session_data.get('capacity', 100) or 100),
+                        capacity=_safe_int(session_data.get('capacity'), 100),
                     )
                     sessions_created += 1
 
-                # ----- Tiers (ticketed / paid_registration only) -----
                 if event.event_flow != Event.EventFlow.FREE_REGISTRATION:
                     for tier_data in data.get('tiers', []) or []:
                         try:
@@ -465,8 +448,8 @@ class EventViewSet(viewsets.ModelViewSet):
                                 event=event,
                                 name=tier_data.get('name', 'General'),
                                 price=tier_data.get('price', 0) or 0,
-                                quantity_total=int(
-                                    tier_data.get('quantity_total', 100) or 100
+                                quantity_total=_safe_int(
+                                    tier_data.get('quantity_total'), 100,
                                 ),
                                 ticket_type=tier_data.get('ticket_type', 'ga'),
                             )
@@ -478,9 +461,9 @@ class EventViewSet(viewsets.ModelViewSet):
                             )
 
                 logger.info(
-                    "✅ Event %s created (organizer=%s, flow=%s, sessions=%d, tiers=%d)",
-                    event.id, target_organizer.id, event.event_flow,
-                    sessions_created, tiers_created,
+                    "Event %s created (org=%s, organizer=%s, flow=%s, sessions=%d, tiers=%d)",
+                    event.id, organization.id, target_organizer.id,
+                    event.event_flow, sessions_created, tiers_created,
                 )
 
         except Exception as exc:
@@ -490,7 +473,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---------- Serialize ----------
         try:
             serialized = EventDetailSerializer(
                 event, context={'request': request},
@@ -510,25 +492,24 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ---------------- LIST ----------------
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         manager = _is_manager(request.user)
 
         queryset = (
             queryset
-            .select_related('venue', 'cancellation_policy', 'organizer')
+            .select_related('venue', 'cancellation_policy', 'organizer', 'organization')
             .prefetch_related('tiers', 'sessions', 'templates__template_type')
         )
 
         if manager:
             queryset = queryset.annotate(
+                # Canonical active ticket definition — see _active_ticket_q().
+                # Kept as an annotation (instead of a per-row .count()) so the
+                # list endpoint stays a single query.
                 active_tickets_count=Count(
                     'tickets',
-                    filter=(
-                        ~Q(tickets__status__in=EXCLUDED_TICKET_STATUSES)
-                        & ~Q(tickets__booking__status__in=EXCLUDED_BOOKING_STATUSES)
-                    ),
+                    filter=_active_ticket_q_via_event(),
                     distinct=True,
                 ),
                 active_bookings_count=Count(
@@ -549,6 +530,8 @@ class EventViewSet(viewsets.ModelViewSet):
 
         if manager:
             for i, event_obj in enumerate(events_list):
+                if i >= len(data):
+                    break
                 data[i]['total_tickets_sold'] = event_obj.active_tickets_count or 0
                 data[i]['total_revenue'] = float(event_obj.active_revenue or 0)
                 data[i]['total_bookings'] = event_obj.active_bookings_count or 0
@@ -557,42 +540,17 @@ class EventViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
-    # ---------------- RETRIEVE ----------------
     def retrieve(self, request, *args, **kwargs):
         queryset = self.get_queryset().prefetch_related(*_PUBLIC_PREFETCH)
         instance = get_object_or_404(queryset, pk=kwargs.get('pk'))
         user = request.user
 
-        if user.is_authenticated and not user.is_staff and not user.is_superuser:
-            is_org = _is_organizer(user)
-
-            if not is_org or instance.organizer_id != user.id:
-                if instance.status not in ('active', 'published') or not instance.is_public:
-                    return Response(
-                        {'error': 'Event not found'},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
-                if instance.end_date and instance.end_date < timezone.now():
-                    return Response(
-                        {'error': 'Event has ended'},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
-
-            if is_org and instance.organizer_id == user.id:
-                if instance.end_date and instance.end_date < timezone.now():
-                    return Response(
-                        {'error': 'Event has ended'},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
-
         serializer = self.get_serializer(instance, context={'request': request})
         data = serializer.data
 
         if _is_manager(user):
-            active_tickets_count = instance.tickets.filter(
-                ~Q(status__in=EXCLUDED_TICKET_STATUSES),
-                booking__status__in=SOLD_BOOKING_STATUSES,
-            ).count()
+            # Canonical active ticket count — same definition as list().
+            active_tickets_count = _active_ticket_count(instance)
             actual_revenue = canonical_revenue(instance.bookings.all())
             active_bookings_count = instance.bookings.exclude(
                 status__in=EXCLUDED_BOOKING_STATUSES
@@ -606,46 +564,17 @@ class EventViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
-    # ---------------- UPDATE ----------------
     def update(self, request, *args, **kwargs):
-        """
-        PUT/PATCH /api/events/<uuid>/
-
-        ✅ FIX [P18]: the old implementation did
-            instance.tiers.all().delete()
-            ... create new tiers
-        on every request that contained a `tiers` key. Because
-        `Ticket.tier` is `on_delete=CASCADE`, that deleted EVERY ticket
-        on EVERY booking of the event. A single save from the edit page
-        could wipe all sold inventory.
-
-        The new implementation reconciles by id:
-          • Tier ids present in the request and in the DB → UPDATE in place
-          • Ids in the request but not in the DB → CREATE
-          • Ids in the DB but not in the request → DELETE only if the
-            tier has no sold tickets and no tickets reference it;
-            otherwise reject with 409.
-
-        The same reconciliation pattern is applied to sessions, since
-        `Ticket.session` is `SET_NULL` (data isn't lost, but the
-        assignment silently blanks).
-
-        ✅ FIX [EVT-UPDATE-FLOW]: `event_flow` is now validated against
-        Event.EventFlow.choices before being written to the model, so a
-        typo from the frontend is a 400 instead of an IntegrityError at
-        save time.
-
-        ✅ NEW [EVT-ORGANIZER-TAGGING]: admins may reassign the event to
-        another organizer via `organizer_id`. The reassignment is
-        blocked if the event has any non-cancelled bookings, so that
-        historical revenue and analytics do not silently migrate
-        between tenants.
-        """
         instance = self.get_object()
         data = request.data
         user = request.user
 
-        # ✅ FIX [EVT-UPDATE-FLOW]: validate event_flow if provided.
+        if not can_manage_event_data(user, instance):
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if 'event_flow' in data:
             normalised_flow = _normalise_event_flow(data.get('event_flow'))
             if normalised_flow is False:
@@ -659,7 +588,6 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # Guard: switching event_flow is destructive on bookings.
         new_flow = data.get('event_flow') if hasattr(data, 'get') else None
         if new_flow and new_flow != instance.event_flow:
             active_bookings = instance.bookings.exclude(
@@ -676,19 +604,13 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if not user.is_staff and not user.is_superuser:
-            if not _is_organizer(user) or instance.organizer_id != user.id:
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if instance.end_date and instance.end_date < timezone.now():
+        if instance.end_date and instance.end_date < timezone.now():
+            if not is_platform_admin(user):
                 return Response(
                     {'error': 'Cannot edit past events'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        # ✅ NEW [EVT-ORGANIZER-TAGGING]: resolve a new organizer if sent.
         if 'organizer_id' in data:
             target_organizer, org_err = self._resolve_target_organizer(
                 user, data.get('organizer_id'), fallback=instance.organizer,
@@ -697,8 +619,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 return org_err
 
             if target_organizer.id != instance.organizer_id:
-                # Refuse reassignment once bookings exist, so historical
-                # revenue/analytics don't silently migrate between tenants.
                 active_bookings = instance.bookings.exclude(
                     status__in=['cancelled', 'refunded'],
                 ).count()
@@ -713,6 +633,17 @@ class EventViewSet(viewsets.ModelViewSet):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+                # Invariant: new organizer must be a member of the org.
+                # Enforced for all callers, superusers included.
+                if not OrganizationMembership.objects.filter(
+                    organization=instance.organization,
+                    user=target_organizer,
+                ).exists():
+                    return Response(
+                        {'organizer_id':
+                         'Organizer is not a member of this organization.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 instance.organizer = target_organizer
                 instance.save(update_fields=['organizer'])
                 logger.info(
@@ -722,7 +653,9 @@ class EventViewSet(viewsets.ModelViewSet):
 
         if data.get('venue_id'):
             try:
-                instance.venue = Venue.objects.get(id=data['venue_id'])
+                instance.venue = Venue.objects.get(
+                    id=data['venue_id'], organization=instance.organization,
+                )
             except (Venue.DoesNotExist, ValueError):
                 pass
 
@@ -758,9 +691,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 setattr(instance, field, data[field])
         instance.save()
 
-        # ============================================================
-        # Sessions — diff-based upsert
-        # ============================================================
         if 'sessions' in data and isinstance(data['sessions'], list):
             incoming = data['sessions'] or []
             existing_by_id = {str(s.id): s for s in instance.sessions.all()}
@@ -770,7 +700,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 sess_id = str(sess_payload.get('id') or '').strip()
                 s_start = self._parse_dt(sess_payload.get('start_time'))
                 s_end = self._parse_dt(sess_payload.get('end_time'))
-                s_capacity = int(sess_payload.get('capacity', 100) or 100)
+                s_capacity = _safe_int(sess_payload.get('capacity'), 100)
 
                 if sess_id and sess_id in existing_by_id:
                     sess = existing_by_id[sess_id]
@@ -792,7 +722,6 @@ class EventViewSet(viewsets.ModelViewSet):
                     )
                     seen_ids.add(str(created.id))
 
-            # Delete sessions that were removed AND have no tickets.
             for sess_id, sess in existing_by_id.items():
                 if sess_id in seen_ids:
                     continue
@@ -819,9 +748,6 @@ class EventViewSet(viewsets.ModelViewSet):
                     )
                 sess.delete()
 
-        # ============================================================
-        # Tiers — diff-based upsert
-        # ============================================================
         if 'tiers' in data and isinstance(data['tiers'], list):
             incoming = data['tiers'] or []
             existing_by_id = {str(t.id): t for t in instance.tiers.all()}
@@ -831,7 +757,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 tier_id = str(tier_payload.get('id') or '').strip()
                 name = tier_payload.get('name', 'General')
                 price = tier_payload.get('price', 0) or 0
-                quantity_total = int(tier_payload.get('quantity_total', 100) or 100)
+                quantity_total = _safe_int(tier_payload.get('quantity_total'), 100)
                 ticket_type = tier_payload.get('ticket_type', 'ga')
 
                 if tier_id and tier_id in existing_by_id:
@@ -854,9 +780,6 @@ class EventViewSet(viewsets.ModelViewSet):
                     )
                     seen_ids.add(str(created.id))
 
-            # Delete tiers that were removed. Refuse if the tier has sold
-            # tickets — deleting would CASCADE-delete every Ticket row
-            # referencing it.
             for tier_id, tier in existing_by_id.items():
                 if tier_id in seen_ids:
                     continue
@@ -892,18 +815,18 @@ class EventViewSet(viewsets.ModelViewSet):
         serialized = _apply_effective_status(serialized, instance)
         return Response(serialized)
 
-    # ---------------- DESTROY ----------------
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         user = request.user
 
-        if not user.is_staff and not user.is_superuser:
-            if not _is_organizer(user) or instance.organizer_id != user.id:
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if instance.end_date and instance.end_date < timezone.now():
+        if not can_manage_event_data(user, instance):
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if instance.end_date and instance.end_date < timezone.now():
+            if not is_platform_admin(user):
                 return Response(
                     {'error': 'Cannot delete past events'},
                     status=status.HTTP_403_FORBIDDEN,
@@ -912,19 +835,19 @@ class EventViewSet(viewsets.ModelViewSet):
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    # ---------------- PUBLISH ----------------
     @action(detail=True, methods=['post'])
     def publish(self, request, pk=None):
         event = self.get_object()
         user = request.user
 
-        if not user.is_staff and not user.is_superuser:
-            if not _is_organizer(user) or event.organizer_id != user.id:
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if event.end_date and event.end_date < timezone.now():
+        if not can_manage_event_data(user, event):
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if event.end_date and event.end_date < timezone.now():
+            if not is_platform_admin(user):
                 return Response(
                     {'error': 'Cannot publish past events'},
                     status=status.HTTP_403_FORBIDDEN,
@@ -934,8 +857,6 @@ class EventViewSet(viewsets.ModelViewSet):
         event.save(update_fields=['status'])
         return Response({'message': 'Event published successfully'})
 
-    # ============ PUBLIC ENDPOINTS ============
-
     @action(
         detail=False,
         methods=['get'],
@@ -944,7 +865,6 @@ class EventViewSet(viewsets.ModelViewSet):
         throttle_scope='public_read',
     )
     def public(self, request):
-        """Public upcoming events — no auth, narrow field set."""
         now = timezone.now()
 
         queryset = (
@@ -954,16 +874,14 @@ class EventViewSet(viewsets.ModelViewSet):
                 is_public=True,
                 end_date__gte=now,
             )
-            .select_related('venue')
+            .select_related('venue', 'organization')
             .prefetch_related('tiers', 'sessions', 'templates__template_type')
             .order_by('-start_date')
             .annotate(
+                # Canonical active ticket definition — see _active_ticket_q().
                 active_tickets_count=Count(
                     'tickets',
-                    filter=(
-                        ~Q(tickets__status__in=EXCLUDED_TICKET_STATUSES)
-                        & ~Q(tickets__booking__status__in=EXCLUDED_BOOKING_STATUSES)
-                    ),
+                    filter=_active_ticket_q_via_event(),
                     distinct=True,
                 )
             )
@@ -971,7 +889,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
         events_list = list(queryset)
 
-        # Pass request so get_template_images can build absolute URLs.
         serializer = PublicEventSerializer(
             events_list,
             many=True,
@@ -979,7 +896,8 @@ class EventViewSet(viewsets.ModelViewSet):
         )
         data = list(serializer.data)
         for i, event_obj in enumerate(events_list):
-            data[i]['total_tickets_sold'] = event_obj.active_tickets_count or 0
+            if i < len(data):
+                data[i]['total_tickets_sold'] = event_obj.active_tickets_count or 0
 
         data = _apply_effective_status(data, events_list, now=now)
 
@@ -993,13 +911,12 @@ class EventViewSet(viewsets.ModelViewSet):
         throttle_scope='public_read',
     )
     def public_detail(self, request, pk=None):
-        """Public single-event detail — no auth, narrow field set."""
         now = timezone.now()
 
         try:
             event = (
                 Event.objects
-                .select_related('venue')
+                .select_related('venue', 'organization')
                 .prefetch_related('tiers', 'sessions', 'templates__template_type')
                 .get(
                     id=pk,
@@ -1014,12 +931,9 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        active_tickets_count = event.tickets.filter(
-            ~Q(status__in=EXCLUDED_TICKET_STATUSES),
-            booking__status__in=SOLD_BOOKING_STATUSES,
-        ).count()
+        # Canonical active ticket count — same definition as list()/public()/retrieve().
+        active_tickets_count = _active_ticket_count(event)
 
-        # Pass request so get_template_images can build absolute URLs.
         serializer = PublicEventDetailSerializer(
             event,
             context={'request': request},

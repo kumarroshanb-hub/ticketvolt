@@ -7,12 +7,15 @@ import { formatDateForInput } from '../../utils/datetime';
 import { resolveTimezoneDefault } from '../../utils/localeDefaults';
 
 // ✅ No hardcoded timezone. Resolution order:
-//    1. explicit `defaultTimezone` argument (platform setting from
-//       useSettings().settings.default_timezone)
+//    1. explicit `defaultTimezone` argument
 //    2. device locale
 //    3. env override
 //    4. product fallback
-const makeDefaultForm = (defaultTimezone) => ({
+//
+// ✅ NEW: `defaultOrganizationId` seeds the tenant FK from the
+// current OrgContext selection so admins who own exactly one org
+// don't have to pick it on every create.
+const makeDefaultForm = (defaultTimezone, defaultOrganizationId) => ({
     title: '',
     description: '',
     short_description: '',
@@ -30,13 +33,19 @@ const makeDefaultForm = (defaultTimezone) => ({
     tickets_per_page: 4,
     cancellation_policy_id: '',
     cancellation_policy_text: '',
-    // ✅ NEW: organizer assignment (admin-only; organizers leave blank)
     organizer_id: '',
+    // ✅ NEW: tenant FK — sent to the backend as `organization_id`.
+    organization_id: defaultOrganizationId || '',
 });
 
-export const useEventForm = (id, { defaultTimezone } = {}) => {
+export const useEventForm = (
+    id,
+    { defaultTimezone, defaultOrganizationId } = {},
+) => {
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState(() => makeDefaultForm(defaultTimezone));
+    const [formData, setFormData] = useState(
+        () => makeDefaultForm(defaultTimezone, defaultOrganizationId),
+    );
     const [sessions, setSessions] = useState([]);
     const [tiers, setTiers] = useState([]);
 
@@ -104,9 +113,6 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
                     venue_id: data.venue?.id || '',
                     start_date: formatDateForInput(data.start_date),
                     end_date: formatDateForInput(data.end_date),
-                    // ✅ If the API returns a timezone, honor it. If not,
-                    // resolve the platform default (settings → device → env
-                    // → fallback) instead of forcing a hardcoded one.
                     timezone:
                         data.timezone ||
                         defaultTimezone ||
@@ -118,13 +124,16 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
                     tickets_per_page: data.tickets_per_page || 4,
                     cancellation_policy_id: data.cancellation_policy?.id || '',
                     cancellation_policy_text: data.cancellation_policy_text || '',
-                    // ✅ NEW: seed the current owner so the admin picker
-                    // shows who currently owns the event.
                     organizer_id: data.organizer || '',
+                    // ✅ NEW: preserve the event's current org on edit.
+                    // Falls back to the caller's default org if the
+                    // backend response omits it (older fixtures).
+                    organization_id:
+                        data.organization ||
+                        defaultOrganizationId ||
+                        '',
                 });
 
-                // ✅ FIX: Explicitly preserve the session ID to prevent the backend
-                // from assuming it was deleted and attempting a deletion.
                 setSessions(
                     (data.sessions || []).map((s) => ({
                         id: s.id,
@@ -143,7 +152,7 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
                 setLoading(false);
             }
         })();
-    }, [id, defaultTimezone]);
+    }, [id, defaultTimezone, defaultOrganizationId]);
 
     return {
         loading,

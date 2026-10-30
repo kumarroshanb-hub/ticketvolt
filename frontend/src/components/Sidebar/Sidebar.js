@@ -2,7 +2,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import styled from 'styled-components';
-import { useTranslation } from 'react-i18next';                       // ✅ NEW
+import { useTranslation } from 'react-i18next';
 import {
     Dashboard as DashboardIcon,
     Event as EventIcon,
@@ -18,9 +18,11 @@ import {
     Close as CloseIcon,
     Logout as LogoutIcon,
     Policy as PolicyIcon,
+    Business as BusinessIcon,                       // ✅ Organizations icon
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
+import { useOrg } from '../../context/OrgContext';            // ✅ NEW: tenant state
 import { ROLES } from '../../constants';
 import { theme } from '../../theme/tokens';
 import Logo from '../Logo';
@@ -89,12 +91,14 @@ const RoleBadge = styled.div`
         if (props.role === 'super_admin') return `${C.success}1A`;
         if (props.role === 'admin')       return `${C.info}1A`;
         if (props.role === 'organizer')   return `${C.warning}1A`;
+        if (props.role === 'staff')       return `${C.secondary}1A`;   // ✅ NEW
         return C.bgInput;
     }};
     color: ${props => {
         if (props.role === 'super_admin') return C.successDark;
         if (props.role === 'admin')       return C.infoDark;
         if (props.role === 'organizer')   return C.warningDark;
+        if (props.role === 'staff')       return C.secondaryDark;      // ✅ NEW
         return C.textSecondary;
     }};
     opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
@@ -108,6 +112,7 @@ const RoleBadge = styled.div`
             if (props.role === 'super_admin') return C.successDark;
             if (props.role === 'admin')       return C.infoDark;
             if (props.role === 'organizer')   return C.warningDark;
+            if (props.role === 'staff')       return C.secondaryDark;  // ✅ NEW
             return C.textSecondary;
         }};
     }
@@ -323,6 +328,19 @@ const MENU_ITEMS = {
         roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
         section: 'main',
     },
+
+    // Organizations (tenant management).
+    // Bug 8 (Option A): roles list stays permissive (USER included) so the
+    // route/self-service onboarding is never role-blocked; visibility is
+    // decided at render time by shouldShowOrganizations() below.
+    organizations: {
+        path: '/app/organizations',
+        icon: <BusinessIcon />,
+        labelKey: 'nav.organizations',
+        roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
+        section: 'main',
+    },
+
     bookings: {
         path: '/app/bookings',
         icon: <TicketIcon />,
@@ -370,7 +388,7 @@ const MENU_ITEMS = {
         path: '/app/checkin',
         icon: <ScannerIcon />,
         labelKey: 'nav.checkin',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
+        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.SUPER_ADMIN], // ✅ Bug 23: allow STAFF to see scanner
         section: 'admin',
     },
     users: {
@@ -411,16 +429,41 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const { logout, isAuthenticated } = useAuth();
     const { t } = useTranslation();
 
+    // Tenant state drives Organizations visibility (Bug 8 / Option A).
+    // Falls back gracefully if OrgContext doesn't expose needsOrganization.
+    const orgCtx = useOrg() || {};
+    const organizations = orgCtx.organizations || [];
+    const needsOrganization = orgCtx.needsOrganization;
+
     const isDrawer = Boolean(onNavigate);
     const effectiveCollapsed = isDrawer ? false : collapsed;
     const isGuest = !isAuthenticated;
 
+    const isPlatformAdmin =
+        isSuperAdmin ||
+        role === ROLES.SUPER_ADMIN ||
+        role === ROLES.ADMIN;
+
+    // Only show the Organizations nav entry when it is actionable:
+    //   • platform admins always see it (they manage every tenant),
+    //   • users who already belong to at least one org,
+    //   • users who still need to onboard (no orgs yet).
+    // Otherwise a regular member without org-creating intent would get a
+    // dead / confusing link.
+    const shouldShowOrganizations =
+        isPlatformAdmin ||
+        organizations.length > 0 ||
+        needsOrganization === true ||
+        (needsOrganization === undefined && organizations.length === 0);
+
     const getVisibleItems = () => {
         return Object.entries(MENU_ITEMS)
-            .filter(([, item]) => {
+            .filter(([key, item]) => {
                 if (isGuest) return false;
                 if (isSuperAdmin) return true;
-                return item.roles.includes(role);
+                if (!item.roles.includes(role)) return false;
+                if (key === 'organizations') return shouldShowOrganizations;
+                return true;
             })
             .map(([key, item]) => ({ key, ...item }));
     };
@@ -444,6 +487,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
         if (role === ROLES.SUPER_ADMIN) return t('roles.superAdmin');
         if (role === ROLES.ADMIN)       return t('roles.admin');
         if (role === ROLES.ORGANIZER)   return t('roles.organizer');
+        if (role === ROLES.STAFF)       return t('roles.staff');     // ✅ NEW
         return t('roles.user');
     };
 

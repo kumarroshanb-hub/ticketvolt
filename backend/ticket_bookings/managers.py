@@ -12,6 +12,12 @@ detail, and event count-update logic each had their own inline lists of
 Now there is exactly ONE definition per concept. Change it here, and every
 consumer changes with it. If the dashboard and analytics page ever disagree
 again, the bug is here — not in the views.
+
+Tenancy (Phase 3):
+------------------
+`visible_to()` delegates to `services.tenancy.visible_bookings()` so the
+scoping rule is defined in exactly one place. Do NOT re-implement
+`filter(event__organizer=user)` anywhere — use the helper.
 """
 from datetime import timedelta
 
@@ -79,34 +85,25 @@ class BookingQuerySet(models.QuerySet):
     # ---------- Scoping ----------
 
     def for_user(self, user):
-        """Bookings owned by this user."""
+        """Bookings owned by this user (i.e. they placed them)."""
         return self.filter(user=user)
-
-    def for_organizer(self, user):
-        """Bookings for events this organizer owns."""
-        return self.filter(event__organizer=user)
 
     def visible_to(self, user):
         """
-        The single scoping rule used by the dashboard, analytics, and
-        bookings list:
-          • Admin    → everything
-          • Organizer→ their events
-          • User     → their own bookings
-          • Anonymous→ nothing
+        The single scoping rule used by the dashboard, analytics,
+        bookings list, and every other consumer.
+
+        Delegates to `services.tenancy.visible_bookings` so tenant
+        scoping lives in exactly one module.
+
+        Roles:
+          • Platform admin (is_staff / is_superuser) → everything.
+          • Org Owner/Admin/Staff                   → that org's bookings.
+          • Regular user / member / customer        → their own bookings.
+          • Anonymous                               → nothing.
         """
-        if not user or not user.is_authenticated:
-            return self.none()
-        if user.is_staff or user.is_superuser:
-            return self
-        is_org = (
-            (hasattr(user, 'profile')
-             and getattr(user.profile, 'is_organizer', False))
-            or hasattr(user, 'organizer')
-        )
-        if is_org:
-            return self.for_organizer(user)
-        return self.for_user(user)
+        from .services.tenancy import visible_bookings
+        return visible_bookings(user)
 
     # ---------- Canonical filtered subsets ----------
 

@@ -12,6 +12,16 @@
 # `Event.get_effective_status()` — not the raw `event.status` field.
 # This guarantees the Dashboard, Events list, and Event Detail always
 # agree, regardless of cron timing.
+#
+# ============================================================================
+# CONVENTION: Tenancy (Phase 1–2)
+# ----------------------------------------------------------------------------
+# Tenant-owned models (Venue, Event, Discount, CancellationPolicy) each
+# carry a NOT NULL `organization` FK. It is the single column that every
+# scoping helper in `services/tenancy.py` filters on. The legacy
+# `organizer` FK is still present on `Event`, `Discount`, and
+# `CancellationPolicy` during the migration, but is NOT used for access
+# control any more — `visible_events()` is.
 # ============================================================================
 
 import secrets
@@ -35,6 +45,12 @@ from .managers import (
 # ============================================
 from .constants import TicketStatus, BookingStatus, EventStatus
 
+# --- Tenancy (Phase 1) -----------------------------------------------------
+from .models_tenancy import (  # noqa: E402,F401
+    Organization,
+    OrganizationMembership,
+    OrganizationContact,
+)
 
 # 36^12 ≈ 4.7e18. Collision probability is negligible, but we retry on the
 # (astronomically rare) IntegrityError anyway — belt and braces.
@@ -58,6 +74,9 @@ class UserProfile(models.Model):
     state = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100, default='India')
     postal_code = models.CharField(max_length=20, blank=True)
+    # DEPRECATED (Phase 6): replaced by OrganizationMembership.role.
+    # Kept during the migration so old code paths still compile, but
+    # every access-check now goes through services.tenancy.
     is_organizer = models.BooleanField(default=False)
     # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
     last_active = models.DateTimeField(null=True, blank=True)
@@ -71,6 +90,14 @@ class UserProfile(models.Model):
 # ============ VENUE ============
 class Venue(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    # ✅ Phase 2: every tenant-owned row carries its organization.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='venues',
+    )
+
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     venue_type = models.CharField(max_length=20, default='indoor')
@@ -121,11 +148,21 @@ class CancellationPolicy(models.Model):
     the engine can evolve without breaking old snapshots.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    # ✅ Phase 2: tenant-owned.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='cancellation_policies',
+    )
+
+    # Legacy FK. Kept during the migration so old imports still work;
+    # access control is by `organization` from here on.
     organizer = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name='cancellation_policies',
-        help_text="Policy owner. Only the owner (or admin) can edit.",
+        help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
     )
 
     name = models.CharField(max_length=120)
@@ -143,7 +180,7 @@ class CancellationPolicy(models.Model):
         default=False,
         help_text=(
             'If true, this policy is preselected when creating a new event '
-            'for this organizer. Only one policy per organizer may be default.'
+            'for this organization. Only one policy per org may be default.'
         ),
     )
 
@@ -153,10 +190,12 @@ class CancellationPolicy(models.Model):
     class Meta:
         ordering = ['-is_default', 'name']
         constraints = [
+            # Scoped per-org default. Replaces the old per-organizer
+            # constraint from migration 0016.
             models.UniqueConstraint(
-                fields=['organizer'],
+                fields=['organization'],
                 condition=models.Q(is_default=True),
-                name='unique_default_policy_per_organizer',
+                name='unique_default_policy_per_organization',
             ),
         ]
 
@@ -171,13 +210,26 @@ class CancellationPolicy(models.Model):
             raise ValidationError({'rules': str(exc)})
 
     def __str__(self):
-        return f'{self.name} ({self.organizer.username})'
+        return f'{self.name} ({self.organization.slug})'
 
 
 # ============ EVENT ============
 class Event(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
-    organizer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='events')
+
+    # ✅ Phase 2: tenant-owned.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='events',
+    )
+
+    # Legacy FK. Kept during the migration; not used for access control.
+    organizer = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='events',
+        help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
+    )
+
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     short_description = models.CharField(max_length=500, blank=True)
@@ -343,6 +395,16 @@ class Event(models.Model):
 
         return self.status
 
+    def user_can_manage(self, user):
+        """Owners/Admins of this event's org. Platform admins always pass."""
+        from .services.tenancy import can_operate_org
+        return can_operate_org(user, self.organization)
+
+    def user_can_edit(self, user):
+        """Only Owners/Admins. Staff (scanner-only) do NOT pass."""
+        from .services.tenancy import can_manage_org
+        return can_manage_org(user, self.organization)
+
     def __str__(self):
         return self.title
 
@@ -402,7 +464,7 @@ class TicketTier(models.Model):
         return max(0, self.quantity_total - self.quantity_sold)
 
     def __str__(self):
-        return f"{self.name} - ₹{self.price}"
+        return f"{self.name} - {self.price}"
 
 
 # ============ BOOKING ============
@@ -577,7 +639,20 @@ class CheckInLog(models.Model):
 # ============ DISCOUNT ============
 class Discount(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
-    organizer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='discounts')
+
+    # ✅ Phase 2: tenant-owned.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='discounts',
+    )
+
+    # Legacy FK. Kept during the migration; access control is by organization.
+    organizer = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='discounts',
+        help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
+    )
+
     code = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=255, blank=True)
     type = models.CharField(max_length=20, default='percentage')
@@ -597,7 +672,7 @@ class Discount(models.Model):
         'ticket_bookings.Event',
         blank=True,
         related_name='applicable_discounts',
-        help_text='If empty, discount applies to all events by this organizer.',
+        help_text='If empty, discount applies to all events in this organization.',
     )
 
     max_uses_per_user = models.IntegerField(
@@ -654,7 +729,7 @@ class DiscountUsage(models.Model):
     def __str__(self):
         return (
             f'{self.discount.code} → {self.booking.booking_reference} '
-            f'(₹{self.amount_applied})'
+            f'({self.amount_applied})'
         )
 
 
@@ -698,25 +773,6 @@ class EventTemplate(models.Model):
     Multiple templates can exist per event, one per EventTemplateType.
     The one with `is_default=True` (for the `ticket` type) is the one
     used when generating tickets.
-
-    The `config` JSON drives layout. Its schema:
-
-        {
-          "fields": {
-            "<field_name>": {
-              "x": 0.5,          # fraction of canvas width (or px if >1)
-              "y": 0.2,          # fraction of canvas height (or px if >1)
-              "font_size": 32,   # px
-              "color": "#D69E2E",
-              "align": "center", # center | left | right
-              "enabled": true    # optional; false hides the field
-            },
-            ...
-          },
-          "template_type": "ticket",
-          "orientation": "landscape",
-          "shape": "wide_stub"
-        }
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='templates')
@@ -752,6 +808,7 @@ class EventTemplate(models.Model):
     def __str__(self):
         return f"{self.event.title} - {self.template_type.name}: {self.name}"
 
+
 # ============================================================
 # SYSTEM SETTINGS — deployment-wide configuration (singleton)
 # ============================================================
@@ -759,11 +816,9 @@ class SystemSettings(models.Model):
     """
     Singleton row holding deployment-wide configuration.
 
-    Only one row may exist. `pk` is forced to 1 on save.
-
-    Readable by any authenticated user (the booking wizard, emails,
-    and ticket PDFs all need `currency_symbol` / `currency_locale`).
-    Writable only by superusers.
+    This is the PLATFORM-WIDE fallback. Per-organization display
+    configuration now lives on `Organization`. `format_money()`
+    prefers the org when available, otherwise falls back here.
     """
     id = models.PositiveSmallIntegerField(primary_key=True, default=1)
 

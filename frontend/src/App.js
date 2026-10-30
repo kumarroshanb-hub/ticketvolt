@@ -6,11 +6,12 @@ import { ThemeProvider as MuiThemeProvider, CssBaseline } from '@mui/material';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
-import { theme } from './theme/tokens';      // single source of truth
+import { theme } from './theme/tokens';
 import muiTheme from './theme/muiTheme';
 import { GlobalStyle } from './styles/global';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { OrgProvider } from './context/OrgContext';           // ✅ NEW
 import { SettingsProvider } from './context/SettingsContext';
 import { RoleProvider, useRole } from './context/RoleContext';
 
@@ -41,10 +42,11 @@ import Users from './pages/Users/Users';
 import Profile from './pages/Profile';
 import CancellationPolicies from './pages/CancellationPolicies';
 import ActiveSessions from './pages/ActiveSessions';
+import Organizations from './pages/Organizations';            // ✅ NEW
 
 import { ROLES } from './constants';
 
-// ---- Loading spinner uses the theme (no hardcoded hex) ----
+// ---- Loading spinner ----
 const LoadingSpinner = () => {
     const C = theme.colors;
     return (
@@ -85,10 +87,6 @@ const PublicOnlyRoute = ({ children }) => {
     if (loading) return <LoadingSpinner />;
 
     if (isAuthenticated) {
-        // ✅ FIX [PUBLIC-ONLY-TOKEN-GUARD]: if isAuthenticated says
-        // "true" but the token is gone (another tab wiped it, or a
-        // stale cache survived a crash), don't bounce — let /login
-        // render. The user can log in normally.
         const token =
             localStorage.getItem('token') ||
             sessionStorage.getItem('token');
@@ -178,6 +176,18 @@ const AppRoutes = () => {
             <Route path="/app" element={<Layout />}>
                 <Route index element={<Navigate to="/app/dashboard" replace />} />
 
+                {/* ✅ NEW: Organizations (tenant bootstrap) — visible to
+                    every logged-in user, since any user may create one
+                    and become its owner. */}
+                <Route
+                    path="organizations"
+                    element={
+                        <ProtectedRoute>
+                            <Organizations />
+                        </ProtectedRoute>
+                    }
+                />
+
                 <Route
                     path="bookings/create"
                     element={
@@ -236,7 +246,7 @@ const AppRoutes = () => {
                     path="checkin"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.SUPER_ADMIN]}
                         >
                             <Checkin />
                         </RoleBasedRoute>
@@ -324,10 +334,6 @@ const AppRoutes = () => {
                     }
                 />
 
-                {/* ✅ FIX: Active Sessions lives INSIDE the /app shell
-                    (renders with Sidebar + Navbar), and its full
-                    resolved path is /app/active-sessions — matching
-                    the Sidebar NavLink. SuperAdmin-only. */}
                 <Route
                     path="active-sessions"
                     element={
@@ -385,28 +391,33 @@ const App = () => {
                 <GlobalStyle />
                 <Router>
                     <AuthProvider>
-                        <SettingsProvider>
-                            <RoleProvider>
-                                <ToastContainer
-                                    position={toastPosition}
-                                    autoClose={5000}
-                                    hideProgressBar={false}
-                                    newestOnTop={false}
-                                    closeOnClick
-                                    rtl={false}
-                                    pauseOnFocusLoss
-                                    draggable
-                                    pauseOnHover
-                                    theme="dark"
-                                    style={{
-                                        fontSize: toastPosition === 'top-center' ? '0.875rem' : '1rem',
-                                        width: toastPosition === 'top-center' ? 'calc(100% - 32px)' : 'auto',
-                                        maxWidth: toastPosition === 'top-center' ? '420px' : 'none',
-                                    }}
-                                />
-                                <AppRoutes />
-                            </RoleProvider>
-                        </SettingsProvider>
+                        {/* ✅ NEW: OrgProvider sits inside AuthProvider
+                            (needs the token) and outside SettingsProvider
+                            (settings don't depend on orgs). */}
+                        <OrgProvider>
+                            <SettingsProvider>
+                                <RoleProvider>
+                                    <ToastContainer
+                                        position={toastPosition}
+                                        autoClose={5000}
+                                        hideProgressBar={false}
+                                        newestOnTop={false}
+                                        closeOnClick
+                                        rtl={false}
+                                        pauseOnFocusLoss
+                                        draggable
+                                        pauseOnHover
+                                        theme="dark"
+                                        style={{
+                                            fontSize: toastPosition === 'top-center' ? '0.875rem' : '1rem',
+                                            width: toastPosition === 'top-center' ? 'calc(100% - 32px)' : 'auto',
+                                            maxWidth: toastPosition === 'top-center' ? '420px' : 'none',
+                                        }}
+                                    />
+                                    <AppRoutes />
+                                </RoleProvider>
+                            </SettingsProvider>
+                        </OrgProvider>
                     </AuthProvider>
                 </Router>
             </MuiThemeProvider>

@@ -1,10 +1,10 @@
 # backend/ticket_bookings/api/qr_api.py
-import json
 from io import BytesIO
 
 import qrcode
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,19 +12,52 @@ from rest_framework.views import APIView
 from ticket_bookings.models import Ticket
 from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
 from ticket_bookings.services.qr_service import QRCodeService
+from ticket_bookings.services.tenancy import (
+    can_operate_event_data,
+    is_platform_admin,
+)
+
+
+def _authorise_ticket(request, ticket):
+    """
+    Reject unless the caller may view this ticket's QR.
+
+    Access rules (matches the two-tier booking predicate):
+      • Platform admin             → always.
+      • Booking owner (customer)   → their own tickets.
+      • OPERATOR of the org        → OWNER/ADMIN/STAFF may view QRs for
+        scanning and support; this is the same set that can read the
+        booking via BookingViewSet's READ predicate.
+    """
+    user = request.user
+    if is_platform_admin(user):
+        return
+    if ticket.booking and ticket.booking.user_id == user.id:
+        return
+    if can_operate_event_data(user, ticket.event):
+        return
+    raise PermissionDenied(
+        "You do not have permission to access this ticket."
+    )
 
 
 class QRCodeDownloadView(APIView):
     """
     Download a ticket's QR as a PNG attachment.
 
-    Uses the CANONICAL payload builder so the downloaded PNG is byte-for-byte
-    consistent with what the scanner expects.
+    Uses the canonical payload builder so the downloaded PNG is
+    byte-for-byte consistent with what the scanner expects.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, ticket_id):
-        ticket = get_object_or_404(Ticket, id=ticket_id)
+        ticket = get_object_or_404(
+            Ticket.objects.select_related(
+                'booking', 'event', 'event__organization',
+            ),
+            id=ticket_id,
+        )
+        _authorise_ticket(request, ticket)
 
         payload = serialise_ticket_qr_payload(ticket, include_ids=True)
 
@@ -56,16 +89,17 @@ class QRCodeDownloadView(APIView):
 class QRCodeImageView(APIView):
     """
     Return a URL pointing to a stored PNG of the ticket's QR.
-
-    NOTE: This endpoint writes to object storage (one object per unique ticket,
-    deterministically named). It does NOT cache the URL on the Ticket model —
-    the model has no such field, and adding one would require a migration for
-    a value that is already derivable. Storage `exists()` + `url()` is cheap.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, ticket_id):
-        ticket = get_object_or_404(Ticket, id=ticket_id)
+        ticket = get_object_or_404(
+            Ticket.objects.select_related(
+                'booking', 'event', 'event__organization',
+            ),
+            id=ticket_id,
+        )
+        _authorise_ticket(request, ticket)
 
         qr_result = QRCodeService.generate_qr_image_file(ticket)
         if not qr_result:

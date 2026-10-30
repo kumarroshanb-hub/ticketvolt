@@ -126,6 +126,16 @@ ALLOWED_HOSTS = []
 # APPLICATIONS
 # ============================================
 INSTALLED_APPS = [
+    # ✅ NEW: `core` is listed FIRST among local apps so that
+    # `core.apps.CoreConfig.ready()` runs at startup and swaps the
+    # default Django AdminSite for `SuperuserOnlyAdminSite`.
+    #
+    # Without this line, `admin.site` keeps Django's stock
+    # `AdminSite.has_permission()` (which allows any `is_staff` user),
+    # and a tenant Admin would be able to open the Django admin and
+    # see every tenant's models.
+    'core',
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

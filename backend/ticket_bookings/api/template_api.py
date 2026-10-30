@@ -1,17 +1,4 @@
 # backend/ticket_bookings/api/template_api.py
-#
-# ============================================================================
-# AUTHORIZATION MODEL
-# ============================================================================
-# EventTemplateViewSet is scoped on event ownership:
-#     • Admin / superuser → every template
-#     • Organizer         → only templates for events they organize
-#     • Anyone else       → nothing
-#
-# ============================================================================
-# IMAGE SPECIFICATION (v4 — relaxed)
-# ============================================================================
-
 import json
 import logging
 
@@ -21,8 +8,16 @@ from rest_framework.response import Response
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from PIL import Image as PILImage, UnidentifiedImageError
+
 from ..models import EventTemplate, EventTemplateType, Event
 from ..constants import TemplateTypes, TEMPLATE_TYPE_MAP
+from ..services.tenancy import (
+    can_manage_event_data,
+    visible_templates,
+    is_platform_admin,
+    user_org_ids,
+)
+
 from .serializers import EventTemplateSerializer, EventTemplateTypeSerializer
 
 logger = logging.getLogger(__name__)
@@ -114,28 +109,30 @@ IMAGE_SPECS = {
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 
-def _user_can_manage_event(user, event) -> bool:
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_staff or user.is_superuser:
-        return True
-    if event is None:
-        return False
-    organizer_id = getattr(event, 'organizer_id', None)
-    if organizer_id is not None:
-        return organizer_id == user.id
-    return getattr(event, 'organizer', None) == user
+class IsTenantManager(permissions.BasePermission):
+    """
+    Class-level permission gate for manager-only endpoints.
+
+    Unlike ``IsOrgManager`` (which primarily enforces at the object level),
+    this check runs in ``has_permission`` so it works even when no object
+    is available (e.g. list/create endpoints). It allows:
+
+    * platform admins, OR
+    * authenticated users who manage at least one org.
+    """
+
+    message = 'Manager role required.'
+
+    def has_permission(self, request, view):
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return False
+        if is_platform_admin(user):
+            return True
+        return bool(user_org_ids(user))
 
 
 def _validate_image_spec(image_file, template_type_slug):
-    """
-    Validate an uploaded image against the spec for `template_type_slug`.
-    Returns (ok: bool, error_message: str | None, warnings: list[str]).
-
-    Hard gates (ALWAYS enforced):
-      1. File is decodable by Pillow.
-      2. File size <= MAX_UPLOAD_BYTES (8 MB).
-    """
     spec = IMAGE_SPECS.get(template_type_slug)
     warnings: list[str] = []
 
@@ -285,12 +282,25 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = EventTemplateSerializer
 
-    def get_queryset(self):
-        user = self.request.user
-        base = EventTemplate.objects.all()
+    # Actions that mutate tenant data require a manager-level caller.
+    # Read actions (list/retrieve/by_type) stay open to any authenticated
+    # user, but are still scoped by visible_templates / can_manage_event_data.
+    _MANAGER_ACTIONS = frozenset({
+        'create',
+        'update',
+        'partial_update',
+        'destroy',
+        'upload',
+        'set_default',
+    })
 
-        if not (user.is_staff or user.is_superuser):
-            base = base.filter(event__organizer=user)
+    def get_permissions(self):
+        if getattr(self, 'action', None) in self._MANAGER_ACTIONS:
+            return [permissions.IsAuthenticated(), IsTenantManager()]
+        return [permissions.IsAuthenticated()]
+
+    def get_queryset(self):
+        base = visible_templates(self.request.user)
 
         event_id = self.request.query_params.get('event_id')
         template_type = self.request.query_params.get('type')
@@ -314,10 +324,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
         return default
 
     def _get_or_create_template_type(self, slug):
-        """
-        ✅ FIX [P13]: get_or_create handles the concurrent-upload race
-        on the unique `slug` column.
-        """
         if not TemplateTypes.is_valid(slug):
             return None
 
@@ -349,20 +355,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 )
             return template_type
 
-    # ==================================================================
-    # DESTROY — also remove the object from storage
-    # ==================================================================
     def destroy(self, request, *args, **kwargs):
-        """
-        ✅ FIX [P8]: ModelViewSet's default destroy removes the DB row
-        but leaves the image blob on the storage backend forever. Over
-        time that leaks quota (Tigris free tier = 5 GB).
-
-        We capture the image reference BEFORE delete and delete the
-        object afterwards. Order matters: delete the DB row first so a
-        storage failure doesn't leave a dangling DB row pointing at a
-        deleted blob.
-        """
         template = self.get_object()
         image_name = template.image.name if template.image else None
         image_field = template.image if template.image else None
@@ -383,9 +376,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
 
         return response
 
-    # ==================================================================
-    # UPLOAD
-    # ==================================================================
     @action(detail=False, methods=['post'])
     def upload(self, request):
         try:
@@ -407,7 +397,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 getattr(request.user, 'username', '?'),
             )
 
-            # ---------- Required-field checks ----------
             if not image_file:
                 return Response(
                     {'error': 'Image file is required'},
@@ -426,7 +415,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Template type validation ----------
             if not TemplateTypes.is_valid(template_type_slug):
                 valid_types = ', '.join(
                     t['slug'] for t in TemplateTypes.get_all()
@@ -455,9 +443,8 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Event lookup + ownership check ----------
             try:
-                event = Event.objects.select_related('organizer').get(
+                event = Event.objects.select_related('organization').get(
                     id=event_id,
                 )
             except Event.DoesNotExist:
@@ -466,13 +453,13 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if not _user_can_manage_event(request.user, event):
+            if not can_manage_event_data(request.user, event):
                 logger.warning(
                     "🚫 Template upload denied: user=%s attempted to add a "
-                    "template to event=%s (organizer=%s)",
+                    "template to event=%s (org=%s)",
                     getattr(request.user, 'username', '?'),
                     event.id,
-                    getattr(event.organizer, 'username', '?'),
+                    getattr(event.organization, 'slug', '?'),
                 )
                 return Response(
                     {
@@ -484,7 +471,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            # ---------- Absolute hard size cap ----------
             if image_file.size > MAX_UPLOAD_BYTES:
                 return Response(
                     {
@@ -496,7 +482,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Config validation (✅ FIX [P33]) ----------
             if isinstance(config, str):
                 try:
                     config = json.loads(config)
@@ -535,7 +520,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # ---------- Per-type validation ----------
             ok, spec_error, spec_warnings = _validate_image_spec(
                 image_file, template_type_slug,
             )
@@ -561,7 +545,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
-            # ---------- Persist ----------
             with transaction.atomic():
                 template = EventTemplate.objects.create(
                     event=event,
@@ -603,12 +586,15 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ==================================================================
-    # SET DEFAULT
-    # ==================================================================
     @action(detail=True, methods=['post'])
     def set_default(self, request, pk=None):
         template = self.get_object()
+
+        if not can_manage_event_data(request.user, template.event):
+            return Response(
+                {'error': 'You do not have permission to manage this template.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         with transaction.atomic():
             EventTemplate.objects.filter(
@@ -616,7 +602,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
                 template_type=template.template_type,
                 is_default=True,
             ).update(is_default=False)
-
             template.is_default = True
             template.save(update_fields=['is_default', 'updated_at'])
 
@@ -625,9 +610,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             'message': f'Template "{template.name}" set as default',
         })
 
-    # ==================================================================
-    # BY TYPE
-    # ==================================================================
     @action(detail=False, methods=['get'])
     def by_type(self, request):
         event_id = request.query_params.get('event_id')
@@ -639,14 +621,14 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            event = Event.objects.select_related('organizer').get(id=event_id)
+            event = Event.objects.select_related('organization').get(id=event_id)
         except Event.DoesNotExist:
             return Response(
                 {'error': 'Event not found'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not _user_can_manage_event(request.user, event):
+        if not can_manage_event_data(request.user, event):
             return Response(
                 {'error': 'You do not have permission to view templates for this event.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -663,10 +645,6 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
             context={'request': request},
         )
 
-        # ✅ FIX [P16]: group by slug (stable) not display name (mutable).
-        # The frontend used to key by name, so renaming "Ticket" to
-        # "Admission Ticket" broke every consumer. `name` and `icon` are
-        # attached to each bucket so the UI still has the display data.
         grouped = {}
         for template in serializer.data:
             details = template.get('template_type_details', {}) or {}

@@ -6,9 +6,9 @@ export const buildEventPayload = (formData, sessions, tiers) => {
     const flow = formData.event_flow || 'ticketed';
     const isFree = flow === 'free_registration';
 
-    // ✅ FIX: Check if any tiers have sold tickets.
-    // If they do, we CANNOT send an empty array to the backend, or it will
-    // attempt to delete the tier and hit the 409 Conflict safety check.
+    // Free registrations cannot have priced tiers. But if the event
+    // already has sold tiers (converting from ticketed), we must NOT
+    // send an empty array — that would trigger the 409 guard.
     const hasSoldTiers = (tiers || []).some((t) => (t.quantity_sold || 0) > 0);
     const shouldDropTiers = isFree && !hasSoldTiers;
 
@@ -31,17 +31,14 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         cancellation_policy_id: formData.cancellation_policy_id || null,
         cancellation_policy_text: formData.cancellation_policy_text || '',
         sessions: (sessions || []).map((s) => ({
-            // ✅ Pass the ID if it exists so the backend knows this is an update.
             ...(s.id ? { id: s.id } : {}),
             start_time: inputToIso(s.start_time),
             end_time: inputToIso(s.end_time),
             capacity: parseInt(s.capacity, 10) || 100,
         })),
-        // For free registrations, only drop tiers if none are sold.
         tiers: shouldDropTiers
             ? []
             : (tiers || []).map((t) => ({
-                // ✅ Pass the ID if it exists for tiers as well.
                 ...(t.id ? { id: t.id } : {}),
                 name: t.name || 'General',
                 price: parseFloat(t.price) || 0,
@@ -50,11 +47,17 @@ export const buildEventPayload = (formData, sessions, tiers) => {
             })),
     };
 
-    // ✅ NEW: admins may explicitly tag/reassign the organizer.
-    // Organizers never send this (the picker is hidden for them), and
-    // even if they did, the backend rejects any value other than
-    // their own ID. Only include the key when a real value is set so
-    // we don't accidentally try to clear the organizer on update.
+    // ✅ NEW: multi-tenancy — the event must belong to exactly one
+    // organization. Sent explicitly when the picker was used. If
+    // omitted, the backend infers it for single-org users and rejects
+    // with a clear message when the caller manages >1 org.
+    if (formData.organization_id) {
+        payload.organization_id = formData.organization_id;
+    }
+
+    // Existing: admin-only organizer tagging. Organizers never send
+    // this; if they did, the backend would reject any value other
+    // than their own ID.
     if (formData.organizer_id) {
         payload.organizer_id = formData.organizer_id;
     }

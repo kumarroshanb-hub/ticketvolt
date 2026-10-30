@@ -14,73 +14,25 @@ from rest_framework.throttling import ScopedRateThrottle
 from ticket_bookings.constants import BookingStatus, TicketStatus
 from ticket_bookings.models import CheckInLog, Event, Ticket
 from ticket_bookings.services.qr_service import QRCodeService
+from ticket_bookings.services.tenancy import (
+    can_operate_event_data,
+    is_platform_admin,
+    user_operator_org_ids,
+    visible_bookings,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# NOTE ON CheckInLog.status
-# ------------------------------------------------------------
-# This viewset is the ONLY place that should create CheckInLog
-# rows. Every `CheckInLog.objects.create(...)` below passes
-# `status='success'` explicitly.
-#
-# The CheckInLog.status model field MUST NOT have a default.
-# A default of 'success' allowed a bug where a failing code
-# path would persist a log with the default status and leave
-# the DB out of sync with the API response.
-#
-# If you see rows with status other than 'success' or 'cancelled'
-# in the CheckInLog table, they are NOT being created by this
-# file. Inspect the model's save() overrides, signals, or
-# background tasks.
-# ============================================================
-
-
-# ============================================================
 # SLOT TIME VALIDATION
-# ------------------------------------------------------------
-# How early / late a scan is allowed, relative to the ticket's
-# assigned session start/end times.
-#
-# These are module-level constants so they can be tuned without
-# touching the validation logic, and so tests can monkey-patch
-# them to simulate edge cases.
 # ============================================================
-
-# How early can a ticket be scanned before its slot starts?
 CHECKIN_EARLY_GRACE = timedelta(minutes=30)
-
-# How late can a ticket be scanned after its slot ends?
 CHECKIN_LATE_GRACE = timedelta(minutes=15)
 
 
 def _validate_checkin_window(ticket, now=None):
-    """
-    Validate that `now` falls within the allowed check-in window for
-    the ticket's assigned slot.
-
-    The window is defined as:
-        [session.start_time - CHECKIN_EARLY_GRACE,
-         session.end_time   + CHECKIN_LATE_GRACE]
-
-    If the ticket has no session (i.e. the event is not time-slotted),
-    the check-in is always allowed.
-
-    Args:
-        ticket: A Ticket instance (may or may not have a session).
-        now:    A timezone-aware datetime. Defaults to `timezone.now()`.
-                Exposed as a parameter for testability.
-
-    Returns:
-        (allowed: bool, reason: str | None)
-          - (True, None)         → check-in is allowed.
-          - (False, reason_str)  → check-in is rejected, with a
-                                    human-readable reason.
-    """
     now = now or timezone.now()
-
-    # No slot → no time restriction.
     if not ticket.session:
         return True, None
 
@@ -90,16 +42,14 @@ def _validate_checkin_window(ticket, now=None):
 
     if now < window_start:
         reason = (
-            f"Too early for this slot. "
-            f"Check-in opens at "
+            f"Too early for this slot. Check-in opens at "
             f"{timezone.localtime(window_start).strftime('%I:%M %p')}."
         )
         return False, reason
 
     if now > window_end:
         reason = (
-            f"Too late for this slot. "
-            f"Check-in closed at "
+            f"Too late for this slot. Check-in closed at "
             f"{timezone.localtime(window_end).strftime('%I:%M %p')}."
         )
         return False, reason
@@ -107,74 +57,45 @@ def _validate_checkin_window(ticket, now=None):
     return True, None
 
 
-def _is_organizer(user):
-    return (
-        (hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False))
-        or hasattr(user, 'organizer')
-    )
-
+# =========================================================================
+# AUTHORIZATION NOTE
+# -------------------------------------------------------------------------
+# This ViewSet backs the SCANNER. STAFF operators must be able to reach
+# every action here (create, validate, bulk, verify, stats, history).
+# The scanner uses `can_operate_event_data` (OWNER/ADMIN/STAFF), which is
+# exactly the intended scope for STAFF.
+#
+# `BookingViewSet` is the inverse: mutating actions there require
+# `can_manage_event_data` (OWNER/ADMIN). STAFF scanning is fine; STAFF
+# changing money is not.
+#
+# The `undo` action is the ONE exception: it is `is_superuser`-only and
+# will remain so. Undo reverses a completed check-in and can invalidate
+# the audit trail.
+# =========================================================================
 
 class CheckInViewSet(viewsets.ViewSet):
-    """
-    Ticket check-in endpoints.
-
-    Throttled under the 'checkin' scope (120/min by default).
-    """
-
     permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'checkin'
 
-    # ============================================================
-    # HELPERS
-    # ============================================================
-
     def _extract_ticket_code(self, code_data):
-        """
-        Extract the ticket code from any accepted QR payload format.
-
-        Delegates to the canonical decoder so this file and every QR
-        generator stay in sync. Returns None if nothing usable is found.
-        """
         decoded = QRCodeService.decode_ticket_qr(code_data)
         return decoded.get('code')
 
     def _user_can_manage_event(self, user, event):
-        """
-        Admins/staff: any event.
-        Organizers:   only their own events.
-        Everyone else: no.
-        """
-        if user.is_staff or user.is_superuser:
+        if not user or not user.is_authenticated:
+            return False
+        if is_platform_admin(user):
             return True
-        if _is_organizer(user) and event is not None:
-            return event.organizer_id == user.id
-        return False
+        if event is None:
+            return False
+        return can_operate_event_data(user, event)
 
     def _check_and_complete_booking(self, booking):
-        """
-        Recompute the booking's terminal status from its current tickets.
-
-        A booking is promoted to `completed` iff:
-          • at least one ticket on the booking is `used`, AND
-          • no ticket is still check-in-able (every remaining ticket is
-            in a terminal state: used / cancelled / refunded / expired).
-
-        Cancelled and refunded tickets are excluded from the denominator
-        — they cannot be checked in, so they shouldn't block completion.
-        This matches the exact same rule enforced by
-        BookingViewSet._check_and_complete_booking, so check-in,
-        cancel, and refund all agree on what "completed" means.
-
-        Refuses to touch a booking that is already `cancelled` or
-        `refunded` — those are terminal and must not be re-promoted.
-
-        Returns True if the status was changed.
-        """
         if not booking:
             return False
 
-        # ---- 1. Nothing to do if already terminal ----
         if booking.status in (
             BookingStatus.COMPLETED,
             BookingStatus.CANCELLED,
@@ -182,7 +103,6 @@ class CheckInViewSet(viewsets.ViewSet):
         ):
             return False
 
-        # ---- 2. Count tickets by category ----
         terminal_states = (
             TicketStatus.USED,
             TicketStatus.CANCELLED,
@@ -199,16 +119,11 @@ class CheckInViewSet(viewsets.ViewSet):
             status__in=terminal_states,
         ).count()
 
-        # ---- 3. Apply the rules ----
-        # Nothing used → not "completed", regardless of the rest.
         if used_tickets == 0:
             return False
-
-        # Any ticket still check-in-able → not done yet.
         if actionable_tickets > 0:
             return False
 
-        # ---- 4. Promote ----
         booking.status = BookingStatus.COMPLETED
         booking.save(update_fields=['status'])
         logger.info(
@@ -221,7 +136,6 @@ class CheckInViewSet(viewsets.ViewSet):
         return True
 
     def _ticket_payload(self, ticket):
-        """Standard ticket summary used in every response."""
         attendee_name = ticket.attendee_name or 'Guest'
         if not ticket.attendee_name and ticket.booking:
             attendee_name = ticket.booking.customer_name
@@ -235,17 +149,9 @@ class CheckInViewSet(viewsets.ViewSet):
         }
 
     def _existing_checkin(self, ticket):
-        """The successful check-in for this ticket, if any."""
         return CheckInLog.objects.filter(ticket=ticket, status='success').first()
 
     def _rejection_for(self, ticket):
-        """
-        If the ticket cannot be checked in, return the appropriate Response.
-        Otherwise return None.
-
-        Shared by create/validate/verify so the rejection rules live in
-        exactly one place.
-        """
         if ticket.status in (
             TicketStatus.REFUNDED,
             TicketStatus.CANCELLED,
@@ -303,12 +209,6 @@ class CheckInViewSet(viewsets.ViewSet):
         )
 
     def _slot_window_response(self, ticket, reason):
-        """
-        Standard response for a check-in rejected due to the slot window.
-
-        Returned by create / validate / verify so the same JSON shape
-        reaches the client regardless of which endpoint caught it.
-        """
         return Response(
             {
                 'detail': reason,
@@ -319,25 +219,11 @@ class CheckInViewSet(viewsets.ViewSet):
         )
 
     # ============================================================
-    # CREATE  — POST /checkin/
+    # CREATE
     # ============================================================
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """
-        POST /checkin/
-        Body:
-            {
-              "code": "TIX...",
-              "device_id": "android-scanner",
-              "latitude": null,
-              "longitude": null
-            }
-
-        Wrapped in @transaction.atomic because the CheckInLog row, the
-        Ticket.status flip, and the Booking.status auto-complete must
-        all succeed or all roll back.
-        """
         raw_code = request.data.get('code') or request.data.get('ticket_code')
         device_id = (request.data.get('device_id') or 'unknown')[:255]
         latitude = request.data.get('latitude')
@@ -361,7 +247,7 @@ class CheckInViewSet(viewsets.ViewSet):
 
         try:
             ticket = get_object_or_404(
-                Ticket.objects.select_related('session', 'event', 'booking'),
+                Ticket.objects.select_related('session', 'event', 'booking', 'event__organization'),
                 unique_code=ticket_code,
             )
 
@@ -379,9 +265,6 @@ class CheckInViewSet(viewsets.ViewSet):
             if rejection is not None:
                 return rejection
 
-            # ============================================================
-            # ✅ SLOT TIME WINDOW VALIDATION
-            # ============================================================
             is_within_window, reason = _validate_checkin_window(ticket)
             if not is_within_window:
                 logger.warning(
@@ -391,7 +274,6 @@ class CheckInViewSet(viewsets.ViewSet):
                 )
                 return self._slot_window_response(ticket, reason)
 
-            # ---- The ONLY place a 'success' CheckInLog is created ----
             checkin_log = CheckInLog.objects.create(
                 ticket=ticket,
                 event=ticket.event,
@@ -399,7 +281,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 scanner_user=request.user,
                 scanner_device_id=device_id,
                 scanner_ip=scanner_ip,
-                status='success',                 # explicit, required
+                status='success',
                 latitude=latitude,
                 longitude=longitude,
                 is_offline=False,
@@ -449,12 +331,11 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
     # ============================================================
-    # VALIDATE  — POST /checkin/validate/
+    # VALIDATE
     # ============================================================
 
     @action(detail=False, methods=['post'])
     def validate(self, request):
-        """Validate a ticket without checking it in."""
         raw_code = request.data.get('code') or request.data.get('ticket_code')
         if not raw_code:
             return Response(
@@ -471,7 +352,7 @@ class CheckInViewSet(viewsets.ViewSet):
 
         try:
             ticket = get_object_or_404(
-                Ticket.objects.select_related('session', 'event', 'booking'),
+                Ticket.objects.select_related('session', 'event', 'booking', 'event__organization'),
                 unique_code=ticket_code,
             )
 
@@ -512,9 +393,6 @@ class CheckInViewSet(viewsets.ViewSet):
                     status=rejection.status_code,
                 )
 
-            # ============================================================
-            # ✅ SLOT TIME WINDOW VALIDATION (read-only preview)
-            # ============================================================
             is_within_window, reason = _validate_checkin_window(ticket)
             if not is_within_window:
                 return Response(
@@ -557,20 +435,11 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
     # ============================================================
-    # BULK  — POST /checkin/bulk/
+    # BULK
     # ============================================================
 
     @action(detail=False, methods=['post'])
     def bulk(self, request):
-        """
-        Check in a list of codes.
-
-        Partial-success by design: each code is processed independently.
-        Each code's mutation is wrapped in its OWN transaction so that a
-        failure on code N cannot leave code N half-applied (log written,
-        ticket still active). Concurrent scans of the same ticket are
-        serialised via SELECT ... FOR UPDATE.
-        """
         codes = request.data.get('codes', [])
         device_id = (request.data.get('device_id') or 'unknown')[:255]
         latitude = request.data.get('latitude')
@@ -609,10 +478,6 @@ class CheckInViewSet(viewsets.ViewSet):
     def _bulk_process_one(
         self, code, user, device_id, latitude, longitude, scanner_ip,
     ):
-        """
-        Process a single code. Never raises — always returns a result dict
-        so the bulk response remains well-formed even if one code explodes.
-        """
         ticket_code = self._extract_ticket_code(code)
         if not ticket_code:
             return {
@@ -627,7 +492,7 @@ class CheckInViewSet(viewsets.ViewSet):
                 ticket = (
                     Ticket.objects
                     .select_for_update()
-                    .select_related('session', 'event', 'booking')
+                    .select_related('session', 'event', 'booking', 'event__organization')
                     .get(unique_code=ticket_code)
                 )
 
@@ -678,9 +543,6 @@ class CheckInViewSet(viewsets.ViewSet):
                         'event': ticket.event.title if ticket.event else 'Event',
                     }
 
-                # ============================================================
-                # ✅ SLOT TIME WINDOW VALIDATION (bulk)
-                # ============================================================
                 is_within_window, reason = _validate_checkin_window(ticket)
                 if not is_within_window:
                     return {
@@ -741,7 +603,7 @@ class CheckInViewSet(viewsets.ViewSet):
             }
 
     # ============================================================
-    # VERIFY  — GET /checkin/verify/?code=...
+    # VERIFY
     # ============================================================
 
     @action(detail=False, methods=['get'])
@@ -758,7 +620,7 @@ class CheckInViewSet(viewsets.ViewSet):
         try:
             ticket = (
                 Ticket.objects
-                .select_related('session', 'event', 'booking')
+                .select_related('session', 'event', 'booking', 'event__organization')
                 .get(unique_code=ticket_code)
             )
 
@@ -788,15 +650,6 @@ class CheckInViewSet(viewsets.ViewSet):
                 )
 
             existing = self._existing_checkin(ticket)
-
-            # ============================================================
-            # ✅ SLOT TIME WINDOW VALIDATION (verify)
-            # ------------------------------------------------------------
-            # If the ticket is valid but outside its slot window, we
-            # still return valid=True (the ticket itself is fine), but
-            # include a `slot_window` advisory so the UI can display
-            # "Ticket is valid, but check-in opens at ...".
-            # ============================================================
             is_within_window, reason = _validate_checkin_window(ticket)
 
             return Response(
@@ -838,18 +691,12 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
     # ============================================================
-    # UNDO  — DELETE /checkin/undo/?code=...
+    # UNDO
     # ============================================================
 
     @action(detail=False, methods=['delete'])
     @transaction.atomic
     def undo(self, request):
-        """
-        Undo a check-in. Superuser only.
-
-        Atomic + row-locked because we mutate three rows: CheckInLog,
-        Ticket, and (potentially) Booking.
-        """
         if not request.user.is_superuser:
             return Response(
                 {'detail': 'Only superusers can undo check-ins'},
@@ -927,19 +774,11 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
     # ============================================================
-    # STATS  — GET /checkin/stats/?event=<uuid>
+    # STATS
     # ============================================================
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """
-        Check-in statistics for an event.
-
-        Authorization:
-          - Admins/staff: any event
-          - Organizers:   only their own events
-          - Others:       denied
-        """
         event_id = request.query_params.get('event')
         if not event_id:
             return Response(
@@ -1009,29 +848,11 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
     # ============================================================
-    # HISTORY  — GET /checkin/history/?limit=&event=
+    # HISTORY
     # ============================================================
 
     @action(detail=False, methods=['get'])
     def history(self, request):
-        """
-        Recent check-in history.
-
-        Returns ALL CheckInLog rows regardless of status (success,
-        failed, cancelled) so the UI can show what actually happened.
-        Previously this filtered to status='success', which hid any
-        anomalous log rows and made the "success vs. failed" bug
-        invisible in the UI.
-
-        Authorization scoping:
-          - Admins/staff:  all check-ins
-          - Organizers:    only check-ins for events they organize
-          - Regular users: only check-ins they personally performed
-
-        `scanned_by` is returned as the scanner's *username*, not their
-        email. Organizers can see who scanned at their events, but we
-        do not broadcast every staff member's email address.
-        """
         try:
             limit_raw = request.query_params.get('limit', 10)
             try:
@@ -1043,15 +864,11 @@ class CheckInViewSet(viewsets.ViewSet):
             event_id = request.query_params.get('event')
             user = request.user
 
-            # NOTE: intentionally NOT filtered by status.
             query = CheckInLog.objects.all()
 
-            # ---- Row-level authorization ----
-            if not (user.is_staff or user.is_superuser):
-                if _is_organizer(user):
-                    query = query.filter(event__organizer=user)
-                else:
-                    query = query.filter(scanner_user=user)
+            if not is_platform_admin(user):
+                org_ids = user_operator_org_ids(user)
+                query = query.filter(event__organization_id__in=org_ids)
 
             if event_id:
                 query = query.filter(event_id=event_id)

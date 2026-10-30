@@ -37,9 +37,10 @@
     "actions": "Actions"
   },
   "roles": {
-    "superAdmin": "Super Admin",
+    "superAdmin": "Platform Admin",
     "admin": "Admin",
     "organizer": "Organizer",
+    "staff": "Staff",
     "user": "User",
     "regularUser": "Regular User"
   },
@@ -63,7 +64,8 @@
     "activeSessions": "Active Sessions",
     "logout": "Logout",
     "login": "Login",
-    "register": "Register"
+    "register": "Register",
+    "organizations": "Organizations"
   },
   "landing": {
     "heroTitleLine1": "Find Your Next",
@@ -915,7 +917,7 @@
     "roleUser": "Regular User",
     "roleOrganizer": "Organizer",
     "roleAdmin": "Admin",
-    "roleSuperAdmin": "Super Admin",
+    "roleSuperAdmin": "Platform Admin",
     "searchPlaceholder": "Search users...",
     "colUser": "User",
     "colEmail": "Email",
@@ -1020,7 +1022,7 @@
     "searchPlaceholder": "Search by name, email, or IP…",
     "filterRoleLabel": "Role",
     "filterRoleAll": "All",
-    "filterRoleSuperAdmin": "Super Admin",
+    "filterRoleSuperAdmin": "Platform Admin",
     "filterRoleAdmin": "Admin",
     "filterRoleOrganizer": "Organizer",
     "filterRoleUser": "User",

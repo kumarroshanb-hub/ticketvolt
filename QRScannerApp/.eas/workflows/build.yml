@@ -1,6 +1,7 @@
 name: Build Android APK on Production Release
 
 on:
+  workflow_dispatch: # Allows manual triggering from GitHub UI
   push:
     branches:
       - Production_Release

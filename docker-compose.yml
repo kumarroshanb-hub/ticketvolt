@@ -1,18 +1,18 @@
-# docker-compose.yml - LOCAL DEVELOPMENT
+# docker-compose.yml - PRODUCTION HOTFIXES LOCAL DEVELOPMENT
 services:
   postgres:
     image: postgres:15
-    container_name: ticketvolt-postgres
+    container_name: ticketvolt-postgres-prod  # Changed: Added -prod suffix
     environment:
       POSTGRES_USER: ticketvolt
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ticketvolt
     ports:
-      - "5432:5432"
+      - "5434:5432"  # Changed: Host port 5434 to avoid conflict with main env (5432)
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_prod:/var/lib/postgresql/data  # Changed: Separate volume
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ticketvolt"]
       interval: 10s
@@ -21,13 +21,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: ticketvolt-redis
+    container_name: ticketvolt-redis-prod  # Changed: Added -prod suffix
     ports:
-      - "6379:6379"
+      - "6380:6379"  # Changed: Host port 6380 to avoid conflict with main env (6379)
     volumes:
-      - redis_data:/data
+      - redis_data_prod:/data  # Changed: Separate volume
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -36,13 +36,13 @@ services:
 
   backend:
     build: ./backend
-    container_name: ticketvolt-backend
+    container_name: ticketvolt-backend-prod  # Changed: Added -prod suffix
     ports:
-      - "8000:8000"
+      - "8010:8000"  # Changed: Host port 8010 (matches master-prod.sh BACKEND_PORT)
     env_file:
-      - ./backend/.env.local     # ← Load from .env.local
+      - ./backend/.env.local
     environment:
-      ENVIRONMENT: local          # ← Selects local.py settings
+      ENVIRONMENT: local
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,12 +51,12 @@ services:
     volumes:
       - ./backend:/app
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
     command: python manage.py runserver 0.0.0.0:8000
 
   celery-worker:
     build: ./backend
-    container_name: ticketvolt-celery
+    container_name: ticketvolt-celery-prod  # Changed: Added -prod suffix
     command: celery -A core worker --loglevel=info --concurrency=4
     env_file:
       - ./backend/.env.local
@@ -69,11 +69,11 @@ services:
     volumes:
       - ./backend:/app
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
 
   celery-beat:
     build: ./backend
-    container_name: ticketvolt-celery-beat
+    container_name: ticketvolt-celery-beat-prod  # Changed: Added -prod suffix
     command: celery -A core beat --loglevel=info
     env_file:
       - ./backend/.env.local
@@ -87,29 +87,29 @@ services:
     volumes:
       - ./backend:/app
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
 
   frontend:
     build: ./frontend
-    container_name: ticketvolt-frontend
+    container_name: ticketvolt-frontend-prod  # Changed: Added -prod suffix
     ports:
-      - "3000:80"
+      - "3010:80"  # Changed: Host port 3010 (matches master-prod.sh FRONTEND_PORT)
     depends_on:
       - backend
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
 
   baileys-gateway:
     build: ./baileys-gateway
-    container_name: ticketvolt-baileys
+    container_name: ticketvolt-baileys-prod  # Changed: Added -prod suffix
     ports:
-      - "3002:3002"
+      - "3012:3002"  # Changed: Host port 3012 (matches master-prod.sh GATEWAY_PORT)
     environment:
       PORT: 3002
       NODE_ENV: development
-      DJANGO_API_URL: http://backend:8000/api
+      DJANGO_API_URL: http://backend:8000/api  # Internal Docker communication remains on 8000
       ADMIN_TOKEN: ${ADMIN_TOKEN}
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379  # Internal Docker communication remains on 6379
       WHATSAPP_ENABLED: 'True'
       WHATSAPP_TICKET_DELIVERY_ENABLED: 'False'
       WHATSAPP_GATEWAY_URL: http://baileys-gateway:3002
@@ -118,15 +118,15 @@ services:
       - /app/node_modules
       - ./baileys-gateway/sessions:/app/sessions
     networks:
-      - ticketvolt-network
+      - ticketvolt-network-prod  # Changed: Separate network
     depends_on:
       - redis
       - backend
 
 volumes:
-  postgres_data:
-  redis_data:
+  postgres_data_prod:  # Changed: New volume name
+  redis_data_prod:     # Changed: New volume name
 
 networks:
-  ticketvolt-network:
+  ticketvolt-network-prod:  # Changed: New network name
     driver: bridge

@@ -2,6 +2,8 @@ name: Build Android APK on Production Release
 
 on:
   push:
+    tags:
+      - 'v*.*.*'   # Triggers only when you push a tag like v1.0.0
     branches:
       - Production_Release
 

@@ -1,0 +1,512 @@
+# backend/ticket_bookings/api/auth_api.py
+"""Passwordless authentication & organization-invite endpoints.
+
+Endpoints
+---------
+POST /api/auth/request-magic-link/   — email a single-use login link (public)
+POST /api/auth/verify-magic-link/    — exchange a login OR invite token for JWTs (public)
+POST /api/auth/request-otp/          — request a 6-digit OTP via email or WhatsApp (public)
+POST /api/auth/verify-otp/           — exchange an OTP for JWTs (public)
+POST /api/organizations/<id>/invite/ — Owner/Admin invites a user to the org (auth)
+
+Email contract (aligned with services/booking_emails.py)
+--------------------------------------------------------
+All delivery goes through ``services/auth_emails.py``:
+  • HTML rendered from ``core/templates/email/*.html``
+  • ``EmailMultiAlternatives`` + ``safe_send_email`` diagnostics
+  • senders return ``{'success': bool, 'message'|'error': str}``
+  • delivery is NON-BLOCKING: failures are logged and reported via
+    ``email_sent`` flags, never swallowed silently and never 500 the flow.
+
+Security invariants
+-------------------
+  • Responses on the request path are constant (no email enumeration).
+  • Tokens are single-use and time-bounded (login: 15 min, invite: 7 days).
+  • Inactive users can neither request nor redeem links.
+  • Invite acceptance honours the validity window captured at invite time.
+  • Ownership can NEVER be granted via invite (transfer-ownership only).
+"""
+import logging
+import secrets
+import re
+import string
+from datetime import timedelta
+
+from django.conf import settings
+from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth.models import User
+from django.db.models import Q
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from ..models import UserProfile, OTPRequest
+from ..models_tenancy import (
+    Organization,
+    OrganizationInvite,
+    OrganizationMembership,
+    OrgRole,
+)
+from ..services import auth_emails
+from ..services.tenancy import (
+    can_manage_org,
+    user_org_ids,
+    user_operator_org_ids,
+)
+from ..views import get_user_role, _user_profile_summary
+
+logger = logging.getLogger(__name__)
+
+MAGIC_LINK_MINUTES = 15
+
+# OTP Configuration
+OTP_LENGTH = 6
+OTP_EXPIRY_MINUTES = 5
+OTP_MAX_ATTEMPTS = 5
+OTP_REQUEST_LIMIT = 3            # max sends per destination per window
+OTP_REQUEST_WINDOW_MINUTES = 10
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _parse_iso(value):
+    """Parse an ISO datetime string; return an aware datetime or None."""
+    if not value:
+        return None
+    dt = parse_datetime(str(value))
+    if dt is None:
+        return None
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
+
+
+def _unique_username(email):
+    """Collision-safe username derived from an email local-part."""
+    base = re.sub(r'[^a-zA-Z0-9_]', '_', (email.split('@')[0] or 'user'))[:140]
+    username = base
+    n = 1
+    while User.objects.filter(username=username).exists():
+        username = f"{base}_{n}"[:150]
+        n += 1
+    return username
+
+
+def _build_user_payload(user):
+    """Same shape as LoginView / MeView so the frontend hydrates instantly."""
+    return {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'name': user.get_full_name() or user.username,
+        'role': get_user_role(user),
+        'is_superuser': user.is_superuser,
+        'is_staff': user.is_staff,
+        'org_ids': [str(o) for o in user_operator_org_ids(user)],
+        'managed_org_ids': [str(o) for o in user_org_ids(user)],
+        **_user_profile_summary(user),
+    }
+
+
+def _issue_tokens(user):
+    refresh = RefreshToken.for_user(user)
+    return {
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'user': _build_user_payload(user),
+    }
+
+
+# ===========================================================================
+# 1. REQUEST MAGIC LINK (public)
+# ===========================================================================
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
+def request_magic_link(request):
+    """User enters an email on the login/register page -> we mail a single-use link."""
+    email = (request.data.get('email') or '').lower().strip()
+    if not email:
+        return Response(
+            {'error': 'Email is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # ✅ Auto-provision new users for seamless passwordless registration
+    user = User.objects.filter(email__iexact=email).first()
+    if user is None:
+        user = User.objects.create_user(
+            username=_unique_username(email),
+            email=email,
+            password=secrets.token_urlsafe(32), # ✅ FIXED: Pass plaintext, create_user hashes it
+            is_active=True,
+        )
+        UserProfile.objects.get_or_create(user=user, defaults={'email': email})
+        logger.info('✨ Auto-provisioned new passwordless user: %s', email)
+
+    # Inactive users must never receive a login link.
+    if not user.is_active:
+        logger.info('ℹ️ Magic link requested for inactive user; no-op.')
+        return Response({
+            'success': True,
+            'message': 'If an account exists, a login link has been sent.',
+        })
+
+    # get_or_create: users created via invite acceptance may lack a profile.
+    profile, _ = UserProfile.objects.get_or_create(
+        user=user, defaults={'email': user.email},
+    )
+    token = secrets.token_urlsafe(48)
+    profile.magic_token = token
+    profile.magic_token_expires = timezone.now() + timedelta(
+        minutes=MAGIC_LINK_MINUTES,
+    )
+    profile.save(update_fields=['magic_token', 'magic_token_expires'])
+
+    login_link = f"{settings.FRONTEND_URL}/auth/verify?token={token}"
+
+    # ✅ Aligned: service-layer send with diagnostics — NEVER silent.
+    result = auth_emails.send_magic_link_email(user, login_link)
+    if not result['success']:
+        logger.warning(
+            '⚠️ Magic-link email not delivered for %s: %s',
+            user.email, result.get('error'),
+        )
+
+    # Constant response — prevents email enumeration.
+    return Response({
+        'success': True,
+        'message': 'If an account exists, a login link has been sent.',
+    })
+
+# Reuse the existing 'login' throttle rate for this login-equivalent endpoint.
+request_magic_link.cls.throttle_scope = 'login'
+
+
+# ===========================================================================
+# 2. VERIFY MAGIC LINK (public) — login token OR invite token
+# ===========================================================================
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_magic_link(request):
+    token = request.data.get('token')
+    if not token:
+        return Response(
+            {'error': 'Invalid token.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # ---------------------------------------------------------------
+    # 2a. Organization invite token
+    # ---------------------------------------------------------------
+    invite = OrganizationInvite.objects.filter(token=token).first()
+    if invite is not None:
+        if invite.is_expired() or invite.accepted_at:
+            return Response(
+                {'error': 'Link expired or already used.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.filter(email__iexact=invite.email).first()
+        if user is None:
+            # Passwordless account creation
+            user = User.objects.create_user(
+                username=_unique_username(invite.email),
+                email=invite.email,
+                password=secrets.token_urlsafe(32), # hashed once by create_user
+            )
+        if not user.is_active:
+            return Response(
+                {'error': 'Account is disabled.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        UserProfile.objects.get_or_create(
+            user=user, defaults={'email': user.email},
+        )
+
+        # Honour the validity window captured when the invite was sent.
+        OrganizationMembership.objects.update_or_create(
+            organization=invite.organization,
+            user=user,
+            defaults={
+                'role': invite.role,
+                'is_active': True,
+                'valid_from': invite.valid_from,
+                'valid_until': invite.valid_until,
+            },
+        )
+
+        invite.accepted_at = timezone.now()
+        invite.save(update_fields=['accepted_at'])
+
+        logger.info(
+            '✅ Invite accepted: user=%s org=%s role=%s',
+            user.username, invite.organization.slug, invite.role,
+        )
+        return Response(_issue_tokens(user), status=status.HTTP_200_OK)
+
+    # ---------------------------------------------------------------
+    # 2b. Standard login token
+    # ---------------------------------------------------------------
+    profile = (
+        UserProfile.objects
+        .filter(magic_token=token, magic_token_expires__gte=timezone.now())
+        .select_related('user')
+        .first()
+    )
+    if profile is None or not profile.user.is_active:
+        return Response(
+            {'error': 'Invalid or expired login link.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Single-use: invalidate immediately.
+    profile.magic_token = None
+    profile.magic_token_expires = None
+    profile.save(update_fields=['magic_token', 'magic_token_expires'])
+
+    logger.info('✅ Magic-link login: user=%s', profile.user.username)
+    return Response(_issue_tokens(profile.user), status=status.HTTP_200_OK)
+
+
+# ===========================================================================
+# 3. REQUEST OTP (public)
+# ===========================================================================
+def _generate_otp() -> str:
+    return ''.join(secrets.choice(string.digits) for _ in range(OTP_LENGTH))
+
+def _normalize_otp_destination(identifier: str, channel: str) -> str:
+    if channel == OTPRequest.CHANNEL_EMAIL:
+        return identifier.lower()
+    return re.sub(r'\D', '', identifier)
+
+def _dispatch_otp(otp_request, otp: str) -> dict:
+    if otp_request.channel == OTPRequest.CHANNEL_EMAIL:
+        user = User.objects.filter(email__iexact=otp_request.destination).first()
+        if user is None:
+            user = User.objects.create_user(
+                username=_unique_username(otp_request.destination),
+                email=otp_request.destination,
+                password=secrets.token_urlsafe(32),
+                is_active=True,
+            )
+            UserProfile.objects.get_or_create(user=user, defaults={'email': user.email})
+        return auth_emails.send_otp_email(user, otp, OTP_EXPIRY_MINUTES)
+
+    # SMS / WhatsApp — Phase 2. Wire to Twilio / MSG91 / WhatsApp bot here.
+    logger.info('📱 OTP queued for %s via %s (delivery integration pending)',
+                otp_request.destination, otp_request.channel)
+    return {'success': True, 'message': 'queued'}
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
+def request_otp(request):
+    identifier = (request.data.get('identifier') or '').strip()
+    channel = (request.data.get('channel') or OTPRequest.CHANNEL_EMAIL).strip().lower()
+
+    if not identifier:
+        return Response({'error': 'Email or phone number is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if channel not in dict(OTPRequest.CHANNEL_CHOICES):
+        return Response({'error': f'Invalid channel: {channel!r}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if channel == OTPRequest.CHANNEL_EMAIL:
+        if '@' not in identifier:
+            return Response({'error': 'Invalid email address.'}, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        digits = re.sub(r'\D', '', identifier)
+        if not (7 <= len(digits) <= 15):
+            return Response({'error': 'Invalid phone number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    identifier = _normalize_otp_destination(identifier, channel)
+
+    # Rate-limit sends per destination
+    window_start = timezone.now() - timedelta(minutes=OTP_REQUEST_WINDOW_MINUTES)
+    recent = OTPRequest.objects.filter(destination=identifier, created_at__gte=window_start).count()
+    if recent >= OTP_REQUEST_LIMIT:
+        return Response({'error': 'Too many requests. Please try again in a few minutes.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    # Invalidate any earlier unverified OTP for this destination
+    OTPRequest.objects.filter(destination=identifier, verified_at__isnull=True).update(expires_at=timezone.now())
+
+    otp = _generate_otp()
+    otp_request = OTPRequest.objects.create(
+        destination=identifier,
+        channel=channel,
+        otp_hash=make_password(otp),          # hashed via bcrypt
+        expires_at=timezone.now() + timedelta(minutes=OTP_EXPIRY_MINUTES),
+        max_attempts=OTP_MAX_ATTEMPTS,
+    )
+
+    result = _dispatch_otp(otp_request, otp)
+    if not result.get('success'):
+        logger.warning('⚠️ OTP delivery failed for %s (%s): %s', identifier, channel, result.get('error'))
+
+    # Constant response — prevents enumeration
+    return Response({'success': True, 'message': 'If the address is valid, an OTP has been sent.'})
+
+request_otp.cls.throttle_scope = 'login'
+
+
+# ===========================================================================
+# 4. VERIFY OTP (public)
+# ===========================================================================
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
+def verify_otp(request):
+    identifier = (request.data.get('identifier') or '').strip()
+    channel = (request.data.get('channel') or OTPRequest.CHANNEL_EMAIL).strip().lower()
+    code = (request.data.get('code') or '').strip()
+
+    if not identifier or not code:
+        return Response({'error': 'identifier and code are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    identifier = _normalize_otp_destination(identifier, channel)
+
+    otp_request = (
+        OTPRequest.objects
+        .filter(destination=identifier, channel=channel, verified_at__isnull=True)
+        .order_by('-created_at')
+        .first()
+    )
+    if otp_request is None or otp_request.is_expired() or otp_request.attempts_exhausted():
+        return Response({'error': 'This code has expired. Please request a new one.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Consume an attempt BEFORE checking (thwarts brute force)
+    otp_request.attempts += 1
+    otp_request.save(update_fields=['attempts'])
+
+    if not check_password(code, otp_request.otp_hash):
+        remaining = otp_request.max_attempts - otp_request.attempts
+        if remaining <= 0:
+            return Response({'error': 'Too many incorrect attempts. Please request a new code.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': f'Incorrect code. {remaining} attempt(s) remaining.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Success — mark consumed
+    otp_request.verified_at = timezone.now()
+    otp_request.save(update_fields=['verified_at'])
+
+    # Resolve the user
+    user = User.objects.filter(email__iexact=identifier, is_active=True).first()
+    if user is None:
+        # Phone-channel: match against stored phone / whatsapp_number
+        profile = (
+            UserProfile.objects
+            .filter(Q(phone=identifier) | Q(whatsapp_number=identifier))
+            .select_related('user')
+            .first()
+        )
+        user = profile.user if profile else None
+
+    if user is None or not user.is_active:
+        return Response({'error': 'Account not found or disabled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(_issue_tokens(user), status=status.HTTP_200_OK)
+
+verify_otp.cls.throttle_scope = 'login'
+
+
+# ===========================================================================
+# 5. SEND ORGANIZATION INVITE (Owner/Admin only)
+# ===========================================================================
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_organization_invite(request, org_id):
+    # Resolve the Organization object FIRST — can_manage_org takes
+    # (user, organization), not an organization_id kwarg.
+    try:
+        org = Organization.objects.get(id=org_id)
+    except (Organization.DoesNotExist, ValueError, TypeError):
+        return Response(
+            {'error': 'Organization not found.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_manage_org(request.user, org):
+        return Response(
+            {'error': 'Permission denied.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    email = (request.data.get('email') or '').strip().lower()
+    role = (request.data.get('role') or OrgRole.MEMBER).strip().lower()
+
+    if not email:
+        return Response(
+            {'error': 'Email is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if role not in dict(OrgRole.choices):
+        return Response(
+            {'error': f'Invalid role: {role!r}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if role == OrgRole.OWNER:
+        return Response(
+            {'error': 'Ownership moves only via transfer-ownership.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if role == OrgRole.ADMIN:
+        is_owner = (
+            request.user.is_superuser
+            or OrganizationMembership.objects.filter(
+                organization=org, user=request.user, role=OrgRole.OWNER,
+            ).exists()
+        )
+        if not is_owner:
+            return Response(
+                {'error': 'Only the organization owner can invite admins.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    if OrganizationMembership.objects.filter(
+        organization=org, user__email__iexact=email,
+    ).exists():
+        return Response(
+            {'error': 'User is already a member.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    valid_from = _parse_iso(request.data.get('valid_from')) or timezone.now()
+    valid_until = _parse_iso(request.data.get('valid_until'))
+
+    # Replace any stale pending invite so only one live link exists.
+    OrganizationInvite.objects.filter(
+        organization=org, email=email, accepted_at__isnull=True,
+    ).delete()
+    invite = OrganizationInvite.objects.create(
+        organization=org,
+        email=email,
+        role=role,
+        invited_by=request.user,
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+
+    invite_link = f"{settings.FRONTEND_URL}/invite/accept?token={invite.token}"
+
+    # ✅ Aligned: non-blocking delivery; result surfaced to the caller.
+    email_result = auth_emails.send_organization_invite_email(invite, invite_link)
+    if not email_result['success']:
+        logger.warning(
+            '⚠️ Invite email not delivered for %s: %s',
+            email, email_result.get('error'),
+        )
+
+    return Response({
+        'success': True,
+        'message': f'Invite created for {email}.',
+        'email_sent': email_result['success'],
+        'email_error': email_result.get('error'),
+    })

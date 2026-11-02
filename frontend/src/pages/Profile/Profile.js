@@ -95,16 +95,22 @@ const RolePill = styled.span`
     background: ${p => {
         switch (p.$role) {
             case 'super_admin': return `${C.success}1A`;
+            case 'owner':       return `${C.warning}1A`;   // ✅ ADDED
             case 'admin':       return `${C.info}1A`;
-            case 'organizer':   return `${C.warning}1A`;
+            case 'staff':       return `${C.secondary}1A`; // ✅ ADDED
+            case 'member':      return `${C.primary}1A`;   // ✅ ADDED
+            case 'organizer':   return `${C.warning}1A`;   // Legacy fallback
             default:            return C.bgInput;
         }
     }};
     color: ${p => {
         switch (p.$role) {
             case 'super_admin': return C.successDark;
+            case 'owner':       return C.warningDark;      // ✅ ADDED
             case 'admin':       return C.infoDark;
-            case 'organizer':   return C.warningDark;
+            case 'staff':       return C.secondaryDark;    // ✅ ADDED
+            case 'member':      return C.primaryDark;      // ✅ ADDED
+            case 'organizer':   return C.warningDark;      // Legacy fallback
             default:            return C.textSecondary;
         }
     }};
@@ -268,10 +274,15 @@ const Profile = () => {
     const [message, setMessage] = useState(null);
 
     const getRoleLabel = () => {
-        if (isSuperAdmin) return t('roles.superAdmin');                // ✅ FIX
-        if (isAdmin) return t('roles.admin');
-        if (isOrganizer) return t('roles.organizer');
-        return t('roles.user');
+        switch (role) {
+            case 'super_admin': return t('roles.superAdmin');
+            case 'owner':       return t('roles.owner');       // ✅ UPDATED
+            case 'admin':       return t('roles.admin');
+            case 'staff':       return t('roles.staff');       // ✅ ADDED
+            case 'member':      return t('roles.member');      // ✅ ADDED
+            case 'organizer':   return t('roles.organizer');   // Legacy fallback
+            default:            return t('roles.user');
+        }
     };
 
     const getInitial = () => {

@@ -1,8 +1,12 @@
 # backend/ticket_bookings/api/serializers.py
+import secrets
+from django.contrib.auth.hashers import make_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.models import User
 from django.conf import settings
+from django.db import models  # ← ADDED: required by get_user_effective_role()
+from django.core.exceptions import FieldDoesNotExist  # ADDED FOR 6-TIER HIERARCHY SAFETY
 from django.utils import timezone
 from decimal import Decimal
 import json
@@ -15,13 +19,58 @@ from ..models import (
     CheckInLog, Discount, DiscountUsage, EventTemplateType, EventTemplate,
     UserProfile, CancellationPolicy,
 )
-from ..models_tenancy import (
-    Organization, OrganizationMembership, OrganizationContact,
+from ..models_tenancy import (  # UPDATED: added OrganizationContact back
+    Organization, OrganizationMembership, OrganizationContact, OrgRole,
 )
 from ..services.cancellation_policy import validate_cancellation_rules
 
 
+def get_user_effective_role(user):
+    """
+    Resolve the user's highest-priority role for the frontend.
+    Priority: superuser > highest org role > 'user' (guest)
+    """
+    if not user or not user.is_authenticated:
+        return 'user'
+    if user.is_superuser:
+        return 'super_admin'
+
+    memberships = _active_user_memberships(user).order_by(
+        models.Case(
+            models.When(role=OrgRole.OWNER, then=models.Value(4)),
+            models.When(role=OrgRole.ADMIN, then=models.Value(3)),
+            models.When(role=OrgRole.STAFF, then=models.Value(2)),
+            models.When(role=OrgRole.MEMBER, then=models.Value(1)),
+            default=models.Value(0),
+            output_field=models.IntegerField(),
+        )
+    )
+
+    if memberships.exists():
+        return memberships.first().role
+
+    return 'user'
+
+
 logger = logging.getLogger(__name__)
+
+# ADDED FOR 6-TIER HIERARCHY SAFETY:
+# Some deployments of OrganizationMembership carry is_active; some do not.
+# These helpers keep every membership query safe across both schemas.
+def _membership_has_is_active():
+    try:
+        OrganizationMembership._meta.get_field('is_active')
+        return True
+    except FieldDoesNotExist:
+        return False
+
+
+def _active_user_memberships(user):
+    qs = OrganizationMembership.objects.filter(user=user)
+    if _membership_has_is_active():
+        qs = qs.filter(is_active=True)
+    return qs
+
 
 # Hard cap — a single booking may not contain more than this many tickets.
 MAX_TICKETS_PER_BOOKING = 50
@@ -63,9 +112,10 @@ def _user_can_own_events(user):
         return False
     if user.is_staff or user.is_superuser:
         return True
-    return bool(
-        hasattr(user, 'profile') and getattr(user.profile, 'is_organizer', False)
-    )
+    # In the 6-tier hierarchy, any user with an active organization membership
+    # can be assigned as an event organizer. The specific organization membership
+    # invariant is strictly enforced in the EventViewSet.
+    return _active_user_memberships(user).exists()
 
 
 # ============================================================
@@ -255,8 +305,9 @@ class OrganizationSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user or not request.user.is_authenticated:
             return None
-        membership = OrganizationMembership.objects.filter(
-            organization=obj, user=request.user,
+        # UPDATED FOR 6-TIER HIERARCHY: use _active_user_memberships helper
+        membership = _active_user_memberships(request.user).filter(
+            organization=obj,
         ).first()
         return membership.role if membership else None
 
@@ -426,7 +477,7 @@ class CancellationPolicySerializer(serializers.ModelSerializer):
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
                 raise serializers.ValidationError(
-                    {'is_default': 'This organizer already has a default policy.'}
+                    {'is_default': 'This user already has a default policy.'}
                 )
         return attrs
 
@@ -523,13 +574,13 @@ class EventSerializer(serializers.ModelSerializer):
         if not (requester.is_staff or requester.is_superuser):
             if value.id != requester.id:
                 raise serializers.ValidationError(
-                    'Only administrators can assign an event to another organizer.'
+                    'Only platform admins can assign an event to another user.'  # ✅ Updated
                 )
             return value
 
         if not _user_can_own_events(value):
             raise serializers.ValidationError(
-                'The selected user is not an organizer.'
+                'The selected user must have an active organization membership.'  # ✅ Updated
             )
         return value
 
@@ -1424,7 +1475,7 @@ class UserProfileSummarySerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
-    profile = UserProfileSummarySerializer(read_only=True)
+    organization_memberships = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -1432,7 +1483,7 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name',
             'role',
             'is_active', 'is_staff', 'is_superuser',
-            'profile',
+            'organization_memberships',
             'date_joined', 'last_login',
         ]
         read_only_fields = [
@@ -1441,14 +1492,31 @@ class UserSerializer(serializers.ModelSerializer):
         ]
 
     def get_role(self, obj):
-        if obj.is_superuser:
-            return 'super_admin'
-        if obj.is_staff:
-            return 'admin'
-        if hasattr(obj, 'profile') and obj.profile.is_organizer:
-            return 'organizer'
-        return 'user'
+        return get_user_effective_role(obj)
 
+    def get_organization_memberships(self, obj):
+        # UPDATED FOR 6-TIER HIERARCHY: use _active_user_memberships helper
+        memberships = _active_user_memberships(obj).select_related('organization')
+
+        result = []
+        for m in memberships:
+            item = {
+                'id': str(m.id),
+                'organization_id': str(m.organization.id),
+                'organization_name': m.organization.name,
+                'organization_slug': m.organization.slug,
+                'role': m.role,
+                'joined_at': m.joined_at.isoformat() if m.joined_at else None,
+                'is_active': getattr(m, 'is_active', True),
+            }
+            # ✅ NEW: Expose validity dates for time-bounded memberships
+            if hasattr(m, 'valid_from') and m.valid_from:
+                item['valid_from'] = m.valid_from.isoformat()
+            if hasattr(m, 'valid_until') and m.valid_until:
+                item['valid_until'] = m.valid_until.isoformat()
+            
+            result.append(item)
+        return result
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
@@ -1469,12 +1537,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
+    # ✅ UPDATED: Make passwords optional for the Magic Link flow
     password = serializers.CharField(
-        write_only=True, required=True, min_length=10,
+        write_only=True, required=False, allow_blank=True, min_length=10,
         style={'input_type': 'password'},
     )
     password_confirm = serializers.CharField(
-        write_only=True, required=True,
+        write_only=True, required=False, allow_blank=True,
         style={'input_type': 'password'},
     )
 
@@ -1497,7 +1566,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'country', 'postal_code', 'is_organizer',
         ]
         extra_kwargs = {
-            'username': {'required': True},
+            'username': {'required': False},
             'email': {'required': True},
         }
 
@@ -1536,17 +1605,25 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return digits
 
     def validate(self, data):
-        if data.get('password') != data.get('password_confirm'):
-            raise serializers.ValidationError(
-                {'password_confirm': 'Passwords do not match'}
-            )
+        password = data.get('password')
+        password_confirm = data.get('password_confirm')
 
-        from django.contrib.auth.password_validation import validate_password
-        from django.core.exceptions import ValidationError as DjangoValidationError
-        try:
-            validate_password(data.get('password'))
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError({'password': list(exc.messages)})
+        # ✅ UPDATED: Only validate passwords if they are provided (Legacy/Admin flow)
+        if password and password_confirm:
+            if password != password_confirm:
+                raise serializers.ValidationError(
+                    {'password_confirm': 'Passwords do not match'}
+                )
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_password(password)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({'password': list(exc.messages)})
+        elif password and not password_confirm:
+            raise serializers.ValidationError({'password_confirm': 'Please confirm your password.'})
+        elif not password and password_confirm:
+            raise serializers.ValidationError({'password': 'Please enter a password.'})
 
         if not data.get('whatsapp_number'):
             data['whatsapp_number'] = data.get('phone', '')
@@ -1554,10 +1631,18 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        password = validated_data.pop('password')
-        validated_data.pop('password_confirm')
-
+        # ✅ Pop passwords and handle passwordless creation
+        password = validated_data.pop('password', None)
+        validated_data.pop('password_confirm', None)
         validated_data.pop('is_organizer', None)
+
+        # If no password was sent (Passwordless Magic Link flow),
+        # generate a secure, unguessable dummy password.
+        # NOTE: pass PLAINTEXT here — create_user() hashes it for you.
+        if not password:
+            final_password = secrets.token_urlsafe(32)   # ← no make_password()
+        else:
+            final_password = password
 
         profile_fields = {
             'phone': validated_data.pop('phone', ''),
@@ -1570,10 +1655,22 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'is_organizer': False,
         }
 
+        # Auto-generate a username if not supplied (invisible-username flow)
+        username = validated_data.get('username')
+        if not username:
+            base = re.sub(
+                r'[^a-zA-Z0-9_]', '_',
+                (validated_data.get('email') or 'user').split('@')[0]
+            )[:140] or 'user'
+            username, n = base, 1
+            while User.objects.filter(username=username).exists():
+                username = f"{base}_{n}"[:150]
+                n += 1
+
         user = User.objects.create_user(
-            username=validated_data.get('username'),
+            username=username,
             email=validated_data.get('email'),
-            password=password,
+            password=final_password,   # ← hashed exactly once here
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
         )

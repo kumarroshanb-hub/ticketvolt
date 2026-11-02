@@ -43,6 +43,8 @@ import Profile from './pages/Profile';
 import CancellationPolicies from './pages/CancellationPolicies';
 import ActiveSessions from './pages/ActiveSessions';
 import Organizations from './pages/Organizations';            // ✅ NEW
+import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
+import TeamMembers from './pages/Organizations/TeamMembers'; // ✅ NEW
 
 import { ROLES } from './constants';
 
@@ -167,6 +169,9 @@ const AppRoutes = () => {
             {/* Password Reset Routes (Public) */}
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
+            {/* ✅ NEW: Magic Link & Organization Invite Verification Routes */}
+            <Route path="/auth/verify" element={<MagicLinkVerify />} />
+            <Route path="/invite/accept" element={<MagicLinkVerify />} />
 
             <Route path="/unauthorized" element={<Unauthorized />} />
 
@@ -176,7 +181,7 @@ const AppRoutes = () => {
             <Route path="/app" element={<Layout />}>
                 <Route index element={<Navigate to="/app/dashboard" replace />} />
 
-                {/* ✅ NEW: Organizations (tenant bootstrap) — visible to
+                {/* ✅ Organizations (tenant bootstrap) — visible to
                     every logged-in user, since any user may create one
                     and become its owner. */}
                 <Route
@@ -187,7 +192,15 @@ const AppRoutes = () => {
                         </ProtectedRoute>
                     }
                 />
-
+                {/* ✅ NEW: Dedicated Team Management Route */}
+                <Route
+                    path="organizations/:orgId/team"
+                    element={
+                        <RoleBasedRoute allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
+                            <TeamMembers />
+                        </RoleBasedRoute>
+                    }
+                />
                 <Route
                     path="bookings/create"
                     element={
@@ -214,11 +227,12 @@ const AppRoutes = () => {
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
                 <Route
                     path="venues/*"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
                         >
                             <Venues />
                         </RoleBasedRoute>
@@ -242,44 +256,49 @@ const AppRoutes = () => {
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: Added OWNER and STAFF for scanner access */}
                 <Route
                     path="checkin"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.STAFF, ROLES.SUPER_ADMIN]}
                         >
                             <Checkin />
                         </RoleBasedRoute>
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
                 <Route
                     path="analytics"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
                         >
                             <Analytics />
                         </RoleBasedRoute>
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
                 <Route
                     path="discounts"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
                         >
                             <Discounts />
                         </RoleBasedRoute>
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: Allow all authenticated roles to access Settings 
+                    (personal profile/password is available to all; platform/org settings are gated internally) */}
                 <Route
                     path="settings"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN, ROLES.STAFF, ROLES.MEMBER, ROLES.USER]}
                         >
                             <Settings />
                         </RoleBasedRoute>
@@ -312,22 +331,24 @@ const AppRoutes = () => {
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
                 <Route
                     path="cancellation-policies"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
                         >
                             <CancellationPolicies />
                         </RoleBasedRoute>
                     }
                 />
 
+                {/* UPDATED FOR 6-TIER HIERARCHY: Added OWNER so they can manage org members */}
                 <Route
                     path="users"
                     element={
                         <RoleBasedRoute
-                            allowedRoles={[ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
                         >
                             <Users />
                         </RoleBasedRoute>

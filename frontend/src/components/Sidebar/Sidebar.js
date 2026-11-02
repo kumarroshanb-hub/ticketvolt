@@ -4,29 +4,30 @@ import { NavLink } from 'react-router-dom';
 import styled from 'styled-components';
 import { useTranslation } from 'react-i18next';
 import {
-    Dashboard as DashboardIcon,
-    Event as EventIcon,
-    Place as VenueIcon,
-    ConfirmationNumber as TicketIcon,
-    Analytics as AnalyticsIcon,
-    Discount as DiscountIcon,
-    Settings as SettingsIcon,
-    ChevronLeft,
-    ChevronRight,
-    QrCodeScanner as ScannerIcon,
-    People as PeopleIcon,
-    Close as CloseIcon,
-    Logout as LogoutIcon,
-    Policy as PolicyIcon,
-    Business as BusinessIcon,                       // ✅ Organizations icon
+  Dashboard as DashboardIcon,
+  Event as EventIcon,
+  Place as VenueIcon,
+  ConfirmationNumber as TicketIcon,
+  Analytics as AnalyticsIcon,
+  Discount as DiscountIcon,
+  Settings as SettingsIcon,
+  ChevronLeft,
+  ChevronRight,
+  QrCodeScanner as ScannerIcon,
+  People as PeopleIcon,
+  Close as CloseIcon,
+  Logout as LogoutIcon,
+  Policy as PolicyIcon,
+  Business as BusinessIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
-import { useOrg } from '../../context/OrgContext';            // ✅ NEW: tenant state
-import { ROLES } from '../../constants';
-import { theme } from '../../theme/tokens';
+// UPDATED FOR 6-TIER HIERARCHY:
+// Use central constants instead of a separate constants/roles.js file.
+// This prevents build failures if roles.js is not maintained.
+import { ROLES, RoleUtils } from '../../constants';
 import Logo from '../Logo';
-import DevicesIcon from '@mui/icons-material/Devices';
+import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -34,564 +35,510 @@ const F = theme.fonts;
 // ============================================
 // STYLED COMPONENTS
 // ============================================
-
 const SidebarContainer = styled.aside`
-    position: ${props => (props.$drawer ? 'relative' : 'fixed')};
-    top: ${props => (props.$drawer ? 'auto' : '0')};
-    left: ${props => (props.$drawer ? 'auto' : '0')};
-    height: ${props => (props.$drawer ? '100%' : '100vh')};
-    width: ${props => {
-        if (props.$drawer) return '100%';
-        return props.collapsed ? '80px' : '260px';
-    }};
-    background: ${props => props.theme?.colors?.bgSidebar || C.bgSidebar};
-    border-right: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    transition: ${props => (props.$drawer ? 'none' : 'width 0.3s ease')};
-    padding: 20px;
-    color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
-    overflow: hidden;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    box-shadow: ${props => (props.$drawer ? 'none' : theme.shadows.card)};
-    box-sizing: border-box;
-    font-family: ${F.family};
+  position: ${props => (props.$drawer ? 'relative' : 'fixed')};
+  top: ${props => (props.$drawer ? 'auto' : '0')};
+  left: ${props => (props.$drawer ? 'auto' : '0')};
+  height: ${props => (props.$drawer ? '100%' : '100vh')};
+  width: ${props => {
+    if (props.$drawer) return '100%';
+    return props.collapsed ? '80px' : '260px';
+  }};
+  background: ${props => props.theme?.colors?.bgSidebar || C.bgSidebar};
+  border-right: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
+  transition: ${props => (props.$drawer ? 'none' : 'width 0.3s ease')};
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
 `;
 
 const LogoWrap = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    margin-bottom: 20px;
-    min-height: 76px;
-    position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 20px;
+  position: relative;
 `;
 
 const LogoLink = styled(NavLink)`
-    display: inline-flex;
-    align-items: center;
-    text-decoration: none;
-    color: inherit;
+  text-decoration: none;
+  display: flex;
+  justify-content: center;
+`;
+
+const LogoImage = styled.img`
+  height: ${props => props.height || '84px'};
+  width: auto;
+  display: ${props => (props.hidden ? 'none' : 'block')};
 `;
 
 const RoleBadge = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 12px;
-    margin-bottom: 12px;
-    border-radius: 12px;
-    font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: ${props => (props.collapsed ? '8px' : '10px 16px')};
+  background: ${props => {
+    // UPDATED FOR 6-TIER HIERARCHY:
+    // Added explicit member styling and kept organizer as legacy fallback.
+    if (props.role === 'super_admin') return C.successDark;
+    if (props.role === 'owner') return C.warningDark;
+    if (props.role === 'admin') return C.infoDark;
+    if (props.role === 'staff') return C.secondaryDark;
+    if (props.role === 'member') return C.primaryDark;
+    if (props.role === 'organizer') return C.warningDark;
+    return C.textSecondary;
+  }};
+  border-radius: 8px;
+  margin-bottom: 16px;
+  justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
+  
+  .role-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  
+  .role-label {
+    font-size: 0.875rem;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: ${props => {
-        if (props.role === 'super_admin') return `${C.success}1A`;
-        if (props.role === 'admin')       return `${C.info}1A`;
-        if (props.role === 'organizer')   return `${C.warning}1A`;
-        if (props.role === 'staff')       return `${C.secondary}1A`;   // ✅ NEW
-        return C.bgInput;
-    }};
-    color: ${props => {
-        if (props.role === 'super_admin') return C.successDark;
-        if (props.role === 'admin')       return C.infoDark;
-        if (props.role === 'organizer')   return C.warningDark;
-        if (props.role === 'staff')       return C.secondaryDark;      // ✅ NEW
-        return C.textSecondary;
-    }};
-    opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-    transition: opacity 0.3s ease;
-
-    .role-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: ${props => {
-            if (props.role === 'super_admin') return C.successDark;
-            if (props.role === 'admin')       return C.infoDark;
-            if (props.role === 'organizer')   return C.warningDark;
-            if (props.role === 'staff')       return C.secondaryDark;  // ✅ NEW
-            return C.textSecondary;
-        }};
-    }
+    color: white;
+    display: ${props => (props.collapsed ? 'none' : 'block')};
+  }
 `;
 
 const NavItems = styled.nav`
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow-y: auto;
-    padding-bottom: 10px;
-
-    &::-webkit-scrollbar { width: 4px; }
-    &::-webkit-scrollbar-thumb {
-        background: ${C.scrollbarThumb};
-        border-radius: 4px;
-    }
-    &::-webkit-scrollbar-thumb:hover {
-        background: ${C.scrollbarThumbHover};
-    }
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding-bottom: 10px;
+  
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: ${C.scrollbarThumb};
+    border-radius: 4px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: ${C.scrollbarThumbHover};
+  }
 `;
 
 const NavSection = styled.div`
-    margin-top: ${props => props.marginTop || '0'};
+  margin-top: ${props => props.marginTop || '0'};
 `;
 
-const NavSectionLabel = styled.div`
-    font-size: 10px;
-    font-weight: 600;
-    color: ${C.textLight};
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 8px 14px 4px;
-    opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-    transition: opacity 0.3s ease;
-    white-space: nowrap;
+const SectionLabel = styled.div`
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: ${C.textSecondary};
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 12px 16px 8px;
+  display: ${props => (props.collapsed ? 'none' : 'block')};
 `;
 
 const NavItem = styled(NavLink)`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: ${props => (props.collapsed ? '12px' : '12px 16px')};
+  border-radius: 8px;
+  text-decoration: none;
+  color: ${props => (props.isActive ? 'white' : C.textSecondary)};
+  background: ${props => (props.isActive ? C.primaryDark : 'transparent')};
+  transition: all 0.2s ease;
+  justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
+  
+  &:hover {
+    background: ${props => (props.isActive ? C.primaryDark : C.bgHover)};
+    color: ${props => (props.isActive ? 'white' : C.textPrimary)};
+  }
+  
+  .icon {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    min-height: 44px;
-    border-radius: 10px;
-    color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
-    text-decoration: none;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.2s ease;
+    justify-content: center;
+    min-width: 24px;
+  }
+  
+  .label {
+    font-size: 0.875rem;
+    font-weight: ${props => (props.isActive ? '600' : '500')};
+    display: ${props => (props.collapsed ? 'none' : 'block')};
     white-space: nowrap;
-    position: relative;
-    cursor: pointer;
-    touch-action: manipulation;
-
-    .icon {
-        min-width: 24px;
-        font-size: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: ${props => props.theme?.colors?.textMuted || C.textMuted};
-    }
-
-    .label {
-        opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-        transition: opacity 0.3s ease;
-    }
-
-    .badge {
-        margin-left: auto;
-        padding: 2px 10px;
-        border-radius: 20px;
-        font-size: 11px;
-        font-weight: 600;
-        background: ${C.primary};
-        color: ${C.textInverse};
-        opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-        transition: opacity 0.3s ease;
-    }
-
-    &:hover {
-        color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
-        background: ${props => props.theme?.colors?.bgCardHover || C.bgCardHover};
-
-        .icon {
-            color: ${C.primary};
-        }
-    }
-
-    &.active {
-        color: ${C.primary};
-        background: ${C.hoverMedium};
-
-        .icon {
-            color: ${C.primary};
-        }
-
-        &::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 3px;
-            height: 24px;
-            background: ${C.primary};
-            border-radius: 0 3px 3px 0;
-        }
-    }
+  }
 `;
 
 const LogoutSection = styled.div`
-    margin-top: auto;
-    border-top: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    padding-top: 12px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid ${C.borderLight};
 `;
 
 const LogoutButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: ${props => (props.collapsed ? '12px' : '12px 16px')};
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: ${C.textSecondary};
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.2s ease;
+  justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
+  
+  &:hover {
+    background: ${C.bgHover};
+    color: ${C.textPrimary};
+  }
+  
+  .icon {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    min-height: 44px;
-    border-radius: 10px;
-    border: none;
-    background: transparent;
-    color: ${C.error};
-    font-size: 14px;
+    justify-content: center;
+    min-width: 24px;
+  }
+  
+  .label {
+    font-size: 0.875rem;
     font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    width: 100%;
+    display: ${props => (props.collapsed ? 'none' : 'block')};
     white-space: nowrap;
-    touch-action: manipulation;
-    font-family: ${F.family};
-
-    .icon {
-        min-width: 24px;
-        font-size: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .label {
-        opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-        transition: opacity 0.3s ease;
-    }
-
-    &:hover {
-        background: ${C.error}1A;
-    }
+  }
 `;
 
 const ToggleButton = styled.button`
-    position: absolute;
-    bottom: 20px;
-    right: -12px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    background: ${props => props.theme?.colors?.bgSecondary || C.bgSecondary};
-    color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
-    cursor: pointer;
-    display: ${props => (props.$drawer ? 'none' : 'flex')};
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    box-shadow: ${theme.shadows.toggle};
-
-    &:hover {
-        border-color: ${C.primary};
-        color: ${C.primary};
-        box-shadow: 0 0 0 4px ${C.hoverStrong};
-    }
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: ${C.bgHover};
+  color: ${C.textSecondary};
+  cursor: pointer;
+  margin-top: 12px;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: ${C.bgHover};
+    color: ${C.textPrimary};
+  }
 `;
 
 const DrawerCloseButton = styled.button`
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    border: none;
-    background: transparent;
-    color: ${C.textSecondary};
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    touch-action: manipulation;
-
-    &:hover {
-        background: ${C.hoverSubtle};
-        color: ${C.textPrimary};
-    }
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: ${C.bgHover};
+  color: ${C.textSecondary};
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  &:hover {
+    background: ${C.bgHover};
+    color: ${C.textPrimary};
+  }
 `;
-
-// ============================================
-// MENU DEFINITIONS — labelKey, not label
-// ============================================
-
-const MENU_ITEMS = {
-    dashboard: {
-        path: '/app/dashboard',
-        icon: <DashboardIcon />,
-        labelKey: 'nav.dashboard',
-        roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'main',
-    },
-
-    // Organizations (tenant management).
-    // Bug 8 (Option A): roles list stays permissive (USER included) so the
-    // route/self-service onboarding is never role-blocked; visibility is
-    // decided at render time by shouldShowOrganizations() below.
-    organizations: {
-        path: '/app/organizations',
-        icon: <BusinessIcon />,
-        labelKey: 'nav.organizations',
-        roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'main',
-    },
-
-    bookings: {
-        path: '/app/bookings',
-        icon: <TicketIcon />,
-        labelKey: 'nav.bookings',
-        roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'main',
-        badge: true,
-    },
-    events: {
-        path: '/app/events',
-        icon: <EventIcon />,
-        labelKey: 'nav.events',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    venues: {
-        path: '/app/venues',
-        icon: <VenueIcon />,
-        labelKey: 'nav.venues',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    discounts: {
-        path: '/app/discounts',
-        icon: <DiscountIcon />,
-        labelKey: 'nav.discounts',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    cancellationPolicies: {
-        path: '/app/cancellation-policies',
-        icon: <PolicyIcon />,
-        labelKey: 'nav.cancellationPolicies',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    analytics: {
-        path: '/app/analytics',
-        icon: <AnalyticsIcon />,
-        labelKey: 'nav.analytics',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    scanner: {
-        path: '/app/checkin',
-        icon: <ScannerIcon />,
-        labelKey: 'nav.checkin',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.SUPER_ADMIN], // ✅ Bug 23: allow STAFF to see scanner
-        section: 'admin',
-    },
-    users: {
-        path: '/app/users',
-        icon: <PeopleIcon />,
-        labelKey: 'nav.users',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-    settings: {
-        path: '/app/settings',
-        icon: <SettingsIcon />,
-        labelKey: 'nav.settings',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-    activeSessions: {
-        path: '/app/active-sessions',
-        icon: <DevicesIcon />,
-        labelKey: 'nav.activeSessions',
-        roles: [ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-};
-
-const SECTION_LABEL_KEYS = {
-    main: 'sections.main',
-    management: 'sections.management',
-    admin: 'sections.admin',
-};
 
 // ============================================
 // COMPONENT
 // ============================================
-
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
-    const { role, isSuperAdmin } = useRole();
-    const { logout, isAuthenticated } = useAuth();
-    const { t } = useTranslation();
-
-    // Tenant state drives Organizations visibility (Bug 8 / Option A).
-    // Falls back gracefully if OrgContext doesn't expose needsOrganization.
-    const orgCtx = useOrg() || {};
-    const organizations = orgCtx.organizations || [];
-    const needsOrganization = orgCtx.needsOrganization;
-
-    const isDrawer = Boolean(onNavigate);
-    const effectiveCollapsed = isDrawer ? false : collapsed;
-    const isGuest = !isAuthenticated;
-
-    const isPlatformAdmin =
-        isSuperAdmin ||
-        role === ROLES.SUPER_ADMIN ||
-        role === ROLES.ADMIN;
-
-    // Only show the Organizations nav entry when it is actionable:
-    //   • platform admins always see it (they manage every tenant),
-    //   • users who already belong to at least one org,
-    //   • users who still need to onboard (no orgs yet).
-    // Otherwise a regular member without org-creating intent would get a
-    // dead / confusing link.
-    const shouldShowOrganizations =
-        isPlatformAdmin ||
-        organizations.length > 0 ||
-        needsOrganization === true ||
-        (needsOrganization === undefined && organizations.length === 0);
-
-    const getVisibleItems = () => {
-        return Object.entries(MENU_ITEMS)
-            .filter(([key, item]) => {
-                if (isGuest) return false;
-                if (isSuperAdmin) return true;
-                if (!item.roles.includes(role)) return false;
-                if (key === 'organizations') return shouldShowOrganizations;
-                return true;
-            })
-            .map(([key, item]) => ({ key, ...item }));
-    };
-
-    const visibleItems = getVisibleItems();
-
-    const groupedItems = visibleItems.reduce((acc, item) => {
-        const section = item.section || 'main';
-        if (!acc[section]) acc[section] = [];
-        acc[section].push(item);
-        return acc;
-    }, {});
-
-    const handleLogout = () => {
-        if (window.confirm(t('common.logoutConfirm'))) {
-            logout();
+  const { role, isSuperAdmin } = useRole();
+  const { logout, isAuthenticated } = useAuth();
+  const { t } = useTranslation();
+  
+  const isGuest = !isAuthenticated;
+  const effectiveCollapsed = isGuest ? false : collapsed;
+  const isDrawer = !!onNavigate;
+  
+  const handleLogout = () => {
+    logout();
+    if (onNavigate) onNavigate();
+  };
+  
+  // Navigation items with role-based visibility
+  // UPDATED FOR 6-TIER HIERARCHY:
+  // - MEMBER can see Dashboard, Bookings, Settings.
+  // - OWNER and ADMIN can see Organizations.
+  // - STAFF can see Scanner.
+  const navItems = [
+    {
+      path: '/app/dashboard',
+      icon: <DashboardIcon />,
+      label: t('nav.dashboard'),
+      roles: [
+        ROLES.SUPER_ADMIN,
+        ROLES.OWNER,
+        ROLES.ADMIN,
+        ROLES.STAFF,
+        ROLES.MEMBER,
+        ROLES.USER,
+      ],
+      section: 'main',
+    },
+    {
+      path: '/app/events',
+      icon: <EventIcon />,
+      label: t('nav.events'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
+    },
+    {
+      path: '/app/venues',
+      icon: <VenueIcon />,
+      label: t('nav.venues'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
+    },
+    {
+      path: '/app/bookings',
+      icon: <TicketIcon />,
+      label: t('nav.bookings'),
+      roles: [
+        ROLES.SUPER_ADMIN,
+        ROLES.OWNER,
+        ROLES.ADMIN,
+        ROLES.STAFF,
+        ROLES.MEMBER,
+        ROLES.USER,
+      ],
+      section: 'main',
+    },
+    {
+      path: '/app/checkin',
+      icon: <ScannerIcon />,
+      label: t('nav.checkin'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN, ROLES.STAFF],
+      section: 'operations',
+    },
+    {
+      path: '/app/discounts',
+      icon: <DiscountIcon />,
+      label: t('nav.discounts'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
+    },
+    {
+      path: '/app/analytics',
+      icon: <AnalyticsIcon />,
+      label: t('nav.analytics'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
+    },
+    {
+      path: '/app/users',
+      icon: <PeopleIcon />,
+      label: t('nav.users'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
+    },
+    {
+      path: '/app/organizations',
+      icon: <BusinessIcon />,
+      label: t('nav.organizations'),
+      // ✅ FIXED: Removed ROLES.USER. Only Admins/Owners/SuperAdmins see this.
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
+    },
+    {
+      path: '/app/settings',
+      icon: <SettingsIcon />,
+      label: t('nav.settings'),
+      roles: [
+        ROLES.SUPER_ADMIN,
+        ROLES.OWNER,
+        ROLES.ADMIN,
+        ROLES.MEMBER,
+        ROLES.USER,
+      ],
+      section: 'main',
+    },
+  ];
+  
+  // Filter items based on role
+  const visibleItems = navItems.filter(item => 
+    item.roles.includes(role) || isSuperAdmin
+  );
+  
+  // Group items by section
+  const mainItems = visibleItems.filter(item => item.section === 'main');
+  const managementItems = visibleItems.filter(item => item.section === 'management');
+  const operationsItems = visibleItems.filter(item => item.section === 'operations');
+  const adminItems = visibleItems.filter(item => item.section === 'admin');
+  
+  // UPDATED FOR 6-TIER HIERARCHY:
+  // Added Owner / Member labels and safe fallbacks using RoleUtils.
+  const getRoleLabel = () => {
+    if (role === ROLES.SUPER_ADMIN) {
+      return t('roles.superAdmin', RoleUtils.getLabel(ROLES.SUPER_ADMIN));
+    }
+    if (role === ROLES.OWNER) {
+      return t('roles.owner', RoleUtils.getLabel(ROLES.OWNER));
+    }
+    if (role === ROLES.ADMIN) {
+      return t('roles.admin', RoleUtils.getLabel(ROLES.ADMIN));
+    }
+    if (role === ROLES.STAFF) {
+      return t('roles.staff', RoleUtils.getLabel(ROLES.STAFF));
+    }
+    if (role === ROLES.MEMBER) {
+      return t('roles.member', RoleUtils.getLabel(ROLES.MEMBER));
+    }
+    if (role === ROLES.ORGANIZER || role === 'organizer') {
+      return t('roles.organizer', 'Organizer');
+    }
+    return t('roles.user', RoleUtils.getLabel(ROLES.USER));
+  };
+  
+  return (
+    <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
+      <LogoWrap>
+        <LogoLink
+          to={isGuest ? '/' : '/app/dashboard'}
+          onClick={() => onNavigate && onNavigate()}
+        >
+          <Logo
+            variant="full"
+            height={84}
+            hidden={effectiveCollapsed && !isDrawer}
+          />
+        </LogoLink>
+        {isDrawer && (
+          <DrawerCloseButton
+            onClick={onNavigate}
+            aria-label={t('common.closeMenu')}
+          >
+            <CloseIcon fontSize="small" />
+          </DrawerCloseButton>
+        )}
+      </LogoWrap>
+      
+      {!isGuest && (
+        <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+          <span className="role-dot" />
+          <span className="role-label">{getRoleLabel()}</span>
+        </RoleBadge>
+      )}
+      
+      <NavItems>
+        {mainItems.length > 0 && (
+          <NavSection>
+            {mainItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+        
+        {managementItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.management')}
+            </SectionLabel>
+            {managementItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+        
+        {operationsItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.operations')}
+            </SectionLabel>
+            {operationsItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+        
+        {adminItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.admin')}
+            </SectionLabel>
+            {adminItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+      </NavItems>
+      
+      {!isGuest && (
+        <LogoutSection>
+          <LogoutButton
+            onClick={handleLogout}
+            collapsed={effectiveCollapsed}
+            $drawer={isDrawer}
+          >
+            <span className="icon">
+              <LogoutIcon fontSize="small" />
+            </span>
+            <span className="label">{t('nav.logout')}</span>
+          </LogoutButton>
+        </LogoutSection>
+      )}
+      
+      <ToggleButton
+        onClick={onToggle}
+        $drawer={isDrawer}
+        aria-label={
+          collapsed
+            ? t('common.expandSidebar')
+            : t('common.collapseSidebar')
         }
-    };
-
-    const getRoleLabel = () => {
-        if (role === ROLES.SUPER_ADMIN) return t('roles.superAdmin');
-        if (role === ROLES.ADMIN)       return t('roles.admin');
-        if (role === ROLES.ORGANIZER)   return t('roles.organizer');
-        if (role === ROLES.STAFF)       return t('roles.staff');     // ✅ NEW
-        return t('roles.user');
-    };
-
-    return (
-        <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
-            <LogoWrap>
-                <LogoLink
-                    to={isGuest ? '/' : '/app/dashboard'}
-                    onClick={() => onNavigate && onNavigate()}
-                >
-                    <Logo
-                        variant="full"
-                        height={84}
-                        hidden={effectiveCollapsed && !isDrawer}
-                    />
-                </LogoLink>
-                {isDrawer && (
-                    <DrawerCloseButton
-                        onClick={onNavigate}
-                        aria-label={t('common.closeMenu')}
-                    >
-                        <CloseIcon fontSize="small" />
-                    </DrawerCloseButton>
-                )}
-            </LogoWrap>
-
-            {!isGuest && (
-                <RoleBadge
-                    role={role}
-                    collapsed={effectiveCollapsed}
-                    $drawer={isDrawer}
-                >
-                    <span className="role-dot" />
-                    {getRoleLabel()}
-                </RoleBadge>
-            )}
-
-            <NavItems>
-                {Object.entries(groupedItems).map(([section, items]) => (
-                    <NavSection key={section}>
-                        <NavSectionLabel
-                            collapsed={effectiveCollapsed}
-                            $drawer={isDrawer}
-                        >
-                            {t(SECTION_LABEL_KEYS[section] || section)}
-                        </NavSectionLabel>
-                        {items.map((item) => (
-                            <NavItem
-                                key={item.key}
-                                to={item.path}
-                                collapsed={effectiveCollapsed}
-                                $drawer={isDrawer}
-                                activeClassName="active"
-                                onClick={() => {
-                                    if (onNavigate) onNavigate();
-                                }}
-                            >
-                                <span className="icon">{item.icon}</span>
-                                <span className="label">
-                                    {t(item.labelKey)}
-                                </span>
-                                {item.badge && (
-                                    <span className="badge">
-                                        {t('common.new')}
-                                    </span>
-                                )}
-                            </NavItem>
-                        ))}
-                    </NavSection>
-                ))}
-            </NavItems>
-
-            {!isGuest && (
-                <LogoutSection>
-                    <LogoutButton
-                        onClick={handleLogout}
-                        collapsed={effectiveCollapsed}
-                        $drawer={isDrawer}
-                    >
-                        <span className="icon">
-                            <LogoutIcon fontSize="small" />
-                        </span>
-                        <span className="label">{t('nav.logout')}</span>
-                    </LogoutButton>
-                </LogoutSection>
-            )}
-
-            <ToggleButton
-                onClick={onToggle}
-                $drawer={isDrawer}
-                aria-label={
-                    collapsed
-                        ? t('common.expandSidebar')
-                        : t('common.collapseSidebar')
-                }
-            >
-                {collapsed ? (
-                    <ChevronRight fontSize="small" />
-                ) : (
-                    <ChevronLeft fontSize="small" />
-                )}
-            </ToggleButton>
-        </SidebarContainer>
-    );
+      >
+        {collapsed ? (
+          <ChevronRight fontSize="small" />
+        ) : (
+          <ChevronLeft fontSize="small" />
+        )}
+      </ToggleButton>
+    </SidebarContainer>
+  );
 };
 
 export default Sidebar;

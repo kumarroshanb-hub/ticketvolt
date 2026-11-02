@@ -382,7 +382,7 @@ const Dashboard = () => {
     const canManageEvents =
         role === ROLES.ADMIN ||
         role === ROLES.SUPER_ADMIN ||
-        role === ROLES.ORGANIZER;
+        role === ROLES.OWNER;  // ✅ UPDATED FOR 6-TIER HIERARCHY
 
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState({
@@ -452,9 +452,9 @@ const Dashboard = () => {
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
-
-            {/* BUG 8: onboarding CTA for users without an organization */}
-            {needsOrganization && <NeedsOrganizationBanner />}
+            
+            {/* ✅ Only show the "Create Org" banner to users who actually have permission to create one */}
+            {needsOrganization && canManageEvents && <NeedsOrganizationBanner />}
 
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>

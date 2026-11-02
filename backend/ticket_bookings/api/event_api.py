@@ -235,7 +235,7 @@ class EventViewSet(viewsets.ModelViewSet):
         if not orgs:
             return None, Response(
                 {'organization_id':
-                 'You are not an organizer of any organization. '
+                 'You are not an owner or admin of any organization. '  # ✅ Updated for 6-tier
                  'Create an organization first.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )

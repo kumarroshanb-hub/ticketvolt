@@ -17,6 +17,15 @@ from .api.settings_api import SystemSettingsView
 # ✅ NEW: organization (tenant) API — enables the bootstrap flow.
 from .api.organization_api import OrganizationViewSet
 
+# ✅ NEW: Magic Link & Invite API
+from .api.auth_api import (
+    request_magic_link, 
+    verify_magic_link, 
+    send_organization_invite,
+    request_otp,      # ✅ NEW
+    verify_otp        # ✅ NEW
+)
+
 # SuperAdmin-only active-sessions endpoint
 from .api.active_sessions_api import ActiveSessionsView
 
@@ -162,8 +171,7 @@ urlpatterns = [
         'events/public/',
         EventViewSet.as_view({'get': 'public'}),
         name='events-public',
-    )
-    ,
+    ),
     path(
         'events/public/<uuid:pk>/',
         EventViewSet.as_view({'get': 'public_detail'}),
@@ -174,4 +182,25 @@ urlpatterns = [
         BookingViewSet.as_view({'post': 'cancel_tickets'}),
         name='booking-cancel-tickets',
     ),
+
+    # ==========================================
+    # ✅ NEW: MAGIC LINK & ORGANIZATION INVITES
+    # ==========================================
+    path(
+        'auth/request-magic-link/', 
+        request_magic_link, 
+        name='request-magic-link'
+    ),
+    path(
+        'auth/verify-magic-link/', 
+        verify_magic_link, 
+        name='verify-magic-link'
+    ),
+    path(
+        'organizations/<uuid:org_id>/invite/', 
+        send_organization_invite, 
+        name='send-org-invite'
+    ),
+    path('auth/request-otp/', request_otp, name='request-otp'),
+    path('auth/verify-otp/', verify_otp, name='verify-otp'),
 ]

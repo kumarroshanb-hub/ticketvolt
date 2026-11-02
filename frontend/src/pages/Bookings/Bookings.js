@@ -43,9 +43,9 @@ const Bookings = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    const isRegularUser = role === ROLES.USER;
+    const isRegularUser = role === ROLES.USER || role === ROLES.MEMBER;
     const canManageAllBookings =
-        role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN || role === ROLES.ORGANIZER;
+        role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN || role === ROLES.OWNER;
 
     // ---- Data ----
     const { bookings, loading, error, loadBookings } = useBookings();

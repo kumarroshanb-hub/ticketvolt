@@ -18,19 +18,22 @@ in `OrganizationMembership.role`. This file never writes `is_organizer`.
 (is_staff / is_superuser) and the "attach to an org" convenience. Moving
 a user between orgs is done via the OrganizationMembership admin.
 """
+import secrets
+import logging
+
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.hashers import make_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
-from django.core.mail import send_mail
 from django.conf import settings
-from django.utils.html import strip_tags
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth.tokens import default_token_generator
@@ -43,12 +46,12 @@ from ..services.tenancy import (
     user_org_ids,
     can_manage_org,
 )
+from ..services import auth_emails  # ✅ NEW: Centralized email service
 from .serializers import (
     UserSerializer,
     UserProfileSerializer,
     UserRegistrationSerializer,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -145,14 +148,13 @@ class UserViewSet(viewsets.ModelViewSet):
             .distinct()
         )
 
-        if role == 'organizer':
-            # Organizer = manager membership, NOT is_staff.
+        # UPDATED FOR 6-TIER HIERARCHY: Filter by specific roles
+        if role in ('organizer', 'owner'):
+            # Owner/Organizer = manager membership, NOT is_staff.
             queryset = queryset.filter(id__in=list(manager_user_ids))
 
         elif role == 'admin':
-            # FIX: Tenant Admin = is_staff=True, is_superuser=False AND a
-            # manager of ≥1 org. Bare `is_staff=True` with no org is a
-            # Regular User per the matrix.
+            # Tenant Admin = is_staff=True, is_superuser=False AND a manager of ≥1 org.
             queryset = queryset.filter(
                 is_staff=True, is_superuser=False,
             ).filter(id__in=list(manager_user_ids))
@@ -160,11 +162,34 @@ class UserViewSet(viewsets.ModelViewSet):
         elif role == 'super_admin':
             queryset = queryset.filter(is_superuser=True)
 
+        elif role == 'staff':
+            staff_user_ids = (
+                OrganizationMembership.objects
+                .filter(role=OrganizationMembership.OrgRole.STAFF)
+                .values_list('user_id', flat=True)
+                .distinct()
+            )
+            queryset = queryset.filter(id__in=list(staff_user_ids))
+
+        elif role == 'member':
+            member_user_ids = (
+                OrganizationMembership.objects
+                .filter(role=OrganizationMembership.OrgRole.MEMBER)
+                .values_list('user_id', flat=True)
+                .distinct()
+            )
+            queryset = queryset.filter(id__in=list(member_user_ids))
+
         elif role == 'user':
-            # Regular user: neither is_staff nor a manager of any org.
+            # Regular user: neither is_staff nor a member of any org.
+            all_org_user_ids = (
+                OrganizationMembership.objects
+                .values_list('user_id', flat=True)
+                .distinct()
+            )
             queryset = queryset.filter(
                 is_staff=False, is_superuser=False,
-            ).exclude(id__in=list(manager_user_ids))
+            ).exclude(id__in=list(all_org_user_ids))
 
         return queryset.order_by('-date_joined')
 
@@ -296,57 +321,64 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         # ---- Resolve target org ----
+        # UPDATED: Allow Superusers to bypass org requirement for Admin/Owner creation
         target_org = None
-        if not is_platform_admin(requester):
-            raw_org_id = request.data.get('organization_id')
-            requester_orgs = user_org_ids(requester)
-            if raw_org_id:
-                try:
-                    target_org = Organization.objects.get(id=raw_org_id)
-                except (Organization.DoesNotExist, ValueError):
-                    return Response(
-                        {'error': 'Organization not found.'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+        raw_org_id = request.data.get('organization_id')
+        
+        if raw_org_id:
+            try:
+                target_org = Organization.objects.get(id=raw_org_id)
+            except (Organization.DoesNotExist, ValueError):
+                return Response(
+                    {'error': 'Organization not found.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not is_platform_admin(requester):
+                requester_orgs = user_org_ids(requester)
                 if target_org.id not in requester_orgs:
                     return Response(
                         {'error': 'You do not have permission to create users in this organization.'},
                         status=status.HTTP_403_FORBIDDEN,
                     )
-                elif len(requester_orgs) == 1:
-                    target_org = Organization.objects.get(id=requester_orgs[0])
-                else:
-                    logger.warning(
-                        "User creation blocked: requester=%s belongs to multiple orgs %s "
-                        "and did not supply organization_id.",
-                        requester.username, sorted(requester_orgs),
-                    )
-                    return Response(
-                        {
-                            'error': 'organization_required',
-                            'detail': (
-                                'You belong to multiple organizations. '
-                                'Please choose which organization this user should belong to.'
-                            ),
-                            'code': 'MULTI_ORG_REQUIRED',
-                            'organizations': list(
-                                Organization.objects
-                                .filter(id__in=requester_orgs)
-                                .values('id', 'name')
-                                .order_by('name')
-                            ),
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+        elif not is_platform_admin(requester):
+            requester_orgs = user_org_ids(requester)
+            if len(requester_orgs) == 1:
+                target_org = Organization.objects.get(id=requester_orgs[0])
+            elif len(requester_orgs) > 1:
+                logger.warning(
+                    "User creation blocked: requester=%s belongs to multiple orgs %s "
+                    "and did not supply organization_id.",
+                    requester.username, sorted(requester_orgs),
+                )
+                return Response(
+                    {
+                        'error': 'organization_required',
+                        'detail': (
+                            'You belong to multiple organizations. '
+                            'Please choose which organization this user should belong to.'
+                        ),
+                        'code': 'MULTI_ORG_REQUIRED',
+                        'organizations': list(
+                            Organization.objects
+                            .filter(id__in=requester_orgs)
+                            .values('id', 'name')
+                            .order_by('name')
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            else:
+                return Response(
+                    {'error': 'You do not belong to any organization and cannot create users.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
-        # ---- FIX: Validate role BEFORE creating the user ----
-        # Previously the role check ran AFTER `serializer.save()`, so a
-        # rejected role check left an orphaned user in the DB (a `return`
-        # inside `with transaction.atomic()` does not roll back).
+        # ---- Validate role BEFORE creating the user ----
         requested_role = request.data.get('role', 'user')
-        if requested_role not in ('user', 'organizer', 'admin', 'super_admin'):
+        valid_roles = ('user', 'member', 'staff', 'owner', 'organizer', 'admin', 'super_admin')
+        if requested_role not in valid_roles:
             return Response(
-                {'error': 'Invalid role. Must be: user, organizer, admin, super_admin'},
+                {'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -357,29 +389,39 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         if requested_role == 'admin':
-            # FIX: per matrix, creating an Admin requires Platform Admin.
-            # Also require an org target so the "Admin" role is meaningful
-            # (an Admin with no org is a Regular User).
             if not is_platform_admin(requester):
                 return Response(
                     {'error': 'You do not have permission to create admins.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if target_org is None:
+            # Superusers can create Admins without an org (to be assigned later)
+            if target_org is None and not is_platform_superuser(requester):
                 return Response(
                     {'error': 'organization_id is required to create admins.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if requested_role == 'organizer':
+        if requested_role in ('organizer', 'owner'):
+            if target_org is None and not is_platform_superuser(requester):
+                return Response(
+                    {'error': 'organization_id is required to create owners.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if target_org is not None and not can_manage_org(requester, target_org):
+                return Response(
+                    {'error': 'You do not have permission to create owners in this organization.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+                
+        if requested_role in ('staff', 'member'):
             if target_org is None:
                 return Response(
-                    {'error': 'organization_id is required to create organizers.'},
+                    {'error': f'organization_id is required to create {requested_role}s.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if not can_manage_org(requester, target_org):
                 return Response(
-                    {'error': 'You do not have permission to create organizers in this organization.'},
+                    {'error': f'You do not have permission to create {requested_role}s in this organization.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -390,6 +432,14 @@ class UserViewSet(viewsets.ModelViewSet):
             if hasattr(request.data, 'copy')
             else dict(request.data)
         )
+
+        # ✅ FIX: Passwordless creation. If no password is provided by the 
+        # frontend, inject a secure, unguessable dummy password so the 
+        # serializer passes validation. The user will log in via Magic Link.
+        if not payload.get('password'):
+            payload['password'] = make_password(secrets.token_urlsafe(32))
+        if not payload.get('password_confirm'):
+            payload['password_confirm'] = payload['password']
 
         serializer = UserRegistrationSerializer(data=payload)
         if not serializer.is_valid():
@@ -406,18 +456,36 @@ class UserViewSet(viewsets.ModelViewSet):
             elif requested_role == 'admin':
                 user.is_staff = True
                 user.save(update_fields=['is_staff'])
-                OrganizationMembership.objects.get_or_create(
-                    organization=target_org,
-                    user=user,
-                    defaults={'role': OrganizationMembership.OrgRole.ADMIN},
-                )
+                if target_org is not None:
+                    OrganizationMembership.objects.get_or_create(
+                        organization=target_org,
+                        user=user,
+                        defaults={'role': OrganizationMembership.OrgRole.ADMIN},
+                    )
 
-            elif requested_role == 'organizer':
-                OrganizationMembership.objects.get_or_create(
-                    organization=target_org,
-                    user=user,
-                    defaults={'role': OrganizationMembership.OrgRole.ORGANIZER},
-                )
+            elif requested_role in ('organizer', 'owner'):
+                if target_org is not None:
+                    OrganizationMembership.objects.get_or_create(
+                        organization=target_org,
+                        user=user,
+                        defaults={'role': OrganizationMembership.OrgRole.OWNER},
+                    )
+
+            elif requested_role == 'staff':
+                if target_org is not None:
+                    OrganizationMembership.objects.get_or_create(
+                        organization=target_org,
+                        user=user,
+                        defaults={'role': OrganizationMembership.OrgRole.STAFF},
+                    )
+
+            elif requested_role == 'member':
+                if target_org is not None:
+                    OrganizationMembership.objects.get_or_create(
+                        organization=target_org,
+                        user=user,
+                        defaults={'role': OrganizationMembership.OrgRole.MEMBER},
+                    )
 
             else:  # 'user'
                 if target_org is not None:
@@ -446,7 +514,13 @@ class UserViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
-        serializer = UserRegistrationSerializer(data=request.data)
+        # ✅ FIX: Inject dummy password for passwordless flow
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        if not data.get('password'):
+            data['password'] = make_password(secrets.token_urlsafe(32))
+            data['password_confirm'] = data['password']
+
+        serializer = UserRegistrationSerializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -457,13 +531,13 @@ class UserViewSet(viewsets.ModelViewSet):
                 user=user,
                 defaults={
                     'email': user.email,
-                    'phone': request.data.get('phone', ''),
-                    'whatsapp_number': request.data.get('whatsapp_number', ''),
-                    'address': request.data.get('address', ''),
-                    'city': request.data.get('city', ''),
-                    'state': request.data.get('state', ''),
-                    'country': request.data.get('country') or _platform_country_default(),
-                    'postal_code': request.data.get('postal_code', ''),
+                    'phone': data.get('phone', ''),
+                    'whatsapp_number': data.get('whatsapp_number', ''),
+                    'address': data.get('address', ''),
+                    'city': data.get('city', ''),
+                    'state': data.get('state', ''),
+                    'country': data.get('country') or _platform_country_default(),
+                    'postal_code': data.get('postal_code', ''),
                 },
             )
 
@@ -505,35 +579,19 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         role = request.data.get('role')
-        if role not in ('user', 'organizer', 'admin', 'super_admin'):
+        valid_roles = ('user', 'member', 'staff', 'owner', 'organizer', 'admin', 'super_admin')
+        if role not in valid_roles:
             return Response(
-                {'error': 'Invalid role. Must be: user, organizer, admin, super_admin'},
+                {'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if role == 'admin':
-            # FIX: an Admin must be a manager of at least one org. If
-            # the caller did not supply an org, refuse — otherwise the
-            # user is a "staff with no org" ghost per the matrix.
+        target_org = None
+        if role in ('admin', 'owner', 'organizer', 'staff', 'member'):
             raw_org_id = request.data.get('organization_id')
             if not raw_org_id:
                 return Response(
-                    {'error': 'organization_id is required to promote a user to admin.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            try:
-                target_org = Organization.objects.get(id=raw_org_id)
-            except (Organization.DoesNotExist, ValueError):
-                return Response(
-                    {'error': 'Organization not found.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        if role == 'organizer':
-            raw_org_id = request.data.get('organization_id')
-            if not raw_org_id:
-                return Response(
-                    {'error': 'organization_id is required to promote to organizer.'},
+                    {'error': f'organization_id is required to promote a user to {role}.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
@@ -545,11 +603,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 )
 
         # FIX (BUG 19): never allow the last active superuser to be
-        # demoted out of the super_admin role. Mirrors the guard in
-        # delete_user(). This MUST run before `with transaction.atomic():`
-        # because the atomic block unconditionally clears both platform
-        # bits on entry — and a `return` inside an atomic block does not
-        # roll back the writes that already happened.
+        # demoted out of the super_admin role.
         if target.is_superuser and role != 'super_admin':
             remaining_superusers = (
                 User.objects
@@ -583,19 +637,30 @@ class UserViewSet(viewsets.ModelViewSet):
                 target.is_superuser = True
                 target.save(update_fields=['is_staff', 'is_superuser'])
 
-            elif role == 'organizer':
+            elif role in ('owner', 'organizer'):
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,
                     user=target,
-                    defaults={'role': OrganizationMembership.OrgRole.ADMIN},
+                    defaults={'role': OrganizationMembership.OrgRole.OWNER},
+                )
+
+            elif role == 'staff':
+                OrganizationMembership.objects.update_or_create(
+                    organization=target_org,
+                    user=target,
+                    defaults={'role': OrganizationMembership.OrgRole.STAFF},
+                )
+
+            elif role == 'member':
+                OrganizationMembership.objects.update_or_create(
+                    organization=target_org,
+                    user=target,
+                    defaults={'role': OrganizationMembership.OrgRole.MEMBER},
                 )
 
             elif role == 'user':
-                # Strip manager roles from every org the target belongs to.
-                OrganizationMembership.objects.filter(
-                    user=target,
-                    role__in=OrganizationMembership.MANAGER_ROLES,
-                ).update(role=OrganizationMembership.OrgRole.MEMBER)
+                # Strip all memberships to make them a pure Regular User
+                OrganizationMembership.objects.filter(user=target).delete()
 
         return Response({
             'success': True,
@@ -628,17 +693,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # FIX (BUG 19 follow-up): deactivating the last active superuser
-        # produces the same lockout as demoting or deleting them. This
-        # path never clears `is_superuser`, so it did not match BUG 19's
-        # original scope — but the *outcome* is the same, and the invariant
-        # "at least one active superuser always exists" should be enforced
-        # at every mutation site rather than inferred from the fact that
-        # authenticated users must be active. Guard is a no-op today given
-        # that guarantee, and protects against future auth changes.
-        #
-        # Only fires on the deactivating transition (`is_active: True -> False`).
-        # Reactivating a superuser is always safe.
         deactivating = target.is_active and target.is_superuser
         if deactivating:
             remaining_superusers = (
@@ -684,9 +738,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # FIX: only a superuser may reset a superuser's password, even on
-        # self-service. A superuser resetting their own password is
-        # allowed (is_self=True bypasses the target-superuser check).
         if target.is_superuser and not is_self and not is_platform_superuser(requester):
             return Response(
                 {'error': 'Only a super admin can reset a super admin password.'},
@@ -751,7 +802,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if not email:
             return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = User.objects.filter(email__iexact=email).first()
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
@@ -759,31 +810,15 @@ class UserViewSet(viewsets.ModelViewSet):
             frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
             reset_link = f"{frontend_url}/reset-password/{uid}/{token}"
 
-            subject = "Password Reset Request - TicketVolt"
-            html_message = f"""
-            <p>Hi {user.first_name or user.username},</p>
-            <p>You requested a password reset. Click the link below to set a new password:</p>
-            <p><a href="{reset_link}">Reset Password</a></p>
-            <p>If you didn't request this, you can safely ignore this email.</p>
-            <p>Thanks,<br>TicketVolt Team</p>
-            """
-
-            try:
-                send_mail(
-                    subject,
-                    strip_tags(html_message),
-                    settings.DEFAULT_FROM_EMAIL,
-                    [user.email],
-                    html_message=html_message,
-                    fail_silently=False,
-                )
-                logger.info(f"Password reset email sent to {email}")
-            except Exception as e:
-                logger.error(f"Failed to send reset email to {email}: {str(e)}")
+            # ✅ Aligned: use centralized auth_emails service
+            result = auth_emails.send_password_reset_email(user, reset_link)
+            if not result['success']:
+                logger.error(f"Failed to send reset email to {email}: {result.get('error')}")
                 return Response(
                     {'error': 'Failed to send email. Please try again later.'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
+            logger.info(f"Password reset email sent to {email}")
 
         return Response(
             {'message': 'If an account exists with this email, a reset link has been sent.'},
@@ -859,9 +894,6 @@ class UserViewSet(viewsets.ModelViewSet):
             username=target.username,
         ).delete()
 
-        # FIX: "unlock" must NOT reactivate a user who was explicitly
-        # deactivated. Reactivation is toggle_active's job. Only clear
-        # Axes attempts here.
         logger.info(
             "Unlocked user=%s by=%s (attempts_deleted=%s)",
             target.username, requester.username, deleted_attempts,
@@ -997,52 +1029,11 @@ class UserViewSet(viewsets.ModelViewSet):
     # Welcome email
     # ------------------------------------------------------------------
     def _send_welcome_email(self, user):
-        try:
-            subject = f'Welcome to TicketVolt, {user.first_name or user.username}!'
-
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    body {{ font-family: Arial, sans-serif; color: #333; }}
-                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                    .header {{ background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }}
-                    .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                    .footer {{ text-align: center; margin-top: 20px; color: #888; font-size: 12px; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>🎫 Welcome to TicketVolt!</h1>
-                    </div>
-                    <div class="content">
-                        <h2>Hi {user.first_name or user.username},</h2>
-                        <p>Your account has been created successfully!</p>
-                        <p><strong>Username:</strong> {user.username}</p>
-                        <p><strong>Email:</strong> {user.email}</p>
-                        <p>You can now log in to start managing your events and bookings.</p>
-                        <p><a href="{settings.FRONTEND_URL}/login" style="background: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block;">Login Now</a></p>
-                    </div>
-                    <div class="footer">
-                        <p>TicketVolt - Your trusted event ticketing platform</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
-
-            send_mail(
-                subject,
-                strip_tags(html_content),
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                html_message=html_content,
-                fail_silently=False,
+        """Delegates to the centralized auth_emails service."""
+        result = auth_emails.send_welcome_email(user)
+        if not result['success']:
+            logger.warning(
+                '⚠️ Welcome email failed for %s: %s', 
+                user.email, result.get('error')
             )
-            logger.info(f"Welcome email sent to {user.email}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send welcome email: {str(e)}")
-            return False
+        return result['success']

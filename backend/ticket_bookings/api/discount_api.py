@@ -52,7 +52,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
 
         if not orgs:
             return None, PermissionDenied(
-                'You are not an organizer of any organization. '
+                'You are not an owner or admin of any organization. '
                 'Create an organization first.'
             )
 

@@ -1,4 +1,3 @@
-# backend/ticket_bookings/api/active_sessions_api.py
 """
 SuperAdmin-only endpoint that lists all active sessions.
 
@@ -19,6 +18,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ticket_bookings.models import UserProfile
+
+# ✅ NEW: Import the centralized 6-tier role helper
+from ..views import get_user_role
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -67,14 +69,8 @@ class ActiveSessionsView(APIView):
             jwt_user_ids.add(u.id)
             unique_user_ids.add(u.id)
 
-            role = 'user'
-            if u.is_superuser:
-                role = 'super_admin'
-            elif u.is_staff:
-                role = 'admin'
-            elif profile.is_organizer:
-                role = 'organizer'
-
+            # ✅ FIX: Use the centralized 6-tier role helper
+            role = get_user_role(u)
             idle_seconds = int((now - profile.last_active).total_seconds())
 
             out.append({
@@ -86,7 +82,6 @@ class ActiveSessionsView(APIView):
                 'role': role,
                 'is_staff': u.is_staff,
                 'is_superuser': u.is_superuser,
-                'is_organizer': profile.is_organizer,
                 'expires_at': None,
                 'seconds_to_expiry': None,
                 'last_activity': profile.last_active.isoformat(),
@@ -111,10 +106,9 @@ class ActiveSessionsView(APIView):
                 'username': u.username,
                 'email': u.email,
                 'full_name': f'{u.first_name} {u.last_name}'.strip() or u.username,
-                'role': 'super_admin' if u.is_superuser else 'admin',
+                'role': get_user_role(u), # ✅ FIX: Will correctly return 'super_admin'
                 'is_staff': u.is_staff,
                 'is_superuser': u.is_superuser,
-                'is_organizer': False,
                 'expires_at': None,
                 'seconds_to_expiry': None,
                 'last_activity': now.isoformat(),
@@ -173,16 +167,8 @@ class ActiveSessionsView(APIView):
             estimated_last_activity = sess.expire_date - timedelta(seconds=28800)
             idle_seconds = int((now - estimated_last_activity).total_seconds())
 
-            role = 'user'
-            is_organizer = False
-            if user:
-                if user.is_superuser:
-                    role = 'super_admin'
-                elif user.is_staff:
-                    role = 'admin'
-                elif hasattr(user, 'profile') and user.profile.is_organizer:
-                    role = 'organizer'
-                    is_organizer = True
+            # ✅ FIX: Use the centralized 6-tier role helper
+            role = get_user_role(user) if user else 'user'
 
             out.append({
                 'session_key': sess.session_key[:8] + '…',
@@ -196,7 +182,6 @@ class ActiveSessionsView(APIView):
                 'role': role,
                 'is_staff': bool(user.is_staff) if user else False,
                 'is_superuser': bool(user.is_superuser) if user else False,
-                'is_organizer': is_organizer,
                 'expires_at': sess.expire_date.isoformat(),
                 'seconds_to_expiry': max(0, int((sess.expire_date - now).total_seconds())),
                 'last_activity': estimated_last_activity.isoformat(),

@@ -30,9 +30,10 @@ const PublicEvents = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
-    const isOrganizer = role === ROLES.ORGANIZER;
-    const canManageEvents = isAdmin || isOrganizer;
-    const isRegularUser = role === ROLES.USER;
+    const isOwner = role === ROLES.OWNER;
+    const canManageEvents = isAdmin || isOwner;
+    // Anyone who isn't an admin or owner is treated as a regular user for booking purposes
+    const isRegularUser = !canManageEvents; 
 
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);

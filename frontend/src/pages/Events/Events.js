@@ -54,10 +54,9 @@ const EventCardWithAdminActions = ({
 }) => {
     const [hovered, setHovered] = useState(false);
 
-    // ✅ NEW: show the owner chip when the event isn't owned by
-    // nobody useful. Only rendered for managers.
-    const organizerLabel =
-        event.organizer_username || event.organizer || null;
+    // ✅ UPDATED FOR 6-TIER HIERARCHY: show the owner label 
+    // so admins can see ownership at a glance.
+    const ownerLabel = event.organizer_username || event.organizer || null;
 
     return (
         <Box
@@ -70,8 +69,8 @@ const EventCardWithAdminActions = ({
                 Keeps the management page consistent with the dashboard. */}
             <EventCard event={event} onSelect={onView} context="management" />
 
-            {/* ✅ NEW: organizer chip so admins can see ownership at a glance. */}
-            {canManageEvents && organizerLabel && (
+            {/* ✅ UPDATED: owner chip */}
+            {canManageEvents && ownerLabel && (
                 <Box
                     sx={{
                         position: 'absolute',
@@ -90,7 +89,7 @@ const EventCardWithAdminActions = ({
                         variant="caption"
                         sx={{ color: C.textSecondary, fontWeight: 600 }}
                     >
-                        👤 {organizerLabel}
+                        👤 {ownerLabel}
                     </Typography>
                 </Box>
             )}
@@ -178,11 +177,14 @@ const Events = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
-    const isOrganizer = role === ROLES.ORGANIZER;
-    const canManageEvents = isAdmin || isOrganizer;
-    const canCreateEvents = isAdmin || isOrganizer;
-    const isRegularUser = role === ROLES.USER;
+    // ✅ UPDATED FOR 6-TIER HIERARCHY:
+    // Replaced legacy 'isOrganizer' with 'isManager' (Owner or Admin).
+    const isManager = role === ROLES.OWNER || role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
+    const canManageEvents = isManager;
+    const canCreateEvents = isManager;
+    
+    // Members and regular Users can browse events.
+    const isRegularUser = role === ROLES.USER || role === ROLES.MEMBER;
 
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);

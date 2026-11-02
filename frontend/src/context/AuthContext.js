@@ -316,24 +316,49 @@ export const AuthProvider = ({ children }) => {
     }, [isAuthenticated, logout]);
 
     // -----------------------------------------------------------------------
-    // Login
+    // Login (Supports both Standard and Magic Link flows)
     // -----------------------------------------------------------------------
-    const login = useCallback(async (email, password) => {
-        console.log('🔐 Login function called with:', { email, password: password ? '***' : 'missing' });
-
+    const login = useCallback(async (emailOrToken, passwordOrRefresh, userData) => {
         try {
-            if (!email || !password) {
-                return { success: false, error: 'Email and password are required' };
-            }
-
-            const response = await api.post('/auth/login/', { email, password });
-
-            if (response.data && response.data.access) {
-                const { access, refresh, user: userData } = response.data;
-
+            // ✅ MAGIC LINK FLOW: First argument is the access token string
+            if (typeof emailOrToken === 'string' && emailOrToken.startsWith('ey')) {
+                const token = emailOrToken;
+                const refresh = passwordOrRefresh;
                 const userToStore = {
                     ...userData,
                     role: userData?.role || 'user',
+                };
+
+                localStorage.setItem('token', token);
+                localStorage.setItem('refresh_token', refresh || '');
+                sessionStorage.setItem('token', token);
+                sessionStorage.setItem('refresh_token', refresh || '');
+
+                setUser(userToStore);
+                api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+                console.log('✅ Magic link login successful');
+                return { success: true, data: { access: token, refresh, user: userToStore } };
+            }
+
+            // ✅ STANDARD LOGIN FLOW
+            console.log('🔐 Standard login called with:', { email: emailOrToken, password: passwordOrRefresh ? '***' : 'missing' });
+
+            if (!emailOrToken || !passwordOrRefresh) {
+                return { success: false, error: 'Email and password are required' };
+            }
+
+            const response = await api.post('/auth/login/', { 
+                email: emailOrToken, 
+                password: passwordOrRefresh 
+            });
+
+            if (response.data && response.data.access) {
+                const { access, refresh, user: resUserData } = response.data;
+
+                const userToStore = {
+                    ...resUserData,
+                    role: resUserData?.role || 'user',
                 };
 
                 localStorage.setItem('token', access);
@@ -344,7 +369,7 @@ export const AuthProvider = ({ children }) => {
                 setUser(userToStore);
                 api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
 
-                console.log('✅ Login successful');
+                console.log('✅ Standard login successful');
                 return { success: true, data: response.data };
             }
 

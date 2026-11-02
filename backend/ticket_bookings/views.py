@@ -227,39 +227,31 @@ def get_user_role(user):
     """
     Compute the effective role string for a user.
 
-    P0 FIX (2026-10-30):
-    --------------------
+    UPDATED FOR 6-TIER HIERARCHY (2026-11-01):
+    ------------------------------------------
     The permission matrix (§0) defines the roles as:
 
         super_admin = is_superuser
+        owner       = membership in MANAGER_ROLES (OWNER/ADMIN), no is_staff
         admin       = is_staff AND member of ≥1 org with role OWNER or ADMIN
-        organizer   = membership in MANAGER_ROLES, no is_staff
-        staff       = membership with role STAFF, not a manager anywhere  (BUG 23/24)
-        user        = everyone else
+        staff       = membership with role STAFF, not a manager anywhere
+        member      = membership with role MEMBER only
+        user        = everyone else (no org membership)
 
-    Previously this returned `'admin'` for ANY `is_staff=True` user. That
-    meant a staff account with zero org memberships was labelled
-    `'admin'` — and the frontend showed them Users / Settings / Checkin
-    links, none of which they could actually operate (every backend
-    permission check for those routes requires `user_org_ids`, which
-    was empty).
-
-    BUG 23/24 FIX (2026-10-30):
-    ---------------------------
-    STAFF (scanner-only) membership is now its own label, `'staff'`.
-    Previously a STAFF-only user fell through to `'organizer'` (if
-    non-staff) or `'user'` (if staff), even though `can_operate_org`
-    grants them every scanner endpoint. The frontend trusts this label
-    to render the Checkin entry, so the UI disagreed with the backend.
+    Previously this returned `'organizer'` for managers who weren't
+    `is_staff`. The 6-tier hierarchy uses `'owner'` instead, which matches
+    the frontend's `ROLES.OWNER` constant and eliminates the need for
+    legacy fallback mapping in `RoleContext.js`.
 
     Precedence (manager beats staff — a user may hold STAFF on one org
     and OWNER on another):
 
         superuser                                   → 'super_admin'
         is_staff AND manager-anywhere               → 'admin'
-        manager-anywhere (not is_staff)             → 'organizer'
+        manager-anywhere (not is_staff)             → 'owner'  # UPDATED: was 'organizer'
         is_staff AND staff-anywhere                 → 'staff'
         staff-anywhere (not is_staff)               → 'staff'
+        member-only (not manager, not staff)        → 'member' # NEW
         otherwise                                   → 'user'
 
     The P0 fix is preserved: an `is_staff=True` user with *no* org
@@ -292,22 +284,28 @@ def get_user_role(user):
         # up and labelling them 'user'.
 
     elif is_org_manager:
-        return 'organizer'
+        # UPDATED FOR 6-TIER HIERARCHY: Return 'owner' instead of 'organizer'
+        return 'owner'
 
     # BUG 23/24: scanner-only membership gets its own label. This is
     # what makes the Checkin sidebar entry appear for STAFF users and
     # matches what `can_operate_org` already allows on the server.
-    #
-    # If `OrganizationMembership.STAFF` is not a named constant in this
-    # codebase, use `role='staff'` here instead — the intent is "the
-    # STAFF tier, not MANAGER_ROLES".
     is_org_staff = OrganizationMembership.objects.filter(
         user=user,
-        role=OrganizationMembership.STAFF,
+        role='staff',
     ).exists()
 
     if is_org_staff:
         return 'staff'
+
+    # ADDED FOR 6-TIER HIERARCHY: Check for member-only membership
+    is_org_member = OrganizationMembership.objects.filter(
+        user=user,
+        role='member',
+    ).exists()
+
+    if is_org_member:
+        return 'member'
 
     # Defensive: is_staff with no manager AND no staff membership means
     # an org-less staff account has sneaked into the app. Log at warning
@@ -328,14 +326,14 @@ def _user_profile_summary(user):
     try:
         profile = user.profile
     except UserProfile.DoesNotExist:
-        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False}
+        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False, 'is_owner': False}
     except Exception:
         logger.warning(
             "Could not load UserProfile for user %r in _user_profile_summary",
             getattr(user, 'id', None),
             exc_info=True,
         )
-        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False}
+        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False, 'is_owner': False}
 
     is_org = OrganizationMembership.objects.filter(
         user=user,
@@ -345,7 +343,8 @@ def _user_profile_summary(user):
     return {
         'phone': getattr(profile, 'phone', '') or '',
         'whatsapp_number': getattr(profile, 'whatsapp_number', '') or '',
-        'is_organizer': is_org,
+        'is_organizer': is_org,  # Kept for backward compatibility
+        'is_owner': is_org,      # ADDED FOR 6-TIER HIERARCHY
     }
 
 

@@ -107,8 +107,11 @@ assert set(BULK_ACTION_MAP.values()) <= BULK_ACTION_HANDLERS, (
 )
 
 
-class IsAdminOrOrganizer(permissions.BasePermission):
-    """Platform admin, or manager of at least one organization."""
+class IsBookingManager(permissions.BasePermission):
+    """
+    Platform admin, or manager (Owner/Admin) of at least one organization.
+    Restricts access to booking mutation actions.
+    """
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
@@ -144,7 +147,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return [permissions.AllowAny()]
         if self.action in admin_actions:
-            return [IsAdminOrOrganizer()]
+            return [IsBookingManager()]  # ✅ UPDATED NAME
         return [permissions.IsAuthenticated()]
 
     def _count_requested_tickets(self, data):

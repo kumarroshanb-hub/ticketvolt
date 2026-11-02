@@ -246,16 +246,6 @@ export const EVENT_CATEGORY_LABELS = {
     [EVENT_CATEGORY.OTHER]: 'Other',
 };
 
-// ────────────────────────────────────────────────────────────────────
-// EVENT_CATEGORY_ICONS
-// Mirrors backend/ticket_bookings/constants.py::EventCategory.get_icon()
-// and the icon map used by EventCard.
-//
-// Required by:
-//   • frontend/src/pages/Landing/Landing.js (category filter pills)
-//   • frontend/src/components/Common/EventCard.js (category tag)
-//   • any other consumer that renders a category badge
-// ────────────────────────────────────────────────────────────────────
 export const EVENT_CATEGORY_ICONS = {
     [EVENT_CATEGORY.CONCERT]:    '🎵',
     [EVENT_CATEGORY.SPORTS]:     '⚽',
@@ -345,31 +335,34 @@ export const EventTemplateTypeUtils = {
 };
 
 // ============================================
-// ROLES CONSTANTS
+// ROLES CONSTANTS (UPDATED FOR 6-TIER HIERARCHY)
 // ============================================
 
 export const ROLES = {
     SUPER_ADMIN: 'super_admin',
+    OWNER: 'owner',
     ADMIN: 'admin',
-    ORGANIZER: 'organizer',
     STAFF: 'staff', 
-    USER: 'user',
+    MEMBER: 'member',
+    USER: 'user', // Guest / Non-member regular user
 };
 
 export const ROLE_LABELS = {
     [ROLES.SUPER_ADMIN]: 'Super Admin',
+    [ROLES.OWNER]: 'Owner',
     [ROLES.ADMIN]: 'Admin',
-    [ROLES.ORGANIZER]: 'Organizer',
     [ROLES.STAFF]: 'Staff',
-    [ROLES.USER]: 'User',
+    [ROLES.MEMBER]: 'Member',
+    [ROLES.USER]: 'Guest',
 };
 
 export const ROLE_HIERARCHY = {
-    [ROLES.SUPER_ADMIN]: 4,
+    [ROLES.SUPER_ADMIN]: 5,
+    [ROLES.OWNER]: 4,
     [ROLES.ADMIN]: 3,
-    [ROLES.ORGANIZER]: 2,
     [ROLES.STAFF]: 2, 
-    [ROLES.USER]: 1,
+    [ROLES.MEMBER]: 1,
+    [ROLES.USER]: 0,
 };
 
 export const ROLE_PERMISSIONS = {
@@ -377,56 +370,73 @@ export const ROLE_PERMISSIONS = {
         canManageUsers: true,
         canManageAllEvents: true,
         canManageAllBookings: true,
-        canManageOrganizers: true,
+        canManageOrganizations: true,
         canManageVenues: true,
         canViewAnalytics: true,
         canManageSystem: true,
         canManageDiscounts: true,
         canAccessScanner: true,
+        canDeleteOrg: true,
     },
-    [ROLES.ADMIN]: {
+    [ROLES.OWNER]: {
         canManageUsers: true,
         canManageAllEvents: true,
         canManageAllBookings: true,
-        canManageOrganizers: false,
+        canManageOrganizations: false,
         canManageVenues: true,
         canViewAnalytics: true,
         canManageSystem: false,
         canManageDiscounts: true,
         canAccessScanner: true,
+        canDeleteOrg: true,
     },
-    [ROLES.ORGANIZER]: {
-        canManageUsers: false,
-        canManageAllEvents: false,
-        canManageAllBookings: false,
-        canManageOrganizers: false,
-        canManageVenues: false,
+    [ROLES.ADMIN]: {
+        canManageUsers: true,
+        canManageAllEvents: true,
+        canManageAllBookings: true,
+        canManageOrganizations: false,
+        canManageVenues: true,
         canViewAnalytics: true,
         canManageSystem: false,
         canManageDiscounts: true,
-        canAccessScanner: false,
+        canAccessScanner: true,
+        canDeleteOrg: false,
     },
-        [ROLES.STAFF]: {
+    [ROLES.STAFF]: {
         canManageUsers: false,
         canManageAllEvents: false,
-        canManageAllBookings: false,
-        canManageOrganizers: false,
+        canManageAllBookings: true, // Can view bookings for scanning
+        canManageOrganizations: false,
         canManageVenues: false,
         canViewAnalytics: false,
         canManageSystem: false,
         canManageDiscounts: false,
         canAccessScanner: true,
+        canDeleteOrg: false,
     },
-    [ROLES.USER]: {
+    [ROLES.MEMBER]: {
         canManageUsers: false,
         canManageAllEvents: false,
         canManageAllBookings: false,
-        canManageOrganizers: false,
+        canManageOrganizations: false,
         canManageVenues: false,
         canViewAnalytics: false,
         canManageSystem: false,
         canManageDiscounts: false,
         canAccessScanner: false,
+        canDeleteOrg: false,
+    },
+    [ROLES.USER]: {
+        canManageUsers: false,
+        canManageAllEvents: false,
+        canManageAllBookings: false,
+        canManageOrganizations: false,
+        canManageVenues: false,
+        canViewAnalytics: false,
+        canManageSystem: false,
+        canManageDiscounts: false,
+        canAccessScanner: false,
+        canDeleteOrg: false,
     },
 };
 
@@ -442,17 +452,21 @@ export const RoleUtils = {
         return perms ? perms[permission] || false : false;
     },
     isAtLeast: function(role, minRole) {
-        return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[minRole];
+        return (ROLE_HIERARCHY[role] || 0) >= (ROLE_HIERARCHY[minRole] || 0);
     },
     getAvailableRoles: function(currentRole) {
         var currentLevel = ROLE_HIERARCHY[currentRole] || 0;
-        // ✅ Bug 23: only roles strictly below your level, and never STAFF
-        // unless the caller is explicitly allowed to grant it (admins).
+        // Staff can only be granted by Admin, Owner, or Super Admin.
         var canGrantStaff =
-            currentRole === ROLES.ADMIN || currentRole === ROLES.SUPER_ADMIN;
+            currentRole === ROLES.ADMIN || 
+            currentRole === ROLES.OWNER || 
+            currentRole === ROLES.SUPER_ADMIN;
+            
         return Object.keys(ROLE_HIERARCHY).filter(function(role) {
             if (role === ROLES.STAFF && !canGrantStaff) return false;
             if (role === currentRole) return false;
+            // Cannot grant USER/Guest via UI as it's the default unauthenticated state
+            if (role === ROLES.USER) return false; 
             return ROLE_HIERARCHY[role] < currentLevel;
         });
     },

@@ -153,10 +153,10 @@ const CreateBooking = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
-    const isOrganizer = role === ROLES.ORGANIZER;
-    const canManageEvents = isAdmin || isOrganizer;
-    const isRegularUser = role === ROLES.USER;
+    const isManager = role === ROLES.OWNER || role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
+    const canManageEvents = isManager;
+    // ✅ UPDATED: Members can also book tickets, so they are treated as regular users here.
+    const isRegularUser = role === ROLES.USER || role === ROLES.MEMBER;
 
     // ✅ Platform timezone used for every slot time in the wizard.
     const platformTimezone = settings?.default_timezone;

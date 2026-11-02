@@ -78,7 +78,7 @@ const roleChipColor = (role) => {
     switch (role) {
         case ROLES.SUPER_ADMIN: return { bg: `${C.success}1A`, color: C.successDark };
         case ROLES.ADMIN:       return { bg: `${C.info}1A`,    color: C.infoDark };
-        case ROLES.ORGANIZER:   return { bg: `${C.warning}1A`, color: C.warningDark };
+        case ROLES.OWNER: return { bg: `${C.warning}1A`, color: C.warningDark };
         default:                return { bg: C.bgInput,        color: C.textSecondary };
     }
 };
@@ -277,7 +277,7 @@ const ActiveSessions = () => {
                                 <MenuItem value="all">All</MenuItem>
                                 <MenuItem value={ROLES.SUPER_ADMIN}>Super Admin</MenuItem>
                                 <MenuItem value={ROLES.ADMIN}>Admin</MenuItem>
-                                <MenuItem value={ROLES.ORGANIZER}>Organizer</MenuItem>
+                                <MenuItem value={ROLES.OWNER}>Owner</MenuItem>
                                 <MenuItem value={ROLES.USER}>User</MenuItem>
                             </Select>
                         </FormControl>

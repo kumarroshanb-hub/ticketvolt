@@ -2,14 +2,20 @@
 """
 Organization (tenant) API.
 
-Role rules:
+Role rules (6-tier hierarchy):
   • Any authenticated user may create an org and becomes OWNER.
   • A Platform Admin may create an org on behalf of another user by
     passing `owner_id` — that user becomes the OWNER instead.
-  • OWNER can change member roles (but NOT demote the final OWNER,
-    and NOT promote anyone to OWNER — only Platform Admin does that).
-  • ADMIN can add/remove STAFF/MEMBER/CUSTOMER members but cannot
-    add/remove ADMIN or OWNER.
+  • OWNER can change member roles among ADMIN / STAFF / MEMBER, but
+    CANNOT promote or demote directly to/from OWNER via
+    `change_member_role`. Ownership moves ONLY through the atomic
+    `transfer-ownership` endpoint (which also re-points the
+    Organization.owner FK).
+  • The current OWNER (or a Platform Admin) may transfer ownership to
+    any existing active member via `transfer-ownership`. The previous
+    owner is demoted to ADMIN and retained in the org.
+  • ADMIN can add/remove STAFF/MEMBER but cannot add/remove ADMIN or
+    OWNER.
   • Only Platform Admin can delete an org.
 
 Regional defaults (currency, country, timezone, branding) are seeded
@@ -50,7 +56,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
-    
+
     def perform_create(self, serializer):
         requester = self.request.user
 
@@ -143,31 +149,50 @@ class OrganizationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def members(self, request, pk=None):
+        """
+        List all members of the organization.
+        Exposes time-bounded validity dates (valid_from, valid_until) 
+        and is_active status for the frontend TeamMembers UI.
+        """
         org = self.get_object()
         if not can_manage_org(request.user, org):
             raise PermissionDenied(
                 'You do not have permission to list members of this organization.'
             )
+        
+        # ✅ UPDATED: Prefetch user and profile to prevent N+1 queries
         qs = (
             OrganizationMembership.objects
             .filter(organization=org)
-            .select_related('user')
+            .select_related('user', 'user__profile')
             .order_by('-joined_at')
         )
-        return Response([
-            {
+        
+        data = []
+        for m in qs:
+            item = {
+                'id': str(m.id),
                 'user_id': m.user_id,
-                'username': m.user.username,
                 'email': m.user.email,
-                'full_name': f'{m.user.first_name} {m.user.last_name}'.strip(),
+                'name': m.user.get_full_name().strip() or m.user.username,
+                'username': m.user.username,
                 'role': m.role,
-                'joined_at': m.joined_at.isoformat(),
+                'is_active': getattr(m, 'is_active', True),
+                'joined_at': m.joined_at.isoformat() if m.joined_at else None,
             }
-            for m in qs
-        ], status=status.HTTP_200_OK)
+            
+            # ✅ NEW: Expose validity dates for time-bounded memberships
+            if hasattr(m, 'valid_from') and m.valid_from:
+                item['valid_from'] = m.valid_from.isoformat()
+            if hasattr(m, 'valid_until') and m.valid_until:
+                item['valid_until'] = m.valid_until.isoformat()
+                
+            data.append(item)
+            
+        return Response(data, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------
-    # Members
+    # Members (Add existing user directly)
     # ------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='members')
     @transaction.atomic
@@ -185,7 +210,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         allowed_roles = {
             OrganizationMembership.OrgRole.STAFF,
             OrganizationMembership.OrgRole.MEMBER,
-            OrganizationMembership.OrgRole.CUSTOMER,
+            # UPDATED FOR 6-TIER HIERARCHY: CUSTOMER removed.
+            # A person who merely bought a ticket and has no account is a
+            # Guest (no membership row); one who has an account is a MEMBER.
         }
         if owns_org(request.user, org) or is_platform_admin(request.user):
             allowed_roles.add(OrganizationMembership.OrgRole.ADMIN)
@@ -281,7 +308,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                     {
                         'error': (
                             'Cannot demote the last OWNER. '
-                            'Promote another member to OWNER first.'
+                            'Use the transfer-ownership endpoint instead.'
                         )
                     },
                     status=status.HTTP_409_CONFLICT,
@@ -291,11 +318,15 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             new_role == OrganizationMembership.OrgRole.OWNER
             and membership.role != OrganizationMembership.OrgRole.OWNER
         ):
+            # UPDATED FOR 6-TIER HIERARCHY:
+            # Direct promotion to OWNER is blocked here on purpose. Ownership
+            # must move through the atomic transfer-ownership endpoint so the
+            # Organization.owner FK and the membership rows stay in sync.
             return Response(
                 {
                     'error': (
-                        'Only a Platform Admin can promote a member to OWNER. '
-                        'Contact the platform administrator.'
+                        'Cannot promote a member to OWNER directly. '
+                        'Use the transfer-ownership endpoint instead.'
                     )
                 },
                 status=status.HTTP_403_FORBIDDEN,
@@ -308,6 +339,113 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             'user_id': membership.user_id,
             'role': membership.role,
         }, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------
+    # ADDED FOR OWNERSHIP TRANSFER
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=['post'], url_path='transfer-ownership')
+    @transaction.atomic
+    def transfer_ownership(self, request, pk=None):
+        """
+        Transfer ownership of this organization to another existing member.
+
+        Allowed:
+          • The current OWNER.
+          • A Platform Admin (is_platform_admin).
+
+        Rules:
+          • New owner must already be a member of the organization.
+          • New owner must be an active user.
+          • Cannot transfer to self / current owner.
+          • Previous owner is demoted to ADMIN and retained in the org.
+          • Organization.owner FK and the OWNER membership are updated
+            atomically so they never drift apart.
+        """
+        org = self.get_object()
+        requester = request.user
+
+        new_owner_user_id = request.data.get('new_owner_user_id')
+        if not new_owner_user_id:
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'This field is required.'}
+            )
+        try:
+            new_owner_user_id = int(new_owner_user_id)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'Must be a valid user ID.'}
+            )
+
+        # Lock the current OWNER row so concurrent transfers serialize.
+        current_owner_membership = (
+            OrganizationMembership.objects
+            .select_for_update()
+            .filter(
+                organization=org,
+                role=OrganizationMembership.OrgRole.OWNER,
+            )
+            .first()
+        )
+
+        requester_is_owner = bool(
+            current_owner_membership
+            and current_owner_membership.user_id == requester.id
+        )
+
+        if not (requester_is_owner or is_platform_admin(requester)):
+            raise PermissionDenied(
+                'Only the current OWNER or a Platform Admin can transfer ownership.'
+            )
+
+        if (
+            current_owner_membership
+            and current_owner_membership.user_id == new_owner_user_id
+        ):
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'This user is already the organization owner.'}
+            )
+
+        # Lock + validate the target membership.
+        target_membership = (
+            OrganizationMembership.objects
+            .select_for_update()
+            .filter(organization=org, user_id=new_owner_user_id)
+            .select_related('user')
+            .first()
+        )
+
+        if not target_membership:
+            raise serializers.ValidationError(
+                {
+                    'new_owner_user_id': (
+                        'New owner must already be a member of this organization.'
+                    )
+                }
+            )
+
+        if not getattr(target_membership.user, 'is_active', True):
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'New owner must be an active user.'}
+            )
+
+        # Demote previous owner to ADMIN (kept in the org).
+        if (
+            current_owner_membership
+            and current_owner_membership.user_id != new_owner_user_id
+        ):
+            current_owner_membership.role = OrganizationMembership.OrgRole.ADMIN
+            current_owner_membership.save(update_fields=['role'])
+
+        # Promote target to OWNER.
+        target_membership.role = OrganizationMembership.OrgRole.OWNER
+        target_membership.save(update_fields=['role'])
+
+        # Keep the Organization.owner FK in sync with the membership.
+        org.owner_id = new_owner_user_id
+        org.save(update_fields=['owner', 'updated_at'])
+
+        serializer = self.get_serializer(org)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(
         detail=True, methods=['delete'],
@@ -333,7 +471,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
 
         if membership.role == OrganizationMembership.OrgRole.OWNER:
             return Response(
-                {'error': 'Cannot remove an OWNER. Demote first via role change.'},
+                {'error': 'Cannot remove an OWNER. Transfer ownership first.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 

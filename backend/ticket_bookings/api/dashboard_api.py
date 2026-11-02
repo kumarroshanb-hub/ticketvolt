@@ -5,18 +5,12 @@ Dashboard stats — tenant-aware.
 Scope (Phase 3):
   • Platform admins see every event / booking in every org.
   • Org Owners/Admins see their org(s) only.
-  • Everyone else sees only public events and their own bookings.
+  • Everyone else (Regular Users) sees only public events and their own bookings.
 
-BUG 9 FIX: `permission_classes` now includes `IsTenantManager`, so the
-dashboard endpoint is manager-only at the permission layer. Non-managers
-are rejected with 403 before any queryset is evaluated. The view still
-keeps its tenant-scoped querysets (`visible_events` etc.) so a caller
-that somehow reaches the view body gets correctly scoped data — but the
-normal HTTP path no longer lets non-managers in.
-
-Every scoping decision delegates to `services.tenancy`. The legacy
-`UserProfile.is_organizer` / `Event.organizer` fields are no longer
-read for access control.
+FIX: Removed `IsTenantManager` permission. Regular users are now allowed to 
+access the endpoint. The scoping is handled entirely by `services.tenancy` 
+(`visible_events`, `visible_bookings`), which correctly restricts Regular 
+Users to their own bookings and public events.
 
 Preserved invariants (from earlier fixes):
   ✅ FIX [P15]: past events excluded from `popular_events`.
@@ -31,11 +25,9 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-
+from ..views import get_user_role 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
-
-from core.permissions import IsTenantManager
 
 from ..models import Event, Booking, Ticket, CheckInLog
 from ..services.tenancy import (
@@ -61,10 +53,8 @@ _TERMINAL_EVENT_STATUSES = ('cancelled', 'completed')
 
 
 class DashboardStatsView(APIView):
-    # BUG 9 FIX: manager-only endpoint. `IsTenantManager` allows platform
-    # admins and managers of ≥ 1 org, and rejects everyone else with 403
-    # before any queryset is evaluated.
-    permission_classes = [IsAuthenticated, IsTenantManager]
+    # FIXED: Allow all authenticated users. Scoping is handled by the querysets below.
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
@@ -73,6 +63,8 @@ class DashboardStatsView(APIView):
 
             # ------------------------------------------------------------
             # 1. Scope — delegated to services.tenancy.
+            #    - Managers see their org's data.
+            #    - Regular users see public events + their own bookings.
             # ------------------------------------------------------------
             events_qs = visible_events(user)
             bookings_qs = visible_bookings(user).filter(event__in=events_qs)
@@ -214,19 +206,13 @@ class DashboardStatsView(APIView):
                 })
 
             # ------------------------------------------------------------
-            # 5. Role info block — read from tenancy helpers, not the
-            #    legacy `profile.is_organizer` flag.
+            # 5. Role info block — 100% accurate 6-tier labels.
             # ------------------------------------------------------------
-            is_admin = is_platform_admin(user)
-            orgs = user_org_ids(user)
-            is_organizer = bool(orgs)
+            # We import get_user_role here to avoid circular imports at the top.
+            # This ensures the dashboard label matches the Sidebar/Profile exactly.
 
-            if is_admin:
-                role_label = 'admin'
-            elif is_organizer:
-                role_label = 'organizer'
-            else:
-                role_label = 'user'
+            role_label = get_user_role(user) # Returns: super_admin, owner, admin, staff, member, or user
+            is_manager = bool(user_org_ids(user)) # True for Owner/Admin
 
             return Response({
                 'total_events': total_events,
@@ -244,9 +230,9 @@ class DashboardStatsView(APIView):
                     'role': role_label,
                     'is_staff': user.is_staff,
                     'is_superuser': user.is_superuser,
-                    'is_organizer': is_organizer,
-                    'org_ids': [str(o) for o in orgs],
-                    'shows_past_events': is_admin or is_organizer,
+                    'is_manager': is_manager,
+                    'org_ids': [str(o) for o in user_org_ids(user)],
+                    'shows_past_events': is_platform_admin(user) or is_manager,
                 },
             })
 

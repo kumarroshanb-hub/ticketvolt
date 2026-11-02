@@ -39,6 +39,7 @@ from .managers import (
     EXCLUDED_BOOKING_STATUSES,
     EXCLUDED_TICKET_STATUSES,
 )
+from django.utils import timezone   # add to top imports if not present
 
 # ============================================
 # IMPORT SHARED CONSTANTS
@@ -74,12 +75,17 @@ class UserProfile(models.Model):
     state = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100, default='India')
     postal_code = models.CharField(max_length=20, blank=True)
+    
     # DEPRECATED (Phase 6): replaced by OrganizationMembership.role.
-    # Kept during the migration so old code paths still compile, but
-    # every access-check now goes through services.tenancy.
     is_organizer = models.BooleanField(default=False)
+    
     # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
     last_active = models.DateTimeField(null=True, blank=True)
+
+    # ✅ NEW: Passwordless Magic Link Authentication fields
+    magic_token = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    magic_token_expires = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -808,6 +814,37 @@ class EventTemplate(models.Model):
     def __str__(self):
         return f"{self.event.title} - {self.template_type.name}: {self.name}"
 
+
+class OTPRequest(models.Model):
+    """A single OTP issuance. Hashed, short-lived, attempt-limited."""
+    CHANNEL_EMAIL = 'email'
+    CHANNEL_SMS = 'sms'
+    CHANNEL_WHATSAPP = 'whatsapp'
+    CHANNEL_CHOICES = [
+        (CHANNEL_EMAIL, 'Email'),
+        (CHANNEL_SMS, 'SMS'),
+        (CHANNEL_WHATSAPP, 'WhatsApp'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    destination = models.CharField(max_length=254, db_index=True)  # email or phone
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default=CHANNEL_EMAIL)
+    otp_hash = models.CharField(max_length=128)                    # NEVER plaintext
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['destination', 'created_at'])]
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def attempts_exhausted(self):
+        return self.attempts >= self.max_attempts
 
 # ============================================================
 # SYSTEM SETTINGS — deployment-wide configuration (singleton)

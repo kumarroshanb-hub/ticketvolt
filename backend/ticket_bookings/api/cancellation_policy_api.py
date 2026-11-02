@@ -43,7 +43,7 @@ class CancellationPolicyViewSet(viewsets.ModelViewSet):
             orgs = user_org_ids(user)
             if not orgs:
                 return None, PermissionDenied(
-                    'You are not an organizer of any organization.'
+                    'You are not an owner or admin of any organization.'  # ✅ Updated for 6-tier
                 )
             if len(orgs) > 1:
                 return None, PermissionDenied(

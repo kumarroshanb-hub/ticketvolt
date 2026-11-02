@@ -1,4 +1,3 @@
-// frontend/src/pages/Users/Users.js
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
@@ -26,8 +25,6 @@ import {
   Close,
   Save,
   Cancel,
-  Password,
-  EnhancedEncryption,
 } from '@mui/icons-material';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -312,13 +309,21 @@ const RoleBadge = styled.span`
      background: ${C.success}1A;
      color: ${C.successDark};
  }
+ &.owner, &.organizer {
+     background: ${C.warning}1A;
+     color: ${C.warningDark};
+ }
  &.admin {
      background: ${C.info}1A;
      color: ${C.infoDark};
  }
- &.organizer {
-     background: ${C.warning}1A;
-     color: ${C.warningDark};
+ &.staff {
+     background: ${C.secondary}1A;
+     color: ${C.secondaryDark};
+ }
+ &.member {
+     background: ${C.primary}1A;
+     color: ${C.primaryDark};
  }
  &.user {
      background: ${C.bgInput};
@@ -695,8 +700,11 @@ const getAvatarColor = (name) => {
 const getRoleLabel = (role) => {
   const labels = {
     'super_admin': 'Super Admin',
+    'owner': 'Owner',
     'admin': 'Admin',
-    'organizer': 'Organizer',
+    'staff': 'Staff',
+    'member': 'Member',
+    'organizer': 'Owner',
     'user': 'Regular User'
   };
   return labels[role] || role;
@@ -704,8 +712,10 @@ const getRoleLabel = (role) => {
 
 const getRoleIcon = (role) => {
   if (role === 'super_admin') return <SupervisorAccount fontSize="small" />;
+  if (role === 'owner' || role === 'organizer') return <Storefront fontSize="small" />;
   if (role === 'admin') return <AdminPanelSettings fontSize="small" />;
-  if (role === 'organizer') return <Storefront fontSize="small" />;
+  if (role === 'staff') return <Group fontSize="small" />;
+  if (role === 'member') return <Person fontSize="small" />;
   return <Person fontSize="small" />;
 };
 
@@ -718,14 +728,10 @@ const formatDate = (date) => {
   });
 };
 
-// ✅ FIX: Escaped '+' to prevent regex compilation error
 const PHONE_RE = /^\+?[0-9]{7,15}$/;
 const normalisePhone = (raw) => String(raw || '').replace(/[\s-().]/g, '');
 const isValidPhone = (raw) => PHONE_RE.test(normalisePhone(raw));
 
-// ============================================================================
-// Normalise the /users/ response.
-// ============================================================================
 const normalizeUserResponse = (data) => {
   if (Array.isArray(data)) {
     return { users: data, count: data.length };
@@ -746,7 +752,7 @@ const normalizeUserResponse = (data) => {
 };
 
 // ============================================================================
-// MODAL COMPONENTS — HOISTED TO MODULE SCOPE
+// MODAL COMPONENTS
 // ============================================================================
 const UserFormModal = ({
   mode,
@@ -757,7 +763,8 @@ const UserFormModal = ({
   currentUser,
   countryOptions,
   defaultCountry,
-  needsOrgPicker,
+  showOrgPicker,
+  isSuperuser,
   requesterOrgs,
 }) => {
   const isEdit = mode === 'edit';
@@ -817,64 +824,16 @@ const UserFormModal = ({
                   <FormError>Enter a valid mobile number (7–15 digits)</FormError>
                 )}
               </FormGroup>
+              
+              {/* ✅ Passwordless Info Banner */}
               {!isEdit && (
-                <>
-                  <FormGroup>
-                    <FormLabel>Password *</FormLabel>
-                    <FormInput
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-                      placeholder="********"
-                      required
-                    />
-                  </FormGroup>
-                  <FormGroup>
-                    <FormLabel>Confirm Password *</FormLabel>
-                    <FormInput
-                      type="password"
-                      value={formData.password_confirm}
-                      onChange={(e) => setFormData(prev => ({ ...prev, password_confirm: e.target.value }))}
-                      placeholder="********"
-                      required
-                      style={{
-                        borderColor: formData.password !== formData.password_confirm ? C.error : undefined
-                      }}
-                    />
-                    {formData.password !== formData.password_confirm && (
-                      <FormError>Passwords do not match</FormError>
-                    )}
-                  </FormGroup>
-                </>
+                <div style={{ gridColumn: '1 / -1', padding: '12px', borderRadius: 8, background: `${C.info}1A`, border: `1px solid ${C.info}4D` }}>
+                  <p style={{ margin: 0, fontSize: '13px', color: C.infoDark, fontFamily: F.family }}>
+                    🔐 <strong>Passwordless:</strong> The user will receive a secure magic link via email to log in. No password is required.
+                  </p>
+                </div>
               )}
-              {isEdit && (
-                <>
-                  <FormGroup>
-                    <FormLabel>New Password (optional)</FormLabel>
-                    <FormInput
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-                      placeholder="Leave blank to keep current"
-                    />
-                  </FormGroup>
-                  <FormGroup>
-                    <FormLabel>Confirm New Password</FormLabel>
-                    <FormInput
-                      type="password"
-                      value={formData.password_confirm}
-                      onChange={(e) => setFormData(prev => ({ ...prev, password_confirm: e.target.value }))}
-                      placeholder="Leave blank to keep current"
-                      style={{
-                        borderColor: formData.password !== formData.password_confirm ? C.error : undefined
-                      }}
-                    />
-                    {formData.password !== formData.password_confirm && (
-                      <FormError>Passwords do not match</FormError>
-                    )}
-                  </FormGroup>
-                </>
-              )}
+
               <FormGroup>
                 <FormLabel>First Name</FormLabel>
                 <FormInput
@@ -932,30 +891,34 @@ const UserFormModal = ({
                 </FormSelect>
               </FormGroup>
               
-              {/* ✅ Organization Picker - FIXED FOR UUIDs & SUPERUSERS */}
-              {needsOrgPicker && (
+              {showOrgPicker && (
                 <FormGroup>
-                  <FormLabel>Organization *</FormLabel>
+                  <FormLabel>Organization {isSuperuser ? '(Optional)' : '*'}</FormLabel>
                   <FormSelect
-                    // Keep as string to match UUID option values exactly
                     value={formData.organization_id || ''}
                     onChange={(e) => {
                       const val = e.target.value;
-                      // ✅ Store as STRING, not Number, because org IDs are UUIDs
                       setFormData(prev => ({
                         ...prev,
                         organization_id: val || null,
                       }));
                     }}
-                    required
+                    required={!isSuperuser}
                   >
-                    <option value="">Select an organization…</option>
+                    <option value="">
+                      {isSuperuser ? 'None (Assign later via Organizations page)' : 'Select an organization…'}
+                    </option>
                     {requesterOrgs.map((org) => (
                       <option key={org.id} value={org.id}>
                         {org.name}
                       </option>
                     ))}
                   </FormSelect>
+                  {isSuperuser && (
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
+                      Leave blank to create the user first. You can assign them as Owner/Admin when creating the Organization later.
+                    </p>
+                  )}
                 </FormGroup>
               )}
 
@@ -965,8 +928,9 @@ const UserFormModal = ({
                   value={formData.role}
                   onChange={(e) => setFormData(prev => ({ ...prev, role: e.target.value }))}
                 >
-                  <option value="user">Regular User</option>
-                  <option value="organizer">Organizer</option>
+                  <option value="user">Regular User (Guest)</option>
+                  <option value="member">Member</option>
+                  <option value="staff">Staff</option>
                   {currentUser?.is_superuser && (
                     <>
                       <option value="admin">Admin</option>
@@ -974,6 +938,9 @@ const UserFormModal = ({
                     </>
                   )}
                 </FormSelect>
+                <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
+                  Note: Organization Owners are managed via the Organizations page.
+                </p>
               </FormGroup>
             </FormGrid>
             <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}` }}>
@@ -1136,88 +1103,6 @@ const DeleteUserModal = ({ user, onClose, onConfirm }) => {
   );
 };
 
-const ResetPasswordModal = ({ user, onClose, onReset, busy }) => {
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-
-  if (!user) return null;
-
-  const mismatch = newPassword !== confirmPassword && confirmPassword.length > 0;
-  const canSubmit = Boolean(newPassword.trim()) && !mismatch && !busy;
-
-  const handleSubmit = () => {
-    if (!canSubmit) return;
-    onReset(user.id, newPassword);
-  };
-
-  return (
-    <ModalOverlay onClick={busy ? undefined : onClose}>
-      <Modal $width="480px" onClick={(e) => e.stopPropagation()}>
-        <ModalHeader>
-          <ModalTitle>
-            <Password />
-            Reset Password
-          </ModalTitle>
-          <ModalClose onClick={busy ? undefined : onClose}>
-            <Close fontSize="small" />
-          </ModalClose>
-        </ModalHeader>
-        <ModalBody>
-          <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6, fontFamily: F.family }}>
-            Set a new password for <strong>{user.username}</strong>.
-          </p>
-          <div style={{ padding: '10px 14px', marginBottom: 16, borderRadius: 8, background: `${C.warning}1A`, border: `1px solid ${C.warning}4D` }}>
-            <p style={{ margin: 0, fontSize: '12px', color: C.warningDark, fontFamily: F.family }}>
-              ⚠️ The user will be signed out of every session. Any Axes lockout will also be cleared.
-            </p>
-          </div>
-          <FormGrid>
-            <FormGroup>
-              <FormLabel>New Password *</FormLabel>
-              <FormInput
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Minimum 10 characters"
-                autoFocus
-                disabled={busy}
-                autoComplete="new-password"
-              />
-            </FormGroup>
-            <FormGroup>
-              <FormLabel>Confirm Password *</FormLabel>
-              <FormInput
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Re-enter password"
-                disabled={busy}
-                autoComplete="new-password"
-                style={{ borderColor: mismatch ? C.error : undefined }}
-              />
-              {mismatch && <FormError>Passwords do not match</FormError>}
-            </FormGroup>
-          </FormGrid>
-        </ModalBody>
-        <ModalFooter>
-          <Button className="secondary" onClick={onClose} disabled={busy}>
-            <Cancel fontSize="small" />
-            Cancel
-          </Button>
-          <Button
-            className="primary"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-          >
-            <EnhancedEncryption fontSize="small" />
-            {busy ? 'Resetting…' : 'Reset Password'}
-          </Button>
-        </ModalFooter>
-      </Modal>
-    </ModalOverlay>
-  );
-};
-
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -1255,19 +1140,15 @@ const Users = () => {
   const [showViewModal, setShowViewModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [resetTarget, setResetTarget] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [lockStatus, setLockStatus] = useState({});
 
-  // ✅ Multi-org support states
   const [requesterOrgs, setRequesterOrgs] = useState([]);
   const [orgsLoaded, setOrgsLoaded] = useState(false);
 
   const [formData, setFormData] = useState({
     username: '',
     email: '',
-    password: '',
-    password_confirm: '',
     first_name: '',
     last_name: '',
     phone: '',
@@ -1280,9 +1161,7 @@ const Users = () => {
     organization_id: null,
   });
 
-  // ✅ Fetch organizations for non-superusers OR superusers (for admin creation)
   useEffect(() => {
-    // Always fetch orgs if we might need them (multi-org admins OR superusers creating admins)
     let cancelled = false;
     api.get('/organizations/mine/')
       .then(({ data }) => {
@@ -1297,14 +1176,13 @@ const Users = () => {
     return () => { cancelled = true; };
   }, []);
 
-  // ✅ FIX: Show picker if (Multi-Org Admin) OR (Superuser creating Admin/SuperAdmin)
-  const needsOrgPicker = useMemo(() => {
-    const isMultiOrgAdmin = !currentUser?.is_superuser && requesterOrgs.length > 1;
-    const isSuperuserCreatingAdmin = currentUser?.is_superuser && ['admin', 'super_admin'].includes(formData.role);
-    return isMultiOrgAdmin || isSuperuserCreatingAdmin;
-  }, [currentUser, requesterOrgs.length, formData.role]);
+  const isSuperuser = Boolean(currentUser?.is_superuser);
+  const showOrgPicker = useMemo(() => {
+    const isMultiOrgAdmin = !isSuperuser && requesterOrgs.length > 1;
+    const isSuperuserCreatingPrivileged = isSuperuser && ['admin', 'owner', 'organizer', 'super_admin'].includes(formData.role);
+    return isMultiOrgAdmin || isSuperuserCreatingPrivileged;
+  }, [isSuperuser, requesterOrgs.length, formData.role]);
 
-  // ✅ Auto-fill organization_id if user belongs to exactly one org
   useEffect(() => {
     if (requesterOrgs.length === 1) {
       setFormData((prev) => {
@@ -1316,7 +1194,6 @@ const Users = () => {
     }
   }, [requesterOrgs]);
 
-  // ✅ Keep the form's country in sync when the platform default changes
   useEffect(() => {
     setFormData((prev) => {
       if (prev.country && prev.country !== '') return prev;
@@ -1327,7 +1204,7 @@ const Users = () => {
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
-    organizers: 0,
+    owners: 0,
     admins: 0,
   });
 
@@ -1347,10 +1224,11 @@ const Users = () => {
       setUsers(pageUsers);
       setTotalUsers(count);
       setTotalPages(Math.max(1, Math.ceil(count / PAGE_SIZE)));
+      
       setStats({
         total: count,
         active: pageUsers.filter((u) => u.is_active).length,
-        organizers: pageUsers.filter((u) => u.role === 'organizer').length,
+        owners: pageUsers.filter((u) => u.role === 'owner' || u.role === 'organizer').length,
         admins: pageUsers.filter((u) => ['admin', 'super_admin'].includes(u.role)).length,
       });
     } catch (err) {
@@ -1397,8 +1275,6 @@ const Users = () => {
     setFormData({
       username: '',
       email: '',
-      password: '',
-      password_confirm: '',
       first_name: '',
       last_name: '',
       phone: '',
@@ -1414,11 +1290,7 @@ const Users = () => {
 
   const handleCreateUser = async (e) => {
     if (e?.preventDefault) e.preventDefault();
-    if (formData.password !== formData.password_confirm) {
-      toast.error('Passwords do not match');
-      return;
-    }
-    if (!formData.username || !formData.email || !formData.password) {
+    if (!formData.username || !formData.email) {
       toast.error('Please fill all required fields');
       return;
     }
@@ -1430,7 +1302,7 @@ const Users = () => {
       toast.error('Enter a valid mobile number (7–15 digits)');
       return;
     }
-    if (needsOrgPicker && !formData.organization_id) {
+    if (showOrgPicker && !formData.organization_id && !isSuperuser) {
       toast.error('Please select an organization');
       return;
     }
@@ -1444,15 +1316,19 @@ const Users = () => {
           ? normalisePhone(formData.whatsapp_number)
           : normalisePhone(formData.phone),
       };
+      
+      // Ensure no legacy password fields are sent
+      delete payload.password;
+      delete payload.password_confirm;
+
       await api.post('/users/', payload);
-      toast.success('User created successfully');
+      toast.success('User created successfully. A welcome email has been sent.');
       setShowCreateModal(false);
       resetForm();
       loadUsers();
     } catch (err) {
       const errorData = err.response?.data;
       
-      // ✅ Explicit handling for multi-org requirement
       if (errorData?.code === 'MULTI_ORG_REQUIRED') {
         if (Array.isArray(errorData.organizations) && errorData.organizations.length) {
           setRequesterOrgs(errorData.organizations);
@@ -1474,23 +1350,14 @@ const Users = () => {
   const handleUpdateUser = async (e) => {
     if (e?.preventDefault) e.preventDefault();
     if (!selectedUser) return;
-    if (formData.password && formData.password !== formData.password_confirm) {
-      toast.error('Passwords do not match');
-      return;
-    }
+    
     try {
       const updateData = { ...formData };
       delete updateData.password;
       delete updateData.password_confirm;
       
       await api.patch(`/users/${selectedUser.id}/`, updateData);
-
-      if (formData.password) {
-        await api.post(
-          `/users/${selectedUser.id}/reset_password/`,
-          { password: formData.password },
-        );
-      }
+      
       toast.success('User updated successfully');
       setShowEditModal(false);
       setSelectedUser(null);
@@ -1552,40 +1419,11 @@ const Users = () => {
     }
   };
 
-  const openResetPassword = (user) => {
-    setResetTarget(user);
-  };
-
-  const closeResetPassword = () => {
-    if (actionBusy) return;
-    setResetTarget(null);
-  };
-
-  const handleResetPassword = async (userId, newPassword) => {
-    if (!userId) return;
-    setActionBusy(true);
-    try {
-      const { data } = await api.post(
-        `/users/${userId}/reset_password/`,
-        { password: newPassword }
-      );
-      toast.success(data.message || 'Password reset.');
-      setResetTarget(null);
-      await loadUsers();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to reset password');
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
   const handleEditUser = (user) => {
     setSelectedUser(user);
     setFormData({
       username: user.username || '',
       email: user.email || '',
-      password: '',
-      password_confirm: '',
       first_name: user.first_name || '',
       last_name: user.last_name || '',
       phone: user.profile?.phone || '',
@@ -1643,9 +1481,6 @@ const Users = () => {
     return Boolean(info?.is_locked) || user.is_active === false;
   };
 
-  // ============================================
-  // MAIN RENDER
-  // ============================================
   return (
     <PageContainer>
       <PageHeader>
@@ -1687,8 +1522,8 @@ const Users = () => {
           <StatIcon $bg={`${C.warning}1A`} $color={C.warningDark}>
             <Storefront />
           </StatIcon>
-          <StatValue>{stats.organizers}</StatValue>
-          <StatLabel>Organizers</StatLabel>
+          <StatValue>{stats.owners}</StatValue>
+          <StatLabel>Owners</StatLabel>
         </StatCard>
         <StatCard>
           <StatIcon $bg={`${C.info}1A`} $color={C.infoDark}>
@@ -1718,10 +1553,12 @@ const Users = () => {
             }}
           >
             <option value="all">All Roles</option>
-            <option value="user">Regular User</option>
-            <option value="organizer">Organizer</option>
-            <option value="admin">Admin</option>
             <option value="super_admin">Super Admin</option>
+            <option value="owner">Owner</option>
+            <option value="admin">Admin</option>
+            <option value="staff">Staff</option>
+            <option value="member">Member</option>
+            <option value="user">Regular User</option>
           </Select>
           <Select
             value={statusFilter}
@@ -1808,17 +1645,6 @@ const Users = () => {
                     <Edit fontSize="small" />
                     Edit
                   </Button>
-                  <Button
-                    className="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openResetPassword(user);
-                    }}
-                    disabled={actionBusy}
-                  >
-                    <Password fontSize="small" />
-                    Reset
-                  </Button>
                   {needsUnlock(user) && (
                     <Button
                       className="success"
@@ -1901,16 +1727,6 @@ const Users = () => {
                         handleEditUser(user);
                       }} title="Edit">
                         <Edit fontSize="small" />
-                      </ActionButton>
-                      <ActionButton
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openResetPassword(user);
-                        }}
-                        title="Reset Password"
-                        disabled={actionBusy}
-                      >
-                        <Password fontSize="small" />
                       </ActionButton>
                       {needsUnlock(user) && (
                         <ActionButton
@@ -2006,7 +1822,8 @@ const Users = () => {
           currentUser={currentUser}
           countryOptions={countryOptions}
           defaultCountry={platformCountry}
-          needsOrgPicker={needsOrgPicker}
+          showOrgPicker={showOrgPicker}
+          isSuperuser={isSuperuser}
           requesterOrgs={requesterOrgs}
         />
       )}
@@ -2023,7 +1840,8 @@ const Users = () => {
           currentUser={currentUser}
           countryOptions={countryOptions}
           defaultCountry={platformCountry}
-          needsOrgPicker={needsOrgPicker}
+          showOrgPicker={showOrgPicker}
+          isSuperuser={isSuperuser}
           requesterOrgs={requesterOrgs}
         />
       )}
@@ -2049,14 +1867,6 @@ const Users = () => {
             setSelectedUser(null);
           }}
           onConfirm={handleDeleteUser}
-        />
-      )}
-      {resetTarget && (
-        <ResetPasswordModal
-          user={resetTarget}
-          onClose={closeResetPassword}
-          onReset={handleResetPassword}
-          busy={actionBusy}
         />
       )}
     </PageContainer>

@@ -36,13 +36,33 @@
     "nA": "N/A",
     "actions": "Actions"
   },
+  "team": {
+    "title": "Team Members",
+    "inviteMember": "Invite Member",
+    "member": "Member",
+    "role": "Role",
+    "validity": "Validity",
+    "actions": "Actions",
+    "noMembers": "No members found. Invite someone to get started!",
+    "invalidEmail": "Please enter a valid email address.",
+    "inviteSent": "Invitation sent to {{email}}!",
+    "inviteFailed": "Failed to send invitation.",
+    "inviteDescription": "Enter the email address of the person you want to invite. They will receive a magic link to join your organization.",
+    "emailAddress": "Email Address",
+    "assignRole": "Assign Role",
+    "validFrom": "Valid From",
+    "validUntil": "Valid Until (Optional)",
+    "validUntilHelper": "Leave blank for indefinite membership",
+    "sendInvite": "Send Invite",
+    "indefinite": "Indefinite"
+  },
   "roles": {
-    "superAdmin": "Platform Admin",
+    "super_admin": "Super Admin",
+    "owner": "Owner",
     "admin": "Admin",
-    "organizer": "Organizer",
     "staff": "Staff",
-    "user": "User",
-    "regularUser": "Regular User"
+    "member": "Member",
+    "user": "Regular User"
   },
   "sections": {
     "main": "Main",
@@ -96,20 +116,12 @@
     "loadErrorToast": "Failed to load events."
   },
   "login": {
-    "title": "Sign in to manage your events",
-    "email": "Email Address",
-    "emailPlaceholder": "Enter your email",
-    "password": "Password",
-    "forgotPassword": "Forgot Password?",
-    "signIn": "Sign In",
-    "backToHome": "Back to Home",
-    "noAccount": "Don't have an account?",
-    "registerLink": "Register",
-    "alreadyLoggedIn": "You are already logged in. Click \"Sign In\" to continue to dashboard.",
-    "success": "Login successful!",
-    "failed": "Login failed. Please try again.",
-    "credentialsLoaded": "Credentials loaded: {{email}}",
-    "demoCredentials": "Demo Credentials (Dev Only)"
+    "emailLoaded": "Email loaded: {{email}}",
+    "magicLinkSent": "Magic link requested.",
+    "magicLinkSentSuccess": "Check your email! We've sent you a secure login link.",
+    "checkEmailInstructions": "Click the link in your email to log in instantly. The link will expire in 15 minutes.",
+    "tryAnotherEmail": "Try another email",
+    "sendMagicLink": "Send Magic Link"
   },
   "register": {
     "title": "Create your account",
@@ -1197,7 +1209,10 @@
   "dashboard": {
     "title": "Dashboard",
     "welcome": "Welcome back, {{name}}!",
-    "refresh": "Refresh",
+    "loadFailed": "Failed to load dashboard stats",
+    "needsOrganizationTitle": "Create your first Organization",
+    "needsOrganizationBody": "You need to belong to an organization to create events and manage bookings. Create one now to get started.",
+    "needsOrganizationCta": "Create Organization",
     "statTotalEvents": "Total Events",
     "statTotalEventsSubtitle": "{{count}} active",
     "statTotalBookings": "Total Bookings",
@@ -1207,10 +1222,9 @@
     "statRevenue": "Revenue",
     "statRevenueSubtitle": "Today: {{amount}}",
     "recentBookings": "Recent Bookings",
-    "noRecentBookings": "No recent bookings",
+    "noRecentBookings": "No recent bookings found",
     "popularEvents": "Popular Events",
-    "noEvents": "No events found",
-    "loadFailed": "Failed to load dashboard stats"
+    "noEvents": "No events available"
   },
   "status": {
     "booking": {
@@ -1268,5 +1282,15 @@
     "social": "Social Media",
     "invite": "Invitation",
     "certificate": "Certificate"
+  },
+  "verify": {
+    "loadingTitle": "Verifying your link...",
+    "loadingSubtitle": "Please wait while we securely log you in.",
+    "successTitle": "Welcome back!",
+    "successMessage": "You have been successfully logged in. Redirecting to your dashboard...",
+    "errorTitle": "Oops! Something went wrong.",
+    "errorMessage": "This link is invalid, has expired, or has already been used.",
+    "invalidLink": "Invalid verification link.",
+    "goToLogin": "Return to Login"
   }
 }

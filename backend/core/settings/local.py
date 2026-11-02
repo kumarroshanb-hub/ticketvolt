@@ -121,8 +121,11 @@ STORAGES = {
 # ============================================
 # EMAIL — print to console locally (opt-in)
 # ============================================
+# Change this:
 # EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
+# To this:
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 # ============================================
 # STARTUP LOG (no secret values echoed)

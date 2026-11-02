@@ -1,8 +1,8 @@
-// frontend/src/pages/Login/Login.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';                       // ✅ NEW
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
+import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
     Box,
@@ -15,13 +15,22 @@ import {
     Link,
     InputLabel,
     FormControl,
+    FormControlLabel,
+    RadioGroup,
+    Radio,
     useMediaQuery,
     useTheme,
 } from '@mui/material';
-import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
+import { 
+    ArrowBack as ArrowBackIcon, 
+    Email as EmailIcon,
+    Sms as SmsIcon,
+    ArrowForward as ArrowForwardIcon,
+    CheckCircleOutline as SuccessIcon
+} from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
 import Logo from '../../components/Logo';
-import LanguageSwitcher from '../../components/LanguageSwitcher';    // ✅ NEW
+import LanguageSwitcher from '../../components/LanguageSwitcher';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
@@ -30,40 +39,16 @@ const SHOW_DEMO_CREDS = process.env.REACT_APP_SHOW_DEMO_CREDS === 'true';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 if (IS_PRODUCTION && SHOW_DEMO_CREDS) {
-    throw new Error(
-        '🚨 SECURITY: REACT_APP_SHOW_DEMO_CREDS must NOT be "true" in production builds.'
-    );
+    throw new Error('🚨 SECURITY: REACT_APP_SHOW_DEMO_CREDS must NOT be "true" in production builds.');
 }
 
-// Build demo creds once. Role labels are looked up lazily via t() at
-// render time so they follow the current language.
 const DEMO_CREDS_RAW = SHOW_DEMO_CREDS
     ? [
-          {
-              roleKey: 'roles.superAdmin',
-              icon: '👑',
-              email: process.env.REACT_APP_DEMO_SUPERADMIN_EMAIL,
-              password: process.env.REACT_APP_DEMO_SUPERADMIN_PASSWORD,
-          },
-          {
-              roleKey: 'roles.admin',
-              icon: '🛡️',
-              email: process.env.REACT_APP_DEMO_ADMIN_EMAIL,
-              password: process.env.REACT_APP_DEMO_ADMIN_PASSWORD,
-          },
-          {
-              roleKey: 'roles.organizer',
-              icon: '📋',
-              email: process.env.REACT_APP_DEMO_ORGANIZER_EMAIL,
-              password: process.env.REACT_APP_DEMO_ORGANIZER_PASSWORD,
-          },
-          {
-              roleKey: 'roles.user',
-              icon: '👤',
-              email: process.env.REACT_APP_DEMO_USER_EMAIL,
-              password: process.env.REACT_APP_DEMO_USER_PASSWORD,
-          },
-      ].filter((c) => c.email && c.password)
+          { roleKey: 'Super Admin', icon: '👑', email: process.env.REACT_APP_DEMO_SUPERADMIN_EMAIL },
+          { roleKey: 'Admin', icon: '🛡️', email: process.env.REACT_APP_DEMO_ADMIN_EMAIL },
+          { roleKey: 'Owner', icon: '📋', email: process.env.REACT_APP_DEMO_OWNER_EMAIL || process.env.REACT_APP_DEMO_ORGANIZER_EMAIL },
+          { roleKey: 'User', icon: '👤', email: process.env.REACT_APP_DEMO_USER_EMAIL },
+      ].filter((c) => c.email)
     : [];
 
 const DEFAULT_POST_LOGIN_PATH = '/app/dashboard';
@@ -71,401 +56,353 @@ const DEFAULT_POST_LOGIN_PATH = '/app/dashboard';
 const Login = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { login, isAuthenticated, loading } = useAuth();
-    const { t } = useTranslation();                                    // ✅ NEW
+    // ✅ Ensure `login` is destructured to handle OTP success
+    const { isAuthenticated, loading, login } = useAuth(); 
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+    // Auth Flow State
+    const [authMethod, setAuthMethod] = useState('magic_link'); // 'magic_link' | 'otp'
+    const [identifier, setIdentifier] = useState('');
+    const [step, setStep] = useState('input'); // 'input' | 'otp' | 'success_magic'
+    const [otpCode, setOtpCode] = useState('');
+    
+    // UI State
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [cooldown, setCooldown] = useState(0);
 
     const rawFrom = location.state?.from;
-    const redirectTo =
-        rawFrom && typeof rawFrom === 'string' && !rawFrom.startsWith('/login')
-            ? rawFrom
-            : DEFAULT_POST_LOGIN_PATH;
+    const redirectTo = rawFrom && typeof rawFrom === 'string' && !rawFrom.startsWith('/login')
+        ? rawFrom
+        : DEFAULT_POST_LOGIN_PATH;
 
+    // Redirect if already logged in
     useEffect(() => {
         if (isAuthenticated && !loading) {
-            console.log('ℹ️ Already authenticated, but staying on login page');
+            navigate(redirectTo, { replace: true });
         }
-    }, [isAuthenticated, loading]);
+    }, [isAuthenticated, loading, navigate, redirectTo]);
 
-    const handleSubmit = async (e) => {
+    // Cooldown timer for Resend OTP
+    useEffect(() => {
+        if (cooldown > 0) {
+            const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [cooldown]);
+
+    const handleRequest = async (e) => {
         e.preventDefault();
         setError('');
         setIsSubmitting(true);
 
         try {
-            const result = await login(email, password);
-
-            if (!result) {
-                const msg = t('login.failed');
-                setError(msg);
-                toast.error(msg);
-                return;
-            }
-
-            if (result.success === true) {
-                toast.success(t('login.success'));
-                navigate(redirectTo, { replace: true });
+            if (authMethod === 'magic_link') {
+                if (!identifier.includes('@')) {
+                    throw new Error('Please enter a valid email address for Magic Link.');
+                }
+                await api.post('/auth/request-magic-link/', { email: identifier });
+                setStep('success_magic');
             } else {
-                const errorMsg = result.error || t('login.failed');
-                setError(errorMsg);
-                toast.error(errorMsg);
+                // OTP Flow
+                const channel = identifier.includes('@') ? 'email' : 'whatsapp';
+                await api.post('/auth/request-otp/', { identifier, channel });
+                setStep('otp');
+                setCooldown(30); // 30 second cooldown
             }
         } catch (err) {
-            const errorMsg = err.message || t('common.unexpectedError');
+            const errorMsg = err.response?.data?.error || err.message || 'Failed to send code. Please try again.';
             setError(errorMsg);
-            toast.error(errorMsg);
         } finally {
             setIsSubmitting(false);
         }
     };
 
-    const fillCredentials = (emailVal, passwordVal) => {
-        setEmail(emailVal);
-        setPassword(passwordVal);
-        toast.info(t('login.credentialsLoaded', { email: emailVal }));
+    const handleVerifyOtp = async () => {
+        if (otpCode.length !== 6) {
+            setError('Please enter the complete 6-digit code.');
+            return;
+        }
+        setError('');
+        setIsSubmitting(true);
+
+        try {
+            const channel = identifier.includes('@') ? 'email' : 'whatsapp';
+            const res = await api.post('/auth/verify-otp/', {
+                identifier,
+                channel,
+                code: otpCode
+            });
+            
+            // ✅ Log the user in and redirect
+            if (res.data.access && res.data.refresh && res.data.user) {
+                login(res.data.access, res.data.refresh, res.data.user);
+                navigate(redirectTo, { replace: true });
+            }
+        } catch (err) {
+            const errorMsg = err.response?.data?.error || 'Invalid or expired code.';
+            setError(errorMsg);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleResendOtp = async () => {
+        setError('');
+        try {
+            const channel = identifier.includes('@') ? 'email' : 'whatsapp';
+            await api.post('/auth/request-otp/', { identifier, channel });
+            setCooldown(30);
+            toast.success('New code sent!');
+        } catch (err) {
+            toast.error(err.response?.data?.error || 'Failed to resend code.');
+        }
+    };
+
+    const resetFlow = () => {
+        setStep('input');
+        setIdentifier('');
+        setOtpCode('');
+        setError('');
+    };
+
+    const fillCredentials = (emailVal) => {
+        setIdentifier(emailVal);
+        setAuthMethod('magic_link');
+        setStep('input');
     };
 
     if (loading) {
         return (
-            <Box
-                sx={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    minHeight: '100vh',
-                    minHeight: '100dvh',
-                    bgcolor: C.bgDark,
-                }}
-            >
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: C.bgDark }}>
                 <CircularProgress sx={{ color: C.secondary }} />
             </Box>
         );
     }
 
+    // Shared Styles
     const labelSx = {
-        color: 'rgba(255, 255, 255, 0.85)',
-        fontSize: '12px',
-        fontWeight: 600,
-        letterSpacing: '0.4px',
-        textTransform: 'uppercase',
-        marginBottom: '6px',
-        position: 'static',
-        transform: 'none',
-        fontFamily: F.family,
+        color: 'rgba(255, 255, 255, 0.85)', fontSize: '12px', fontWeight: 600,
+        letterSpacing: '0.4px', textTransform: 'uppercase', marginBottom: '6px',
+        position: 'static', transform: 'none', fontFamily: F.family,
         '&.Mui-focused': { color: C.secondary },
     };
 
     const fieldSx = {
         '& .MuiOutlinedInput-root': {
-            backgroundColor: 'rgba(255, 255, 255, 0.04)',
-            color: C.textInverse,
-            fontSize: 15,
-            fontFamily: F.family,
+            backgroundColor: 'rgba(255, 255, 255, 0.04)', color: C.textInverse,
+            fontSize: 15, fontFamily: F.family,
             '& fieldset': { borderColor: C.bgDarkBorder },
             '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
             '&.Mui-focused fieldset': { borderColor: C.secondary },
         },
         '& .MuiOutlinedInput-input': { padding: '14px 14px', fontFamily: F.family },
-        '& .MuiFormHelperText-root': { color: C.errorLight, marginLeft: 0 },
+    };
+
+    const primaryBtnSx = {
+        py: 1.5, minHeight: 48, background: C.secondary, color: C.textInverse,
+        borderRadius: 2, textTransform: 'none', fontSize: '15px', fontWeight: 700,
+        letterSpacing: '0.3px', fontFamily: F.family, transition: 'all 0.2s ease',
+        '&:hover': { background: C.secondaryDark, transform: 'translateY(-1px)', boxShadow: `0 8px 24px rgba(255, 42, 42, 0.30)` },
+        '&:disabled': { background: 'rgba(255, 42, 42, 0.40)', color: 'rgba(255, 255, 255, 0.60)' },
     };
 
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                minHeight: '100vh',
-                minHeight: '100dvh',
-                bgcolor: C.bgDark,
-                p: isMobile ? 1.5 : 2,
-                pt: isMobile ? 'max(12px, env(safe-area-inset-top))' : 2,
-                pb: isMobile ? 'max(12px, env(safe-area-inset-bottom))' : 2,
-                pl: isMobile ? 'max(12px, env(safe-area-inset-left))' : 2,
-                pr: isMobile ? 'max(12px, env(safe-area-inset-right))' : 2,
-                fontFamily: F.family,
-                position: 'relative',
-            }}
-        >
+        <Box sx={{
+            display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh',
+            bgcolor: C.bgDark, p: isMobile ? 1.5 : 2, fontFamily: F.family, position: 'relative',
+        }}>
             {/* Back to Home */}
             <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10 }}>
-                <Button
-                    component={RouterLink}
-                    to="/"
-                    startIcon={<ArrowBackIcon />}
-                    sx={{
-                        color: 'rgba(255, 255, 255, 0.6)',
-                        textTransform: 'none',
-                        fontWeight: 600,
-                        fontFamily: F.family,
-                        '&:hover': {
-                            color: 'rgba(255, 255, 255, 0.95)',
-                            bgcolor: 'rgba(255, 255, 255, 0.08)',
-                        },
-                    }}
-                >
-                    {!isMobile && t('login.backToHome')}
+                <Button component={RouterLink} to="/" startIcon={<ArrowBackIcon />} sx={{
+                    color: 'rgba(255, 255, 255, 0.6)', textTransform: 'none', fontWeight: 600, fontFamily: F.family,
+                    '&:hover': { color: 'rgba(255, 255, 255, 0.95)', bgcolor: 'rgba(255, 255, 255, 0.08)' },
+                }}>
+                    {!isMobile && 'Back to Home'}
                 </Button>
             </Box>
 
-            {/* ✅ NEW: Language switcher (dark variant fits the dark card) */}
             <Box sx={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
                 <LanguageSwitcher variant="dark" compact={isMobile} />
             </Box>
 
-            <Paper
-                sx={{
-                    p: isMobile ? 3 : 4,
-                    maxWidth: 440,
-                    width: '100%',
-                    borderRadius: 3,
-                    bgcolor: C.bgDarkCard,
-                    border: `1px solid ${C.bgDarkBorder}`,
-                    boxShadow: 'none',
-                    my: isMobile ? 1 : 0,
-                }}
-            >
-                <Box
-                    sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        mb: 4,
-                    }}
-                >
+            <Paper sx={{
+                p: isMobile ? 3 : 4, maxWidth: 440, width: '100%', borderRadius: 3,
+                bgcolor: C.bgDarkCard, border: `1px solid ${C.bgDarkBorder}`, boxShadow: 'none',
+            }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
                     <Logo variant="full" height={80} inverse />
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: 'rgba(255, 255, 255, 0.65)',
-                            mt: 3,
-                            fontSize: '15px',
-                            fontFamily: F.family,
-                        }}
-                    >
-                        {t('login.title')}
+                    <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.65)', mt: 3, fontSize: '15px', fontFamily: F.family }}>
+                        {step === 'input' ? 'Sign in to your account' : 
+                         step === 'otp' ? 'Verify your identity' : 'Check your inbox'}
                     </Typography>
                 </Box>
 
                 {error && (
-                    <Alert
-                        severity="error"
-                        sx={{
-                            mb: 3,
-                            bgcolor: 'rgba(239, 68, 68, 0.10)',
-                            color: C.errorLight,
-                            border: `1px solid rgba(239, 68, 68, 0.25)`,
-                            fontFamily: F.family,
-                            '& .MuiAlert-icon': { color: C.errorLight },
-                        }}
-                    >
+                    <Alert severity="error" sx={{
+                        mb: 3, bgcolor: 'rgba(239, 68, 68, 0.10)', color: C.errorLight,
+                        border: `1px solid rgba(239, 68, 68, 0.25)`, fontFamily: F.family,
+                    }}>
                         {error}
                     </Alert>
                 )}
 
-                {isAuthenticated && !loading && !isMobile && (
-                    <Alert
-                        severity="info"
-                        sx={{
-                            mb: 3,
-                            bgcolor: 'rgba(51, 51, 51, 0.10)',
-                            color: C.primaryLight,
-                            border: `1px solid rgba(255, 255, 255, 0.10)`,
-                            fontFamily: F.family,
-                        }}
-                    >
-                        {t('login.alreadyLoggedIn')}
-                    </Alert>
+                {/* ==========================================
+                    STEP 1: IDENTIFIER INPUT
+                   ========================================== */}
+                {step === 'input' && (
+                    <form onSubmit={handleRequest} noValidate>
+                        <FormControl fullWidth sx={{ mb: 2.5 }}>
+                            <InputLabel shrink sx={labelSx}>
+                                {authMethod === 'magic_link' ? 'Email Address' : 'Email or Mobile Number'}
+                            </InputLabel>
+                            <TextField
+                                fullWidth
+                                type={authMethod === 'magic_link' ? 'email' : 'text'}
+                                value={identifier}
+                                onChange={(e) => setIdentifier(e.target.value)}
+                                required
+                                placeholder={authMethod === 'magic_link' ? 'you@example.com' : 'email or +1234567890'}
+                                sx={fieldSx}
+                                disabled={isSubmitting}
+                            />
+                        </FormControl>
+
+                        <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
+                            <RadioGroup row value={authMethod} onChange={(e) => setAuthMethod(e.target.value)}>
+                                <FormControlLabel 
+                                    value="magic_link" 
+                                    control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>Magic Link</Typography>} 
+                                />
+                                <FormControlLabel 
+                                    value="otp" 
+                                    control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>OTP Code</Typography>} 
+                                />
+                            </RadioGroup>
+                        </FormControl>
+
+                        <Button type="submit" fullWidth variant="contained" disabled={isSubmitting || !identifier}
+                            endIcon={!isSubmitting && <ArrowForwardIcon />} sx={primaryBtnSx}>
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : 'Continue'}
+                        </Button>
+
+                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2.5 }}>
+                            <Link component={RouterLink} to="/register" sx={{
+                                color: 'rgba(255, 255, 255, 0.65)', fontSize: '13px', fontFamily: F.family, textDecoration: 'none',
+                                '&:hover': { color: C.secondary, textDecoration: 'underline' },
+                            }}>
+                                Don't have an account? Sign up
+                            </Link>
+                        </Box>
+                    </form>
                 )}
 
-                <form onSubmit={handleSubmit} noValidate>
-                    <FormControl fullWidth sx={{ mb: 2.5 }}>
-                        <InputLabel htmlFor="login-email" shrink sx={labelSx}>
-                            {t('login.email')}
-                        </InputLabel>
-                        <TextField
-                            id="login-email"
-                            fullWidth
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            required
-                            autoComplete="email"
-                            placeholder={t('login.emailPlaceholder')}
-                            inputProps={{ inputMode: 'email' }}
-                            sx={fieldSx}
-                            disabled={isSubmitting}
-                        />
-                    </FormControl>
-
-                    <FormControl fullWidth sx={{ mb: 1 }}>
-                        <InputLabel htmlFor="login-password" shrink sx={labelSx}>
-                            {t('login.password')}
-                        </InputLabel>
-                        <TextField
-                            id="login-password"
-                            fullWidth
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                            autoComplete="current-password"
-                            placeholder="••••••••"
-                            sx={fieldSx}
-                            disabled={isSubmitting}
-                        />
-                    </FormControl>
-
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2.5 }}>
-                        <Link
-                            component={RouterLink}
-                            to="/forgot-password"
-                            sx={{
-                                color: 'rgba(255, 255, 255, 0.65)',
-                                fontSize: '13px',
-                                fontFamily: F.family,
-                                textDecoration: 'none',
-                                '&:hover': {
-                                    color: C.secondary,
-                                    textDecoration: 'underline',
-                                },
-                            }}
-                        >
-                            {t('login.forgotPassword')}
-                        </Link>
-                    </Box>
-
-                    <Button
-                        type="submit"
-                        fullWidth
-                        variant="contained"
-                        disabled={isSubmitting}
-                        sx={{
-                            py: 1.5,
-                            minHeight: 48,
-                            background: C.secondary,
-                            color: C.textInverse,
-                            borderRadius: 2,
-                            '&:hover': {
-                                background: C.secondaryDark,
-                                transform: 'translateY(-1px)',
-                                boxShadow: `0 8px 24px rgba(255, 42, 42, 0.30)`,
-                            },
-                            '&:disabled': {
-                                background: 'rgba(255, 42, 42, 0.40)',
-                                color: 'rgba(255, 255, 255, 0.60)',
-                            },
-                            textTransform: 'none',
-                            fontSize: '15px',
-                            fontWeight: 700,
-                            letterSpacing: '0.3px',
-                            fontFamily: F.family,
-                            transition: 'all 0.2s ease',
-                        }}
-                    >
-                        {isSubmitting ? (
-                            <CircularProgress size={22} sx={{ color: C.textInverse }} />
-                        ) : (
-                            t('login.signIn')
-                        )}
-                    </Button>
-                </form>
-
-                {DEMO_CREDS_RAW.length > 0 && (
-                    <Box
-                        sx={{
-                            mt: 3,
-                            pt: 2.5,
-                            borderTop: `1px solid ${C.bgDarkBorder}`,
-                            textAlign: 'center',
-                            maxHeight: isMobile ? 180 : 'none',
-                            overflowY: isMobile ? 'auto' : 'visible',
-                            WebkitOverflowScrolling: 'touch',
-                        }}
-                    >
-                        <Typography
-                            variant="caption"
-                            sx={{
-                                color: 'rgba(255, 255, 255, 0.35)',
-                                textTransform: 'uppercase',
-                                letterSpacing: 1,
-                                fontSize: '10px',
-                                fontWeight: 600,
-                                fontFamily: F.family,
-                            }}
-                        >
-                            {t('login.demoCredentials')}
+                {/* ==========================================
+                    STEP 2: OTP ENTRY
+                   ========================================== */}
+                {step === 'otp' && (
+                    <Box sx={{ textAlign: 'center' }}>
+                        <Typography sx={{ color: 'rgba(255,255,255,0.8)', mb: 1, fontSize: 15 }}>
+                            We sent a 6-digit code to
+                        </Typography>
+                        <Typography sx={{ color: C.textInverse, fontWeight: 700, fontSize: 18, mb: 3 }}>
+                            {identifier}
                         </Typography>
 
+                        <TextField
+                            fullWidth
+                            value={otpCode}
+                            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                            placeholder="• • • • • •"
+                            inputProps={{
+                                maxLength: 6,
+                                style: { 
+                                    textAlign: 'center', 
+                                    letterSpacing: '0.5em', 
+                                    fontSize: '24px',
+                                    fontFamily: F.familyMono,
+                                    color: C.textInverse
+                                },
+                                inputMode: 'numeric',
+                                pattern: '[0-9]*'
+                            }}
+                            sx={{
+                                ...fieldSx,
+                                mb: 3,
+                                '& .MuiOutlinedInput-root': {
+                                    ...fieldSx['& .MuiOutlinedInput-root'],
+                                    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                                }
+                            }}
+                            disabled={isSubmitting}
+                            autoFocus
+                        />
+
+                        <Button fullWidth variant="contained" onClick={handleVerifyOtp} 
+                            disabled={isSubmitting || otpCode.length !== 6} sx={primaryBtnSx}>
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : 'Verify & Login'}
+                        </Button>
+
+                        <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Button onClick={resetFlow} sx={{ color: 'rgba(255,255,255,0.6)', textTransform: 'none' }}>
+                                Change Email/Phone
+                            </Button>
+                            <Button onClick={handleResendOtp} disabled={cooldown > 0} 
+                                sx={{ color: cooldown > 0 ? 'rgba(255,255,255,0.3)' : C.secondary, textTransform: 'none' }}>
+                                {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend Code'}
+                            </Button>
+                        </Box>
+                    </Box>
+                )}
+
+                {/* ==========================================
+                    STEP 3: MAGIC LINK SUCCESS
+                   ========================================== */}
+                {step === 'success_magic' && (
+                    <Box sx={{ textAlign: 'center' }}>
+                        <SuccessIcon sx={{ fontSize: 60, color: C.success, mb: 2 }} />
+                        <Typography variant="h6" sx={{ color: C.textInverse, mb: 1, fontWeight: 700 }}>
+                            Check your email
+                        </Typography>
+                        <Typography sx={{ color: 'rgba(255,255,255,0.6)', mb: 3, fontSize: 14 }}>
+                            We sent a secure login link to <strong style={{color: C.textInverse}}>{identifier}</strong>.<br/>
+                            Click the link in the email to log in instantly.
+                        </Typography>
+                        <Button variant="outlined" onClick={resetFlow} sx={{
+                            color: C.textInverse, borderColor: C.bgDarkBorder, textTransform: 'none',
+                            '&:hover': { borderColor: C.secondary, color: C.secondary },
+                        }}>
+                            Try another email
+                        </Button>
+                    </Box>
+                )}
+
+                {/* Demo Credentials */}
+                {DEMO_CREDS_RAW.length > 0 && step === 'input' && (
+                    <Box sx={{ mt: 3, pt: 2.5, borderTop: `1px solid ${C.bgDarkBorder}`, textAlign: 'center' }}>
+                        <Typography variant="caption" sx={{
+                            color: 'rgba(255, 255, 255, 0.35)', textTransform: 'uppercase',
+                            letterSpacing: 1, fontSize: '10px', fontWeight: 600,
+                        }}>
+                            Demo Credentials
+                        </Typography>
                         <Box sx={{ mt: 1.5 }}>
                             {DEMO_CREDS_RAW.map((cred, index) => (
-                                <Typography
-                                    key={index}
-                                    variant="caption"
-                                    sx={{
-                                        display: 'block',
-                                        color: 'rgba(255, 255, 255, 0.55)',
-                                        fontFamily: F.familyMono,
-                                        fontSize: { xs: '11px', sm: '12px' },
-                                        py: 0.75,
-                                        cursor: 'pointer',
-                                        wordBreak: 'break-all',
-                                        borderRadius: 1,
-                                        transition: 'background 0.15s ease, color 0.15s ease',
-                                        '&:hover': {
-                                            color: 'rgba(255, 255, 255, 0.95)',
-                                            background: 'rgba(255, 255, 255, 0.05)',
-                                        },
-                                    }}
-                                    onClick={() =>
-                                        fillCredentials(cred.email, cred.password)
-                                    }
-                                >
-                                    {cred.icon} {t(cred.roleKey)}:{' '}
-                                    <span style={{ color: C.secondary }}>
-                                        {cred.email}
-                                    </span>{' '}
-                                    / {cred.password}
+                                <Typography key={index} variant="caption" onClick={() => fillCredentials(cred.email)} sx={{
+                                    display: 'block', color: 'rgba(255, 255, 255, 0.55)', fontFamily: F.familyMono,
+                                    fontSize: '12px', py: 0.75, cursor: 'pointer', borderRadius: 1,
+                                    '&:hover': { color: 'rgba(255, 255, 255, 0.95)', background: 'rgba(255, 255, 255, 0.05)' },
+                                }}>
+                                    {cred.icon} {cred.roleKey}: <span style={{ color: C.secondary }}>{cred.email}</span>
                                 </Typography>
                             ))}
                         </Box>
                     </Box>
                 )}
-
-                <Box textAlign="center" mt={3}>
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: 'rgba(255, 255, 255, 0.55)',
-                            fontFamily: F.family,
-                            fontSize: '13px',
-                        }}
-                    >
-                        {t('login.noAccount')}{' '}
-                        <Link
-                            component={RouterLink}
-                            to="/register"
-                            state={{ from: redirectTo }}
-                            sx={{
-                                color: C.secondary,
-                                fontWeight: 600,
-                                textDecoration: 'none',
-                                '&:hover': {
-                                    color: C.secondaryLight,
-                                    textDecoration: 'underline',
-                                },
-                            }}
-                        >
-                            {t('login.registerLink')}
-                        </Link>
-                    </Typography>
-                </Box>
             </Paper>
         </Box>
     );

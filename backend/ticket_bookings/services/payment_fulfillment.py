@@ -1,4 +1,3 @@
-# backend/ticket_bookings/services/payment_fulfillment.py
 import logging
 from decimal import Decimal
 
@@ -7,10 +6,11 @@ from django.utils import timezone
 
 from ..models import Booking, Ticket
 from ..models_payments import Payment, PaymentStatus
+from ..models_seating import Seat, SeatReservation  # ✅ ADDED for reserved seating
 from ..constants import BookingStatus
 from . import inventory_hold
-from . import booking_emails          # ✅ Points to your existing email service
-from .qr_service import QRCodeService # ✅ Points to your existing QR generator
+from . import booking_emails
+from .qr_service import QRCodeService
 from .serializers_helpers import resolve_or_create_user_for_booking
 
 logger = logging.getLogger(__name__)
@@ -64,19 +64,34 @@ def fulfill_payment(payment_id) -> Booking:
     )
     booking.save()  # auto-generates booking_reference
 
-    # 4. Issue tickets + QR
+    # 4. Issue tickets + QR + Seat Reservations
     for item in payment.items:
         qty = int(item.get('qty', 0))
-        tier = event.tiers.get(pk=item['tier_id']) if item.get('tier_id') else None
-        session = event.sessions.filter(pk=item.get('session_id')).first() if item.get('session_id') else None
-        attendees = item.get('attendees') or []
-        net_paid = (tier.price - discount_share) if tier else Decimal('0')
+        tier_id = item.get('tier_id')
+        session_id = item.get('session_id')
+        seat_id = item.get('seat_id')  # ✅ NEW: Check for reserved seat ID
+        
+        tier = event.tiers.get(pk=tier_id) if tier_id else None
+        session = event.sessions.filter(pk=session_id).first() if session_id else None
+        seat = Seat.objects.get(pk=seat_id) if seat_id else None  # ✅ NEW: Fetch the seat
+        
+        # Calculate net paid amount (prefer seat category price for reserved seating)
+        if seat and seat.category:
+            net_paid = Decimal(str(seat.category.price))
+        elif tier:
+            net_paid = (tier.price - discount_share)
+        else:
+            net_paid = Decimal('0')
 
+        attendees = item.get('attendees') or []
         for i in range(qty):
             attendee = attendees[i] if i < len(attendees) else {}
+            
+            # NOTE: Ensure `tier` field in Ticket model is nullable (null=True, blank=True) 
+            # to support reserved seating where tier_id might be null.
             ticket = Ticket(
                 booking=booking,
-                tier=tier,
+                tier=tier, 
                 event=event,
                 session=session,
                 status='active',
@@ -93,6 +108,16 @@ def fulfill_payment(payment_id) -> Booking:
                 ticket.save(update_fields=['qr_code'])
             except Exception:
                 logger.exception('QR generation failed for ticket %s', ticket.unique_code)
+
+            # ✅ NEW: If this is a reserved seat, create a SeatReservation to permanently lock it
+            if seat:
+                SeatReservation.objects.create(
+                    event=event,
+                    session=session,
+                    seat=seat,
+                    status='booked',
+                    booking=booking,
+                )
 
     # 5. Mark payment paid + link booking
     payment.status = PaymentStatus.PAID

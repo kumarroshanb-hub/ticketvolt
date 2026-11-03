@@ -62,6 +62,8 @@ services:
       - ./backend/.env.local
     environment:
       ENVIRONMENT: local
+      RUN_MIGRATIONS: '0'        # Workers should NOT run migrations
+      RUN_COLLECTSTATIC: '0'     # ✅ Workers don't need static files
     depends_on:
       - postgres
       - redis
@@ -79,6 +81,8 @@ services:
       - ./backend/.env.local
     environment:
       ENVIRONMENT: local
+      RUN_MIGRATIONS: '0'        # Beat should NOT run migrations
+      RUN_COLLECTSTATIC: '0'     # ✅ Beat doesn't need static files
     depends_on:
       - postgres
       - redis

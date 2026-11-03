@@ -548,7 +548,10 @@ class Booking(models.Model):
 class Ticket(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='tickets')
-    tier = models.ForeignKey(TicketTier, on_delete=models.CASCADE)
+    # ✅ FIX 1: Make tier optional for reserved seating
+    tier = models.ForeignKey(TicketTier, on_delete=models.SET_NULL, null=True, blank=True)
+    # ✅ FIX 2: Add a direct link to the reserved seat
+    seat = models.ForeignKey('ticket_bookings.Seat', on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets')
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='tickets')
     session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, blank=True)
     unique_code = models.CharField(max_length=50, unique=True)
@@ -912,3 +915,5 @@ class SystemSettings(models.Model):
 
     def __str__(self):
         return f'SystemSettings({self.currency_code}, {self.country})'
+
+from .models_seating import SeatCategory, SeatLayout, Seat, SeatReservation

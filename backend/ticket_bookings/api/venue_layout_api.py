@@ -4,12 +4,10 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-
-# ✅ FIX: Import the correct tenancy functions
 from ..models import Venue
 from ..models_seating import SeatLayout, Seat, SeatCategory
 from ..services.seat_layout_parser import ingest_svg_layout
-from ..services.tenancy import can_manage_org  # ✅ Changed from can_manage_venue
+from ..services.tenancy import can_manage_org
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
@@ -20,17 +18,16 @@ def upload_venue_layout(request, venue_id):
     """
     venue = get_object_or_404(Venue, id=venue_id)
     
-    # ✅ FIX: Use can_manage_org with venue.organization
     if not can_manage_org(request.user, venue.organization):
         return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
+
     svg_file = request.FILES.get('svg_file')
     if not svg_file:
         return Response({'error': 'No SVG file provided. Please upload a valid .svg file.'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
     canvas_width = int(request.data.get('canvas_width', 1000))
     canvas_height = int(request.data.get('canvas_height', 800))
-    
+
     # Create or update the layout metadata
     layout, created = SeatLayout.objects.update_or_create(
         venue=venue,
@@ -39,7 +36,7 @@ def upload_venue_layout(request, venue_id):
             'canvas_height': canvas_height,
         }
     )
-    
+
     # Run the automation engine to parse the SVG and bulk-create seats
     try:
         seat_count = ingest_svg_layout(layout.id, svg_file)
@@ -48,8 +45,11 @@ def upload_venue_layout(request, venue_id):
             'layout_id': str(layout.id),
             'seat_count': seat_count
         }, status=status.HTTP_201_CREATED)
+    except ValueError as e:
+        # ✅ Catch our custom validation errors and return them cleanly to the UI
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
-        return Response({'error': f'Failed to parse SVG layout: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': f'Unexpected server error parsing SVG: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET', 'POST'])
@@ -91,7 +91,8 @@ def venue_categories(request, venue_id):
             'id': str(category.id),
             'name': category.name,
             'hex_color': category.hex_color,
-            'price': float(category.price)
+            'price': float(category.price),
+            'seat_count': 0  # ✅ ADD THIS LINE so the frontend knows it starts with 0 seats
         }, status=status.HTTP_201_CREATED)
 
 

@@ -38,6 +38,7 @@ from .views import (
     checkin_manual,
     run_scheduled_tasks,
     cron_health,
+    EventSeatMapViewSet,
 )
 from .api.payments_api import (
     create_checkout, verify_checkout, checkout_status,
@@ -71,6 +72,9 @@ router.register(
     OrganizationViewSet,
     basename='organization',
 )
+
+# ✅ Add the seat map endpoint nested under events
+router.register(r'events/(?P<event_pk>[^/.]+)/seat-map', EventSeatMapViewSet, basename='event-seat-map')
 
 urlpatterns = [
     # ============ CRON ENDPOINTS ============

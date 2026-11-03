@@ -695,8 +695,9 @@ const CreateBooking = () => {
                     notes: customer.notes,
                     booking_source: isRegularUser ? 'user_portal' : 'admin_portal',
                     tickets: selectedSeats.map((seat, index) => ({
-                        tier_id: seat.category_id || (tiers.length > 0 ? tiers[0].id : null),
+                        tier_id: null, // ✅ FIX: Explicitly set to null. Backend will use the Seat's Category for pricing.
                         seat_id: seat.id,
+                        qty: 1, // ✅ FIX: Crucial: tells backend to create 1 ticket per seat object
                         attendee_name: reservedAttendees[index]?.name || customer.name,
                         attendee_email: reservedAttendees[index]?.email || customer.email,
                         attendee_phone: reservedAttendees[index]?.phone || customer.phone,

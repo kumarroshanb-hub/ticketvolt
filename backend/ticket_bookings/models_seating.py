@@ -26,7 +26,14 @@ class Seat(models.Model):
     """Individual seats parsed from the layout."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     layout = models.ForeignKey(SeatLayout, on_delete=models.CASCADE, related_name='seats')
-    category = models.ForeignKey(SeatCategory, on_delete=models.SET_NULL, null=True, blank=True)
+    # ✅ ADD related_name='seats' to enable c.seats.count()
+    category = models.ForeignKey(
+        SeatCategory, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='seats'  # ✅ THIS IS THE FIX
+    )
     row_label = models.CharField(max_length=10, blank=True)
     seat_number = models.CharField(max_length=10, blank=True)
     x_coord = models.FloatField()

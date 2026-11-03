@@ -1,4 +1,3 @@
-# backend/ticket_bookings/views.py
 """
 Auth views for TicketVolt.
 
@@ -36,9 +35,10 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.shortcuts import get_object_or_404  # ✅ ADD THIS LINE
 from django.utils import timezone
 
-from rest_framework import status
+from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -54,7 +54,8 @@ from axes.handlers.proxy import AxesProxyHandler
 from axes.helpers import get_client_ip_address
 
 from .constants import BookingStatus, TicketStatus
-from .models import Ticket, CheckInLog, UserProfile
+# ✅ FIX: Added Event to the imports
+from .models import Event, Ticket, CheckInLog, UserProfile
 from .models_tenancy import OrganizationMembership
 from .services.booking_status import reconcile_completed_booking
 from .services.tenancy import (
@@ -1066,3 +1067,64 @@ def cron_health(request):
         'service': 'ticketvolt',
         'now': timezone.now().isoformat(),
     })
+
+
+# ===========================================================================
+# Seat Map API Endpoint (For Reserved Seating Frontend Canvas)
+# ===========================================================================
+
+class EventSeatMapViewSet(viewsets.ViewSet):
+    """
+    API Endpoint to fetch the interactive seat map for an event.
+    URL: /api/events/{event_id}/seat-map/
+    """
+    permission_classes = [AllowAny] # Allow guests to view the seat map
+
+    def list(self, request, event_pk=None):
+        event = get_object_or_404(Event, id=event_pk)
+        
+        if not hasattr(event.venue, 'layout'):
+            return Response(
+                {'detail': 'No seating layout configured for this venue.'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        layout = event.venue.layout
+        session_id = request.query_params.get('session')
+        
+        # Fetch all active seats for this layout
+        seats_qs = layout.seats.filter(is_active=True).select_related('category')
+        
+        # Fetch real-time reservations for this event (and session if applicable)
+        reservations_qs = SeatReservation.objects.filter(event=event)
+        if session_id:
+            reservations_qs = reservations_qs.filter(session_id=session_id)
+            
+        # Filter out expired holds (e.g., 15-minute cart timeout)
+        now = timezone.now()
+        reservations_qs = reservations_qs.exclude(status='held', held_until__lt=now)
+        
+        # Map reservations to a dictionary for fast lookup
+        reservation_map = {str(res.seat_id): res.status for res in reservations_qs}
+
+        seats_data = []
+        for seat in seats_qs:
+            seats_data.append({
+                'id': str(seat.id),
+                'x_coord': seat.x_coord,
+                'y_coord': seat.y_coord,
+                'row_label': seat.row_label,
+                'seat_number': seat.seat_number,
+                'category_id': str(seat.category.id) if seat.category else None,
+                'category_name': seat.category.name if seat.category else 'General',
+                'category_color': seat.category.hex_color if seat.category else '#4CAF50',
+                'price': float(seat.category.price) if seat.category else 0.00,
+                'status': reservation_map.get(str(seat.id), 'available')
+            })
+
+        return Response({
+            'canvas_width': layout.canvas_width,
+            'canvas_height': layout.canvas_height,
+            'background_image': layout.background_image,
+            'seats': seats_data
+        })

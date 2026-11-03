@@ -1,163 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="800"
-  height="600"
-  viewBox="0 0 800 600"
->
-  <title>Sample Venue Seating Layout</title>
-  <desc>
-    Simple test seating layout with 6 rows and 10 seats per row.
-    Seats are represented as circles so the backend SVG parser can detect them.
-  </desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 300" width="100%" height="100%">
+  
+  <!-- STAGE: Drawn with <path> so the backend parser ignores it -->
+  <path d="M 100 40 Q 250 10 400 40 L 380 60 Q 250 35 120 60 Z" fill="#333333" />
+  <text x="250" y="50" font-family="sans-serif" font-size="14" fill="white" text-anchor="middle" font-weight="bold">STAGE</text>
 
-  <!-- Background -->
-  <path
-    d="M 0 0 H 800 V 600 H 0 Z"
-    fill="#f8fafc"
-  />
+  <!-- ROW A (y=100) -->
+  <rect x="100" y="100" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="150" y="100" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="200" y="100" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="250" y="100" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="300" y="100" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="350" y="100" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
 
-  <!-- Stage / Screen -->
-  <path
-    d="M 220 60 H 580 Q 600 60 600 80 V 115 H 200 V 80 Q 200 60 220 60 Z"
-    fill="#334155"
-  />
-  <text
-    x="400"
-    y="95"
-    text-anchor="middle"
-    font-family="Arial, sans-serif"
-    font-size="22"
-    font-weight="700"
-    fill="#ffffff"
-  >
-    STAGE
-  </text>
+  <!-- ROW B (y=160) -->
+  <rect x="80" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="130" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="180" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="230" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="280" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="330" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="380" y="160" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
 
-  <!-- Legend -->
-  <circle cx="245" cy="500" r="8" fill="#22c55e" />
-  <text x="265" y="505" font-family="Arial, sans-serif" font-size="14" fill="#334155">
-    Available seat
-  </text>
+  <!-- ROW C (y=220) -->
+  <rect x="60" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="110" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="160" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="210" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="260" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="310" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="360" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <rect x="410" y="220" width="30" height="30" rx="4" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
 
-  <text
-    x="400"
-    y="545"
-    text-anchor="middle"
-    font-family="Arial, sans-serif"
-    font-size="13"
-    fill="#64748b"
-  >
-    Sample layout: Rows A-F, Seats 1-10
-  </text>
-
-  <!-- Row Labels -->
-  <text x="120" y="166" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#334155">A</text>
-  <text x="120" y="211" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#334155">B</text>
-  <text x="120" y="256" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#334155">C</text>
-  <text x="120" y="301" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#334155">D</text>
-  <text x="120" y="346" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#334155">E</text>
-  <text x="120" y="391" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#334155">F</text>
-
-  <!-- Aisle Label -->
-  <text
-    x="360"
-    y="135"
-    text-anchor="middle"
-    font-family="Arial, sans-serif"
-    font-size="12"
-    fill="#94a3b8"
-  >
-    AISLE
-  </text>
-
-  <!-- ========================================================= -->
-  <!-- ROW A -->
-  <!-- ========================================================= -->
-  <circle id="seat-A1" data-row="A" data-seat="1" cx="170" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A2" data-row="A" data-seat="2" cx="200" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A3" data-row="A" data-seat="3" cx="230" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A4" data-row="A" data-seat="4" cx="260" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A5" data-row="A" data-seat="5" cx="290" cy="160" r="8" fill="#22c55e" />
-
-  <circle id="seat-A6" data-row="A" data-seat="6" cx="430" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A7" data-row="A" data-seat="7" cx="460" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A8" data-row="A" data-seat="8" cx="490" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A9" data-row="A" data-seat="9" cx="520" cy="160" r="8" fill="#22c55e" />
-  <circle id="seat-A10" data-row="A" data-seat="10" cx="550" cy="160" r="8" fill="#22c55e" />
-
-  <!-- ========================================================= -->
-  <!-- ROW B -->
-  <!-- ========================================================= -->
-  <circle id="seat-B1" data-row="B" data-seat="1" cx="170" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B2" data-row="B" data-seat="2" cx="200" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B3" data-row="B" data-seat="3" cx="230" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B4" data-row="B" data-seat="4" cx="260" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B5" data-row="B" data-seat="5" cx="290" cy="205" r="8" fill="#22c55e" />
-
-  <circle id="seat-B6" data-row="B" data-seat="6" cx="430" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B7" data-row="B" data-seat="7" cx="460" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B8" data-row="B" data-seat="8" cx="490" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B9" data-row="B" data-seat="9" cx="520" cy="205" r="8" fill="#22c55e" />
-  <circle id="seat-B10" data-row="B" data-seat="10" cx="550" cy="205" r="8" fill="#22c55e" />
-
-  <!-- ========================================================= -->
-  <!-- ROW C -->
-  <!-- ========================================================= -->
-  <circle id="seat-C1" data-row="C" data-seat="1" cx="170" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C2" data-row="C" data-seat="2" cx="200" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C3" data-row="C" data-seat="3" cx="230" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C4" data-row="C" data-seat="4" cx="260" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C5" data-row="C" data-seat="5" cx="290" cy="250" r="8" fill="#22c55e" />
-
-  <circle id="seat-C6" data-row="C" data-seat="6" cx="430" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C7" data-row="C" data-seat="7" cx="460" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C8" data-row="C" data-seat="8" cx="490" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C9" data-row="C" data-seat="9" cx="520" cy="250" r="8" fill="#22c55e" />
-  <circle id="seat-C10" data-row="C" data-seat="10" cx="550" cy="250" r="8" fill="#22c55e" />
-
-  <!-- ========================================================= -->
-  <!-- ROW D -->
-  <!-- ========================================================= -->
-  <circle id="seat-D1" data-row="D" data-seat="1" cx="170" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D2" data-row="D" data-seat="2" cx="200" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D3" data-row="D" data-seat="3" cx="230" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D4" data-row="D" data-seat="4" cx="260" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D5" data-row="D" data-seat="5" cx="290" cy="295" r="8" fill="#22c55e" />
-
-  <circle id="seat-D6" data-row="D" data-seat="6" cx="430" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D7" data-row="D" data-seat="7" cx="460" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D8" data-row="D" data-seat="8" cx="490" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D9" data-row="D" data-seat="9" cx="520" cy="295" r="8" fill="#22c55e" />
-  <circle id="seat-D10" data-row="D" data-seat="10" cx="550" cy="295" r="8" fill="#22c55e" />
-
-  <!-- ========================================================= -->
-  <!-- ROW E -->
-  <!-- ========================================================= -->
-  <circle id="seat-E1" data-row="E" data-seat="1" cx="170" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E2" data-row="E" data-seat="2" cx="200" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E3" data-row="E" data-seat="3" cx="230" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E4" data-row="E" data-seat="4" cx="260" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E5" data-row="E" data-seat="5" cx="290" cy="340" r="8" fill="#22c55e" />
-
-  <circle id="seat-E6" data-row="E" data-seat="6" cx="430" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E7" data-row="E" data-seat="7" cx="460" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E8" data-row="E" data-seat="8" cx="490" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E9" data-row="E" data-seat="9" cx="520" cy="340" r="8" fill="#22c55e" />
-  <circle id="seat-E10" data-row="E" data-seat="10" cx="550" cy="340" r="8" fill="#22c55e" />
-
-  <!-- ========================================================= -->
-  <!-- ROW F -->
-  <!-- ========================================================= -->
-  <circle id="seat-F1" data-row="F" data-seat="1" cx="170" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F2" data-row="F" data-seat="2" cx="200" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F3" data-row="F" data-seat="3" cx="230" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F4" data-row="F" data-seat="4" cx="260" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F5" data-row="F" data-seat="5" cx="290" cy="385" r="8" fill="#22c55e" />
-
-  <circle id="seat-F6" data-row="F" data-seat="6" cx="430" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F7" data-row="F" data-seat="7" cx="460" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F8" data-row="F" data-seat="8" cx="490" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F9" data-row="F" data-seat="9" cx="520" cy="385" r="8" fill="#22c55e" />
-  <circle id="seat-F10" data-row="F" data-seat="10" cx="550" cy="385" r="8" fill="#22c55e" />
 </svg>

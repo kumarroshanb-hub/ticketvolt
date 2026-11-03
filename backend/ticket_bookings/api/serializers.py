@@ -246,6 +246,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'state': obj.venue.state,
             'postal_code': obj.venue.postal_code,
             'country': obj.venue.country,
+            'has_reserved_seating': obj.venue.has_reserved_seating, # ✅ ADDED
         }
 
     def get_tier_count(self, obj):
@@ -284,10 +285,10 @@ class PublicEventSerializer(serializers.ModelSerializer):
             if template.is_default and default_url is None:
                 default_url = url
 
-        if default_url is not None:
-            images['default'] = default_url
-        elif images:
-            images['default'] = next(iter(images.values()))
+            if default_url is not None:
+                images['default'] = default_url
+            elif images:
+                images['default'] = next(iter(images.values()))
 
         return images
 
@@ -444,6 +445,7 @@ class EventSerializer(serializers.ModelSerializer):
             'state': obj.venue.state,
             'postal_code': obj.venue.postal_code,
             'country': obj.venue.country,
+            'has_reserved_seating': obj.venue.has_reserved_seating, # ✅ ADDED
         }
 
     def get_tier_count(self, obj):
@@ -873,20 +875,44 @@ class BookingSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         {'tickets': f'Item {i} is not an object.'}
                     )
-                tier_id = str(t.get('tier_id') or '').strip()
-                if not tier_id:
+                
+                seat_id = t.get('seat_id')
+                tier_id = t.get('tier_id')
+                tier_id_str = str(tier_id or '').strip()
+                
+                # ✅ FIX: Allow tier_id to be missing/null if seat_id is provided (Reserved Seating)
+                if not seat_id and not tier_id_str:
                     raise serializers.ValidationError(
-                        {'tickets': f'Item {i} missing tier_id.'}
+                        {'tickets': f'Item {i} is missing both tier_id and seat_id.'}
                     )
-                if tier_id not in valid_tier_ids:
+                
+                if tier_id_str and tier_id_str not in valid_tier_ids:
                     raise serializers.ValidationError(
-                        {'tickets': f'Tier {tier_id} not found for this event.'}
+                        {'tickets': f'Tier {tier_id_str} not found for this event.'}
                     )
+                
+                # ✅ FIX: Default qty to 1 if not provided (especially for reserved seating)
+                if 'qty' not in t:
+                    t['qty'] = 1
 
             for t in tickets_payload:
-                tier = TicketTier.objects.filter(id=t.get('tier_id')).first()
-                if tier:
-                    computed_total += Decimal(str(tier.price))
+                seat_id = t.get('seat_id')
+                tier_id = t.get('tier_id')
+                qty = int(t.get('qty', 1))
+                
+                if seat_id:
+                    # ✅ Reserved seating: get price from Seat's category
+                    try:
+                        from ..models_seating import Seat
+                        seat = Seat.objects.get(id=seat_id)
+                        if seat.category:
+                            computed_total += Decimal(str(seat.category.price)) * qty
+                    except Seat.DoesNotExist:
+                        pass
+                elif tier_id:
+                    tier = TicketTier.objects.filter(id=tier_id).first()
+                    if tier:
+                        computed_total += Decimal(str(tier.price)) * qty
 
         if computed_total == Decimal('0.00'):
             fallback = (
@@ -966,7 +992,7 @@ class BookingSerializer(serializers.ModelSerializer):
                     discount=discount_obj,
                     user=requester if requester and requester.is_authenticated else None,
                     event=self._event_obj,
-                    ticket_count=len(tickets_payload),
+                    ticket_count=requested_count,
                     order_subtotal=computed_total,
                 )
             except DiscountError as exc:
@@ -1108,10 +1134,22 @@ class BookingSerializer(serializers.ModelSerializer):
         if not validated_data.get('total_amount'):
             total = Decimal('0.00')
             for t in tickets_data:
-                tid = t.get('tier_id')
-                if tid:
+                seat_id = t.get('seat_id')
+                tier_id = t.get('tier_id')
+                qty = int(t.get('qty', 1))
+                
+                if seat_id:
+                    # ✅ Reserved seating: get price from Seat's category
                     try:
-                        total += Decimal(str(TicketTier.objects.get(id=tid).price))
+                        from ..models_seating import Seat
+                        seat = Seat.objects.get(id=seat_id)
+                        if seat.category:
+                            total += Decimal(str(seat.category.price)) * qty
+                    except Seat.DoesNotExist:
+                        pass
+                elif tier_id:
+                    try:
+                        total += Decimal(str(TicketTier.objects.get(id=tier_id).price)) * qty
                     except TicketTier.DoesNotExist:
                         pass
             validated_data['total_amount'] = total
@@ -1416,6 +1454,7 @@ class UserSerializer(serializers.ModelSerializer):
             
             result.append(item)
         return result
+
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)

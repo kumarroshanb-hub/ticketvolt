@@ -31,15 +31,14 @@ import EventCard from '../../components/Common/EventCard';
 import { ROLES } from '../../constants';
 import { theme } from '../../theme/tokens';
 
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+
 const C = theme.colors;
 
 // ---------------------------------------------------------------------------
 // HOVER ACTIONS OVERLAY
-// ---------------------------------------------------------------------------
-// The EventCard is a self-contained public-facing component. We don't
-// want to pollute it with admin-only actions, so we wrap it in a
-// relative container and float the admin action buttons on top-right
-// on hover (desktop) / always-visible (mobile).
 // ---------------------------------------------------------------------------
 const EventCardWithAdminActions = ({
     event,
@@ -54,8 +53,6 @@ const EventCardWithAdminActions = ({
 }) => {
     const [hovered, setHovered] = useState(false);
 
-    // ✅ UPDATED FOR 6-TIER HIERARCHY: show the owner label 
-    // so admins can see ownership at a glance.
     const ownerLabel = event.organizer_username || event.organizer || null;
 
     return (
@@ -64,12 +61,8 @@ const EventCardWithAdminActions = ({
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
         >
-            {/* ✅ ENHANCEMENT: `context="management"` makes the CTA
-                read "View Details" and route to the event detail page.
-                Keeps the management page consistent with the dashboard. */}
             <EventCard event={event} onSelect={onView} context="management" />
 
-            {/* ✅ UPDATED: owner chip */}
             {canManageEvents && ownerLabel && (
                 <Box
                     sx={{
@@ -177,13 +170,18 @@ const Events = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // ✅ UPDATED FOR 6-TIER HIERARCHY:
-    // Replaced legacy 'isOrganizer' with 'isManager' (Owner or Admin).
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
+
     const isManager = role === ROLES.OWNER || role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
     const canManageEvents = isManager;
     const canCreateEvents = isManager;
-    
-    // Members and regular Users can browse events.
     const isRegularUser = role === ROLES.USER || role === ROLES.MEMBER;
 
     const [events, setEvents] = useState([]);
@@ -200,7 +198,8 @@ const Events = () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await api.get('/events/');
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/events/', { params: orgParams });
             let eventsData = [];
 
             if (Array.isArray(response.data)) {
@@ -221,7 +220,7 @@ const Events = () => {
     useEffect(() => {
         loadEvents();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [orgParams]); // ✅ 3. Added orgParams to dependency array
 
     const handleCreateEvent = () => navigate('/app/events/create');
     const handleEditEvent = (event) => navigate(`/app/events/${event.id}/edit`);
@@ -288,6 +287,13 @@ const Events = () => {
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
+                    {/* ✅ 4. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadEvents}>
                         Refresh
                     </OutlineButton>

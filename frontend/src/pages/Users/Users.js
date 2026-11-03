@@ -35,6 +35,10 @@ import {
   normaliseCountryName,
 } from '../../config/countries';
 
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+
 const C = theme.colors;
 const F = theme.fonts;
 
@@ -785,17 +789,8 @@ const UserFormModal = ({
         <ModalBody>
           <form onSubmit={onSubmit}>
             <FormGrid>
-              <FormGroup>
-                <FormLabel>Username *</FormLabel>
-                <FormInput
-                  type="text"
-                  value={formData.username}
-                  onChange={(e) => setFormData(prev => ({ ...prev, username: e.target.value }))}
-                  disabled={isEdit}
-                  placeholder="username"
-                  required
-                />
-              </FormGroup>
+              {/* ✅ Username field completely removed. Backend auto-generates it from email. */}
+              
               <FormGroup>
                 <FormLabel>Email *</FormLabel>
                 <FormInput
@@ -804,6 +799,7 @@ const UserFormModal = ({
                   onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                   placeholder="user@example.com"
                   required
+                  disabled={isEdit}
                 />
               </FormGroup>
               <FormGroup>
@@ -893,7 +889,7 @@ const UserFormModal = ({
               
               {showOrgPicker && (
                 <FormGroup>
-                  <FormLabel>Organization {isSuperuser ? '(Optional)' : '*'}</FormLabel>
+                  <FormLabel>Organization {isSuperuser && formData.role !== 'owner' ? '(Optional)' : '*'}</FormLabel>
                   <FormSelect
                     value={formData.organization_id || ''}
                     onChange={(e) => {
@@ -903,10 +899,10 @@ const UserFormModal = ({
                         organization_id: val || null,
                       }));
                     }}
-                    required={!isSuperuser}
+                    required={!isSuperuser || formData.role === 'owner'}
                   >
                     <option value="">
-                      {isSuperuser ? 'None (Assign later via Organizations page)' : 'Select an organization…'}
+                      {isSuperuser && formData.role !== 'owner' ? 'None (Assign later via Organizations page)' : 'Select an organization…'}
                     </option>
                     {requesterOrgs.map((org) => (
                       <option key={org.id} value={org.id}>
@@ -914,11 +910,6 @@ const UserFormModal = ({
                       </option>
                     ))}
                   </FormSelect>
-                  {isSuperuser && (
-                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                      Leave blank to create the user first. You can assign them as Owner/Admin when creating the Organization later.
-                    </p>
-                  )}
                 </FormGroup>
               )}
 
@@ -931,6 +922,7 @@ const UserFormModal = ({
                   <option value="user">Regular User (Guest)</option>
                   <option value="member">Member</option>
                   <option value="staff">Staff</option>
+                  <option value="owner">Owner</option> {/* ✅ Added Owner Role */}
                   {currentUser?.is_superuser && (
                     <>
                       <option value="admin">Admin</option>
@@ -939,7 +931,9 @@ const UserFormModal = ({
                   )}
                 </FormSelect>
                 <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                  Note: Organization Owners are managed via the Organizations page.
+                  {formData.role === 'owner' 
+                    ? 'Owners have full control over the selected organization.' 
+                    : 'Organization Owners can also be managed via the Organizations page.'}
                 </p>
               </FormGroup>
             </FormGrid>
@@ -994,7 +988,7 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
         <ModalBody>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
             <UserAvatar $bg={getAvatarColor(user.username || 'user')}>
-              {getInitials(user.username)}
+              {getInitials(user.first_name ? `${user.first_name} ${user.last_name}` : user.username)}
             </UserAvatar>
             <div style={{ minWidth: 0 }}>
               <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: F.family }}>
@@ -1112,6 +1106,15 @@ const Users = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
+  // ✅ 1. Initialize Platform Filter Hook
+  const { 
+    params: orgParams, 
+    isPlatformAdmin, 
+    orgFilter, 
+    setOrgFilter, 
+    organizations 
+  } = usePlatformFilter();
+
   const platformCountry = useMemo(() => {
     const normalised = normaliseCountryName(settings?.country);
     return normalised || 'Hong Kong';
@@ -1146,8 +1149,8 @@ const Users = () => {
   const [requesterOrgs, setRequesterOrgs] = useState([]);
   const [orgsLoaded, setOrgsLoaded] = useState(false);
 
+  // ✅ Removed username from state
   const [formData, setFormData] = useState({
-    username: '',
     email: '',
     first_name: '',
     last_name: '',
@@ -1177,10 +1180,17 @@ const Users = () => {
   }, []);
 
   const isSuperuser = Boolean(currentUser?.is_superuser);
+  
+  // ✅ Updated showOrgPicker logic to handle Owner role properly
   const showOrgPicker = useMemo(() => {
     const isMultiOrgAdmin = !isSuperuser && requesterOrgs.length > 1;
-    const isSuperuserCreatingPrivileged = isSuperuser && ['admin', 'owner', 'organizer', 'super_admin'].includes(formData.role);
-    return isMultiOrgAdmin || isSuperuserCreatingPrivileged;
+    const isCreatingOrgRole = ['owner', 'admin', 'staff', 'member'].includes(formData.role);
+    
+    if (isSuperuser) {
+      return isCreatingOrgRole; // Superusers need to pick an org for any org-bound role
+    }
+    // Non-superusers: show picker if they have multiple orgs, or if they are creating an Owner (to be explicit about which org)
+    return isMultiOrgAdmin || (formData.role === 'owner' && requesterOrgs.length > 0);
   }, [isSuperuser, requesterOrgs.length, formData.role]);
 
   useEffect(() => {
@@ -1218,6 +1228,7 @@ const Users = () => {
         search: search || undefined,
         role: roleFilter !== 'all' ? roleFilter : undefined,
         is_active: statusFilter !== 'all' ? statusFilter === 'active' : undefined,
+        ...orgParams, // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
       };
       const response = await api.get('/users/', { params });
       const { users: pageUsers, count } = normalizeUserResponse(response.data);
@@ -1238,7 +1249,7 @@ const Users = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, search, roleFilter, statusFilter, PAGE_SIZE]);
+  }, [page, search, roleFilter, statusFilter, PAGE_SIZE, orgParams]); // ✅ 3. Added orgParams to dependency array
 
   useEffect(() => {
     loadUsers();
@@ -1271,9 +1282,9 @@ const Users = () => {
     return () => clearTimeout(timer);
   }, [search]);
 
+  // ✅ Removed username from resetForm
   const resetForm = () => {
     setFormData({
-      username: '',
       email: '',
       first_name: '',
       last_name: '',
@@ -1290,8 +1301,8 @@ const Users = () => {
 
   const handleCreateUser = async (e) => {
     if (e?.preventDefault) e.preventDefault();
-    if (!formData.username || !formData.email) {
-      toast.error('Please fill all required fields');
+    if (!formData.email) {
+      toast.error('Email is required');
       return;
     }
     if (!formData.phone?.trim()) {
@@ -1302,9 +1313,16 @@ const Users = () => {
       toast.error('Enter a valid mobile number (7–15 digits)');
       return;
     }
-    if (showOrgPicker && !formData.organization_id && !isSuperuser) {
-      toast.error('Please select an organization');
-      return;
+    
+    // ✅ Validation for Organization requirement based on role
+    const orgBoundRoles = ['owner', 'admin', 'staff', 'member'];
+    if (orgBoundRoles.includes(formData.role) && !formData.organization_id && !isSuperuser) {
+        toast.error('Please select an organization for this role');
+        return;
+    }
+    if (formData.role === 'owner' && !formData.organization_id) {
+        toast.error('An organization must be selected to create an Owner');
+        return;
     }
 
     try {
@@ -1419,10 +1437,10 @@ const Users = () => {
     }
   };
 
+  // ✅ Removed username from handleEditUser
   const handleEditUser = (user) => {
     setSelectedUser(user);
     setFormData({
-      username: user.username || '',
       email: user.email || '',
       first_name: user.first_name || '',
       last_name: user.last_name || '',
@@ -1445,7 +1463,7 @@ const Users = () => {
 
   const renderAvatar = (user) => (
     <UserAvatar $bg={getAvatarColor(user.username || 'user')}>
-      {getInitials(user.username)}
+      {getInitials(user.first_name ? `${user.first_name} ${user.last_name}` : user.username)}
     </UserAvatar>
   );
 
@@ -1536,6 +1554,14 @@ const Users = () => {
 
       <FilterCard>
         <FilterGrid>
+          {/* ✅ 4. Render the Organization Filter Dropdown */}
+          <OrgFilterSelect
+            isPlatformAdmin={isPlatformAdmin}
+            organizations={organizations}
+            orgFilter={orgFilter}
+            setOrgFilter={setOrgFilter}
+            onPageReset={() => setPage(1)}
+          />
           <SearchWrapper>
             <Search className="search-icon" fontSize="small" />
             <SearchInput

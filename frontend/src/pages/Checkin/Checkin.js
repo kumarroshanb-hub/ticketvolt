@@ -68,6 +68,8 @@ import {
 
 // frontend/src/pages/Checkin/Checkin.js — ADD THIS IMPORT
 import { theme } from '../../theme/tokens';
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
 
 const C = theme.colors;
 const F = theme.fonts;

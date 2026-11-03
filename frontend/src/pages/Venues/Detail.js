@@ -25,6 +25,7 @@ import {
     Email as EmailIcon,
     Phone as PhoneIcon,
     Language as LanguageIcon,
+    EventSeat as SeatIcon, // ✅ NEW: Icon for seating layout
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -40,9 +41,6 @@ import {
     OutlineButton,
     LoadingWrapper,
 } from '../../components/Common';
-
-// ✅ Import shared constants
-import { EVENT_STATUS } from '../../constants';
 
 const VenueDetail = () => {
     const { id } = useParams();
@@ -133,6 +131,19 @@ const VenueDetail = () => {
                             color={venue.is_active ? 'success' : 'default'}
                             sx={{ fontWeight: 600, alignSelf: isMobile ? 'flex-start' : 'center' }}
                         />
+                        
+                        {/* ✅ NEW: Edit Seating Layout Button (Only shows if reserved seating is enabled) */}
+                        {venue.has_reserved_seating && (
+                            <OutlineButton
+                                variant="outlined"
+                                startIcon={<SeatIcon />}
+                                onClick={() => navigate(`/app/venues/${id}/layout`)}
+                                sx={isMobile ? { width: '100%' } : undefined}
+                            >
+                                Edit Seating Layout
+                            </OutlineButton>
+                        )}
+                        
                         <OutlineButton
                             variant="outlined"
                             startIcon={<RefreshIcon />}
@@ -263,14 +274,36 @@ const VenueDetail = () => {
                     <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600, mb: 2 }}>
-                                Capacity
+                                Capacity & Seating
                             </Typography>
                             <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary' }}>
                                 {venue.capacity || 'N/A'}
                             </Typography>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
                                 {venue.has_reserved_seating ? 'Reserved Seating' : 'General Admission'}
                             </Typography>
+                            
+                            {/* ✅ NEW: Quick action for reserved seating */}
+                            {venue.has_reserved_seating && (
+                                <>
+                                    <Divider sx={{ my: 2 }} />
+                                    <Typography variant="subtitle2" sx={{ color: 'text.secondary', mb: 1 }}>
+                                        Seating Layout
+                                    </Typography>
+                                    <Button
+                                        variant="contained"
+                                        fullWidth
+                                        startIcon={<SeatIcon />}
+                                        onClick={() => navigate(`/app/venues/${id}/layout`)}
+                                        sx={{ mt: 1 }}
+                                    >
+                                        Configure Seats
+                                    </Button>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', mt: 1, display: 'block' }}>
+                                        Upload SVG and assign seat categories
+                                    </Typography>
+                                </>
+                            )}
                         </CardContent>
                     </Card>
                 </Grid>

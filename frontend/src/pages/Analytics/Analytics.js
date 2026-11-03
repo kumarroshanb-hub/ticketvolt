@@ -1,4 +1,3 @@
-// frontend/src/pages/Analytics/Analytics.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Grid, CardContent, Box, Typography, CircularProgress,
@@ -35,6 +34,8 @@ import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
 import { useSettings } from '../../context/SettingsContext';
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -138,10 +139,19 @@ const EMPTY_ANALYTICS = {
 
 const Analytics = () => {
     useAuth();
-    const { formatMoney } = useSettings();   // ✅ NEW
+    const { formatMoney } = useSettings();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+
+    // ✅ Platform-aware org filtering
+    const {
+        params: orgParams,
+        isPlatformAdmin,
+        orgFilter,
+        setOrgFilter,
+        organizations,
+    } = usePlatformFilter();
 
     const [loading, setLoading] = useState(true);
     const [timeframe, setTimeframe] = useState('week');
@@ -151,7 +161,10 @@ const Analytics = () => {
         setLoading(true);
         try {
             const response = await api.get('/analytics/', {
-                params: { timeframe },
+                params: {
+                    timeframe,
+                    ...orgParams,  // ✅ Merge org scoping (empty for Super Admin = all orgs)
+                },
             });
             setAnalytics({
                 ...EMPTY_ANALYTICS,
@@ -168,7 +181,7 @@ const Analytics = () => {
         } finally {
             setLoading(false);
         }
-    }, [timeframe]);
+    }, [timeframe, orgParams]);  // ✅ Added orgParams to deps
 
     useEffect(() => {
         loadAnalytics();
@@ -228,7 +241,7 @@ const Analytics = () => {
         },
         {
             title: 'Revenue',
-            value: formatMoney(overview.total_revenue || 0),   // ✅ PATCHED
+            value: formatMoney(overview.total_revenue || 0),
             icon: <MoneyIcon />,
             color: C.success,
             bg: `${C.success}14`,
@@ -268,6 +281,14 @@ const Analytics = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
+                        {/* ✅ Organization filter dropdown (only for Platform Admin) */}
+                        <OrgFilterSelect
+                            isPlatformAdmin={isPlatformAdmin}
+                            organizations={organizations}
+                            orgFilter={orgFilter}
+                            setOrgFilter={setOrgFilter}
+                        />
+                        
                         {['week', 'month', 'year'].map((tf) => (
                             <Button
                                 key={tf}
@@ -523,7 +544,7 @@ const Analytics = () => {
                                         <YAxis stroke={C.textLight} axisLine={false} tickLine={false} />
                                         <Tooltip
                                             contentStyle={TOOLTIP_CONTENT_STYLE}
-                                            formatter={(value) => [formatMoney(value), 'Revenue']}   // ✅ PATCHED
+                                            formatter={(value) => [formatMoney(value), 'Revenue']}
                                         />
                                         <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                                             {eventData.map((entry, index) => (
@@ -574,7 +595,7 @@ const Analytics = () => {
                                                     {event.name}
                                                 </Typography>
                                                 <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                                                    {event.bookings || 0} bookings • {formatMoney(event.revenue || 0)}   {/* ✅ PATCHED */}
+                                                    {event.bookings || 0} bookings • {formatMoney(event.revenue || 0)}
                                                 </Typography>
                                             </Box>
                                             <Chip

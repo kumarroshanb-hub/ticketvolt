@@ -152,11 +152,35 @@ INSTALLED_APPS = [
     'django_filters',
     'axes',                                       # Brute-force lockout
 
+    # ... other apps
+    'channels',
+
     # Local
     'ticket_bookings',
     'ticket_whatsapp',
 ]
 
+
+# ============================================
+# ASGI / WebSockets Configuration
+# ============================================
+ASGI_APPLICATION = 'core.asgi.application'
+# Add this section
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [(os.environ.get('REDIS_HOST', 'localhost'), int(os.environ.get('REDIS_PORT', 6379)))],
+        },
+    },
+}
+
+# For local development without Redis, you can use in-memory (NOT for production):
+# CHANNEL_LAYERS = {
+#     'default': {
+#         'BACKEND': 'channels.layers.InMemoryChannelLayer',
+#     },
+# }
 
 # ============================================
 # 🌏 INTERNATIONALIZATION — MULTILINGUAL
@@ -460,6 +484,22 @@ AXES_VERBOSE = False
 AXES_ENABLE_ADMIN = False
 AXES_RESET_ON_SUCCESS = True
 
+
+# ============================ PAYMENTS ============================
+PAYMENTS = {
+    'HOLD_TTL_MINUTES': int(os.environ.get('PAYMENT_HOLD_TTL_MINUTES', '15')),
+    'DEFAULT_GATEWAY': os.environ.get('DEFAULT_PAYMENT_GATEWAY', 'razorpay'),
+}
+
+# Razorpay
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
+RAZORPAY_WEBHOOK_SECRET = os.environ.get('RAZORPAY_WEBHOOK_SECRET', '')
+
+# Stripe
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
 
 # ============================================
 # SECURITY HEADERS (defense-in-depth)

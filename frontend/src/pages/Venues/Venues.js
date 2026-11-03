@@ -1,5 +1,4 @@
-// frontend/src/pages/Venues/Venues.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // ✅ Added useCallback
 import { useNavigate } from 'react-router-dom';
 import {
     Box,
@@ -39,6 +38,10 @@ import {
     LoadingWrapper,
 } from '../../components/Common';
 
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+
 // ❌ Removed unused EVENT_STATUS import (was dead code)
 
 const Venues = () => {
@@ -46,16 +49,26 @@ const Venues = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
+
     const [venues, setVenues] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    const loadVenues = async () => {
+    const loadVenues = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await api.get('/venues/');
-            setVenues(response.data || []);
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/venues/', { params: orgParams });
+            setVenues(response.data?.results || response.data || []);
         } catch (error) {
             console.error('❌ Failed to load venues:', error);
             setError(error.message || 'Failed to load venues');
@@ -63,11 +76,11 @@ const Venues = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [orgParams]); // ✅ 3. Added orgParams to dependency array
 
     useEffect(() => {
         loadVenues();
-    }, []);
+    }, [loadVenues]); // ✅ Updated dependencies
 
     const handleDelete = async (id, name) => {
         if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
@@ -137,6 +150,13 @@ const Venues = () => {
                         width: isMobile ? '100%' : 'auto',
                     }}
                 >
+                    {/* ✅ 4. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton
                         variant="outlined"
                         startIcon={<RefreshIcon />}

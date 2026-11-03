@@ -1,4 +1,3 @@
-// frontend/src/pages/CancellationPolicies/CancellationPolicies.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Paper, Button,
@@ -25,6 +24,10 @@ import {
     OutlineButton, LoadingWrapper,
 } from '../../components/Common';
 import { useSettings } from '../../context/SettingsContext';
+
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
 
 // ---------------------------------------------------------------------------
 // Default new-policy draft. Kept at module scope so "reset" is trivial.
@@ -150,6 +153,15 @@ const CancellationPolicies = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const { formatMoney, settings } = useSettings();
 
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
+
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [policies, setPolicies] = useState([]);
@@ -167,7 +179,8 @@ const CancellationPolicies = () => {
     const loadPolicies = useCallback(async () => {
         setLoading(true);
         try {
-            const response = await api.get('/cancellation-policies/');
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/cancellation-policies/', { params: orgParams });
             setPolicies(response.data?.results || response.data || []);
         } catch (err) {
             console.error('Failed to load policies:', err);
@@ -176,7 +189,7 @@ const CancellationPolicies = () => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [orgParams]); // ✅ Added orgParams to dependency array
 
     useEffect(() => { loadPolicies(); }, [loadPolicies]);
 
@@ -240,7 +253,6 @@ const CancellationPolicies = () => {
     const handleAddTier = () => {
         setFormData((prev) => {
             const tiers = [...prev.rules.refund_tiers];
-            // New tier goes at the *bottom* with the smallest hours value
             const smallestHours = tiers.length
                 ? Math.max(0, Number(tiers[tiers.length - 1].min_hours_before) - 1)
                 : 0;
@@ -347,8 +359,6 @@ const CancellationPolicies = () => {
     // ----------------------------------------------------------
     const handleSetDefault = async (policy) => {
         try {
-            // Unset other defaults is handled by the backend constraint,
-            // but we also do it explicitly here to be safe.
             await api.patch(`/cancellation-policies/${policy.id}/`, { is_default: true });
             toast.success(`"${policy.name}" is now the default policy`);
             loadPolicies();
@@ -405,6 +415,13 @@ const CancellationPolicies = () => {
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
+                    {/* ✅ 3. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton startIcon={<RefreshIcon />} onClick={loadPolicies}>
                         Refresh
                     </OutlineButton>

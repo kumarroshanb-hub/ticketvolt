@@ -1,4 +1,3 @@
-// frontend/src/pages/Discounts/Discounts.js
 import React, { useState, useEffect } from 'react';
 import {
     Grid, CardContent, Box, Typography, CircularProgress,
@@ -35,6 +34,10 @@ import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
 import { useSettings } from '../../context/SettingsContext';
+
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -176,7 +179,16 @@ const Discounts = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
-    const { formatMoney, settings } = useSettings();   // ✅ NEW
+    const { formatMoney, settings } = useSettings();
+
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
 
     const [loading, setLoading] = useState(true);
     const [discounts, setDiscounts] = useState([]);
@@ -200,7 +212,8 @@ const Discounts = () => {
     const loadDiscounts = async () => {
         setLoading(true);
         try {
-            const response = await api.get('/discounts/');
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/discounts/', { params: orgParams });
             const list = response.data?.results || response.data || [];
             setDiscounts(list);
             calculateStats(list);
@@ -215,7 +228,8 @@ const Discounts = () => {
 
     const loadEvents = async () => {
         try {
-            const response = await api.get('/events/');
+            // ✅ 3. Merge orgParams so the "Applicable Events" dropdown is also scoped
+            const response = await api.get('/events/', { params: orgParams });
             const list = response.data?.results || response.data || [];
             setEvents(list);
         } catch (error) {
@@ -237,10 +251,11 @@ const Discounts = () => {
         setStats({ total, active, used, expired });
     };
 
+    // ✅ 4. Added orgParams to dependency array so it refetches when filter changes
     useEffect(() => {
         loadDiscounts();
         loadEvents();
-    }, []);
+    }, [orgParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleOpenDialog = (discount = null) => {
         if (discount) {
@@ -382,7 +397,6 @@ const Discounts = () => {
         return <StatusBadge label="ACTIVE" size="small" color="success" />;
     };
 
-    // ✅ Token-driven stat cards
     const statCards = [
         {
             title: 'Total Discounts',
@@ -442,6 +456,13 @@ const Discounts = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
+                        {/* ✅ 5. Render the Organization Filter Dropdown */}
+                        <OrgFilterSelect
+                            isPlatformAdmin={isPlatformAdmin}
+                            organizations={organizations}
+                            orgFilter={orgFilter}
+                            setOrgFilter={setOrgFilter}
+                        />
                         <Button
                             variant="outlined"
                             size="small"
@@ -594,7 +615,7 @@ const Discounts = () => {
                                                 value:
                                                     discount.type === 'percentage'
                                                         ? `${discount.value}%`
-                                                        : formatMoney(discount.value),   // ✅ PATCHED
+                                                        : formatMoney(discount.value),
                                                 color: C.textPrimary,
                                                 weight: 700,
                                             },
@@ -769,7 +790,7 @@ const Discounts = () => {
                                             <TableCell align="center" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                                 {discount.type === 'percentage'
                                                     ? `${discount.value}%`
-                                                    : formatMoney(discount.value)}   {/* ✅ PATCHED */}
+                                                    : formatMoney(discount.value)}
                                             </TableCell>
                                             <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                 {discount.used_count || 0}
@@ -856,7 +877,7 @@ const Discounts = () => {
                                     onChange={handleFormChange}
                                 >
                                     <MenuItem value="percentage">Percentage (%)</MenuItem>
-                                    <MenuItem value="fixed">Fixed Amount ({settings.currency_code})</MenuItem>   {/* ✅ PATCHED */}
+                                    <MenuItem value="fixed">Fixed Amount ({settings.currency_code})</MenuItem>
                                 </TextField>
                             </Grid>
                         </FormRow>

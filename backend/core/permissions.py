@@ -8,178 +8,107 @@ Tenant-aware DRF permissions — core layer.
   Public   : Member-less user / Guest                  — no membership row
 
 `is_staff` is Django admin-site access ONLY. It does not grant
-platform-admin privileges. See services/tenancy.py for the
-authoritative predicate implementations used by viewsets.
+platform-admin privileges.
 
-This module provides lightweight helpers and DRF permission classes
-for code that imports from core rather than ticket_bookings.permissions.
-The canonical implementations live in services/tenancy.py and
-ticket_bookings/permissions.py.
+IMPORTANT (2026-11-02):
+Every predicate and permission class in this module now DELEGATES to
+``ticket_bookings.services.tenancy``. That service enforces:
+  • ``is_active=True``
+  • the time-bounded validity window (``valid_from <= now <= valid_until``)
+
+Do NOT re-implement membership queries here — that silently re-introduces
+the expired-membership bypass. Keep this file a thin delegation layer.
 """
 from rest_framework.permissions import BasePermission
-from ticket_bookings.models_tenancy import OrganizationMembership, OrgRole
+
+from ticket_bookings.services import tenancy
 
 
 # ---------------------------------------------------------------------------
-# Predicates
+# Predicates — thin delegation to services/tenancy.py (validity-aware)
 # ---------------------------------------------------------------------------
 
 def is_platform_admin(user):
-    """
-    Check if user is a Platform Super Admin.
-
-    FIXED for 6-tier hierarchy: was `user.is_superuser or user.is_staff`.
-    `is_staff` is Django admin-site access only and must NOT grant
-    platform-admin privileges. An is_staff user with zero org
-    memberships resolves to 'user' (Guest) per the permission matrix.
-
-    Mirrors services/tenancy.py::is_platform_admin exactly.
-    """
-    if not user or not user.is_authenticated:
-        return False
-    return user.is_superuser  # ← FIXED: removed `or user.is_staff`
+    """Platform Super Admin. `is_staff` alone does NOT qualify."""
+    return tenancy.is_platform_admin(user)
 
 
 def can_manage_org(user, org):
-    """Can create/edit events, venues, and manage members (Owner + Admin)."""
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_superuser:
-        return True
-    try:
-        membership = OrganizationMembership.objects.get(
-            user=user,
-            organization=org,
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        )
-        return membership.role in [OrgRole.OWNER, OrgRole.ADMIN]
-    except OrganizationMembership.DoesNotExist:
-        return False
+    """Create/edit events, venues, manage members (Owner + Admin)."""
+    return tenancy.can_manage_org(user, org)
 
 
 def can_operate_org(user, org):
-    """Can perform operational tasks like scanning tickets (Owner + Admin + Staff)."""
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_superuser:
-        return True
-    try:
-        membership = OrganizationMembership.objects.get(
-            user=user,
-            organization=org,
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        )
-        return membership.role in [OrgRole.OWNER, OrgRole.ADMIN, OrgRole.STAFF]
-    except OrganizationMembership.DoesNotExist:
-        return False
+    """Operational tasks e.g. scanning tickets (Owner + Admin + Staff)."""
+    return tenancy.can_operate_org(user, org)
 
 
 def can_delete_org(user, org):
-    """Only Owners can delete an organization."""
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_superuser:
-        return True
-    try:
-        membership = OrganizationMembership.objects.get(
-            user=user,
-            organization=org,
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        )
-        return membership.role == OrgRole.OWNER
-    except OrganizationMembership.DoesNotExist:
-        return False
+    """Only Owners (or platform admins) can delete an organization."""
+    return tenancy.owns_org(user, org)
 
 
 def user_org_ids(user):
-    """Get list of organization IDs where user has any role."""
-    if not user or not user.is_authenticated:
-        return []
-    return list(
-        OrganizationMembership.objects.filter(
-            user=user,
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).values_list('organization_id', flat=True)
-    )
+    """Org IDs where the user holds ANY valid membership role."""
+    return tenancy.user_membership_org_ids(user)
 
 
 def user_manager_org_ids(user):
-    """Get list of organization IDs where user is Owner or Admin."""
-    if not user or not user.is_authenticated:
-        return []
-    return list(
-        OrganizationMembership.objects.filter(
-            user=user,
-            role__in=[OrgRole.OWNER, OrgRole.ADMIN],
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).values_list('organization_id', flat=True)
-    )
+    """Org IDs where the user is Owner or Admin (valid membership)."""
+    return tenancy.user_org_ids(user)
 
 
 def user_operator_org_ids(user):
-    """Get list of organization IDs where user is Owner, Admin, or Staff."""
-    if not user or not user.is_authenticated:
-        return []
-    return list(
-        OrganizationMembership.objects.filter(
-            user=user,
-            role__in=[OrgRole.OWNER, OrgRole.ADMIN, OrgRole.STAFF],
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).values_list('organization_id', flat=True)
-    )
+    """Org IDs where the user is Owner, Admin, or Staff (valid membership)."""
+    return tenancy.user_operator_org_ids(user)
 
 
 # ---------------------------------------------------------------------------
-# DRF Permission Classes
+# DRF Permission Classes — delegated, validity-aware
 # ---------------------------------------------------------------------------
 
 class IsPlatformAdmin(BasePermission):
     """Allows access only to platform superusers."""
 
     def has_permission(self, request, view):
-        return request.user and is_platform_admin(request.user)
+        return tenancy.is_platform_admin(request.user)
 
 
 class CanManageOrganization(BasePermission):
     """Allows access to Owner and Admin of the organization."""
 
     def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
-            return False
         org = getattr(obj, 'organization', obj)
-        return can_manage_org(request.user, org)
+        return tenancy.can_manage_org(request.user, org)
 
 
 class CanOperateOrganization(BasePermission):
     """Allows access to Owner, Admin, and Staff of the organization."""
 
     def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
-            return False
         org = getattr(obj, 'organization', obj)
-        return can_operate_org(request.user, org)
+        return tenancy.can_operate_org(request.user, org)
 
 
 class IsTenantMember(BasePermission):
-    """Allows access to any member of the organization."""
+    """Allows access to any valid member of the organization."""
 
     def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
+        user = request.user
+        if not user or not user.is_authenticated:
             return False
-        if is_platform_admin(request.user):
+        if tenancy.is_platform_admin(user):
             return True
         org = getattr(obj, 'organization', obj)
-        return OrganizationMembership.objects.filter(
-            user=request.user,
-            organization=org,
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).exists()
+        org_id = getattr(org, 'id', None)
+        if org_id is None:
+            return False
+        return org_id in tenancy.user_membership_org_ids(user)
 
 
 # ---------------------------------------------------------------------------
-# Legacy aliases — do not remove yet.
-# These names are still imported by several viewsets and decorators.
-# They now mean the tenant-correct thing.
+# Legacy aliases — names still imported by several viewsets/decorators.
+# They now resolve to the tenant-correct, validity-aware thing.
 # ---------------------------------------------------------------------------
 
 class IsOrganizerOrAdmin(CanManageOrganization):
@@ -188,45 +117,21 @@ class IsOrganizerOrAdmin(CanManageOrganization):
 
 
 class IsOrganizerUser(CanOperateOrganization):
-    """Legacy name for operational access."""
+    """Legacy name for operational access (Owner/Admin/Staff, any valid org)."""
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        if is_platform_admin(request.user):
-            return True
-        return OrganizationMembership.objects.filter(
-            user=request.user,
-            role__in=[OrgRole.OWNER, OrgRole.ADMIN, OrgRole.STAFF],
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).exists()
+        return tenancy.is_tenant_operator(request.user)
 
 
 class IsTenantManager(BasePermission):
     """Allows access to users who manage at least one organization."""
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        if is_platform_admin(request.user):
-            return True
-        return OrganizationMembership.objects.filter(
-            user=request.user,
-            role__in=[OrgRole.OWNER, OrgRole.ADMIN],
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).exists()
+        return tenancy.is_tenant_admin(request.user)
 
 
 class IsTenantOperator(BasePermission):
     """Allows access to users who operate at least one organization."""
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        if is_platform_admin(request.user):
-            return True
-        return OrganizationMembership.objects.filter(
-            user=request.user,
-            role__in=[OrgRole.OWNER, OrgRole.ADMIN, OrgRole.STAFF],
-            # is_active=True,  # ← UNCOMMENT if your model has is_active on Membership
-        ).exists()
+        return tenancy.is_tenant_operator(request.user)

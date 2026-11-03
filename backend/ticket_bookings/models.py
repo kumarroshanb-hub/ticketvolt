@@ -52,6 +52,7 @@ from .models_tenancy import (  # noqa: E402,F401
     OrganizationMembership,
     OrganizationContact,
 )
+from .models_payments import Payment, PaymentRefund, WebhookEvent, InventoryHold  # noqa: E402,F401
 
 # 36^12 ≈ 4.7e18. Collision probability is negligible, but we retry on the
 # (astronomically rare) IntegrityError anyway — belt and braces.
@@ -424,9 +425,14 @@ class Session(models.Model):
     end_time = models.DateTimeField()
     capacity = models.IntegerField()
     booked = models.IntegerField(default=0)
+    reserved = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+
+    def remaining_capacity(self):
+        return max(0, self.capacity - self.booked - self.reserved)
+    
     def remaining_capacity(self):
         return max(0, self.capacity - self.booked)
 
@@ -459,12 +465,16 @@ class TicketTier(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity_total = models.IntegerField()
     quantity_sold = models.IntegerField(default=0)
+    quantity_reserved = models.IntegerField(default=0)   # units currently on payment hold
     ticket_type = models.CharField(max_length=20, default='ga')
     sale_start_date = models.DateTimeField(null=True, blank=True)
     sale_end_date = models.DateTimeField(null=True, blank=True)
     min_per_order = models.IntegerField(default=1)
     max_per_order = models.IntegerField(default=10)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def available_tickets(self):
+        return max(0, self.quantity_total - self.quantity_sold - self.quantity_reserved)
 
     def available_tickets(self):
         return max(0, self.quantity_total - self.quantity_sold)
@@ -880,6 +890,11 @@ class SystemSettings(models.Model):
     updated_by = models.ForeignKey(
         User, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='+',
+    )
+
+    payments_enabled = models.BooleanField(
+        default=False,
+        help_text="Globally enable/disable online payment gateways (Razorpay/Stripe). When off, only offline/free flows are allowed."
     )
 
     class Meta:

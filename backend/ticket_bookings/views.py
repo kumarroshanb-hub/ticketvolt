@@ -64,6 +64,8 @@ from .services.tenancy import (
     user_org_ids,
 )
 
+from .models_seating import SeatReservation, Seat
+
 import logging
 
 from django.http import JsonResponse

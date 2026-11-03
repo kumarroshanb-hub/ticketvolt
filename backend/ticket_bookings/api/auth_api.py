@@ -64,6 +64,18 @@ from ..views import get_user_role, _user_profile_summary
 logger = logging.getLogger(__name__)
 
 MAGIC_LINK_MINUTES = 15
+# Reserved accounts that must NEVER be hijackable via magic link / OTP.
+SERVICE_ACCOUNTS = frozenset({'whatsapp_bot'})
+
+def _is_service_account(user) -> bool:
+    """Return True if user is a reserved service account."""
+    return bool(user and user.username in SERVICE_ACCOUNTS)
+
+
+def _looks_like_service_account_email(email: str) -> bool:
+    """Block reserved usernames used as email local-parts (e.g. whatsapp_bot@...)."""
+    local = (email or '').split('@', 1)[0].lower()
+    return local in SERVICE_ACCOUNTS
 
 # OTP Configuration
 OTP_LENGTH = 6
@@ -141,13 +153,29 @@ def request_magic_link(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ✅ Auto-provision new users for seamless passwordless registration
+    # 🛡️ Block service accounts from being hijacked via magic link
+    if _looks_like_service_account_email(email):
+        logger.warning('🚫 Blocked magic-link request for reserved identifier: %s', email)
+        return Response({
+            'success': True,
+            'message': 'If an account exists, a login link has been sent.',
+        })
+
     user = User.objects.filter(email__iexact=email).first()
+
+    if user is not None and _is_service_account(user):
+        logger.warning('🚫 Blocked magic-link request for service account: %s', user.username)
+        return Response({
+            'success': True,
+            'message': 'If an account exists, a login link has been sent.',
+        })
+
     if user is None:
+        # Auto-provision (existing code continues...)
         user = User.objects.create_user(
             username=_unique_username(email),
             email=email,
-            password=secrets.token_urlsafe(32), # ✅ FIXED: Pass plaintext, create_user hashes it
+            password=secrets.token_urlsafe(32),
             is_active=True,
         )
         UserProfile.objects.get_or_create(user=user, defaults={'email': email})
@@ -215,7 +243,14 @@ def verify_magic_link(request):
                 {'error': 'Link expired or already used.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
+        # 🛡️ Block service accounts from being hijacked via invite acceptance
+        if _looks_like_service_account_email(invite.email):
+            logger.warning('🚫 Blocked invite acceptance for reserved email: %s',
+                           invite.email)
+            return Response(
+                {'error': 'Invalid or expired link.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         user = User.objects.filter(email__iexact=invite.email).first()
         if user is None:
             # Passwordless account creation
@@ -292,7 +327,19 @@ def _normalize_otp_destination(identifier: str, channel: str) -> str:
 
 def _dispatch_otp(otp_request, otp: str) -> dict:
     if otp_request.channel == OTPRequest.CHANNEL_EMAIL:
+        # 🛡️ Block service accounts from OTP hijacking
+        if _looks_like_service_account_email(otp_request.destination):
+            logger.warning('🚫 Blocked OTP request for reserved identifier: %s',
+                           otp_request.destination)
+            return {'success': True, 'message': 'queued'}   # silent success (no enum)
+
         user = User.objects.filter(email__iexact=otp_request.destination).first()
+
+        if user is not None and _is_service_account(user):
+            logger.warning('🚫 Blocked OTP request for service account: %s',
+                           user.username)
+            return {'success': True, 'message': 'queued'}
+
         if user is None:
             user = User.objects.create_user(
                 username=_unique_username(otp_request.destination),
@@ -303,7 +350,13 @@ def _dispatch_otp(otp_request, otp: str) -> dict:
             UserProfile.objects.get_or_create(user=user, defaults={'email': user.email})
         return auth_emails.send_otp_email(user, otp, OTP_EXPIRY_MINUTES)
 
-    # SMS / WhatsApp — Phase 2. Wire to Twilio / MSG91 / WhatsApp bot here.
+    # Phone / WhatsApp channel — service accounts never have phone numbers
+    # on file, but block the reserved local-part anyway for defence-in-depth.
+    if _looks_like_service_account_email(otp_request.destination):
+        logger.warning('🚫 Blocked OTP request for reserved identifier: %s',
+                       otp_request.destination)
+        return {'success': True, 'message': 'queued'}
+
     logger.info('📱 OTP queued for %s via %s (delivery integration pending)',
                 otp_request.destination, otp_request.channel)
     return {'success': True, 'message': 'queued'}
@@ -312,6 +365,7 @@ def _dispatch_otp(otp_request, otp: str) -> dict:
 @permission_classes([AllowAny])
 @throttle_classes([ScopedRateThrottle])
 def request_otp(request):
+    """Request a 6-digit OTP via email or WhatsApp (public endpoint)."""
     identifier = (request.data.get('identifier') or '').strip()
     channel = (request.data.get('channel') or OTPRequest.CHANNEL_EMAIL).strip().lower()
 
@@ -320,6 +374,7 @@ def request_otp(request):
     if channel not in dict(OTPRequest.CHANNEL_CHOICES):
         return Response({'error': f'Invalid channel: {channel!r}'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Validate format based on channel
     if channel == OTPRequest.CHANNEL_EMAIL:
         if '@' not in identifier:
             return Response({'error': 'Invalid email address.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -328,32 +383,55 @@ def request_otp(request):
         if not (7 <= len(digits) <= 15):
             return Response({'error': 'Invalid phone number.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Normalize the identifier (lowercase email, strip non-digits from phone)
     identifier = _normalize_otp_destination(identifier, channel)
 
-    # Rate-limit sends per destination
+    # 🛡️ Block service accounts from OTP hijacking (early-reject)
+    if _looks_like_service_account_email(identifier):
+        logger.warning('🚫 Blocked OTP request for reserved identifier: %s', identifier)
+        return Response({
+            'success': True,
+            'message': 'If the address is valid, an OTP has been sent.',
+        })
+
+    # Rate-limit: max 3 sends per destination per 10-minute window
     window_start = timezone.now() - timedelta(minutes=OTP_REQUEST_WINDOW_MINUTES)
-    recent = OTPRequest.objects.filter(destination=identifier, created_at__gte=window_start).count()
+    recent = OTPRequest.objects.filter(
+        destination=identifier, created_at__gte=window_start
+    ).count()
     if recent >= OTP_REQUEST_LIMIT:
-        return Response({'error': 'Too many requests. Please try again in a few minutes.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        return Response({
+            'error': 'Too many requests. Please try again in a few minutes.'
+        }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-    # Invalidate any earlier unverified OTP for this destination
-    OTPRequest.objects.filter(destination=identifier, verified_at__isnull=True).update(expires_at=timezone.now())
+    # Invalidate any earlier unverified OTPs for this destination
+    OTPRequest.objects.filter(
+        destination=identifier, verified_at__isnull=True
+    ).update(expires_at=timezone.now())
 
+    # Generate and store hashed OTP
     otp = _generate_otp()
     otp_request = OTPRequest.objects.create(
         destination=identifier,
         channel=channel,
-        otp_hash=make_password(otp),          # hashed via bcrypt
+        otp_hash=make_password(otp),
         expires_at=timezone.now() + timedelta(minutes=OTP_EXPIRY_MINUTES),
         max_attempts=OTP_MAX_ATTEMPTS,
     )
 
+    # Dispatch the OTP (auto-provision user if needed)
     result = _dispatch_otp(otp_request, otp)
     if not result.get('success'):
-        logger.warning('⚠️ OTP delivery failed for %s (%s): %s', identifier, channel, result.get('error'))
+        logger.warning(
+            '⚠️ OTP delivery failed for %s (%s): %s',
+            identifier, channel, result.get('error')
+        )
 
     # Constant response — prevents enumeration
-    return Response({'success': True, 'message': 'If the address is valid, an OTP has been sent.'})
+    return Response({
+        'success': True,
+        'message': 'If the address is valid, an OTP has been sent.',
+    })
 
 request_otp.cls.throttle_scope = 'login'
 

@@ -14,11 +14,11 @@ import {
     Business as BusinessIcon,
     ArrowForward as ArrowForwardIcon,
 } from '@mui/icons-material';
-import { useTranslation } from 'react-i18next';                   // ✅ NEW
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useSettings } from '../../context/SettingsContext';
-import { useOrg } from '../../context/OrgContext';                  // ✅ NEW
+import { useOrg } from '../../context/OrgContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -33,12 +33,15 @@ import { BOOKING_STATUS, ROLES } from '../../constants';
 
 import { theme as appTheme } from '../../theme/tokens';
 
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+
 const C = appTheme.colors;
 const F = appTheme.fonts;
 
 // ============================================
 // MONEY HELPERS (pure numeric only — no currency symbol here)
-// Formatting now comes from SettingsContext via `useSettings().formatMoney`.
 // ============================================
 const getNetAmount = (booking) => {
     if (!booking) return 0;
@@ -177,7 +180,7 @@ const StatCard = ({ title, value, icon, color, subtitle }) => {
 // MOBILE BOOKING CARD
 // ============================================
 const MobileBookingCard = ({ booking, onClick }) => {
-    const { t } = useTranslation();                                 // ✅ NEW
+    const { t } = useTranslation();
     const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
 
     return (
@@ -231,10 +234,10 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             letterSpacing: 0.5,
                         }}
                     >
-                        {t('booking.customer')}                       {/* ✅ FIX */}
+                        {t('booking.customer')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 500 }}>
-                        {booking.customer_name || t('common.nA')}     {/* ✅ FIX */}
+                        {booking.customer_name || t('common.nA')}
                     </Typography>
                 </Box>
 
@@ -249,7 +252,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             letterSpacing: 0.5,
                         }}
                     >
-                        {t('booking.event')}                          {/* ✅ FIX */}
+                        {t('booking.event')}
                     </Typography>
                     <Typography
                         variant="body2"
@@ -261,7 +264,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             whiteSpace: 'nowrap',
                         }}
                     >
-                        {booking.event_title || t('common.nA')}       {/* ✅ FIX */}
+                        {booking.event_title || t('common.nA')}
                     </Typography>
                 </Box>
 
@@ -276,7 +279,6 @@ const MobileBookingCard = ({ booking, onClick }) => {
                 >
                     <AmountDisplay booking={booking} align="left" size="h6" />
                     <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
-                        {/* ✅ FIX: singular / plural aware */}
                         {t('booking.ticketCount', {
                             count: booking.ticket_count || 0,
                         })}
@@ -285,7 +287,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
 
                 {isCompleted && (
                     <Typography variant="caption" sx={{ color: C.success, display: 'block', mt: 1, fontWeight: 600 }}>
-                        ✅ {t('booking.allTicketsUsed')}               {/* ✅ FIX */}
+                        ✅ {t('booking.allTicketsUsed')}
                     </Typography>
                 )}
             </CardContent>
@@ -294,8 +296,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
 };
 
 // ============================================
-// ORGANIZATION BANNER (BUG 8)
-// Shown only while the user has no organization yet.
+// ORGANIZATION BANNER
 // ============================================
 const NeedsOrganizationBanner = () => {
     const { t } = useTranslation();
@@ -371,18 +372,25 @@ const Dashboard = () => {
     const { user } = useAuth();
     const { role } = useRole();
     const { formatMoney } = useSettings();
-    const { needsOrganization } = useOrg();                         // ✅ NEW
-    const { t } = useTranslation();                                 // ✅ NEW
+    const { needsOrganization } = useOrg();
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Admins, superadmins, and organizers see "View Details" on popular
-    // events; regular users see the booking CTA that routes them into the wizard.
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
+
     const canManageEvents =
         role === ROLES.ADMIN ||
         role === ROLES.SUPER_ADMIN ||
-        role === ROLES.OWNER;  // ✅ UPDATED FOR 6-TIER HIERARCHY
+        role === ROLES.OWNER;
 
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState({
@@ -402,20 +410,22 @@ const Dashboard = () => {
     const loadDashboard = async () => {
         setLoading(true);
         try {
-            const response = await api.get('/dashboard/stats/');
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/dashboard/stats/', { params: orgParams });
             console.log('📊 Dashboard stats:', response.data);
             setStats(response.data);
         } catch (error) {
             console.error('Dashboard error:', error);
-            toast.error(t('dashboard.loadFailed'));                 // ✅ FIX
+            toast.error(t('dashboard.loadFailed'));
         }
         setLoading(false);
     };
 
     useEffect(() => {
         loadDashboard();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    // ✅ 3. Added orgParams to dependency array so it refetches when filter changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgParams]);
 
     if (loading) {
         return (
@@ -432,7 +442,7 @@ const Dashboard = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle variant="h4">{t('dashboard.title')}</PageTitle>          {/* ✅ FIX */}
+                    <PageTitle variant="h4">{t('dashboard.title')}</PageTitle>
                     <Typography
                         variant="body2"
                         sx={{
@@ -442,63 +452,68 @@ const Dashboard = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
-                        {/* ✅ FIX: user name interpolated */}
                         {t('dashboard.welcome', { name: user?.name || 'Admin' })}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
+                    {/* ✅ 4. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadDashboard}>
-                        {t('common.refresh')}                                  {/* ✅ FIX */}
+                        {t('common.refresh')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
             
-            {/* ✅ Only show the "Create Org" banner to users who actually have permission to create one */}
             {needsOrganization && canManageEvents && <NeedsOrganizationBanner />}
 
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title={t('dashboard.statTotalEvents')}                 /* ✅ FIX */
+                        title={t('dashboard.statTotalEvents')}
                         value={stats.total_events || 0}
                         icon={<EventIcon sx={{ color: C.primary, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.primary}
                         subtitle={t('dashboard.statTotalEventsSubtitle', {
                             count: stats.active_events || 0,
-                        })}                                                    /* ✅ FIX */
+                        })}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title={t('dashboard.statTotalBookings')}               /* ✅ FIX */
+                        title={t('dashboard.statTotalBookings')}
                         value={stats.total_bookings || 0}
                         icon={<PeopleIcon sx={{ color: C.success, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.success}
                         subtitle={t('dashboard.statTotalBookingsSubtitle', {
                             count: stats.pending_bookings || 0,
-                        })}                                                    /* ✅ FIX */
+                        })}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title={t('dashboard.statTickets')}                     /* ✅ FIX */
+                        title={t('dashboard.statTickets')}
                         value={stats.total_tickets || 0}
                         icon={<TicketIcon sx={{ color: C.secondary, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.secondary}
                         subtitle={t('dashboard.statTicketsSubtitle', {
                             count: stats.used_tickets || 0,
-                        })}                                                    /* ✅ FIX */
+                        })}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title={t('dashboard.statRevenue')}                     /* ✅ FIX */
+                        title={t('dashboard.statRevenue')}
                         value={formatMoney(stats.total_revenue || 0)}
                         icon={<MoneyIcon sx={{ color: C.warning, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.warning}
                         subtitle={t('dashboard.statRevenueSubtitle', {
                             amount: formatMoney(stats.today_revenue || 0),
-                        })}                                                    /* ✅ FIX */
+                        })}
                     />
                 </Grid>
             </Grid>
@@ -513,7 +528,7 @@ const Dashboard = () => {
                         fontSize: isMobile ? '1rem' : '1.25rem',
                     }}
                 >
-                    {t('dashboard.recentBookings')}                            {/* ✅ FIX */}
+                    {t('dashboard.recentBookings')}
                 </Typography>
 
                 {isMobile ? (
@@ -530,7 +545,7 @@ const Dashboard = () => {
                     ) : (
                         <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
                             <Typography sx={{ color: C.textLight }}>
-                                {t('dashboard.noRecentBookings')}              {/* ✅ FIX */}
+                                {t('dashboard.noRecentBookings')}
                             </Typography>
                         </Paper>
                     )
@@ -540,22 +555,22 @@ const Dashboard = () => {
                             <TableHead>
                                 <TableRow>
                                     <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
-                                        {t('booking.reference')}                   {/* ✅ FIX */}
+                                        {t('booking.reference')}
                                     </TableCell>
                                     <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
-                                        {t('booking.customer')}                    {/* ✅ FIX */}
+                                        {t('booking.customer')}
                                     </TableCell>
                                     <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
-                                        {t('booking.event')}                       {/* ✅ FIX */}
+                                        {t('booking.event')}
                                     </TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>
-                                        {t('booking.amount')}                      {/* ✅ FIX */}
+                                        {t('booking.amount')}
                                     </TableCell>
                                     <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>
-                                        {t('booking.status')}                      {/* ✅ FIX */}
+                                        {t('booking.status')}
                                     </TableCell>
                                     <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>
-                                        {t('booking.date')}                        {/* ✅ FIX */}
+                                        {t('booking.date')}
                                     </TableCell>
                                 </TableRow>
                             </TableHead>
@@ -578,7 +593,7 @@ const Dashboard = () => {
                                                     {booking.booking_reference}
                                                     {isCompleted && (
                                                         <Typography variant="caption" sx={{ color: C.success, display: 'block' }}>
-                                                            ✅ {t('booking.allTicketsUsed')}  {/* ✅ FIX */}
+                                                            ✅ {t('booking.allTicketsUsed')}
                                                         </Typography>
                                                     )}
                                                 </TableCell>
@@ -599,7 +614,7 @@ const Dashboard = () => {
                                 ) : (
                                     <TableRow>
                                         <TableCell colSpan={6} align="center" sx={{ py: 4, color: C.textLight }}>
-                                            {t('dashboard.noRecentBookings')}       {/* ✅ FIX */}
+                                            {t('dashboard.noRecentBookings')}
                                         </TableCell>
                                     </TableRow>
                                 )}
@@ -609,12 +624,6 @@ const Dashboard = () => {
                 )}
             </Box>
 
-            {/* ==================================================
-                POPULAR EVENTS
-                Role-aware CTA + routing.
-                - Admin / Organizer → "View Details" → /app/events/:id
-                - Regular User      → "Book Tickets" / "Register" → wizard
-               ================================================== */}
             <Box>
                 <Typography
                     variant="h6"
@@ -625,7 +634,7 @@ const Dashboard = () => {
                         fontSize: isMobile ? '1rem' : '1.25rem',
                     }}
                 >
-                    {t('dashboard.popularEvents')}                             {/* ✅ FIX */}
+                    {t('dashboard.popularEvents')}
                 </Typography>
                 <Grid container spacing={isMobile ? 1.5 : 2}>
                     {popularEvents.length > 0 ? (
@@ -645,7 +654,7 @@ const Dashboard = () => {
                     ) : (
                         <Grid item xs={12}>
                             <Box sx={{ textAlign: 'center', py: 4, color: C.textLight }}>
-                                {t('dashboard.noEvents')}                      {/* ✅ FIX */}
+                                {t('dashboard.noEvents')}
                             </Box>
                         </Grid>
                     )}

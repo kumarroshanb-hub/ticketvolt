@@ -45,6 +45,8 @@ import ActiveSessions from './pages/ActiveSessions';
 import Organizations from './pages/Organizations';            // ✅ NEW
 import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
 import TeamMembers from './pages/Organizations/TeamMembers'; // ✅ NEW
+import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor'; // ✅ NEW
+
 
 import { ROLES } from './constants';
 
@@ -378,6 +380,12 @@ const AppRoutes = () => {
                         : <Navigate to="/" replace />
                 }
             />
+            {/* ============================================
+                Venue Layout Editor (for SVG upload & seat detection) — NEW
+               ============================================ */}
+            <Route path="/app/venues/:venueId/layout" element={<VenueLayoutEditor />} />
+            {/* ============================================ */}
+
         </Routes>
     );
 };

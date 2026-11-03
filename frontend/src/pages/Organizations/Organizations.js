@@ -42,6 +42,17 @@ const EMPTY_EDIT_FORM = {
 const STAGE_FORM = 'form';
 const STAGE_CONFIRM = 'confirm';
 
+// ---------------------------------------------------------------------------
+// Owner-assignment grouping: candidates are either Superusers or Owners.
+// ---------------------------------------------------------------------------
+const OWNER_GROUP_ORDER = { 'Super Admin': 0, 'Owner': 1 };
+
+const ownerGroupLabel = (u) => {
+    if (!u) return 'Owner';
+    if (u.is_superuser || u.role === 'super_admin') return 'Super Admin';
+    return 'Owner';
+};
+
 const Organizations = () => {
     const { organizations, loading, refresh, isPlatformAdmin } = useOrg();
 
@@ -88,13 +99,9 @@ const Organizations = () => {
 
     const canDeleteOrg = () => Boolean(isPlatformAdmin);
 
-    // Load candidate owners when a Platform Admin opens the dialog.
-    //
-    // UPDATED FOR 6-TIER HIERARCHY:
-    // Previously this filtered by role=organizer.
-    // The organizer role has been replaced by Owner/Admin/Staff/Member.
-    // Platform Admins may assign ownership to any existing user; final
-    // eligibility is enforced server-side by OrganizationViewSet.
+    // Load owner candidates when a Platform Admin opens the create dialog.
+    // We fetch both existing Owners and Superusers so the admin can
+    // deliberately assign the new tenant to either, grouped + badged in the UI.
     useEffect(() => {
         if (!isPlatformAdmin || !dialogOpen) return;
 
@@ -103,14 +110,37 @@ const Organizations = () => {
 
         (async () => {
             try {
-                const res = await api.get('/users/', {
-                    params: { page_size: 200 },
+                const [ownerRes, superRes] = await Promise.all([
+                    api.get('/users/', { params: { page_size: 200, role: 'owner' } }),
+                    api.get('/users/', { params: { page_size: 200, role: 'super_admin' } }),
+                ]);
+                const owners = ownerRes.data?.results || ownerRes.data || [];
+                const supers = superRes.data?.results || superRes.data || [];
+
+                // Merge + dedupe by id (a superuser can also be an owner).
+                const seen = new Set();
+                const merged = [];
+                for (const u of [...supers, ...owners]) {
+                    if (!u || seen.has(u.id)) continue;
+                    seen.add(u.id);
+                    merged.push(u);
+                }
+
+                // Sort so each role renders as one clean group:
+                // Super Admin first, then Owner; alphabetical within a group.
+                merged.sort((a, b) => {
+                    const oa = OWNER_GROUP_ORDER[ownerGroupLabel(a)] ?? 99;
+                    const ob = OWNER_GROUP_ORDER[ownerGroupLabel(b)] ?? 99;
+                    if (oa !== ob) return oa - ob;
+                    const na = (a.name || a.username || a.email || '').toLowerCase();
+                    const nb = (b.name || b.username || b.email || '').toLowerCase();
+                    return na.localeCompare(nb);
                 });
-                const list = res.data?.results || res.data || [];
-                if (!cancelled) setPotentialOwners(list);
+
+                if (!cancelled) setPotentialOwners(merged);
             } catch {
                 if (!cancelled) {
-                    toast.error('Could not load users to assign as owners.');
+                    toast.error('Could not load Owners/Superusers to assign.');
                     setPotentialOwners([]);
                 }
             } finally {
@@ -650,6 +680,7 @@ const Organizations = () => {
                                     loading={ownersLoading}
                                     value={selectedOwner}
                                     onChange={(_, value) => setSelectedOwner(value)}
+                                    groupBy={ownerGroupLabel}
                                     getOptionLabel={(option) => {
                                         if (!option) return '';
                                         const display =
@@ -673,16 +704,43 @@ const Organizations = () => {
                                             return hay.includes(q);
                                         });
                                     }}
+                                    renderOption={(props, option) => {
+                                        const isSuper = ownerGroupLabel(option) === 'Super Admin';
+                                        return (
+                                            <li {...props}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                                                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                        <Typography variant="body2" noWrap>
+                                                            {option.name
+                                                                || [option.first_name, option.last_name]
+                                                                    .filter(Boolean).join(' ')
+                                                                    .trim()
+                                                                || option.username}
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary" noWrap>
+                                                            {option.email}
+                                                        </Typography>
+                                                    </Box>
+                                                    <Chip
+                                                        size="small"
+                                                        label={isSuper ? 'Super Admin' : 'Owner'}
+                                                        color={isSuper ? 'success' : 'warning'}
+                                                        variant="outlined"
+                                                    />
+                                                </Box>
+                                            </li>
+                                        );
+                                    }}
                                     noOptionsText={
                                         ownersLoading
                                             ? 'Loading…'
-                                            : 'No matching users'
+                                            : 'No Owners or Superusers found'
                                     }
                                     renderInput={(params) => (
                                         <TextField
                                             {...params}
                                             label="Assign Owner (optional)"
-                                            helperText="Choose an existing user to assign as owner. Leaving blank makes you the owner."
+                                            helperText="Pick an existing Owner or Superuser to own this organization. Leave blank to own it yourself."
                                             disabled={creating}
                                             InputProps={{
                                                 ...params.InputProps,

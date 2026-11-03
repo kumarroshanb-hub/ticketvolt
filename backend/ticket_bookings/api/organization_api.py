@@ -147,62 +147,61 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             entry['is_owner'] = owns_org(request.user, org)
         return Response(data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['get'])
+    # ------------------------------------------------------------------
+    # Members (List & Add) - ✅ MERGED TO FIX ROUTER COLLISION
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=['get', 'post'], url_path='members')
+    @transaction.atomic
     def members(self, request, pk=None):
         """
-        List all members of the organization.
-        Exposes time-bounded validity dates (valid_from, valid_until) 
-        and is_active status for the frontend TeamMembers UI.
+        GET: List all members of the organization (for Transfer Ownership, etc).
+        POST: Add an existing user directly to the organization.
         """
         org = self.get_object()
         if not can_manage_org(request.user, org):
             raise PermissionDenied(
-                'You do not have permission to list members of this organization.'
+                'You do not have permission to manage members of this organization.'
             )
-        
-        # ✅ UPDATED: Prefetch user and profile to prevent N+1 queries
-        qs = (
-            OrganizationMembership.objects
-            .filter(organization=org)
-            .select_related('user', 'user__profile')
-            .order_by('-joined_at')
-        )
-        
-        data = []
-        for m in qs:
-            item = {
-                'id': str(m.id),
-                'user_id': m.user_id,
-                'email': m.user.email,
-                'name': m.user.get_full_name().strip() or m.user.username,
-                'username': m.user.username,
-                'role': m.role,
-                'is_active': getattr(m, 'is_active', True),
-                'joined_at': m.joined_at.isoformat() if m.joined_at else None,
-            }
+
+        # ---------------------------------------------------------
+        # GET: List Members
+        # ---------------------------------------------------------
+        if request.method == 'GET':
+            qs = (
+                OrganizationMembership.objects
+                .filter(organization=org)
+                .select_related('user', 'user__profile')
+                .order_by('-joined_at')
+            )
             
-            # ✅ NEW: Expose validity dates for time-bounded memberships
-            if hasattr(m, 'valid_from') and m.valid_from:
-                item['valid_from'] = m.valid_from.isoformat()
-            if hasattr(m, 'valid_until') and m.valid_until:
-                item['valid_until'] = m.valid_until.isoformat()
+            data = []
+            for m in qs:
+                full_name = m.user.get_full_name().strip() or m.user.username
+                item = {
+                    'id': str(m.id),
+                    'user_id': m.user_id,
+                    'email': m.user.email,
+                    'name': full_name,
+                    'full_name': full_name,  # ✅ Required by frontend Transfer Ownership dialog
+                    'username': m.user.username,
+                    'role': m.role,
+                    'is_active': getattr(m, 'is_active', True),
+                    'joined_at': m.joined_at.isoformat() if m.joined_at else None,
+                }
                 
-            data.append(item)
-            
-        return Response(data, status=status.HTTP_200_OK)
+                # Expose validity dates for time-bounded memberships
+                if hasattr(m, 'valid_from') and m.valid_from:
+                    item['valid_from'] = m.valid_from.isoformat()
+                if hasattr(m, 'valid_until') and m.valid_until:
+                    item['valid_until'] = m.valid_until.isoformat()
+                    
+                data.append(item)
+                
+            return Response(data, status=status.HTTP_200_OK)
 
-    # ------------------------------------------------------------------
-    # Members (Add existing user directly)
-    # ------------------------------------------------------------------
-    @action(detail=True, methods=['post'], url_path='members')
-    @transaction.atomic
-    def add_member(self, request, pk=None):
-        org = self.get_object()
-        if not can_manage_org(request.user, org):
-            raise PermissionDenied(
-                'You do not have permission to add members to this organization.'
-            )
-
+        # ---------------------------------------------------------
+        # POST: Add Member
+        # ---------------------------------------------------------
         email = (request.data.get('email') or '').strip().lower()
         user_id = request.data.get('user_id')
         role = (request.data.get('role') or 'member').strip().lower()
@@ -210,9 +209,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         allowed_roles = {
             OrganizationMembership.OrgRole.STAFF,
             OrganizationMembership.OrgRole.MEMBER,
-            # UPDATED FOR 6-TIER HIERARCHY: CUSTOMER removed.
-            # A person who merely bought a ticket and has no account is a
-            # Guest (no membership row); one who has an account is a MEMBER.
         }
         if owns_org(request.user, org) or is_platform_admin(request.user):
             allowed_roles.add(OrganizationMembership.OrgRole.ADMIN)
@@ -318,10 +314,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             new_role == OrganizationMembership.OrgRole.OWNER
             and membership.role != OrganizationMembership.OrgRole.OWNER
         ):
-            # UPDATED FOR 6-TIER HIERARCHY:
-            # Direct promotion to OWNER is blocked here on purpose. Ownership
-            # must move through the atomic transfer-ownership endpoint so the
-            # Organization.owner FK and the membership rows stay in sync.
             return Response(
                 {
                     'error': (
@@ -348,18 +340,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     def transfer_ownership(self, request, pk=None):
         """
         Transfer ownership of this organization to another existing member.
-
-        Allowed:
-          • The current OWNER.
-          • A Platform Admin (is_platform_admin).
-
-        Rules:
-          • New owner must already be a member of the organization.
-          • New owner must be an active user.
-          • Cannot transfer to self / current owner.
-          • Previous owner is demoted to ADMIN and retained in the org.
-          • Organization.owner FK and the OWNER membership are updated
-            atomically so they never drift apart.
         """
         org = self.get_object()
         requester = request.user
@@ -376,7 +356,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 {'new_owner_user_id': 'Must be a valid user ID.'}
             )
 
-        # Lock the current OWNER row so concurrent transfers serialize.
         current_owner_membership = (
             OrganizationMembership.objects
             .select_for_update()
@@ -405,7 +384,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 {'new_owner_user_id': 'This user is already the organization owner.'}
             )
 
-        # Lock + validate the target membership.
         target_membership = (
             OrganizationMembership.objects
             .select_for_update()
@@ -428,7 +406,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 {'new_owner_user_id': 'New owner must be an active user.'}
             )
 
-        # Demote previous owner to ADMIN (kept in the org).
         if (
             current_owner_membership
             and current_owner_membership.user_id != new_owner_user_id
@@ -436,11 +413,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             current_owner_membership.role = OrganizationMembership.OrgRole.ADMIN
             current_owner_membership.save(update_fields=['role'])
 
-        # Promote target to OWNER.
         target_membership.role = OrganizationMembership.OrgRole.OWNER
         target_membership.save(update_fields=['role'])
 
-        # Keep the Organization.owner FK in sync with the membership.
         org.owner_id = new_owner_user_id
         org.save(update_fields=['owner', 'updated_at'])
 

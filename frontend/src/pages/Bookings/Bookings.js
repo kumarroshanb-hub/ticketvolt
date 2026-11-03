@@ -35,6 +35,10 @@ import { BookingsTable } from './components/BookingsTable';
 import { ConfirmActionDialog } from './components/ConfirmActionDialog';
 import { BookingDetailsDialog } from './components/BookingDetailsDialog';
 
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+
 const C = appTheme.colors;
 
 const Bookings = () => {
@@ -47,8 +51,17 @@ const Bookings = () => {
     const canManageAllBookings =
         role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN || role === ROLES.OWNER;
 
-    // ---- Data ----
-    const { bookings, loading, error, loadBookings } = useBookings();
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
+
+    // ✅ 2. Pass orgParams to the data hook
+    const { bookings, loading, error, loadBookings } = useBookings(orgParams);
     const stats = useBookingStats(bookings);
 
     // ---- Selection ----
@@ -82,7 +95,7 @@ const Bookings = () => {
         actions.promptBulkAction(selection.bulkAction, selection.selectedIds);
     }, [actions, selection.bulkAction, selection.selectedIds]);
 
-    if (loading) {
+    if (loading && bookings.length === 0) {
         return (
             <LoadingWrapper>
                 <CircularProgress sx={{ color: C.primary }} />
@@ -108,20 +121,33 @@ const Bookings = () => {
                     >
                         {isRegularUser
                             ? 'View and manage your bookings'
-                            : 'Manage all customer bookings'}
+                            : isPlatformAdmin 
+                                ? 'Manage all customer bookings across the platform'
+                                : 'Manage all customer bookings'}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
+                    {/* ✅ 3. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                        onPageReset={loadBookings}
+                    />
+                    
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadBookings}>
                         Refresh
                     </OutlineButton>
-                    <PrimaryButton
-                        variant="contained"
-                        startIcon={<ShoppingCartIcon />}
-                        onClick={handleBookTickets}
-                    >
-                        Book Tickets
-                    </PrimaryButton>
+                    {!isRegularUser && (
+                        <PrimaryButton
+                            variant="contained"
+                            startIcon={<ShoppingCartIcon />}
+                            onClick={handleBookTickets}
+                        >
+                            Book Tickets
+                        </PrimaryButton>
+                    )}
                 </PageHeaderRight>
             </PageHeader>
 

@@ -117,6 +117,8 @@ STORAGES = {
     },
 }
 
+REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
+REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 
 # ============================================
 # EMAIL — print to console locally (opt-in)

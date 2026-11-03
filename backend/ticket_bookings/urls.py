@@ -39,6 +39,17 @@ from .views import (
     run_scheduled_tasks,
     cron_health,
 )
+from .api.payments_api import (
+    create_checkout, verify_checkout, checkout_status,
+    razorpay_webhook, stripe_webhook, refund_payment,
+)
+from .api.venue_layout_api import (
+    get_venue_layout,
+    upload_venue_layout, 
+    venue_categories, 
+    assign_seats_to_category, 
+    clear_seat_category
+)
 
 # Create router and register all view sets
 router = DefaultRouter()
@@ -203,4 +214,24 @@ urlpatterns = [
     ),
     path('auth/request-otp/', request_otp, name='request-otp'),
     path('auth/verify-otp/', verify_otp, name='verify-otp'),
+
+    # ==========================================
+    # ✅ NEW: PAYMENT integration endpoints 
+    # ==========================================
+    path('payments/checkout/', create_checkout, name='payment-checkout'),
+    path('payments/verify/', verify_checkout, name='payment-verify'),
+    path('payments/<uuid:payment_id>/status/', checkout_status, name='payment-status'),
+    path('payments/<uuid:payment_id>/refund/', refund_payment, name='payment-refund'),
+    path('webhooks/razorpay/', razorpay_webhook, name='webhook-razorpay'),
+    path('webhooks/stripe/', stripe_webhook, name='webhook-stripe'),
+
+    # ==========================================
+    # ✅ NEW: Venue Layout & Seat Management endpoints
+    # ==========================================
+    path('venues/<uuid:venue_id>/layout/', get_venue_layout, name='venue-layout-get'),
+    path('venues/<uuid:venue_id>/layout/upload/', upload_venue_layout, name='venue-layout-upload'),
+    path('venues/<uuid:venue_id>/layout/upload/', upload_venue_layout, name='venue-layout-upload'),
+    path('venues/<uuid:venue_id>/categories/', venue_categories, name='venue-categories'),
+    path('venues/<uuid:venue_id>/categories/assign/', assign_seats_to_category, name='assign-seats-to-category'),
+    path('venues/<uuid:venue_id>/categories/clear/', clear_seat_category, name='clear-seat-category'),
 ]

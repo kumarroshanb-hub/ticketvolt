@@ -215,6 +215,27 @@ class BookingViewSet(viewsets.ModelViewSet):
         return None, 'no-tiers-available'
 
     # ============================================================
+    # ✅ NEW: RESERVED SEATING HELPER — release locked seats
+    # ============================================================
+    def _release_reserved_seats(self, booking):
+        """Delete SeatReservation rows tied to a booking so seats return to the pool."""
+        try:
+            from ..models_seating import SeatReservation
+            deleted, _ = SeatReservation.objects.filter(booking=booking).delete()
+            if deleted:
+                logger.info(
+                    "🔓 Released %d reserved seat(s) for booking %s",
+                    deleted, booking.booking_reference,
+                )
+            return deleted
+        except Exception:
+            logger.exception(
+                "⚠️ Failed to release reserved seats for booking %s",
+                getattr(booking, 'booking_reference', '<unknown>'),
+            )
+            return 0
+
+    # ============================================================
     # FREE REGISTRATION
     # ============================================================
 
@@ -493,6 +514,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                         total += float(tier.price)
                     except TicketTier.DoesNotExist:
                         pass
+                # ✅ RESERVED SEATING: price from seat category when no tier_id
+                seat_id = ticket.get('seat_id')
+                if not tier_id and seat_id:
+                    try:
+                        from ..models_seating import Seat
+                        seat = Seat.objects.filter(id=seat_id).select_related('category').first()
+                        if seat and seat.category:
+                            total += float(seat.category.price)
+                    except Exception:
+                        pass
             data['total_amount'] = str(total)
 
         session_id = (
@@ -521,6 +552,30 @@ class BookingViewSet(viewsets.ModelViewSet):
                 serializer = self.get_serializer(data=data)
                 serializer.is_valid(raise_exception=True)
                 self.perform_create(serializer)
+
+                # ✅ RESERVED SEATING: lock the selected physical seats to this
+                # booking immediately so concurrent bookings cannot double-sell them.
+                try:
+                    from ..models_seating import Seat, SeatReservation
+                    booking_instance = serializer.instance
+                    for t_item in (data.get('tickets') or []):
+                        if isinstance(t_item, dict) and t_item.get('seat_id'):
+                            seat_obj = Seat.objects.filter(id=t_item['seat_id']).first()
+                            if seat_obj:
+                                SeatReservation.objects.update_or_create(
+                                    event=booking_instance.event,
+                                    seat=seat_obj,
+                                    defaults={
+                                        'session': booking_instance.session,
+                                        'status': 'booked',
+                                        'booking': booking_instance,
+                                    },
+                                )
+                except Exception:
+                    logger.exception(
+                        "⚠️ Failed to lock reserved seats (not blocking) for booking %s",
+                        getattr(serializer.instance, 'booking_reference', '<unknown>'),
+                    )
 
                 headers = self.get_success_headers(serializer.data)
                 response_data = _with_total_display(serializer.data, serializer.instance)
@@ -640,7 +695,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'net_paid': float(net),
                 'refund_percent': decision.refund_percent,
                 'refund_amount': float(decision.net_refund),
-                'cancellation_fee': float(decision.cancellation_fee),
+                'cancellation_fee': decision.cancellation_fee,
                 'tier_label': decision.tier_label,
                 'allowed': decision.allowed,
                 'reason': decision.reason or None,
@@ -748,7 +803,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         headers = dict(request.headers)
         headers.pop('Authorization', None)
         headers.pop('authorization', None)
-        SENSITIVE_KEYS = {'password', 'password_confirm', 'current_password', 'new_password', 'token', 'refresh', 'access', 'secret', 'api_key', 'admin_token'}
+        SENSITIVE_KEYS = {'password', 'password_confirm', 'current_password', 'new_password', 'token', 'refresh', 'access', 'secret', 'api_key'}
         if isinstance(parsed_data, dict):
             parsed_data = {k: ('[REDACTED]' if k.lower() in SENSITIVE_KEYS else v) for k, v in parsed_data.items()}
         return Response({
@@ -1148,8 +1203,12 @@ class BookingViewSet(viewsets.ModelViewSet):
         logger.info(f"✅ Booking {booking.booking_reference} status set to confirmed (payment + tickets)")
         tickets_result = self._issue_tickets_for_booking(booking)
         if 'error' in tickets_result:
+            # ✅ FIX: roll back BOTH status and paid_at so the booking stays
+            # eligible for Mark Payment / Confirm & Issue retries instead of
+            # getting stuck in validation_failed forever.
             booking.status = 'pending'
-            booking.save()
+            booking.paid_at = None
+            booking.save(update_fields=['status', 'paid_at', 'updated_at'])
             return tickets_result
         self._update_event_counts(booking.event)
         return {
@@ -1331,7 +1390,11 @@ class BookingViewSet(viewsets.ModelViewSet):
         valid_tiers = {str(t.id): t for t in TicketTier.objects.filter(event=booking.event)}
         tiers_in_order = list(valid_tiers.values())
 
-        if expected_count > 0 and not tiers_in_order:
+        # ✅ RESERVED SEATING support
+        from ..models_seating import Seat, SeatReservation
+        has_seat_tickets = any(isinstance(t, dict) and t.get('seat_id') for t in tickets_data)
+
+        if expected_count > 0 and not tiers_in_order and not has_seat_tickets:
             return {
                 'error': 'This event has no ticket tiers configured. Tickets cannot be issued until at least one tier exists.',
                 'tickets_created': 0,
@@ -1339,28 +1402,105 @@ class BookingViewSet(viewsets.ModelViewSet):
             }
 
         for idx, ticket_data in enumerate(tickets_data):
-            attendee_name = (ticket_data.get('attendee_name', booking.customer_name) if isinstance(ticket_data, dict) else booking.customer_name)
-            tier, fallback_reason = self._resolve_tier_for_metadata_entry(ticket_data, valid_tiers, tiers_in_order, idx)
+            is_dict = isinstance(ticket_data, dict)
+            attendee_name = (ticket_data.get('attendee_name') or booking.customer_name) if is_dict else booking.customer_name
+            attendee_email = (ticket_data.get('attendee_email') or booking.customer_email) if is_dict else booking.customer_email
+            attendee_phone = (ticket_data.get('attendee_phone') or booking.customer_phone) if is_dict else booking.customer_phone
+
+            # ✅ 1) Resolve the physical seat (reserved seating)
+            seat = None
+            seat_id = ticket_data.get('seat_id') if is_dict else None
+            if seat_id:
+                seat = Seat.objects.filter(id=seat_id).select_related('category', 'layout').first()
+                if seat is None:
+                    logger.warning("⚠️ Ticket #%d: seat %s no longer exists; skipping.", idx, seat_id)
+                    fallback_log.append({'index': idx, 'attendee_name': attendee_name, 'reason': 'seat-not-found', 'created': False})
+                    continue
+
+            # ✅ 2) Resolve tier: explicit tier_id → mirror of seat category → legacy fallback
+            tier = None
+            fallback_reason = None
+            raw_tier_id = str(ticket_data.get('tier_id') or '') if is_dict else ''
+
+            if raw_tier_id and raw_tier_id in valid_tiers:
+                tier = valid_tiers[raw_tier_id]
+            elif seat is not None and seat.category:
+                cat_name = (seat.category.name or '').strip().lower()
+                tier = next((t for t in tiers_in_order if (t.name or '').strip().lower() == cat_name), None)
+                if tier is None:
+                    # Auto-create a mirror tier from the SeatCategory so reserved
+                    # seating events never need manual tier configuration.
+                    seat_count = Seat.objects.filter(layout=seat.layout, category=seat.category).count()
+                    tier, _created = TicketTier.objects.get_or_create(
+                        event=booking.event,
+                        name=seat.category.name,
+                        defaults={
+                            'price': seat.category.price,
+                            'quantity_total': max(seat_count, 1),
+                            'ticket_type': 'ga',
+                        },
+                    )
+                    tiers_in_order = list(TicketTier.objects.filter(event=booking.event))
+                    valid_tiers = {str(t.id): t for t in tiers_in_order}
+                    fallback_reason = f'auto-created tier from seat category ({tier.name})'
+            elif seat is not None:
+                tier, _created = TicketTier.objects.get_or_create(
+                    event=booking.event,
+                    name='Reserved Seating',
+                    defaults={'price': 0, 'quantity_total': 1000, 'ticket_type': 'ga'},
+                )
+                tiers_in_order = list(TicketTier.objects.filter(event=booking.event))
+                valid_tiers = {str(t.id): t for t in tiers_in_order}
+                fallback_reason = 'auto-created generic reserved tier'
+            else:
+                tier, fallback_reason = self._resolve_tier_for_metadata_entry(ticket_data, valid_tiers, tiers_in_order, idx)
+
             if tier is None:
                 logger.error("❌ Ticket #%d for %s: no tier could be resolved. Skipping attendee %r.", idx, booking.booking_reference, attendee_name)
                 fallback_log.append({'index': idx, 'attendee_name': attendee_name, 'reason': 'no-tier-available', 'created': False})
                 continue
+
             if fallback_reason:
                 fallback_log.append({'index': idx, 'attendee_name': attendee_name, 'reason': fallback_reason, 'created': True})
+
             try:
-                ticket = Ticket.objects.create(
-                    booking=booking, tier=tier, event=booking.event, session=session_to_use,
-                    status='active', attendee_name=attendee_name,
-                    attendee_email=booking.customer_email, attendee_phone=booking.customer_phone,
+                ticket_kwargs = dict(
+                    booking=booking,
+                    tier=tier,
+                    event=booking.event,
+                    session=session_to_use,
+                    status='active',
+                    attendee_name=attendee_name,
+                    attendee_email=attendee_email,
+                    attendee_phone=attendee_phone,
                 )
+                # Attach the physical seat only if the Ticket.seat FK migration was applied
+                if seat is not None and hasattr(Ticket, 'seat'):
+                    ticket_kwargs['seat'] = seat
+
+                ticket = Ticket.objects.create(**ticket_kwargs)
                 self._generate_qr_code(ticket)
+
                 tier.quantity_sold += 1
                 tier.save(update_fields=['quantity_sold'])
                 booking.event.total_tickets_sold += 1
                 booking.event.save(update_fields=['total_tickets_sold'])
+
+                # ✅ 3) Permanently lock the physical seat to this booking
+                if seat is not None:
+                    SeatReservation.objects.update_or_create(
+                        event=booking.event,
+                        seat=seat,
+                        defaults={'session': session_to_use, 'status': 'booked', 'booking': booking},
+                    )
+
                 tickets_created += 1
                 created_ticket_ids.append(str(ticket.id))
-                logger.info("✅ Created ticket %s for %s (Tier: %s)", ticket.unique_code, attendee_name, tier.name)
+                logger.info(
+                    "✅ Created ticket %s for %s (Tier: %s, Seat: %s)",
+                    ticket.unique_code, attendee_name, tier.name,
+                    f"{seat.row_label}{seat.seat_number}" if seat else "-",
+                )
             except Exception as e:
                 logger.exception("❌ Error creating ticket #%d for %r: %s", idx, attendee_name, e)
                 fallback_log.append({'index': idx, 'attendee_name': attendee_name, 'reason': f'exception: {e}', 'created': False})
@@ -1602,6 +1742,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='cancelled')
         release_session_seats(booking, seats_to_release)
+        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
         self._update_event_counts(booking.event)
         try:
             email_result = booking_emails.send_cancellation_email(booking)
@@ -1622,6 +1763,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='refunded')
         release_session_seats(booking, seats_to_release)
+        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
         self._update_event_counts(booking.event)
         try:
             email_result = booking_emails.send_refund_email(booking)
@@ -1718,6 +1860,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='cancelled')
         release_session_seats(booking, seats_to_release)
+        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
         self._update_event_counts(event)
         try:
             email_result = booking_emails.send_cancellation(booking)
@@ -1734,7 +1877,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         if booking.status not in ['paid', 'confirmed']:
             return Response({'error': f'Only paid or confirmed bookings can be refunded. Current status: {booking.status}'}, status=status.HTTP_400_BAD_REQUEST)
         if booking.status == 'refunded':
-            return Response({'error': 'Booking is already refunded'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Booking is already refunded'}
+            if False else {'error': 'Booking is already refunded'}, status=status.HTTP_400_BAD_REQUEST)
         if booking.status == 'completed':
             return Response({'error': 'Cannot refund a completed booking (all tickets already used)'}, status=status.HTTP_400_BAD_REQUEST)
         event = booking.event
@@ -1743,6 +1887,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='refunded')
         release_session_seats(booking, seats_to_release)
+        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
         self._update_event_counts(event)
         try:
             email_result = booking_emails.send_refund_email(booking)

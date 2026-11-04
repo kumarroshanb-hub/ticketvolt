@@ -1,10 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import Konva from 'konva';
 import { Box, CircularProgress, Typography, IconButton, Stack, Paper } from '@mui/material';
 import { ZoomIn, ZoomOut, FitScreen } from '@mui/icons-material';
 import api from '../../services/api';
 
-// TiketVault Branding Colors
 const BRAND_COLORS = {
   charcoal: '#333333',
   red: '#FF2A2A',
@@ -12,22 +11,27 @@ const BRAND_COLORS = {
   lightGray: '#f4f4f4',
   border: '#e2e8f0',
   success: '#22c55e',
-  warning: '#f59e0b',
+  warning: '#f59e0b', 
   info: '#3b82f6',
 };
 
 const SEAT_SIZE = 24;
-const MIN_SCALE = 0.3;
+const MIN_SCALE = 0.2;
 const MAX_SCALE = 3;
 
-const seatFill = (seat, isSelected) => {
-  if (isSelected) return BRAND_COLORS.red;
-  if (seat.status === 'booked' || seat.status === 'sold') return '#e0e0e0';
-  if (seat.status === 'held') return BRAND_COLORS.warning;
-  return '#ffffff';
+// Safe area constants
+const PADDING_TOP = 20;
+const PADDING_BOTTOM = 80; 
+const PADDING_SIDE = 40;
+
+const getSeatColor = (seat, isSelected) => {
+  if (isSelected) return BRAND_COLORS.red; 
+  if (seat.status === 'booked' || seat.status === 'sold') return '#e0e0e0'; 
+  if (seat.status === 'held') return BRAND_COLORS.warning; 
+  return seat.category_color || '#94a3b8';
 };
 
-const seatStroke = (seat, isSelected) => {
+const getSeatStroke = (seat, isSelected) => {
   if (isSelected) return BRAND_COLORS.charcoal;
   if (seat.status === 'booked' || seat.status === 'sold') return '#bdbdbd';
   return BRAND_COLORS.charcoal;
@@ -38,7 +42,6 @@ export default function SeatingCanvas({
   sessionId,
   selectedSeatIds = [],
   onSelectSeats,
-  height = 600,
   readOnly = false,
   layoutData: externalLayoutData,
 }) {
@@ -50,15 +53,13 @@ export default function SeatingCanvas({
   const stageRef = useRef(null);
   const layerRef = useRef(null);
   const nodesRef = useRef(new Map());
-  const seatsRef = useRef([]);
-  const rowLabelsRef = useRef(new Map());
-
+  
   const selectedRef = useRef(selectedSeatIds);
   const onSelectRef = useRef(onSelectSeats);
   const readOnlyRef = useRef(readOnly);
 
-  const [size, setSize] = useState({ width: 800, height });
-  const [zoomPct, setZoomPct] = useState(90); // ✅ Default to 90%
+  const [zoomPct, setZoomPct] = useState(100);
+  const [isStageReady, setIsStageReady] = useState(false);
 
   useEffect(() => { selectedRef.current = selectedSeatIds; }, [selectedSeatIds]);
   useEffect(() => { onSelectRef.current = onSelectSeats; }, [onSelectSeats]);
@@ -71,17 +72,7 @@ export default function SeatingCanvas({
     }
   }, [externalLayoutData]);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect?.width;
-      if (w) setSize({ width: Math.floor(w), height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [height]);
-
+  // Fetch Layout
   useEffect(() => {
     if (externalLayoutData) return;
     
@@ -92,7 +83,8 @@ export default function SeatingCanvas({
         });
         setLayoutData(res.data);
       } catch (err) {
-        setError('Failed to load seating layout. Ensure the venue has a configured layout.');
+        console.error(err);
+        setError('Failed to load seating layout.');
       } finally {
         setLoading(false);
       }
@@ -100,204 +92,226 @@ export default function SeatingCanvas({
     if (eventId) fetchLayout();
   }, [eventId, sessionId, externalLayoutData]);
 
+  // DYNAMIC LEGEND
+  const legendStats = useMemo(() => {
+    if (!layoutData?.seats) return [];
+    const stats = {};
+    layoutData.seats.forEach(seat => {
+      let groupName = 'General';
+      let groupColor = '#94a3b8';
+      
+      if (seat.status === 'sold' || seat.status === 'booked') {
+        groupName = 'Sold / Unavailable';
+        groupColor = '#e0e0e0';
+      } else if (seat.status === 'held') {
+        groupName = 'Held';
+        groupColor = BRAND_COLORS.warning;
+      } else if (seat.category_name) {
+        groupName = seat.category_name;
+        groupColor = seat.category_color || '#94a3b8';
+      }
+
+      if (!stats[groupName]) stats[groupName] = { name: groupName, color: groupColor, count: 0 };
+      stats[groupName].count++;
+    });
+
+    return Object.values(stats).sort((a, b) => {
+      const isSpecialA = a.name.includes('Sold') || a.name.includes('Held');
+      const isSpecialB = b.name.includes('Sold') || b.name.includes('Held');
+      if (isSpecialA && !isSpecialB) return 1;
+      if (!isSpecialA && isSpecialB) return -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [layoutData]);
+
+  // =========================================================================
+  // ✅ BUILD STAGE (Safely waits for layout to settle)
+  // =========================================================================
   useEffect(() => {
     if (!containerRef.current || !layoutData?.seats?.length) return;
 
-    if (stageRef.current) {
-      stageRef.current.destroy();
-      nodesRef.current.clear();
-      rowLabelsRef.current.clear();
-    }
+    const el = containerRef.current;
+    let stage = null;
+    let layer = null;
+    let animationFrameId = null;
+    let isDestroyed = false;
 
-    const stage = new Konva.Stage({
-      container: containerRef.current,
-      width: size.width,
-      height: size.height,
-      draggable: true,
-    });
-    const layer = new Konva.Layer();
-    stage.add(layer);
-    stageRef.current = stage;
-    layerRef.current = layer;
-    seatsRef.current = layoutData.seats;
+    const initKonva = () => {
+      if (isDestroyed) return;
 
-    // Group seats by row
-    const rowsMap = new Map();
-    layoutData.seats.forEach(seat => {
-      const row = seat.row_label || 'A';
-      if (!rowsMap.has(row)) {
-        rowsMap.set(row, []);
+      // Measure the actual painted DOM element
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+
+      // If still zero, wait for the next frame (flexbox layout settling)
+      if (w === 0 || h === 0) {
+        animationFrameId = requestAnimationFrame(initKonva);
+        return;
       }
-      rowsMap.get(row).push(seat);
-    });
 
-    // Sort rows
-    const sortedRows = Array.from(rowsMap.keys()).sort();
-    
-    // ✅ FIX: Draw row labels aligned with actual seat positions
-    sortedRows.forEach((row) => {
-      const seatsInRow = rowsMap.get(row);
-      // Calculate the center Y of this row based on actual seats
-      const avgY = seatsInRow.reduce((sum, s) => sum + s.y_coord, 0) / seatsInRow.length;
-      const rowY = avgY + SEAT_SIZE / 2;
-      
-      // Left label
-      const leftLabel = new Konva.Text({
-        x: 15,
-        y: rowY - 6,
-        text: row,
-        fontSize: 12,
-        fill: BRAND_COLORS.darkGray,
-        width: 25,
-        align: 'right',
-        fontStyle: 'bold',
+      // Destroy old stage if it exists
+      if (stageRef.current) {
+        stageRef.current.destroy();
+        nodesRef.current.clear();
+      }
+
+      stage = new Konva.Stage({
+        container: el,
+        width: w,
+        height: h,
+        draggable: true,
       });
-      
-      // Right label
-      const rightLabel = new Konva.Text({
-        x: size.width - 40,
-        y: rowY - 6,
-        text: row,
-        fontSize: 12,
-        fill: BRAND_COLORS.darkGray,
-        width: 25,
-        align: 'left',
-        fontStyle: 'bold',
-      });
+      layer = new Konva.Layer();
+      stage.add(layer);
+      stageRef.current = stage;
+      layerRef.current = layer;
 
-      layer.add(leftLabel);
-      layer.add(rightLabel);
-      rowLabelsRef.current.set(row, { left: leftLabel, right: rightLabel });
-    });
+      const selectedSet = new Set(selectedRef.current);
 
-    const selectedSet = new Set(selectedRef.current);
-
-    // Draw seats
-    layoutData.seats.forEach((seat) => {
-      const isSelected = selectedSet.has(seat.id);
-      const seatNumber = seat.seat_number || seat.id.substring(0, 4);
-      
-      const group = new Konva.Group({
-        x: seat.x_coord,
-        y: seat.y_coord,
-      });
-
-      const rect = new Konva.Rect({
-        width: SEAT_SIZE,
-        height: SEAT_SIZE,
-        cornerRadius: 3,
-        fill: seatFill(seat, isSelected),
-        stroke: seatStroke(seat, isSelected),
-        strokeWidth: isSelected ? 2.5 : 1.5,
-        shadowColor: isSelected ? BRAND_COLORS.red : 'transparent',
-        shadowBlur: isSelected ? 10 : 0,
-        shadowOpacity: 0.5,
-        perfectDrawEnabled: false,
-        listening: seat.status === 'available',
-      });
-
-      const text = new Konva.Text({
-        text: seatNumber,
-        fontSize: 9,
-        fill: isSelected ? '#ffffff' : BRAND_COLORS.charcoal,
-        width: SEAT_SIZE,
-        align: 'center',
-        y: 6,
-        fontStyle: isSelected ? 'bold' : 'normal',
-      });
-
-      group.add(rect);
-      group.add(text);
-
-      group.on('click tap', () => {
-        if (readOnlyRef.current || seat.status !== 'available') return;
-        const current = selectedRef.current;
-        const next = current.includes(seat.id)
-          ? current.filter((id) => id !== seat.id)
-          : [...current, seat.id];
+      // Draw Seats
+      layoutData.seats.forEach((seat) => {
+        const isSelected = selectedSet.has(seat.id);
+        const seatNumber = seat.seat_number || seat.id.substring(0, 4);
         
-        const nextSeats = layoutData.seats.filter(s => next.includes(s.id));
-        onSelectRef.current?.(nextSeats);
+        const group = new Konva.Group({
+          x: seat.x_coord,
+          y: seat.y_coord,
+        });
+
+        const rect = new Konva.Rect({
+          width: SEAT_SIZE,
+          height: SEAT_SIZE,
+          cornerRadius: 3,
+          fill: getSeatColor(seat, isSelected),
+          stroke: getSeatStroke(seat, isSelected),
+          strokeWidth: isSelected ? 2.5 : 1.5,
+          shadowColor: isSelected ? BRAND_COLORS.red : 'transparent',
+          shadowBlur: isSelected ? 10 : 0,
+          shadowOpacity: 0.5,
+          perfectDrawEnabled: false,
+          listening: seat.status === 'available' && !readOnly,
+        });
+
+        const text = new Konva.Text({
+          text: seatNumber,
+          fontSize: 9,
+          fill: isSelected ? '#ffffff' : BRAND_COLORS.charcoal,
+          width: SEAT_SIZE,
+          align: 'center',
+          y: 6,
+          fontStyle: isSelected ? 'bold' : 'normal',
+        });
+
+        group.add(rect);
+        group.add(text);
+
+        group.on('click tap', () => {
+          if (readOnlyRef.current || seat.status !== 'available') return;
+          const current = selectedRef.current;
+          const next = current.includes(seat.id) ? current.filter((id) => id !== seat.id) : [...current, seat.id];
+          const nextSeats = layoutData.seats.filter(s => next.includes(s.id));
+          onSelectRef.current?.(nextSeats);
+        });
+
+        group.on('mouseenter', () => {
+          if (seat.status === 'available' && !isSelected && !readOnly) {
+            stage.container().style.cursor = 'pointer';
+            rect.fill(getSeatColor(seat, false) + 'CC'); 
+            layer.batchDraw();
+          }
+        });
+        
+        group.on('mouseleave', () => {
+          stage.container().style.cursor = 'default';
+          if (!isSelected) {
+            rect.fill(getSeatColor(seat, false));
+            layer.batchDraw();
+          }
+        });
+
+        layer.add(group);
+        nodesRef.current.set(seat.id, { group, rect, text });
       });
 
-      group.on('mouseenter', () => {
-        if (seat.status === 'available' && !isSelected) {
-          stage.container().style.cursor = 'pointer';
-          rect.fill('#fff5f5');
-          layer.batchDraw();
-        }
+      // Calculate Bounding Box
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      layoutData.seats.forEach(seat => {
+        minX = Math.min(minX, seat.x_coord);
+        maxX = Math.max(maxX, seat.x_coord + SEAT_SIZE); 
+        minY = Math.min(minY, seat.y_coord);
+        maxY = Math.max(maxY, seat.y_coord + SEAT_SIZE); 
+      });
+
+      const contentWidth = maxX - minX;
+      const contentHeight = maxY - minY;
+      
+      const availW = Math.max(100, w - (PADDING_SIDE * 2));
+      const availH = Math.max(100, h - (PADDING_TOP + PADDING_BOTTOM));
+      
+      const scaleX = availW / contentWidth;
+      const scaleY = availH / contentHeight;
+      const initialScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
+      
+      stage.scale({ x: initialScale, y: initialScale });
+      
+      const centerX = (w - (contentWidth * initialScale)) / 2;
+      const centerY = (h - (contentHeight * initialScale)) / 2;
+      
+      stage.position({
+        x: centerX - (minX * initialScale),
+        y: centerY - (minY * initialScale),
       });
       
-      group.on('mouseleave', () => {
-        stage.container().style.cursor = 'default';
-        if (!isSelected) {
-          rect.fill(seatFill(seat, false));
-          layer.batchDraw();
-        }
+      setZoomPct(Math.round(initialScale * 100));
+      setIsStageReady(true);
+
+      // Zoom Handler
+      stage.on('wheel', (e) => {
+        if (!e.evt.ctrlKey && !e.evt.metaKey) return;
+        e.evt.preventDefault();
+        
+        const oldScale = stage.scaleX();
+        const pointer = stage.getPointerPosition();
+        if (!pointer) return;
+        
+        const factor = e.evt.deltaY > 0 ? 1 / 1.15 : 1.15;
+        const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale * factor));
+        
+        const mousePointTo = {
+          x: (pointer.x - stage.x()) / oldScale,
+          y: (pointer.y - stage.y()) / oldScale,
+        };
+        
+        stage.scale({ x: newScale, y: newScale });
+        stage.position({
+          x: pointer.x - mousePointTo.x * newScale,
+          y: pointer.y - mousePointTo.y * newScale,
+        });
+        setZoomPct(Math.round(newScale * 100));
+        layer.batchDraw();
       });
 
-      layer.add(group);
-      nodesRef.current.set(seat.id, { group, rect, text });
-    });
+      layer.batchDraw();
+    };
 
-    // ✅ Auto-fit with 90% default zoom
-    const pad = 100;
-    const fit = Math.min(
-      (size.width - pad) / (layoutData.canvas_width + 100),
-      (size.height - pad) / (layoutData.canvas_height + 80)
-    );
-    
-    // Default to 90% (0.9), but if the canvas is larger than the container, 
-    // scale it down to fit so it doesn't overflow.
-    const initial = Math.max(MIN_SCALE, Math.min(fit, 0.9));
-    
-    stage.scale({ x: initial, y: initial });
-    
-    // ✅ Perfect center alignment
-    stage.position({
-      x: (size.width - (layoutData.canvas_width + 100) * initial) / 2,
-      y: (size.height - (layoutData.canvas_height + 80) * initial) / 2,
-    });
-    
-    setZoomPct(Math.round(initial * 100));
-
-    // Zoom with Ctrl/Cmd
-    stage.on('wheel', (e) => {
-      if (!e.evt.ctrlKey && !e.evt.metaKey) return;
-      e.evt.preventDefault();
-      const oldScale = stage.scaleX();
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
-      const factor = e.evt.deltaY > 0 ? 1 / 1.15 : 1.15;
-      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale * factor));
-      const mousePointTo = {
-        x: (pointer.x - stage.x()) / oldScale,
-        y: (pointer.y - stage.y()) / oldScale,
-      };
-      stage.scale({ x: newScale, y: newScale });
-      stage.position({
-        x: pointer.x - mousePointTo.x * newScale,
-        y: pointer.y - mousePointTo.y * newScale,
-      });
-      setZoomPct(Math.round(newScale * 100));
-      stage.batchDraw();
-    });
-
-    layer.batchDraw();
+    // Start the measurement loop
+    animationFrameId = requestAnimationFrame(initKonva);
 
     return () => {
-      stage.destroy();
+      isDestroyed = true;
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (stage) stage.destroy();
       stageRef.current = null;
       layerRef.current = null;
       nodesRef.current.clear();
-      rowLabelsRef.current.clear();
+      setIsStageReady(false);
     };
-  }, [layoutData, size.width, size.height]);
+  }, [layoutData, readOnly]); 
 
-  // Update seat appearance on selection change
+  // Update Appearance on Selection Change
   useEffect(() => {
     const layer = layerRef.current;
-    if (!layer) return;
+    if (!layer || !layoutData) return;
     const selectedSet = new Set(selectedSeatIds);
     
     layoutData.seats.forEach((seat) => {
@@ -305,12 +319,11 @@ export default function SeatingCanvas({
       if (!node) return;
       const isSelected = selectedSet.has(seat.id);
       
-      node.rect.fill(seatFill(seat, isSelected));
-      node.rect.stroke(seatStroke(seat, isSelected));
+      node.rect.fill(getSeatColor(seat, isSelected));
+      node.rect.stroke(getSeatStroke(seat, isSelected));
       node.rect.strokeWidth(isSelected ? 2.5 : 1.5);
       node.rect.shadowColor(isSelected ? BRAND_COLORS.red : 'transparent');
       node.rect.shadowBlur(isSelected ? 10 : 0);
-      node.rect.shadowOpacity(isSelected ? 0.5 : 0);
       node.text.fill(isSelected ? '#ffffff' : BRAND_COLORS.charcoal);
       node.text.fontStyle(isSelected ? 'bold' : 'normal');
     });
@@ -341,36 +354,41 @@ export default function SeatingCanvas({
     if (!stageRef.current || !layoutData) return;
     const stage = stageRef.current;
     
-    const pad = 100;
-    const fit = Math.min(
-      (size.width - pad) / (layoutData.canvas_width + 100),
-      (size.height - pad) / (layoutData.canvas_height + 80)
-    );
-    
-    // Fit to screen uses the calculated fit ratio
-    const initial = Math.max(MIN_SCALE, Math.min(fit, 1.2));
-    
-    stage.scale({ x: initial, y: initial });
-    stage.position({
-      x: (size.width - (layoutData.canvas_width + 100) * initial) / 2,
-      y: (size.height - (layoutData.canvas_height + 80) * initial) / 2,
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    layoutData.seats.forEach(seat => {
+      minX = Math.min(minX, seat.x_coord);
+      maxX = Math.max(maxX, seat.x_coord + SEAT_SIZE); 
+      minY = Math.min(minY, seat.y_coord);
+      maxY = Math.max(maxY, seat.y_coord + SEAT_SIZE); 
     });
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    
+    const availW = Math.max(100, stage.width() - (PADDING_SIDE * 2));
+    const availH = Math.max(100, stage.height() - (PADDING_TOP + PADDING_BOTTOM));
+    
+    const scaleX = availW / contentWidth;
+    const scaleY = availH / contentHeight;
+    const newScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
+    
+    stage.scale({ x: newScale, y: newScale });
+    
+    const centerX = (stage.width() - (contentWidth * newScale)) / 2;
+    const centerY = (stage.height() - (contentHeight * newScale)) / 2;
+    
+    stage.position({
+      x: centerX - (minX * newScale),
+      y: centerY - (minY * newScale),
+    });
+    
     layerRef.current?.batchDraw();
-    setZoomPct(Math.round(initial * 100));
-  }, [layoutData, size]);
+    setZoomPct(Math.round(newScale * 100));
+  }, [layoutData]);
 
   if (loading) {
     return (
-      <Paper sx={{ 
-        p: 3, 
-        borderRadius: 2, 
-        border: `1px solid ${BRAND_COLORS.border}`,
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height,
-        bgcolor: BRAND_COLORS.lightGray
-      }}>
+      <Paper sx={{ p: 3, borderRadius: 2, border: `1px solid ${BRAND_COLORS.border}`, display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
         <CircularProgress sx={{ color: BRAND_COLORS.red }} />
       </Paper>
     );
@@ -378,13 +396,7 @@ export default function SeatingCanvas({
 
   if (error || !layoutData?.seats?.length) {
     return (
-      <Paper sx={{ 
-        p: 4, 
-        textAlign: 'center', 
-        border: `1px solid ${BRAND_COLORS.border}`, 
-        borderRadius: 2,
-        bgcolor: BRAND_COLORS.lightGray
-      }}>
+      <Paper sx={{ p: 4, textAlign: 'center', border: `1px solid ${BRAND_COLORS.border}`, borderRadius: 2, height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
         <Typography sx={{ color: BRAND_COLORS.darkGray }}>
           {error || 'No seating layout has been configured for this venue yet.'}
         </Typography>
@@ -394,45 +406,58 @@ export default function SeatingCanvas({
 
   return (
     <Paper sx={{ 
-      p: 0, 
-      borderRadius: 2, 
+      width: '100%',
+      height: '100%',
+      display: 'flex', 
+      flexDirection: 'column', 
       border: `1px solid ${BRAND_COLORS.border}`,
-      bgcolor: BRAND_COLORS.lightGray,
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+      overflow: 'hidden',
+      position: 'relative',
+      bgcolor: '#fafafa',
+      borderRadius: 2,
     }}>
-      {/* Screen Indicator */}
       <Box sx={{ 
+        flexShrink: 0,
         bgcolor: BRAND_COLORS.charcoal, 
         color: 'white', 
-        py: 2, 
+        py: 1.5, 
         textAlign: 'center',
-        fontSize: '16px',
+        fontSize: '14px',
         fontWeight: 700,
-        letterSpacing: '3px',
-        borderTopLeftRadius: 8,
-        borderTopRightRadius: 8,
+        letterSpacing: '4px',
+        zIndex: 10,
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
       }}>
         SCREEN
       </Box>
 
-      <Box sx={{ position: 'relative', overflow: 'hidden', bgcolor: '#fafafa' }}>
-        <div ref={containerRef} style={{ width: '100%', height }} />
+      <Box sx={{ flexGrow: 1, position: 'relative', minHeight: 300, overflow: 'hidden' }}>
         
-        {/* Zoom Controls */}
+        {!isStageReady && (
+          <Box sx={{ position: 'absolute', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 5 }}>
+            <CircularProgress size={24} sx={{ color: BRAND_COLORS.red }} />
+          </Box>
+        )}
+
+        <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+        
         <Stack
           direction="row"
           spacing={0.5}
           alignItems="center"
           sx={{ 
             position: 'absolute', 
-            bottom: 12, 
-            right: 12, 
-            bgcolor: 'white', 
-            borderRadius: 1, 
+            bottom: 16, 
+            right: 16, 
+            bgcolor: 'rgba(255, 255, 255, 0.95)', 
+            backdropFilter: 'blur(4px)',
+            borderRadius: 2, 
             px: 1, 
             py: 0.5,
-            boxShadow: 2,
-            border: `1px solid ${BRAND_COLORS.border}`
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            border: `1px solid ${BRAND_COLORS.border}`,
+            zIndex: 30
           }}
         >
           <IconButton size="small" onClick={() => zoomBy(1 / 1.25)} sx={{ width: 28, height: 28 }}>
@@ -448,72 +473,49 @@ export default function SeatingCanvas({
             <ZoomIn fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
           </IconButton>
         </Stack>
-      </Box>
 
-      {/* Legend */}
-      <Box sx={{ 
-        p: 2.5, 
-        bgcolor: '#fff',
-        borderTop: `1px solid ${BRAND_COLORS.border}`,
-        borderBottomLeftRadius: 8,
-        borderBottomRightRadius: 8,
-      }}>
-        <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ 
-              width: 24, 
-              height: 24, 
-              border: `1.5px solid ${BRAND_COLORS.charcoal}`, 
-              borderRadius: 1,
-              bgcolor: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '10px',
-              color: BRAND_COLORS.charcoal,
-              fontWeight: 600,
-            }}>2</Box>
-            <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontWeight: 500 }}>Selectable</Typography>
-          </Box>
+        <Box sx={{ 
+          position: 'absolute', 
+          bottom: 16, 
+          left: 16, 
+          bgcolor: 'rgba(255, 255, 255, 0.95)', 
+          backdropFilter: 'blur(4px)',
+          borderRadius: 2, 
+          px: 2, 
+          py: 1,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          border: `1px solid ${BRAND_COLORS.border}`,
+          zIndex: 30,
+          display: 'flex',
+          gap: 1.5,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          maxWidth: 'calc(100% - 160px)' 
+        }}>
+          {legendStats.map((stat) => (
+            <Box key={stat.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ 
+                width: 12, 
+                height: 12, 
+                border: `1px solid ${BRAND_COLORS.charcoal}`, 
+                borderRadius: 0.5, 
+                bgcolor: stat.color 
+              }} />
+              <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>
+                {stat.name}: {stat.count}
+              </Typography>
+            </Box>
+          ))}
           
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ 
-              width: 24, 
-              height: 24, 
-              border: `1.5px solid ${BRAND_COLORS.charcoal}`, 
-              borderRadius: 1,
-              bgcolor: BRAND_COLORS.red,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '10px',
-              color: 'white',
-              fontWeight: 700,
-            }}>5</Box>
-            <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontWeight: 500 }}>Selected</Typography>
-          </Box>
-
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ 
-              width: 24, 
-              height: 24, 
-              border: `1px solid #bdbdbd`, 
-              borderRadius: 1,
-              bgcolor: '#e0e0e0',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '14px',
-              color: '#9e9e9e',
-              fontWeight: 300,
-            }}>×</Box>
-            <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontWeight: 500 }}>Sold</Typography>
-          </Box>
-
-          <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, ml: 'auto', fontWeight: 500 }}>
-            Hold Ctrl/Cmd + Scroll to zoom • Drag to pan
-          </Typography>
-        </Stack>
+          {selectedSeatIds.length > 0 && (
+             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, pl: 1, borderLeft: `1px solid ${BRAND_COLORS.border}` }}>
+               <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: BRAND_COLORS.red }} />
+               <Typography variant="caption" sx={{ fontWeight: 700, color: BRAND_COLORS.red }}>
+                 Selected: {selectedSeatIds.length}
+               </Typography>
+             </Box>
+          )}
+        </Box>
       </Box>
     </Paper>
   );

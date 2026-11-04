@@ -3,18 +3,19 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Box, Typography, Paper, Button, Alert, CircularProgress,
-    TextField, Grid, IconButton, Chip, Stack
+    TextField, Grid, IconButton, Chip, Stack, Divider
 } from '@mui/material';
 import {
     CloudUpload as UploadIcon,
     ArrowBack as BackIcon,
     CheckCircle as CheckIcon,
     Palette as PaletteIcon,
-    Map as MapIcon
+    Map as MapIcon,
+    ExpandMore as ExpandIcon,
+    ExpandLess as CollapseIcon
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import api from '../../services/api';
-import { PageContainer, PageHeader, PageTitle, PrimaryButton } from '../../components/Common';
 import CategoryAssignmentCanvas from '../../components/Seating/CategoryAssignmentCanvas';
 
 const VenueLayoutEditor = () => {
@@ -33,6 +34,7 @@ const VenueLayoutEditor = () => {
     // Layout state
     const [layoutData, setLayoutData] = useState(null);
     const [loadingLayout, setLoadingLayout] = useState(false);
+    const [showInstructions, setShowInstructions] = useState(false);
 
     useEffect(() => {
         const fetchVenue = async () => {
@@ -111,141 +113,207 @@ const VenueLayoutEditor = () => {
     }
 
     return (
-        // ✅ FORCE FULL VIEWPORT HEIGHT FLEX LAYOUT
-        <PageContainer sx={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', p: 3 }}>
-            <PageHeader sx={{ flexShrink: 0, mb: 2 }}>
-                <Box display="flex" alignItems="center" gap={2}>
-                    <IconButton onClick={() => navigate('/app/venues')}>
+        // ✅ FIX: Force Full Screen Breakout
+        // This overrides any max-width or centering styles from the global PageContainer/Layout
+        <Box 
+            sx={{ 
+                position: 'fixed',       // Take over the entire viewport
+                top: 0, left: 0, right: 0, bottom: 0, // Pin to all edges
+                zIndex: 1000,            // Ensure it sits above sidebar/header if needed
+                bgcolor: '#f5f5f5',      // Match app background
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden'       // Prevent body scrollbars
+            }}
+        >
+            
+            {/* =========================================
+               HEADER BAR (Fixed Top)
+               ========================================= */}
+            <Paper 
+                elevation={0}
+                sx={{ 
+                    px: 3, py: 1.5, 
+                    flexShrink: 0,
+                    borderBottom: '1px solid #e0e0e0',
+                    bgcolor: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 2,
+                    borderRadius: 0 // Square corners for full-screen feel
+                }}
+            >
+                <Stack direction="row" spacing={2} alignItems="center">
+                    <IconButton onClick={() => navigate('/app/venues')} size="small">
                         <BackIcon />
                     </IconButton>
-                    <PageTitle variant="h4">Seating Layout: {venue?.name}</PageTitle>
-                </Box>
-            </PageHeader>
-
-            {/* ✅ MAIN CONTENT: 50/50 SPLIT, FULL REMAINING HEIGHT */}
-            <Box sx={{ display: 'flex', gap: 3, flexGrow: 1, minHeight: 0 }}>
-                
-                {/* ================= LEFT COLUMN: CONTROLS (50%) ================= */}
-                <Box sx={{ width: '50%', overflowY: 'auto', pr: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    
-                    {/* 1. Upload Section */}
-                    <Paper sx={{ p: 3 }}>
-                        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <UploadIcon color="primary" /> 1. Upload Venue Map (SVG)
+                    <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: '#333', lineHeight: 1 }}>
+                            Seating Layout: {venue?.name}
                         </Typography>
-                        <Alert severity="info" sx={{ mb: 2, fontSize: '0.85rem' }}>
-                            Upload the vector (SVG) file of your venue. The system will automatically detect seats.
-                        </Alert>
+                        <Typography variant="caption" color="text.secondary">
+                            Manage venue map and seat categories
+                        </Typography>
+                    </Box>
+                </Stack>
 
-                        <Box sx={{ mb: 2 }}>
+                {/* Right Side Actions */}
+                <Stack direction="row" spacing={1} alignItems="center">
+                     {layoutData && !svgFile && (
+                         <Chip 
+                            label={`${layoutData.seats?.length || 0} Seats Loaded`} 
+                            color="success" 
+                            size="small"
+                            icon={<CheckIcon />}
+                            sx={{ mr: 1 }}
+                         />
+                    )}
+                    <IconButton 
+                        onClick={() => setShowInstructions(!showInstructions)}
+                        size="small"
+                        sx={{ color: 'text.secondary' }}
+                        title="Toggle Instructions"
+                    >
+                        {showInstructions ? <CollapseIcon /> : <ExpandIcon />}
+                    </IconButton>
+                </Stack>
+            </Paper>
+
+            {/* =========================================
+               CONTROL PANEL (Collapsible / Conditional)
+               ========================================= */}
+            {(showInstructions || !layoutData || svgFile) && (
+                <Paper 
+                    elevation={0}
+                    sx={{ 
+                        px: 3, py: 2, 
+                        flexShrink: 0,
+                        borderBottom: '1px solid #e0e0e0',
+                        bgcolor: '#fafafa',
+                        animation: 'fadeIn 0.3s ease-out'
+                    }}
+                >
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems="center" justifyContent="space-between">
+                        
+                        {/* Left: Upload Controls */}
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
                             <Button
-                                variant="outlined"
+                                variant="contained"
                                 component="label"
                                 startIcon={<UploadIcon />}
-                                fullWidth
-                                sx={{ mb: 1, py: 1.5 }}
+                                disabled={uploading}
+                                sx={{ 
+                                    bgcolor: '#FF2A2A', 
+                                    '&:hover': { bgcolor: '#e62626' },
+                                    textTransform: 'none',
+                                    fontWeight: 600,
+                                    boxShadow: 'none'
+                                }}
                             >
-                                {svgFile ? svgFile.name : 'Choose SVG File'}
+                                {svgFile ? 'Change File' : 'Choose SVG'}
                                 <input type="file" hidden accept=".svg" onChange={handleFileChange} />
                             </Button>
+                            
                             {svgFile && (
-                                <Chip label="Ready to upload" color="success" size="small" icon={<CheckIcon />} />
+                                <Chip 
+                                    label={svgFile.name} 
+                                    onDelete={() => setSvgFile(null)} 
+                                    color="primary" 
+                                    size="small"
+                                    sx={{ maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                />
                             )}
-                        </Box>
+                        </Stack>
 
-                        <Typography variant="subtitle2" sx={{ mb: 1, mt: 2 }}>Canvas Dimensions (Optional)</Typography>
-                        <Grid container spacing={2} sx={{ mb: 3 }}>
-                            <Grid item xs={6}>
+                        {/* Middle: Dimensions (Only when relevant) */}
+                        {(!layoutData || svgFile) && (
+                            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: { md: 2 }, borderLeft: { md: '1px solid #eee' }, borderRight: { md: '1px solid #eee' } }}>
                                 <TextField 
-                                    fullWidth size="small" label="Width (px)" type="number" 
-                                    value={canvasWidth} onChange={(e) => setCanvasWidth(e.target.value)} 
+                                    size="small" 
+                                    label="W" 
+                                    type="number" 
+                                    value={canvasWidth} 
+                                    onChange={(e) => setCanvasWidth(e.target.value)}
+                                    sx={{ width: 80, '& .MuiOutlinedInput-input': { p: 1, textAlign: 'center' } }}
                                 />
-                            </Grid>
-                            <Grid item xs={6}>
+                                <Typography variant="caption">×</Typography>
                                 <TextField 
-                                    fullWidth size="small" label="Height (px)" type="number" 
-                                    value={canvasHeight} onChange={(e) => setCanvasHeight(e.target.value)} 
+                                    size="small" 
+                                    label="H" 
+                                    type="number" 
+                                    value={canvasHeight} 
+                                    onChange={(e) => setCanvasHeight(e.target.value)}
+                                    sx={{ width: 80, '& .MuiOutlinedInput-input': { p: 1, textAlign: 'center' } }}
                                 />
-                            </Grid>
-                        </Grid>
-
-                        <PrimaryButton 
-                            variant="contained" 
-                            fullWidth 
-                            onClick={handleUpload} 
-                            disabled={!svgFile || uploading}
-                            startIcon={uploading ? <CircularProgress size={20} /> : <UploadIcon />}
-                        >
-                            {uploading ? 'Parsing Layout...' : 'Generate Seating Grid'}
-                        </PrimaryButton>
-                    </Paper>
-
-                    {/* 2. Instructions Section (Eliminates Confusion) */}
-                    <Paper sx={{ p: 3 }}>
-                        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <PaletteIcon color="primary" /> 2. How to Assign Categories
-                        </Typography>
-                        <Box component="ol" sx={{ pl: 2, m: 0, '& li': { mb: 1.5, color: 'text.secondary', lineHeight: 1.6 } }}>
-                            <li>Click seats on the right canvas to <strong>select</strong> them (they will turn blue).</li>
-                            <li>Click a category chip (e.g., <strong>VIP</strong>) to set it as your target.</li>
-                            <li>Click the <strong>"Assign"</strong> button. The selected seats permanently become that category.</li>
-                            <li><em>Note: Assigning a new category ONLY affects the seats you currently have selected. Previously assigned seats remain unchanged.</em></li>
-                        </Box>
-                    </Paper>
-                </Box>
-
-                {/* ================= RIGHT COLUMN: CANVAS (50%) ================= */}
-                <Box sx={{ width: '50%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                        <Typography variant="h6" sx={{ mb: 1, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
-                            <MapIcon color="primary" /> Interactive Seat Map
-                        </Typography>
-                        
-                        {loadingLayout ? (
-                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1 }}>
-                                <CircularProgress />
-                            </Box>
-                        ) : layoutData ? (
-                            <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                                <Alert severity="success" sx={{ mb: 2, fontSize: '0.85rem', flexShrink: 0 }}>
-                                    Successfully parsed <strong>{layoutData.seats?.length || 0}</strong> seats. 
-                                </Alert>
-                                
-                                {/* ✅ Canvas fills all remaining vertical space */}
-                                <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-                                    <CategoryAssignmentCanvas
-                                        venueId={venueId}
-                                        layoutData={layoutData}
-                                        onCategoryChange={fetchLayoutData}
-                                        useFullHeight={true} 
-                                    />
-                                </Box>
-                            </Box>
-                        ) : (
-                            <Box sx={{ 
-                                flexGrow: 1, 
-                                display: 'flex', 
-                                flexDirection: 'column',
-                                justifyContent: 'center', 
-                                alignItems: 'center', 
-                                border: '2px dashed #e0e0e0', 
-                                borderRadius: 2,
-                                bgcolor: '#fafafa'
-                            }}>
-                                <MapIcon sx={{ fontSize: 60, color: 'text.disabled', mb: 2 }} />
-                                <Typography variant="h6" color="text.secondary" gutterBottom>
-                                    No Layout Uploaded Yet
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary" align="center">
-                                    Upload an SVG file on the left to generate your seating grid.
-                                </Typography>
-                            </Box>
+                            </Stack>
                         )}
-                    </Paper>
-                </Box>
 
+                        {/* Right: Generate Button */}
+                        {(svgFile || !layoutData) && (
+                            <Button 
+                                variant="outlined" 
+                                onClick={handleUpload} 
+                                disabled={!svgFile || uploading}
+                                startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
+                                sx={{ textTransform: 'none', borderColor: '#FF2A2A', color: '#FF2A2A', '&:hover': { borderColor: '#e62626', bgcolor: '#fff5f5' } }}
+                            >
+                                {uploading ? 'Uploading...' : 'Generate Grid'}
+                            </Button>
+                        )}
+                    </Stack>
+
+                    {/* Instructions Content */}
+                    {showInstructions && (
+                        <Alert 
+                            severity="info" 
+                            onClose={() => setShowInstructions(false)}
+                            sx={{ mt: 2, fontSize: '0.85rem', py: 1 }}
+                        >
+                            <strong>How to assign:</strong> 
+                            1. Click seats on the map to select them (they turn red). 
+                            2. Choose a category chip below. 
+                            3. Click "Assign". 
+                            <em>Note: Assigning affects ONLY selected seats.</em>
+                        </Alert>
+                    )}
+                </Paper>
+            )}
+
+            {/* =========================================
+               MAIN CANVAS AREA (Flex Grow - Takes All Space)
+               ========================================= */}
+            <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', p: 2 }}>
+                {loadingLayout ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', bgcolor: '#fff', borderRadius: 2, border: '1px solid #e0e0e0' }}>
+                        <CircularProgress />
+                    </Box>
+                ) : layoutData ? (
+                    <CategoryAssignmentCanvas
+                        venueId={venueId}
+                        layoutData={layoutData}
+                        onCategoryChange={fetchLayoutData}
+                    />
+                ) : (
+                    <Box sx={{ 
+                        height: '100%', 
+                        display: 'flex', 
+                        flexDirection: 'column',
+                        justifyContent: 'center', 
+                        alignItems: 'center', 
+                        bgcolor: '#fff',
+                        border: '2px dashed #e0e0e0',
+                        borderRadius: 2,
+                        color: 'text.secondary'
+                    }}>
+                        <MapIcon sx={{ fontSize: 80, mb: 2, opacity: 0.3 }} />
+                        <Typography variant="h6">No Layout Uploaded</Typography>
+                        <Typography variant="body2">Upload an SVG file above to generate the seating grid.</Typography>
+                    </Box>
+                )}
             </Box>
-        </PageContainer>
+
+        </Box>
     );
 };
 

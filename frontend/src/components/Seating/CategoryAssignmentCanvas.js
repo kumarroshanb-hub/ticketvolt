@@ -14,7 +14,8 @@ import {
   DialogActions,
   Alert,
   IconButton,
-  Tooltip
+  Tooltip,
+  Divider
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -23,7 +24,8 @@ import {
   Clear as ClearIcon,
   ZoomIn as ZoomInIcon,
   ZoomOut as ZoomOutIcon,
-  FitScreen as FitScreenIcon
+  FitScreen as FitScreenIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import api from '../../services/api';
@@ -41,23 +43,21 @@ const BRAND_COLORS = {
 };
 
 const SEAT_SIZE = 24;
-const SEAT_GAP = 4;
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 3;
 
-const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canvasHeight = 650 }) => {
+const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange }) => {
   const containerRef = useRef(null);
   const stageRef = useRef(null);
   const layerRef = useRef(null);
   const nodesRef = useRef(new Map());
-  const rowLabelsRef = useRef(new Map());
   
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedSeatIds, setSelectedSeatIds] = useState([]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newCategory, setNewCategory] = useState({ name: '', hex_color: '#FF2A2A', price: 0 });
-  const [size, setSize] = useState({ width: 800, height: canvasHeight });
+  const [size, setSize] = useState({ width: 800, height: 600 }); // Dynamic size
   const [zoomPct, setZoomPct] = useState(100);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -75,10 +75,11 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
     if (venueId) fetchCategories();
   }, [venueId]);
 
-  // Responsive sizing
+  // Responsive sizing - Observe the actual DOM element
   useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
+    
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width;
       const h = entries[0]?.contentRect?.height;
@@ -98,7 +99,6 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
     if (stageRef.current) {
       stageRef.current.destroy();
       nodesRef.current.clear();
-      rowLabelsRef.current.clear();
     }
 
     const stage = new Konva.Stage({
@@ -107,63 +107,19 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
       height: size.height,
       draggable: true,
     });
+    
     const layer = new Konva.Layer();
     stage.add(layer);
     stageRef.current = stage;
     layerRef.current = layer;
 
-    // Group seats by row
-    const rowsMap = new Map();
-    layoutData.seats.forEach(seat => {
-      const row = seat.row_label || 'A';
-      if (!rowsMap.has(row)) {
-        rowsMap.set(row, []);
-      }
-      rowsMap.get(row).push(seat);
-    });
-
-    // Sort rows
-    const sortedRows = Array.from(rowsMap.keys()).sort();
     const selectedSet = new Set(selectedSeatIds);
 
-    // Draw row labels aligned with actual seat positions
-    sortedRows.forEach((row) => {
-      const seatsInRow = rowsMap.get(row);
-      const avgY = seatsInRow.reduce((sum, s) => sum + s.y_coord, 0) / seatsInRow.length;
-      const rowY = avgY + SEAT_SIZE / 2;
-      
-      const leftLabel = new Konva.Text({
-        x: 15,
-        y: rowY - 6,
-        text: row,
-        fontSize: 12,
-        fill: BRAND_COLORS.darkGray,
-        width: 25,
-        align: 'right',
-        fontStyle: 'bold',
-      });
-      
-      const rightLabel = new Konva.Text({
-        x: size.width - 40,
-        y: rowY - 6,
-        text: row,
-        fontSize: 12,
-        fill: BRAND_COLORS.darkGray,
-        width: 25,
-        align: 'left',
-        fontStyle: 'bold',
-      });
-
-      layer.add(leftLabel);
-      layer.add(rightLabel);
-      rowLabelsRef.current.set(row, { left: leftLabel, right: rightLabel });
-    });
-
-    // Draw seats with Group, Rect, and Text (matching SeatingCanvas exactly)
+    // Draw seats
     layoutData.seats.forEach((seat) => {
       const isSelected = selectedSet.has(seat.id);
       const seatCategory = categories.find(c => c.id === seat.category_id);
-      const categoryColor = seatCategory?.hex_color || '#94a3b8';
+      const categoryColor = seatCategory?.hex_color || '#94a3b8'; // Gray if unassigned
       const seatNumber = seat.seat_number || seat.id.substring(0, 4);
 
       const group = new Konva.Group({
@@ -210,7 +166,7 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
       group.on('mouseenter', () => {
         if (!isSelected) {
           stage.container().style.cursor = 'pointer';
-          rect.fill(categoryColor + '40');
+          rect.fill(categoryColor + 'CC'); // Lighter hover
           layer.batchDraw();
         }
       });
@@ -227,7 +183,7 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
       nodesRef.current.set(seat.id, { group, rect, text });
     });
 
-    // Auto-fit
+    // ✅ CENTER ALIGNMENT LOGIC
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     layoutData.seats.forEach(seat => {
       minX = Math.min(minX, seat.x_coord);
@@ -238,32 +194,44 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
 
     const contentWidth = maxX - minX + SEAT_SIZE;
     const contentHeight = maxY - minY + SEAT_SIZE;
-    const pad = 100;
-    const fit = Math.min(
-      (size.width - pad) / (contentWidth + 100),
-      (size.height - pad) / (contentHeight + 80)
-    );
-    const initial = Math.max(MIN_SCALE, Math.min(fit, 1.2));
-    stage.scale({ x: initial, y: initial });
+    
+    // Calculate scale to fit with padding
+    const pad = 60; 
+    const scaleX = (size.width - pad) / contentWidth;
+    const scaleY = (size.height - pad) / contentHeight;
+    const initialScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5)); // Cap at 1.5x
+    
+    stage.scale({ x: initialScale, y: initialScale });
+    
+    // Center the content in the viewport
+    const centerX = (size.width - (contentWidth * initialScale)) / 2;
+    const centerY = (size.height - (contentHeight * initialScale)) / 2;
+    
+    // Adjust position to account for the offset of minX/minY in the coordinate system
     stage.position({
-      x: (size.width - (contentWidth + 100) * initial) / 2,
-      y: (size.height - (contentHeight + 80) * initial) / 2,
+      x: centerX - (minX * initialScale),
+      y: centerY - (minY * initialScale),
     });
-    setZoomPct(Math.round(initial * 100));
+    
+    setZoomPct(Math.round(initialScale * 100));
 
     // Zoom with Ctrl/Cmd + Scroll
     stage.on('wheel', (e) => {
       if (!e.evt.ctrlKey && !e.evt.metaKey) return;
       e.evt.preventDefault();
+      
       const oldScale = stage.scaleX();
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
+      
       const factor = e.evt.deltaY > 0 ? 1 / 1.15 : 1.15;
       const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale * factor));
+      
       const mousePointTo = {
         x: (pointer.x - stage.x()) / oldScale,
         y: (pointer.y - stage.y()) / oldScale,
       };
+      
       stage.scale({ x: newScale, y: newScale });
       stage.position({
         x: pointer.x - mousePointTo.x * newScale,
@@ -283,7 +251,7 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
     };
   }, [layoutData, size, categories, selectedSeatIds]);
 
-  // Update seat appearance on selection change
+  // Update seat appearance on selection change without rebuilding stage
   useEffect(() => {
     const layer = layerRef.current;
     if (!layer || !layoutData?.seats) return;
@@ -302,7 +270,6 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
       node.rect.strokeWidth(isSelected ? 2.5 : 1.5);
       node.rect.shadowColor(isSelected ? BRAND_COLORS.red : 'transparent');
       node.rect.shadowBlur(isSelected ? 10 : 0);
-      node.rect.shadowOpacity(isSelected ? 0.5 : 0);
       node.text.fill(isSelected ? '#ffffff' : BRAND_COLORS.charcoal);
       node.text.fontStyle(isSelected ? 'bold' : 'normal');
     });
@@ -386,20 +353,24 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
 
     const contentWidth = maxX - minX + SEAT_SIZE;
     const contentHeight = maxY - minY + SEAT_SIZE;
-    const pad = 100;
-    const fit = Math.min(
-      (size.width - pad) / (contentWidth + 100),
-      (size.height - pad) / (contentHeight + 80)
-    );
-    const initial = Math.max(MIN_SCALE, Math.min(fit, 1.2));
+    const pad = 60; 
     
-    stage.scale({ x: initial, y: initial });
+    const scaleX = (size.width - pad) / contentWidth;
+    const scaleY = (size.height - pad) / contentHeight;
+    const initialScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
+    
+    stage.scale({ x: initialScale, y: initialScale });
+    
+    const centerX = (size.width - (contentWidth * initialScale)) / 2;
+    const centerY = (size.height - (contentHeight * initialScale)) / 2;
+    
     stage.position({
-      x: (size.width - (contentWidth + 100) * initial) / 2,
-      y: (size.height - (contentHeight + 80) * initial) / 2,
+      x: centerX - (minX * initialScale),
+      y: centerY - (minY * initialScale),
     });
+    
     layerRef.current?.batchDraw();
-    setZoomPct(Math.round(initial * 100));
+    setZoomPct(Math.round(initialScale * 100));
   }, [layoutData, size]);
 
   const handleZoomIn = useCallback(() => {
@@ -422,6 +393,35 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
     layerRef.current?.batchDraw();
   }, []);
 
+  // ✅ DYNAMIC LEGEND RENDERER
+  const renderLegendItems = () => {
+    const items = [];
+
+    // 1. Base States (Always present)
+    items.push(
+      <Box key="unassigned" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: '#94a3b8' }} />
+        <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>Unassigned</Typography>
+      </Box>,
+      <Box key="selected" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: BRAND_COLORS.red }} />
+        <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>Selected</Typography>
+      </Box>
+    );
+
+    // 2. Dynamic Categories
+    categories.forEach(cat => {
+      items.push(
+        <Box key={cat.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: cat.hex_color }} />
+          <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>{cat.name}</Typography>
+        </Box>
+      );
+    });
+
+    return items;
+  };
+
   return (
     <Box sx={{ 
       height: '100%', 
@@ -431,188 +431,191 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
       bgcolor: BRAND_COLORS.lightGray,
       p: 2,
       borderRadius: 2,
+      overflow: 'hidden' // Prevent outer scrollbars
     }}>
-      <Alert 
-        severity="info" 
+      
+      {/* =========================================
+          TOP TOOLBAR (Horizontal Layout)
+         ========================================= */}
+      <Paper 
+        elevation={0}
         sx={{ 
-          fontSize: '0.85rem', 
+          p: 2, 
           flexShrink: 0,
-          bgcolor: '#eff6ff',
-          border: `1px solid ${BRAND_COLORS.info}`,
-          color: BRAND_COLORS.charcoal,
-        }}
-      >
-        💡 <strong>How to assign:</strong> Select seats on the map, choose a category, then click "Assign Category"
-      </Alert>
-
-      <Paper sx={{ 
-        p: 2.5, 
-        flexShrink: 0,
-        border: `1px solid ${BRAND_COLORS.border}`,
-        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      }}>
-        <Typography variant="h6" sx={{ 
-          mb: 2, 
-          fontWeight: 700,
-          color: BRAND_COLORS.charcoal,
+          border: `1px solid ${BRAND_COLORS.border}`,
+          boxShadow: 'none',
           display: 'flex',
           alignItems: 'center',
-          gap: 1,
-        }}>
-          <PaletteIcon sx={{ color: BRAND_COLORS.red }} />
-          Seat Categories
-        </Typography>
-        
-        <Stack direction="row" spacing={1} sx={{ mb: 2.5, flexWrap: 'wrap', gap: 1 }}>
-          {categories.map((cat) => (
-            <Chip
-              key={cat.id}
-              label={`${cat.name} (${cat.seat_count || 0})`}
-              onClick={() => setSelectedCategory(cat)}
+          justifyContent: 'space-between',
+          gap: 2,
+          flexWrap: 'wrap',
+          bgcolor: '#fff'
+        }}
+      >
+        {/* Left Side: Info & Categories */}
+        <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Tooltip title="Select seats on the map below, choose a category here, then click Assign">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: BRAND_COLORS.darkGray, pr: 2, borderRight: `1px solid ${BRAND_COLORS.border}` }}>
+              <PaletteIcon fontSize="small" sx={{ color: BRAND_COLORS.red }} />
+              <Typography variant="subtitle2" fontWeight={700}>Seat Categories</Typography>
+            </Box>
+          </Tooltip>
+
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {categories.map((cat) => (
+              <Chip
+                key={cat.id}
+                label={`${cat.name} (${cat.seat_count || 0})`}
+                onClick={() => setSelectedCategory(cat)}
+                sx={{
+                  bgcolor: selectedCategory?.id === cat.id ? cat.hex_color : `${cat.hex_color}15`,
+                  color: selectedCategory?.id === cat.id ? '#fff' : cat.hex_color,
+                  fontWeight: 600,
+                  border: selectedCategory?.id === cat.id ? `2px solid ${BRAND_COLORS.charcoal}` : `1px solid ${cat.hex_color}40`,
+                  cursor: 'pointer',
+                  '&:hover': {
+                    bgcolor: `${cat.hex_color}25`,
+                    transform: 'translateY(-1px)',
+                  },
+                  transition: 'all 0.2s',
+                  height: 32,
+                }}
+              />
+            ))}
+            <Button
+              size="small"
+              startIcon={<AddIcon />}
+              onClick={() => setCreateDialogOpen(true)}
+              variant="outlined"
               sx={{
-                bgcolor: selectedCategory?.id === cat.id ? cat.hex_color : `${cat.hex_color}20`,
-                color: selectedCategory?.id === cat.id ? '#fff' : cat.hex_color,
-                fontWeight: 600,
-                border: selectedCategory?.id === cat.id ? `2px solid ${BRAND_COLORS.charcoal}` : `1px solid ${cat.hex_color}`,
-                cursor: 'pointer',
+                borderColor: BRAND_COLORS.border,
+                color: BRAND_COLORS.darkGray,
+                height: 32,
                 '&:hover': {
-                  bgcolor: `${cat.hex_color}40`,
+                  borderColor: BRAND_COLORS.red,
+                  color: BRAND_COLORS.red,
+                  bgcolor: '#fff',
                 },
-                transition: 'all 0.2s',
               }}
-            />
-          ))}
-          <Button
-            size="small"
-            startIcon={<AddIcon />}
-            onClick={() => setCreateDialogOpen(true)}
-            variant="outlined"
-            sx={{
-              borderColor: BRAND_COLORS.charcoal,
-              color: BRAND_COLORS.charcoal,
-              '&:hover': {
-                borderColor: BRAND_COLORS.red,
-                color: BRAND_COLORS.red,
-                bgcolor: '#fff',
-              },
-            }}
-          >
-            New Category
-          </Button>
+            >
+              New
+            </Button>
+          </Stack>
         </Stack>
 
-        {selectedSeatIds.length > 0 && (
-          <Paper sx={{ 
-            p: 2, 
-            bgcolor: '#eff6ff',
-            border: `1px solid ${BRAND_COLORS.info}`,
-            borderRadius: 2,
-          }}>
-            <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: BRAND_COLORS.charcoal }}>
-              {selectedSeatIds.length} seat{selectedSeatIds.length !== 1 ? 's' : ''} selected
-            </Typography>
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" gap={1}>
-              <Button
+        {/* Right Side: Selection Actions (Conditional) */}
+        {selectedSeatIds.length > 0 ? (
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ pl: 2, borderLeft: `1px solid ${BRAND_COLORS.border}` }}>
+             <Typography variant="caption" sx={{ fontWeight: 700, color: BRAND_COLORS.charcoal, mr: 1 }}>
+               {selectedSeatIds.length} Selected
+             </Typography>
+             
+             <Button
                 variant="contained"
+                size="small"
                 onClick={handleAssignCategory}
                 disabled={!selectedCategory || isSaving}
                 startIcon={isSaving ? <CheckCircleIcon /> : null}
                 sx={{ 
                   bgcolor: selectedCategory?.hex_color || BRAND_COLORS.darkGray,
+                  height: 32,
                   '&:hover': {
                     bgcolor: selectedCategory?.hex_color || BRAND_COLORS.charcoal,
+                    transform: 'translateY(-1px)',
                   },
                   '&:disabled': {
                     bgcolor: '#cbd5e1',
                   },
                 }}
               >
-                {isSaving ? 'Saving...' : `Assign to ${selectedCategory?.name || 'Category'}`}
+                {isSaving ? 'Saving...' : `Assign to ${selectedCategory?.name || '...'}`}
               </Button>
-              <Button 
-                variant="outlined" 
-                color="error" 
+              
+              <IconButton 
+                size="small" 
                 onClick={handleClearCategory} 
                 disabled={isSaving}
-                startIcon={<ClearIcon />}
-                sx={{
-                  borderColor: '#ef4444',
-                  color: '#ef4444',
-                  '&:hover': {
-                    borderColor: '#dc2626',
-                    bgcolor: '#fef2f2',
-                  },
-                }}
+                sx={{ color: '#ef4444', width: 32, height: 32 }}
+                title="Remove Category from Selected"
               >
-                Clear
-              </Button>
-              <Button 
-                variant="text" 
+                <ClearIcon fontSize="small" />
+              </IconButton>
+
+              <IconButton 
+                size="small" 
                 onClick={() => setSelectedSeatIds([])}
-                sx={{
-                  color: BRAND_COLORS.darkGray,
-                  '&:hover': {
-                    color: BRAND_COLORS.charcoal,
-                    bgcolor: 'rgba(0,0,0,0.04)',
-                  },
-                }}
+                sx={{ color: BRAND_COLORS.darkGray, width: 32, height: 32 }}
+                title="Deselect All"
               >
-                Deselect All
-              </Button>
-            </Stack>
-          </Paper>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+          </Stack>
+        ) : (
+          <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontStyle: 'italic' }}>
+            Click seats on the map to select them
+          </Typography>
         )}
       </Paper>
 
+      {/* =========================================
+          MAIN CANVAS AREA
+         ========================================= */}
       <Paper sx={{ 
         p: 0,
         flexGrow: 1,
         display: 'flex',
         flexDirection: 'column',
         border: `1px solid ${BRAND_COLORS.border}`,
-        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
         overflow: 'hidden',
+        position: 'relative', // Anchor for absolute children
+        bgcolor: '#fafafa'
       }}>
-        {/* SCREEN Header - matching SeatingCanvas */}
+        
+        {/* SCREEN Header */}
         <Box sx={{ 
           bgcolor: BRAND_COLORS.charcoal, 
           color: 'white', 
-          py: 2, 
+          py: 1.5, 
           textAlign: 'center',
-          fontSize: '16px',
+          fontSize: '14px',
           fontWeight: 700,
-          letterSpacing: '3px',
+          letterSpacing: '4px',
+          zIndex: 10,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
         }}>
           SCREEN
         </Box>
 
+        {/* Konva Container */}
         <Box sx={{ 
           flexGrow: 1, 
           position: 'relative',
-          bgcolor: '#fafafa',
           overflow: 'hidden',
-          minHeight: 400,
+          minHeight: 300, // Safety net
         }}>
           <div 
             ref={containerRef} 
             style={{ width: '100%', height: '100%' }} 
           />
           
-          {/* Zoom Controls - matching SeatingCanvas */}
+          {/* Floating Zoom Controls (Bottom Right) */}
           <Stack
             direction="row"
             spacing={0.5}
             alignItems="center"
             sx={{ 
               position: 'absolute', 
-              bottom: 12, 
-              right: 12, 
-              bgcolor: 'white', 
-              borderRadius: 1, 
+              bottom: 16, 
+              right: 16, 
+              bgcolor: 'rgba(255, 255, 255, 0.9)', 
+              backdropFilter: 'blur(4px)',
+              borderRadius: 2, 
               px: 1, 
               py: 0.5,
-              boxShadow: 2,
-              border: `1px solid ${BRAND_COLORS.border}`
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              border: `1px solid ${BRAND_COLORS.border}`,
+              zIndex: 20
             }}
           >
             <IconButton size="small" onClick={handleZoomOut} sx={{ width: 28, height: 28 }}>
@@ -628,49 +631,28 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
               <ZoomInIcon fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
             </IconButton>
           </Stack>
-        </Box>
 
-        {/* Legend - Cleaned up (removed hardcoded numbers) */}
-        <Box sx={{ 
-          p: 2.5, 
-          bgcolor: '#fff',
-          borderTop: `1px solid ${BRAND_COLORS.border}`,
-        }}>
-          <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box sx={{ 
-                width: 24, 
-                height: 24, 
-                border: `1.5px solid ${BRAND_COLORS.charcoal}`, 
-                borderRadius: 1,
-                bgcolor: 'white',
-              }} />
-              <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontWeight: 500 }}>Available</Typography>
-            </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box sx={{ 
-                width: 24, 
-                height: 24, 
-                border: `1.5px solid ${BRAND_COLORS.charcoal}`, 
-                borderRadius: 1,
-                bgcolor: BRAND_COLORS.red,
-              }} />
-              <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontWeight: 500 }}>Selected</Typography>
-            </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box sx={{ 
-                width: 24, 
-                height: 24, 
-                border: `1px solid #bdbdbd`, 
-                borderRadius: 1,
-                bgcolor: '#e0e0e0',
-              }} />
-              <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, fontWeight: 500 }}>Assigned/Sold</Typography>
-            </Box>
-            <Typography variant="caption" sx={{ color: BRAND_COLORS.darkGray, ml: 'auto', fontWeight: 500 }}>
-              Hold Ctrl/Cmd + Scroll to zoom • Drag to pan
-            </Typography>
-          </Stack>
+          {/* ✅ FLOATING DYNAMIC LEGEND (Bottom Left) */}
+          <Box sx={{ 
+            position: 'absolute', 
+            bottom: 16, 
+            left: 16, 
+            bgcolor: 'rgba(255, 255, 255, 0.95)', 
+            backdropFilter: 'blur(4px)',
+            borderRadius: 2, 
+            px: 2, 
+            py: 1,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            border: `1px solid ${BRAND_COLORS.border}`,
+            zIndex: 20,
+            display: 'flex',
+            gap: 1.5,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            maxWidth: 'calc(100% - 120px)' // Don't overlap zoom controls
+          }}>
+            {renderLegendItems()}
+          </Box>
         </Box>
       </Paper>
 
@@ -678,7 +660,7 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
       <Dialog 
         open={createDialogOpen} 
         onClose={() => setCreateDialogOpen(false)} 
-        maxWidth="sm" 
+        maxWidth="xs" 
         fullWidth
         PaperProps={{
           sx: {
@@ -692,102 +674,48 @@ const CategoryAssignmentCanvas = ({ venueId, layoutData, onCategoryChange, canva
           color: BRAND_COLORS.charcoal,
           borderBottom: `1px solid ${BRAND_COLORS.border}`,
           pb: 2,
+          pt: 3
         }}>
-          Create New Category
+          New Category
         </DialogTitle>
         <DialogContent sx={{ pt: 3 }}>
           <TextField
             autoFocus
             margin="dense"
-            label="Category Name"
+            label="Name"
             fullWidth
             value={newCategory.name}
             onChange={(e) => setNewCategory((prev) => ({ ...prev, name: e.target.value }))}
-            sx={{ 
-              mb: 2.5,
-              '& .MuiOutlinedInput-root': {
-                '&:hover fieldset': {
-                  borderColor: BRAND_COLORS.red,
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: BRAND_COLORS.red,
-                },
-              },
-              '& .MuiInputLabel-root.Mui-focused': {
-                color: BRAND_COLORS.red,
-              },
-            }}
+            sx={{ mb: 2 }}
           />
-          <TextField
-            margin="dense"
-            label="Color"
-            type="color"
-            fullWidth
-            value={newCategory.hex_color}
-            onChange={(e) => setNewCategory((prev) => ({ ...prev, hex_color: e.target.value }))}
-            sx={{ 
-              mb: 2.5,
-              '& input[type="color"]': {
-                height: '48px',
-                padding: '4px',
-                cursor: 'pointer',
-              },
-            }}
-          />
-          <TextField
-            margin="dense"
-            label="Price"
-            type="number"
-            fullWidth
-            value={newCategory.price}
-            onChange={(e) => setNewCategory((prev) => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
-            InputProps={{
-              startAdornment: <span style={{ marginRight: 8, color: BRAND_COLORS.darkGray }}>₹</span>,
-            }}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                '&:hover fieldset': {
-                  borderColor: BRAND_COLORS.red,
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: BRAND_COLORS.red,
-                },
-              },
-              '& .MuiInputLabel-root.Mui-focused': {
-                color: BRAND_COLORS.red,
-              },
-            }}
-          />
+          <Stack direction="row" spacing={2}>
+            <TextField
+              margin="dense"
+              label="Color"
+              type="color"
+              value={newCategory.hex_color}
+              onChange={(e) => setNewCategory((prev) => ({ ...prev, hex_color: e.target.value }))}
+              sx={{ 
+                width: 100,
+                '& input[type="color"]': { height: 40, padding: 2, cursor: 'pointer' } 
+              }}
+            />
+            <TextField
+              margin="dense"
+              label="Price"
+              type="number"
+              fullWidth
+              value={newCategory.price}
+              onChange={(e) => setNewCategory((prev) => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+              InputProps={{
+                startAdornment: <span style={{ marginRight: 4, color: BRAND_COLORS.darkGray }}>₹</span>,
+              }}
+            />
+          </Stack>
         </DialogContent>
-        <DialogActions sx={{ 
-          p: 2.5, 
-          borderTop: `1px solid ${BRAND_COLORS.border}`,
-          gap: 1,
-        }}>
-          <Button 
-            onClick={() => setCreateDialogOpen(false)}
-            sx={{
-              color: BRAND_COLORS.darkGray,
-              '&:hover': {
-                color: BRAND_COLORS.charcoal,
-                bgcolor: 'rgba(0,0,0,0.04)',
-              },
-            }}
-          >
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleCreateCategory} 
-            variant="contained"
-            sx={{
-              bgcolor: BRAND_COLORS.red,
-              '&:hover': {
-                bgcolor: '#e62626',
-              },
-            }}
-          >
-            Create Category
-          </Button>
+        <DialogActions sx={{ p: 2, borderTop: `1px solid ${BRAND_COLORS.border}` }}>
+          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleCreateCategory} variant="contained" sx={{ bgcolor: BRAND_COLORS.red }}>Create</Button>
         </DialogActions>
       </Dialog>
     </Box>

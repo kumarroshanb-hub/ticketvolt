@@ -1,4 +1,3 @@
-# backend/ticket_bookings/api/serializers.py
 import secrets
 from django.contrib.auth.hashers import make_password
 from rest_framework import serializers
@@ -1114,9 +1113,36 @@ class BookingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'event': 'Event was not validated.'})
         validated_data['event'] = event
 
+        # ✅ CRITICAL FIX: `tickets` is read-only, so it is stripped from validated_data.
+        # We must explicitly extract it from the raw request payload (initial_data).
         tickets_data = validated_data.pop('tickets', [])
+        if not tickets_data:
+            raw_data = self.initial_data if isinstance(self.initial_data, dict) else {}
+            tickets_data = self._resolve_tickets_payload(raw_data)
+            
         logger.info(f"📊 Tickets received in serializer: {len(tickets_data)}")
 
+        # ✅ NEW: Validate that reserved seats have categories with prices
+        has_reserved_seating = any(t.get('seat_id') for t in tickets_data if isinstance(t, dict))
+        if has_reserved_seating:
+            from ..models_seating import Seat
+            for t in tickets_data:
+                if isinstance(t, dict) and t.get('seat_id'):
+                    try:
+                        seat = Seat.objects.select_related('category').get(id=t['seat_id'])
+                        if not seat.category:
+                            raise serializers.ValidationError({
+                                'tickets': f'Seat {seat.seat_number} (Row {seat.row_label}) does not have a category assigned. Please configure seat categories before booking.'
+                            })
+                        if seat.category.price <= 0:
+                            raise serializers.ValidationError({
+                                'tickets': f'Seat {seat.seat_number} (Row {seat.row_label}) has a category with zero price. Please set a valid price for the category.'
+                            })
+                    except Seat.DoesNotExist:
+                        raise serializers.ValidationError({
+                            'tickets': f'Seat ID {t["seat_id"]} not found.'
+                        })
+                
         discount_code = validated_data.pop('discount_code', '')
         discount_applied = validated_data.pop('discount_applied', Decimal('0.00'))
 
@@ -1225,8 +1251,8 @@ class BookingSerializer(serializers.ModelSerializer):
         if not booking.metadata:
             booking.metadata = {}
 
-        if not tickets_data and isinstance(validated_data.get('metadata'), dict):
-            md = validated_data['metadata']
+        if not tickets_data and isinstance(booking.metadata, dict):
+            md = booking.metadata
             if isinstance(md.get('ticket_types'), list):
                 tickets_data = md['ticket_types']
             elif isinstance(md.get('tickets'), list):
@@ -1252,21 +1278,33 @@ class BookingSerializer(serializers.ModelSerializer):
                             'attendee_name': attendee_name,
                         })
 
+        # ✅ CRITICAL FIX: Persist the raw tickets data (with seat_ids) into metadata
         booking.metadata['tickets'] = tickets_data
         booking.metadata['total_tickets'] = len(tickets_data)
         booking.metadata['ticket_created'] = False
 
         if tickets_data:
             tier_ids = list({
-                t.get('tier_id') for t in tickets_data if t.get('tier_id')
+                str(t.get('tier_id')) for t in tickets_data if t.get('tier_id')
             })
             booking.metadata['tier_ids'] = tier_ids
 
+            # ✅ NEW: Extract seat_ids for reserved seating
+            seat_ids = [str(t.get('seat_id')) for t in tickets_data if t.get('seat_id')]
+            if seat_ids:
+                booking.metadata['seat_ids'] = seat_ids
+                booking.metadata['reserved_seating'] = True
+
             booking.metadata['ticket_types'] = [
                 {
-                    'tier_id': t.get('tier_id'),
+                    'tier_id': str(t.get('tier_id')) if t.get('tier_id') else None,
+                    'seat_id': str(t.get('seat_id')) if t.get('seat_id') else None,
+                    'qty': int(t.get('qty', 1) or 1),
                     'attendee_name': t.get('attendee_name', booking.customer_name),
+                    'attendee_email': t.get('attendee_email', booking.customer_email),
+                    'attendee_phone': t.get('attendee_phone', booking.customer_phone),
                     'tier_name': t.get('tier_name', 'Unknown'),
+                    'price': t.get('price'),
                 }
                 for t in tickets_data
             ]
@@ -1274,9 +1312,10 @@ class BookingSerializer(serializers.ModelSerializer):
             tier_quantities = {}
             attendee_names_by_tier = {}
             for t in tickets_data:
-                tier_id = str(t.get('tier_id'))
-                tier_quantities[tier_id] = tier_quantities.get(tier_id, 0) + 1
-                attendee_names_by_tier.setdefault(tier_id, []).append(
+                # Use seat_id as key if tier_id is missing (reserved seating)
+                key = str(t.get('tier_id') or t.get('seat_id') or 'general')
+                tier_quantities[key] = tier_quantities.get(key, 0) + 1
+                attendee_names_by_tier.setdefault(key, []).append(
                     t.get('attendee_name', booking.customer_name)
                 )
 

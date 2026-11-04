@@ -1,20 +1,35 @@
 #!/bin/bash
 # ============================================================
-# TicketVolt — Complete Codebase Dump (v4 — false-positive fix)
+# TicketVolt — Complete Codebase Dump (v5.2 — progress + timing fixes)
 # ------------------------------------------------------------
-# New in v4 over v3:
-#   1. ✅ FIX: entropy scan now ignores path-like strings
-#      (absolute paths, file paths, URLs, build artifact paths)
-#      This was the cause of the 1709 false positives.
-#   2. ✅ FIX: added .cxx, cmake, intermediates, .gradle,
-#      .kotlin, derived, .android to exclusions.
-#   3. ✅ NEW: --skip-leak-scan flag (scan is on by default)
-#   4. ✅ NEW: --only-leak-report prints report and exits
-#   5. ✅ NEW: entropy scan skips lines containing common
-#      path roots (/Users/, /home/, C:\, etc.)
-#   6. ✅ NEW: --include-build flag to explicitly allow
-#      build dirs (use at your own risk)
-#   7. ✅ Improved progress bar with ETA
+# New in v5.2 over v5.1:
+#   1. ✅ FIX: progress bar start-time is now passed explicitly to
+#      render_progress instead of relying on the global START_TS.
+#      Split dumps no longer report inflated elapsed times.
+#   2. ✅ FIX: every progress bar is terminated with a real \n,
+#      so frames no longer appear frozen at an old percentage.
+#   3. ✅ NEW: combined-pass summary line printed after the dump
+#      block ("✅ Combined pass: N files in Ns"), overwriting
+#      the stale mid-run frame.
+#   4. ✅ NEW: progress bar only redraws every Nth file (default 5)
+#      to reduce terminal churn on 300+ file runs. Configure with
+#      PROGRESS_EVERY=N.
+#   5. ✅ NEW: lists the files that timed out (from .dump_poison_files)
+#      at the end of the run, so you can inspect them.
+#
+# New in v5.1 over v5:
+#   - bash 3.2 compatible (no `declare -A`)
+#   - fixed `paste -sd,` banner crash
+#   - .github/.gitlab/.circleci/.husky now dumped
+#   - stale `.dump_leak_report_*` excluded
+#   - tree exclusion anchored on `.git$`
+#   - one split failure no longer aborts the whole run
+#
+# New in v5 over v4:
+#   - per-folder / per-file split dumps
+#   - --no-split, --split-dirs, --split-targets
+#   - per-split leak scan (removes only the bad split)
+#   - strict mode: combined leak removes all splits
 # ============================================================
 
 set -o pipefail
@@ -33,36 +48,134 @@ NC='\033[0m'
 # ---------- Config ----------
 PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-20}"
 MAX_FILE_BYTES="${MAX_FILE_BYTES:-5242880}"
+PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-20}"
+MAX_FILE_BYTES="${MAX_FILE_BYTES:-5242880}"
 MIN_TIMEOUT=8
 MAX_TIMEOUT=60
+PROGRESS_EVERY="${PROGRESS_EVERY:-5}"   # redraw progress every N files
+
+# ---------- Split output config ----------
+SPLIT_DIRS="${SPLIT_DIRS:-frontend,backend,QRScannerApp,baileys-gateway}"
+
+SPLIT_TARGETS="${SPLIT_TARGETS:-}"
+if [ -z "$SPLIT_TARGETS" ]; then
+    SPLIT_TARGETS="dir:frontend,dir:backend,dir:QRScannerApp,dir:baileys-gateway"
+    SPLIT_TARGETS+=",dir:shared,dir:sample_configs"
+    SPLIT_TARGETS+=",file:package-lock.json"
+    SPLIT_TARGETS+=",file:docker-compose.yml"
+    SPLIT_TARGETS+=",file:docker-compose.prod.yml"
+    SPLIT_TARGETS+=",file:README.md"
+    SPLIT_TARGETS+=",file:DEPLOYMENT.md"
+fi
+
+# Optional expected-count map for per-split verification.
+# bash 3.2 has no associative arrays, so this is a plain string:
+#   "label|count;label|count;..."
+EXPECTED_COUNTS_STR="${EXPECTED_COUNTS_STR:-}"
+if [ -z "$EXPECTED_COUNTS_STR" ]; then
+    EXPECTED_COUNTS_STR="frontend|148;backend|106;QRScannerApp|46;baileys-gateway|10;"
+    EXPECTED_COUNTS_STR+="shared|7;sample_configs|1;"
+    EXPECTED_COUNTS_STR+="package-lock.json|1;docker-compose.yml|1;docker-compose.prod.yml|1;"
+    EXPECTED_COUNTS_STR+="README.md|1;DEPLOYMENT.md|1"
+fi
+
+expected_count_for() {
+    local needle="$1" entry
+    local _ifs="$IFS"
+    IFS=';'
+    for entry in $EXPECTED_COUNTS_STR; do
+        [ -z "$entry" ] && continue
+        local k="${entry%%|*}"
+        local v="${entry##*|}"
+        if [ "$k" = "$needle" ]; then
+            IFS="$_ifs"
+            printf '%s' "$v"
+            return 0
+        fi
+    done
+    IFS="$_ifs"
+    return 1
+}
+
+SKIP_SPLIT=0
+SCAN_SPLITS=1
+STRICT_SPLIT_CLEANUP=1
 
 # ---------- Args ----------
 SKIP_LEAK_SCAN=0
 INCLUDE_BUILD=0
 ONLY_LEAK_REPORT=0
-for arg in "$@"; do
+args=("$@")
+i=0
+while [ $i -lt ${#args[@]} ]; do
+    arg="${args[$i]}"
     case "$arg" in
-        --skip-leak-scan)   SKIP_LEAK_SCAN=1 ;;
-        --include-build)    INCLUDE_BUILD=1 ;;
-        --only-leak-report) ONLY_LEAK_REPORT=1 ;;
+        --skip-leak-scan)      SKIP_LEAK_SCAN=1 ;;
+        --include-build)       INCLUDE_BUILD=1 ;;
+        --only-leak-report)    ONLY_LEAK_REPORT=1 ;;
+        --no-split)            SKIP_SPLIT=1 ;;
+        --scan-splits)         SCAN_SPLITS=1 ;;
+        --no-scan-splits)      SCAN_SPLITS=0 ;;
+        --no-strict-split)     STRICT_SPLIT_CLEANUP=0 ;;
+        --split-dirs)
+            i=$((i+1))
+            if [ $i -lt ${#args[@]} ]; then
+                SPLIT_DIRS="${args[$i]}"
+                SPLIT_TARGETS=""
+            fi
+            ;;
+        --split-targets)
+            i=$((i+1))
+            if [ $i -lt ${#args[@]} ]; then
+                SPLIT_TARGETS="${args[$i]}"
+            fi
+            ;;
         --help|-h)
             cat <<EOF
 Usage: $0 [PROJECT_ROOT] [options]
 
 Options:
-  --skip-leak-scan      Skip the leak scan entirely (still writes report)
-  --include-build       Include build/ and .cxx/ (NOT recommended)
-  --only-leak-report    Just re-scan the existing dump and print the report
-  -h, --help            Show this help
+  --skip-leak-scan         Skip the leak scan entirely (still writes report)
+  --include-build          Include build/ and .cxx/ (NOT recommended)
+  --only-leak-report       Just re-scan the existing dump and print the report
+  --no-split               Skip all per-folder/per-file split dumps
+  --scan-splits            Leak-scan each split file independently (default)
+  --no-scan-splits         Skip per-split leak scan (combined scan still runs)
+  --no-strict-split        Keep split files even if combined dump leaks
+  --split-dirs "a,b,c"     Legacy: also dump these top-level dirs individually
+  --split-targets "..."    Rich: comma-separated list of
+                             dir:<name>
+                             file:<relpath>
+                             group:<label>:<a,b,c>
+                           (default: legacy four dirs + shared, sample_configs,
+                            + five root files individually)
+  -h, --help               Show this help
 
 Environment:
-  PER_FILE_TIMEOUT      Baseline timeout in seconds (default: 20)
-  MAX_FILE_BYTES        Skip redaction above this size (default: 5 MB)
+  PER_FILE_TIMEOUT         Baseline timeout in seconds (default: 20)
+  MAX_FILE_BYTES           Skip redaction above this size (default: 5 MB)
+  PROGRESS_EVERY           Redraw progress bar every N files (default: 5)
+  SPLIT_TARGETS            Same as --split-targets
+  SPLIT_DIRS               Same as --split-dirs
+  EXPECTED_COUNTS_STR      "label|count;label|count;..." for verification
 EOF
             exit 0
             ;;
     esac
+    i=$((i+1))
 done
+
+# Translate legacy SPLIT_DIRS -> SPLIT_TARGETS if needed.
+if [ -z "$SPLIT_TARGETS" ] && [ -n "$SPLIT_DIRS" ]; then
+    _acc=""
+    IFS=',' read -ra _dirs <<< "$SPLIT_DIRS"
+    for _d in "${_dirs[@]}"; do
+        _d="${_d// /}"
+        [ -z "$_d" ] && continue
+        _acc+="dir:${_d},"
+    done
+    SPLIT_TARGETS="${_acc%,}"
+fi
 
 # ---------- Output file ----------
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -74,17 +187,16 @@ POISON_FILE=".dump_poison_files"
 LEAK_REPORT=".dump_leak_report"
 touch "$POISON_FILE" 2>/dev/null || true
 
-# ---------- Exclusions (v4 — added build artifacts) ----------
+# ---------- Exclusions ----------
 EXCLUDE_DIR_RE='(^|/)(node_modules|__pycache__|\.git|\.git-projects-old|\.expo|\.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|\.metro|\.gradle|\.kotlin|\.cache|\.vscode|\.idea|\.npm|\.yarn|venv|env|\.venv|\.tox|\.mypy_cache|\.pytest_cache|Pods|\.next|\.nuxt|\.turbo|\.parcel-cache|\.serverless|\.terraform|\.husky|_build|target|vendor|\.cxx|cmake|intermediates|derived|\.android|\.gradle-cache|\.rustup|\.cargo)(/|$)'
 
 EXCLUDE_FILE_RE='\.(pyc|pyo|so|dylib|dll|exe|o|obj|a|lib|class|jar|apk|aab|ipa|log|lock|map|min\.js|min\.css|png|jpg|jpeg|gif|ico|bmp|webp|tiff|pdf|zip|tar|gz|bz2|xz|7z|rar|db|sqlite|sqlite3|woff|woff2|ttf|otf|eot|mp3|mp4|mov|avi|webm|DS_Store|bak|swp|swo|ninja|ninja_log|ninja_deps|check_cache|verify_globs)$'
+EXCLUDE_FILE_RE='\.(pyc|pyo|so|dylib|dll|exe|o|obj|a|lib|class|jar|apk|aab|ipa|log|lock|map|min\.js|min\.css|png|jpg|jpeg|gif|ico|bmp|webp|tiff|pdf|zip|tar|gz|bz2|xz|7z|rar|db|sqlite|sqlite3|woff|woff2|ttf|otf|eot|mp3|mp4|mov|avi|webm|DS_Store|bak|swp|swo|ninja|ninja_log|ninja_deps|check_cache|verify_globs)$'
 
-EXCLUDE_NAME_RE='(\.DS_Store|Thumbs\.db|celerybeat-schedule|\.dump_poison_files|\.dump_leak_report|complete_codebase_dump_.*\.txt|CMakeCache\.txt|CMakeFiles|\.cmake|build\.ninja|rules\.ninja|compile_commands\.json|\.ninja_deps|\.ninja_log|cmake\.check_cache|cmake\.verify_globs)$'
+EXCLUDE_NAME_RE='(\.DS_Store|Thumbs\.db|celerybeat-schedule|\.dump_poison_files|\.dump_leak_report.*|complete_codebase_dump_.*\.txt|CMakeCache\.txt|CMakeFiles|\.cmake|build\.ninja|rules\.ninja|compile_commands\.json|\.ninja_deps|\.ninja_log|cmake\.check_cache|cmake\.verify_globs)$'
 
 EXCLUDE_ENV_RE='(^|/)\.env(\..*)?$'
 
-# v4: when --include-build is passed, empty the build-artifact
-# exclusions but keep dependency/session exclusions.
 if [ "$INCLUDE_BUILD" = "1" ]; then
     EXCLUDE_DIR_RE='(^|/)(node_modules|__pycache__|\.git|\.git-projects-old|\.expo|\.expo-shared|sessions|logs|media|staticfiles|\.metro|\.vscode|\.idea|\.npm|\.yarn|venv|env|\.venv|\.tox|\.mypy_cache|\.pytest_cache|Pods|\.next|\.nuxt|\.turbo|\.parcel-cache|\.serverless|\.terraform|\.husky|target|vendor)(/|$)'
 fi
@@ -101,19 +213,34 @@ PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -
 if [ "$INCLUDE_BUILD" = "1" ]; then
     PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name target -o -name vendor ) -prune'
 fi
+PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name build -o -name dist -o -name out -o -name coverage -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .gradle -o -name .kotlin -o -name .cache -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name _build -o -name target -o -name vendor -o -name .cxx -o -name cmake -o -name intermediates -o -name derived -o -name .android ) -prune'
+
+if [ "$INCLUDE_BUILD" = "1" ]; then
+    PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name target -o -name vendor ) -prune'
+fi
 
 # ---------- Banner ----------
 if [ "$ONLY_LEAK_REPORT" = "0" ]; then
-    clear
+    clear 2>/dev/null || true
     echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║   📦  TicketVolt — Complete Codebase Dump (v4)              ║${NC}"
-    echo -e "${BLUE}║       false-positive leak scan fixed                          ║${NC}"
-    echo -e "${BLUE}║       build artifacts excluded by default                    ║${NC}"
+    echo -e "${BLUE}║   📦  TicketVolt — Complete Codebase Dump (v5.2)            ║${NC}"
+    echo -e "${BLUE}║       per-folder / per-file split dumps                      ║${NC}"
+    echo -e "${BLUE}║       progress + timing fixes                                ║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 fi
 
 # ---------- Locate project root ----------
+PROJECT_ROOT=""
+for arg in "$@"; do
+    if [ -d "$arg" ]; then
+        PROJECT_ROOT="$arg"
+        break
+    fi
+done
+
+if [ -n "$PROJECT_ROOT" ]; then
+    cd "$PROJECT_ROOT" </dev/null || { echo -e "${RED}❌ Cannot cd into $PROJECT_ROOT${NC}"; exit 1; }
 PROJECT_ROOT=""
 for arg in "$@"; do
     if [ -d "$arg" ]; then
@@ -137,8 +264,7 @@ if [ "$ONLY_LEAK_REPORT" = "1" ]; then
         exit 1
     fi
     echo -e "${CYAN}Re-scanning:${NC} $LATEST_DUMP"
-    # ... (scan function inlined below — see full script)
-    echo -e "${YELLOW}Use --skip-leak-scan on a fresh run, or edit the scan function.${NC}"
+    echo -e "${YELLOW}Re-scan not yet implemented; use --skip-leak-scan on a fresh run.${NC}"
     exit 0
 fi
 
@@ -146,6 +272,15 @@ echo -e "${CYAN}Project root:${NC} $PROJECT_ROOT"
 echo -e "${CYAN}Output file:${NC}  $OUTPUT_FILE"
 echo -e "${CYAN}Leak scan:${NC}    $([ "$SKIP_LEAK_SCAN" = "1" ] && echo "SKIPPED (--skip-leak-scan)" || echo "ENABLED")"
 echo -e "${CYAN}Build dirs:${NC}   $([ "$INCLUDE_BUILD" = "1" ] && echo "INCLUDED (--include-build)" || echo "EXCLUDED")"
+echo -e "${CYAN}Split dumps:${NC}  $([ "$SKIP_SPLIT" = "1" ] && echo "SKIPPED (--no-split)" || echo "ENABLED")"
+if [ "$SKIP_SPLIT" = "0" ]; then
+    echo -e "${CYAN}Split scan:${NC}   $([ "$SCAN_SPLITS" = "1" ] && echo "per-file" || echo "combined-only")"
+    echo -e "${CYAN}Split targets:${NC}"
+    printf '%s' "$SPLIT_TARGETS" \
+        | sed -E 's/,(dir:|file:|group:)/\n\1/g' \
+        | sed 's/^/                  • /'
+    echo ""
+fi
 
 if command -v gtimeout >/dev/null 2>&1; then
     HAS_GTIMEOUT=1
@@ -324,6 +459,68 @@ dump_file_to_stdout() {
     echo ""
 }
 
+# v5.2: render_progress now takes start_ts as an explicit second arg.
+# Falls back to $START_TS if omitted (for backward compat with any
+# remaining call sites). Only redraws every PROGRESS_EVERY files
+# (except the final one) to cut terminal churn.
+render_progress() {
+    local rel_path="$1"
+    local start_ts="${2:-${START_TS:-$(date +%s)}}"
+    local total="${PROGRESS_TOTAL:-$TOTAL_FILES}"
+    [ "$total" -le 0 ] && total=1
+
+    # Throttle redraws; always render the final frame.
+    if [ "$CURRENT" -lt "$total" ] && [ "$PROGRESS_EVERY" -gt 1 ]; then
+        if [ $((CURRENT % PROGRESS_EVERY)) -ne 0 ]; then
+            return 0
+        fi
+    fi
+
+    local pct=$((CURRENT * 100 / total))
+    local now elapsed eta
+    now=$(date +%s)
+    elapsed=$((now - start_ts))
+    [ "$elapsed" -lt 0 ] && elapsed=0
+
+    if [ "$CURRENT" -gt 0 ] && [ "$elapsed" -gt 0 ]; then
+        local remaining=$((total - CURRENT))
+        eta=$((elapsed * remaining / CURRENT))
+    else
+        eta=0
+    fi
+
+    local bar_width=30
+    local filled=$((pct * bar_width / 100))
+    local empty=$((bar_width - filled))
+    local bar="" i
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty;  i++)); do bar+="░"; done
+
+    if [ ${#rel_path} -gt 60 ]; then
+        rel_path="...${rel_path: -57}"
+    fi
+
+    printf "\r${CYAN}[%3d/%3d]${NC} ${GREEN}[%s]${NC} %3d%% ${YELLOW}(%ds, ETA %ds)${NC}  ${DIM}%s${NC}\033[K" \
+        "$CURRENT" "$total" "$bar" "$pct" "$elapsed" "$eta" "$rel_path" >&2
+}
+
+emit_files_section() {
+    local title="$1" desc_prefix="$2" f
+    if [ -n "$title" ]; then
+        echo ""
+        echo "################################################################################"
+        echo "# $title"
+        echo "################################################################################"
+        echo ""
+    fi
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        CURRENT=$((CURRENT + 1))
+        render_progress "${f#$PROJECT_ROOT/}" "$START_TS"
+        dump_file_to_stdout "$f" "$desc_prefix"
+    done
+}
+
 # ============================================================
 # LEAK SCAN (v4 — false-positive fix)
 # ============================================================
@@ -333,7 +530,6 @@ scan_for_leaks() {
 
     : > "$LEAK_REPORT"
 
-    # --- 1. Known API key prefixes (unchanged) ---
     local prefix_re='(tid_[A-Za-z0-9]{8,}|tsec_[A-Za-z0-9]{8,}|re_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|sk_live_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9]{20,}|pk_live_[A-Za-z0-9]{20,}|pk_test_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|ghs_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[bps]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})'
 
     local prefix_hits
@@ -349,35 +545,17 @@ scan_for_leaks() {
         findings=$((findings + $(printf '%s\n' "$prefix_hits" | grep -c .)))
     fi
 
-    # --- 2. High-entropy strings (v4 — path-aware filter) ---
-    #
-    # The v3 scanner flagged:
-    #   - /Users/roshankumarbharathan/Library/Android/sdk/ndk/27...
-    #   - cmake/api/v1/query/client-agp/cmakeFiles-v1
-    #   - any 40+ char path containing upper/lower/digits
-    #
-    # v4 fixes this by:
-    #   a) Requiring the token to be a SINGLE contiguous segment
-    #      (no '/', '\\', ':', '.') unless it looks like a key
-    #   b) Explicitly skipping tokens that start with '/', './', '../',
-    #      or contain 'cmake', 'cmakeFiles', 'android', 'ndk'
-    #   c) Skipping lines that start with @@@FILE@@@, LOCATION:, or SIZE:
-    #   d) Raising the minimum length to 32 (was 40) but adding
-    #      stricter character-class checks — a real secret will pass
-    #      these; a path won't.
     local entropy_hits
     entropy_hits=$(awk '
         {
             line = $0
 
-            # Skip dump metadata lines
             if (line ~ /^@@@FILE@@@ /)   next
             if (line ~ /^LOCATION: /)    next
             if (line ~ /^DESCRIPTION: /) next
             if (line ~ /^SIZE: /)        next
             if (line ~ /^LINES: /)       next
 
-            # Skip lines that are obviously paths
             if (line ~ /^\/Users\//)     next
             if (line ~ /^\/home\//)      next
             if (line ~ /^\/tmp\//)       next
@@ -392,50 +570,32 @@ scan_for_leaks() {
             if (line ~ /\.gradle\//)     next
             if (line ~ /ndk\//)          next
 
-            # Remove already-redacted markers
             gsub(/\[REDACTED\]/, "", line)
 
-            # Split on whitespace and non-secret-safe chars.
-            # v4: only allow characters that appear in real secrets
-            # (base64, hex, JWT, API keys). '/', '.', ':' are NOT in
-            # that set — which eliminates paths entirely.
             n = split(line, tokens, /[ \t]+/)
             for (i = 1; i <= n; i++) {
                 t = tokens[i]
 
-                # Strip surrounding punctuation
                 gsub(/^["'\''`\(\)\[\]\{\}<>;,]+/, "", t)
                 gsub(/["'\''`\(\)\[\]\{\}<>;,]+$/, "", t)
 
                 L = length(t)
                 if (L < 32) continue
 
-                # Skip obvious non-secrets
-                if (t ~ /^iVBOR/)  continue   # PNG
-                if (t ~ /^\/9j\//) continue   # JPEG
-                if (t ~ /^R0lGOD/) continue   # GIF
+                if (t ~ /^iVBOR/)  continue
+                if (t ~ /^\/9j\//) continue
+                if (t ~ /^R0lGOD/) continue
                 if (t ~ /^sha(1|256|384|512)-/) continue
 
-                # v4: must be composed ONLY of secret-safe chars
-                # (base64 / base64url / hex)
                 if (t !~ /^[A-Za-z0-9+\/=_.\-]+$/) continue
-
-                # v4: reject anything containing a path separator
-                # (a valid secret never contains '/' or '.')
                 if (t ~ /[\/\.]/) continue
-
-                # v4: reject known path segment names
                 if (t ~ /cmake|android|ndk|gradle|node_modules/) continue
 
-                # Character-class diversity — real secrets have mixed
-                # case AND digits
                 has_digit = (t ~ /[0-9]/)
                 has_upper = (t ~ /[A-Z]/)
                 has_lower = (t ~ /[a-z]/)
                 if (!(has_digit && has_upper && has_lower)) continue
 
-                # Allow known hex lengths (SHA-256 hex = 64, SHA-1 hex = 40,
-                # MD5 hex = 32)
                 if (L == 32 && t ~ /^[0-9a-fA-F]+$/) continue
                 if (L == 40 && t ~ /^[0-9a-fA-F]+$/) continue
                 if (L == 64 && t ~ /^[0-9a-fA-F]+$/) continue
@@ -513,8 +673,11 @@ echo ""
 
 # ============================================================
 # TOP-LEVEL DIRS + ROOT FILES
+# (v5.1: allowlist CI dotfolders; other dotdirs stay excluded)
 # ============================================================
-find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type d -not -name ".*" 2>/dev/null </dev/null \
+find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type d \
+    \( -name ".github" -o -name ".gitlab" -o -name ".circleci" -o -name ".husky" -o -not -name ".*" \) \
+    2>/dev/null </dev/null \
     | grep -Ev "$EXCLUDE_DIR_RE" \
     | LC_ALL=C sort > "$TOP_DIRS_FILE"
 
@@ -533,41 +696,14 @@ done < <(find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/nul
     | LC_ALL=C sort > "$ROOT_FILES_FILE"
 
 # ============================================================
-# PROGRESS BAR
+# PROGRESS STATE
 # ============================================================
 CURRENT=0
 START_TS=$(date +%s)
-
-render_progress() {
-    local rel_path="$1"
-    local pct=$((CURRENT * 100 / TOTAL_FILES))
-    local now elapsed eta
-    now=$(date +%s)
-    elapsed=$((now - START_TS))
-
-    if [ "$CURRENT" -gt 0 ] && [ "$elapsed" -gt 0 ]; then
-        local remaining=$((TOTAL_FILES - CURRENT))
-        eta=$((elapsed * remaining / CURRENT))
-    else
-        eta=0
-    fi
-
-    local bar_width=30
-    local filled=$((pct * bar_width / 100))
-    local empty=$((bar_width - filled))
-    local bar="" i
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    for ((i=0; i<empty;  i++)); do bar+="░"; done
-
-    if [ ${#rel_path} -gt 60 ]; then
-        rel_path="...${rel_path: -57}"
-    fi
-
-    printf "\r${CYAN}[%3d/%3d]${NC} ${GREEN}[%s]${NC} %3d%% ${YELLOW}(%ds, ETA %ds)${NC}  ${DIM}%s${NC}\033[K" \
-        "$CURRENT" "$TOTAL_FILES" "$bar" "$pct" "$elapsed" "$eta" "$rel_path" >&2
-}
+PROGRESS_TOTAL="$TOTAL_FILES"
 
 # ============================================================
+# BEGIN DUMP (atomic)
 # BEGIN DUMP (atomic)
 # ============================================================
 {
@@ -586,6 +722,7 @@ Per-file TO:   adaptive (${MIN_TIMEOUT}-${MAX_TIMEOUT}s, scale by size)
 Redaction:     v4 (line-anchored, JSON-safe)
 Leak scan:     $([ "$SKIP_LEAK_SCAN" = "1" ] && echo "SKIPPED" || echo "enabled (path-aware entropy filter)")
 Build dirs:    $([ "$INCLUDE_BUILD" = "1" ] && echo "INCLUDED" || echo "excluded")
+Split dumps:   $([ "$SKIP_SPLIT" = "1" ] && echo "disabled" || echo "enabled")
 Excluded:      .env files, celerybeat-schedule, previous dumps,
                node_modules/, build/, .cxx/, cmake/, intermediates/,
                .gradle/, sessions/, .git/, .git-projects-old/
@@ -609,7 +746,9 @@ SECTION
 
     echo "Immediate subdirectories:"
     echo ""
-    find "$PROJECT_ROOT" -mindepth 1 -maxdepth 1 -type d -not -name ".*" 2>/dev/null </dev/null | LC_ALL=C sort
+    while IFS= read -r _d; do
+        [ -n "$_d" ] && echo "$_d"
+    done < "$TOP_DIRS_FILE"
     echo ""
 
     # ---------- 2. DIRECTORY TREE ----------
@@ -624,7 +763,7 @@ SECTION
     echo "Full directory tree (excluding build artifacts, deps, binaries, .env files):"
     echo ""
 
-    TREE_EXCLUDE='node_modules|__pycache__|.git|.git-projects-old|.expo|.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|.metro|.gradle|.kotlin|.cache|.vscode|.idea|.npm|.yarn|venv|env|.venv|.tox|.mypy_cache|.pytest_cache|Pods|.next|.nuxt|.turbo|.parcel-cache|.serverless|.terraform|.husky|_build|target|vendor|.cxx|cmake|intermediates|derived|.android|.env|celerybeat-schedule|complete_codebase_dump_*.txt|.dump_leak_report'
+    TREE_EXCLUDE='node_modules|__pycache__|^\.git$|\.git-projects-old|\.expo|\.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|\.metro|\.gradle|\.kotlin|\.cache|\.vscode|\.idea|\.npm|\.yarn|venv|env|\.venv|\.tox|\.mypy_cache|\.pytest_cache|Pods|\.next|\.nuxt|\.turbo|\.parcel-cache|\.serverless|\.terraform|_build|target|vendor|\.cxx|cmake|intermediates|derived|\.android|\.env|celerybeat-schedule|complete_codebase_dump_.*\.txt|\.dump_leak_report'
 
     if command -v tree &>/dev/null; then
         if [ "$HAS_GTIMEOUT" = "1" ]; then
@@ -729,6 +868,8 @@ SECTION
         FROM information_schema.table_constraints AS tc
         JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
         JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+        JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
         WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema='public'
         ORDER BY tc.table_name;" </dev/null 2>/dev/null
         echo ""
@@ -757,6 +898,7 @@ Each file begins with:
     @@@FILE@@@ <relative/path>
 
 Redaction v4: line-anchored. Only literal string assignments at the
+Redaction v4: line-anchored. Only literal string assignments at the
 beginning of a line are redacted. JSON like {"PASSWORD": "x"} is NOT
 matched (avoids source corruption).
 
@@ -767,22 +909,10 @@ SECTION
 
     # ----- 5.0 Root files -----
     if [ -s "$ROOT_FILES_FILE" ]; then
-        echo ""
-        echo "################################################################################"
-        echo "# ROOT-LEVEL FILES"
-        echo "################################################################################"
-        echo ""
-        ROOT_CONTENTS="$(cat "$ROOT_FILES_FILE")"
-        while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            CURRENT=$((CURRENT + 1))
-            render_progress "${f#$PROJECT_ROOT/}"
-            dump_file_to_stdout "$f" "Root-level file"
-        done <<< "$ROOT_CONTENTS"
+        emit_files_section "ROOT-LEVEL FILES" "Root-level file" < "$ROOT_FILES_FILE"
     fi
 
-    # ----- 5.x Each top-level dir -----
-    TOP_DIRS_CONTENTS="$(cat "$TOP_DIRS_FILE")"
+    # ----- 5.x Each top-level dir (including allowlisted CI dotfolders) -----
     while IFS= read -r dir; do
         [ -z "$dir" ] && continue
         [ -d "$dir" ] || continue
@@ -805,13 +935,9 @@ SECTION
         echo "Files in $dir_name/: $DIR_COUNT"
         echo ""
 
-        while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            CURRENT=$((CURRENT + 1))
-            render_progress "${f#$PROJECT_ROOT/}"
-            dump_file_to_stdout "$f" "Source file under $dir_name/"
-        done <<< "$DIR_CONTENTS"
-    done <<< "$TOP_DIRS_CONTENTS"
+        printf '%s\n' "$DIR_CONTENTS" \
+            | emit_files_section "" "Source file under $dir_name/"
+    done < "$TOP_DIRS_FILE"
 
     # ---------- 6. MIGRATIONS LISTING ----------
     cat <<'SECTION'
@@ -850,9 +976,10 @@ FOOTER
 } > "$TMP_OUTPUT"
 
 # ============================================================
-# ATOMIC MOVE
+# ATOMIC MOVE + terminate the progress line
 # ============================================================
 if [ ! -s "$TMP_OUTPUT" ]; then
+    printf '\n' >&2
     echo -e "${RED}❌ Dump produced empty output — aborting.${NC}" >&2
     exit 1
 fi
@@ -861,15 +988,219 @@ mv "$TMP_OUTPUT" "$OUTPUT_FILE"
 END_TS=$(date +%s)
 ELAPSED=$((END_TS - START_TS))
 
+# v5.2: overwrite the last rendered progress frame with a truthful
+# summary line, terminated with a real newline so it scrolls cleanly.
+printf '\r%s✅ Combined pass: %d files in %ds%s\033[K\n' \
+    "$GREEN" "$TOTAL_FILES" "$ELAPSED" "$NC" >&2
+
 # ============================================================
-# LEAK SCAN
+# SPLIT DUMPS
+# ============================================================
+SPLIT_OUTPUTS=()
+SPLIT_FAILURES=0
+
+resolve_split_spec() {
+    local spec="$1"
+    local kind="${spec%%:*}"
+    local rest="${spec#*:}"
+    local label="" files=""
+
+    case "$kind" in
+        dir)
+            label="$rest"
+            local d="$PROJECT_ROOT/$rest"
+            [ -d "$d" ] || return 1
+            files="$(grep "^${d}/" "$TMP_LIST" || true)"
+            ;;
+        file)
+            label="$(basename "$rest")"
+            local f="$PROJECT_ROOT/$rest"
+            [ -f "$f" ] || return 1
+            if grep -Fxq "$f" "$TMP_LIST"; then
+                files="$f"
+            else
+                return 1
+            fi
+            ;;
+        group)
+            label="${rest%%:*}"
+            local members="${rest#*:}"
+            IFS=',' read -ra _m <<< "$members"
+            local one
+            for one in "${_m[@]}"; do
+                one="${one// /}"
+                [ -z "$one" ] && continue
+                local fp="$PROJECT_ROOT/$one"
+                [ -f "$fp" ] || continue
+                if grep -Fxq "$fp" "$TMP_LIST"; then
+                    files+="$fp"$'\n'
+                fi
+            done
+            files="${files%$'\n'}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [ -z "$files" ] && return 1
+    printf '%s\t%s' "$label" "$files"
+}
+
+write_split_dump() {
+    local spec="$1"
+    local resolved
+    resolved="$(resolve_split_spec "$spec")" || {
+        echo -e "${DIM}   • ${spec} matched 0 files — skipping${NC}" >&2
+        return 0
+    }
+
+    local label="${resolved%%$'\t'*}"
+    local files="${resolved#*$'\t'}"
+    local split_count
+    split_count=$(printf '%s\n' "$files" | grep -c . || true)
+    [ "$split_count" -eq 0 ] && return 0
+
+    local slug="${label//\//_}"
+    slug="${slug// /_}"
+    local split_file="complete_codebase_dump_${slug}_${TIMESTAMP}.txt"
+    local split_tmp
+    split_tmp="$(mktemp -t dump_split.XXXXXX)"
+
+    echo -e "${YELLOW}🗂️  Writing split dump: ${BOLD}${label}${NC}${YELLOW} (${split_count} files) -> ${split_file}${NC}" >&2
+
+    # v5.2: save combined state, reset to split-local state. All of
+    # these writes are visible to emit_files_section because it runs
+    # in the same scope (not a subshell within this function).
+    local _saved_current="$CURRENT"
+    local _saved_start="$START_TS"
+    local _saved_total="$PROGRESS_TOTAL"
+    CURRENT=0
+    START_TS=$(date +%s)
+    PROGRESS_TOTAL="$split_count"
+
+    {
+        cat <<SPLIT_HEADER
+================================================================================
+COMPLETE CODEBASE DUMP — SUBSET: ${label}
+================================================================================
+Generated:     $(date)
+Project:       $PROJECT_NAME
+Host:          $(hostname 2>/dev/null || echo unknown)
+Project root:  $PROJECT_ROOT
+Subset:        ${label}
+Spec:          ${spec}
+Files in dump: ${split_count}
+Per-file TO:   adaptive (${MIN_TIMEOUT}-${MAX_TIMEOUT}s, scale by size)
+Redaction:     v4 (line-anchored, JSON-safe)
+Leak scan:     $([ "$SKIP_LEAK_SCAN" = "1" ] && echo "SKIPPED" || echo "enabled (path-aware entropy filter)")
+Build dirs:    $([ "$INCLUDE_BUILD" = "1" ] && echo "INCLUDED" || echo "excluded")
+================================================================================
+
+SPLIT_HEADER
+
+        echo ""
+        echo "################################################################################"
+        echo "# SUBSET: ${label}"
+        echo "################################################################################"
+        echo ""
+        echo "Files in subset: ${split_count}"
+        echo ""
+
+        printf '%s\n' "$files" \
+            | emit_files_section "" "Source file under ${label}"
+
+        cat <<SPLIT_FOOTER
+
+================================================================================
+END OF SUBSET DUMP: ${label}
+================================================================================
+Generated:     $(date)
+Files in dump: ${split_count}
+================================================================================
+SPLIT_FOOTER
+    } > "$split_tmp"
+
+    local _split_elapsed=$(( $(date +%s) - START_TS ))
+
+    # Restore combined state so the next split starts clean.
+    CURRENT="$_saved_current"
+    START_TS="$_saved_start"
+    PROGRESS_TOTAL="$_saved_total"
+
+    # v5.2: terminate the progress line and print truthful summary.
+    printf '\r%s✅ %s: %d files in %ds%s\033[K\n' \
+        "$GREEN" "$label" "$split_count" "$_split_elapsed" "$NC" >&2
+
+    if [ ! -s "$split_tmp" ]; then
+        echo -e "${RED}   ❌ ${label} split dump was empty — discarding${NC}" >&2
+        rm -f "$split_tmp"
+        SPLIT_FAILURES=$((SPLIT_FAILURES + 1))
+        return 1
+    fi
+
+    mv "$split_tmp" "$split_file"
+
+    # Optional per-split leak scan.
+    if [ "$SKIP_LEAK_SCAN" = "0" ] && [ "$SCAN_SPLITS" = "1" ]; then
+        local _saved_report
+        _saved_report="$(cat "$LEAK_REPORT" 2>/dev/null || true)"
+        local sc
+        sc=$(scan_for_leaks "$split_file" | tr -d '[:space:]')
+        [ -z "$sc" ] && sc=0
+        if [ "$sc" -gt 0 ] 2>/dev/null; then
+            echo -e "${RED}   ❌ Leak in ${split_file} (${sc} hit(s)) — removing${NC}" >&2
+            cp "$LEAK_REPORT" "leak_report_${slug}_${TIMESTAMP}.txt" 2>/dev/null || true
+            rm -f "$split_file"
+            printf '%s\n' "$_saved_report" > "$LEAK_REPORT"
+            SPLIT_FAILURES=$((SPLIT_FAILURES + 1))
+            return 1
+        fi
+        printf '%s\n' "$_saved_report" > "$LEAK_REPORT"
+    fi
+
+    SPLIT_OUTPUTS+=("$split_file")
+
+    local _expected
+    if _expected="$(expected_count_for "$label")" && [ -n "$_expected" ]; then
+        if [ "$split_count" -eq "$_expected" ]; then
+            echo -e "${GREEN}   ✅ ${split_file} (${split_count} files, $(du -h "$split_file" | cut -f1))${NC}" >&2
+        else
+            echo -e "${YELLOW}   ⚠️  ${split_file} (${split_count} files, expected ${_expected})${NC}" >&2
+        fi
+    else
+        echo -e "${GREEN}   ✅ ${split_file} (${split_count} files, $(du -h "$split_file" | cut -f1))${NC}" >&2
+    fi
+    return 0
+}
+
+if [ "$SKIP_SPLIT" = "0" ] && [ -n "$SPLIT_TARGETS" ]; then
+    echo "" >&2
+    echo -e "${CYAN}🗂️  Writing split dumps...${NC}" >&2
+    _spec_list="$(printf '%s' "$SPLIT_TARGETS" | sed -E 's/,(dir:|file:|group:)/\n\1/g')"
+    while IFS= read -r _spec; do
+        [ -z "$_spec" ] && continue
+        # Run in a subshell so a crash in one split target does NOT
+        # abort the loop. Subshell state (CURRENT/START_TS/etc.) is
+        # discarded on exit, which is exactly what we want.
+        (
+            write_split_dump "$_spec"
+        ) || {
+            echo -e "${YELLOW}   ⚠️  Split '${_spec}' failed — continuing with remaining targets${NC}" >&2
+            SPLIT_FAILURES=$((SPLIT_FAILURES + 1))
+        }
+    done <<< "$_spec_list"
+fi
+
+# ============================================================
+# LEAK SCAN (combined)
 # ============================================================
 if [ "$SKIP_LEAK_SCAN" = "1" ]; then
     echo "" >&2
     echo -e "${YELLOW}⏭️  Leak scan skipped (--skip-leak-scan).${NC}" >&2
 else
     echo "" >&2
-    echo -e "${YELLOW}🔎 Scanning dump for leaked secrets...${NC}" >&2
+    echo -e "${YELLOW}🔎 Scanning combined dump for leaked secrets...${NC}" >&2
     LEAK_COUNT=$(scan_for_leaks "$OUTPUT_FILE" | tr -d '[:space:]')
     [ -z "$LEAK_COUNT" ] && LEAK_COUNT=0
 
@@ -885,17 +1216,22 @@ else
         echo -e "${YELLOW}First 20 hits:${NC}" >&2
         head -20 "$LEAK_REPORT" | sed 's/^/      /' >&2
         echo "" >&2
+        if [ "$STRICT_SPLIT_CLEANUP" = "1" ] && [ "${#SPLIT_OUTPUTS[@]}" -gt 0 ]; then
+            echo -e "${RED}Removing ${#SPLIT_OUTPUTS[@]} split dump(s) due to combined leak.${NC}" >&2
+            rm -f "${SPLIT_OUTPUTS[@]}"
+        fi
         echo -e "${YELLOW}If these are false positives (paths, cmake, ndk), run:${NC}" >&2
         echo -e "  ./$(basename "$0") --skip-leak-scan" >&2
         echo "" >&2
         exit 2
     fi
 
-    echo -e "${GREEN}✅ No leaks detected.${NC}" >&2
+    echo -e "${GREEN}✅ No leaks detected in combined dump.${NC}" >&2
 fi
 echo "" >&2
 
 # ============================================================
+# STATISTICS
 # STATISTICS
 # ============================================================
 sed "s|^${PROJECT_ROOT}/||" "$TMP_LIST" | LC_ALL=C sort -u > "$EXPECTED_TMP"
@@ -913,6 +1249,9 @@ FRONTEND_COUNT=$(count_matches '^frontend/' "$ACTUAL_TMP")
 BACKEND_COUNT=$(count_matches '^backend/' "$ACTUAL_TMP")
 SCANNER_COUNT=$(count_matches '^QRScannerApp/' "$ACTUAL_TMP")
 BAILEYS_COUNT=$(count_matches '^baileys-gateway/' "$ACTUAL_TMP")
+SHARED_COUNT=$(count_matches '^shared/' "$ACTUAL_TMP")
+SAMPLE_CONFIGS_COUNT=$(count_matches '^sample_configs/' "$ACTUAL_TMP")
+GITHUB_COUNT=$(count_matches '^\.github/' "$ACTUAL_TMP")
 ENV_LEAKS=$(count_matches '(^|/)\.env(\.|$)' "$ACTUAL_TMP")
 CELERY_LEAKS=$(count_matches '(^|/)celerybeat-schedule$' "$ACTUAL_TMP")
 SESSION_LEAKS=$(count_matches '(^|/)sessions/' "$ACTUAL_TMP")
@@ -927,8 +1266,8 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║   ✅  DUMP COMPLETE                                          ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${CYAN}📄 Output file:${NC}  $OUTPUT_FILE"
-echo -e "${CYAN}📁 Full path:${NC}    $(pwd)/$OUTPUT_FILE"
+echo -e "${CYAN}📄 Combined dump:${NC}  $OUTPUT_FILE"
+echo -e "${CYAN}📁 Full path:${NC}      $(pwd)/$OUTPUT_FILE"
 echo ""
 echo -e "${BLUE}📊 Statistics:${NC}"
 echo -e "   • Files expected:  ${BOLD}${TOTAL_FILES}${NC}"
@@ -943,6 +1282,9 @@ echo -e "   • frontend/ files:        ${BOLD}${FRONTEND_COUNT}${NC}"
 echo -e "   • backend/ files:         ${BOLD}${BACKEND_COUNT}${NC}"
 echo -e "   • QRScannerApp/ files:    ${BOLD}${SCANNER_COUNT}${NC}"
 echo -e "   • baileys-gateway/ files: ${BOLD}${BAILEYS_COUNT}${NC} (expected: >0)"
+echo -e "   • shared/ files:          ${BOLD}${SHARED_COUNT}${NC}"
+echo -e "   • sample_configs/ files:  ${BOLD}${SAMPLE_CONFIGS_COUNT}${NC}"
+echo -e "   • .github/ files:         ${BOLD}${GITHUB_COUNT}${NC}"
 echo -e "   • .env leaks:             ${BOLD}${ENV_LEAKS}${NC} (expected: 0)"
 echo -e "   • sessions/ leaks:        ${BOLD}${SESSION_LEAKS}${NC} (expected: 0)"
 echo -e "   • celerybeat-schedule:    ${BOLD}${CELERY_LEAKS}${NC} (expected: 0)"
@@ -952,7 +1294,7 @@ awk '{printf "   • %-30s %s files\n", $2, $1}' "$TOPLEVEL_BUCKETS_FILE"
 echo ""
 
 if [ "$MISSING_COUNT" -gt 0 ]; then
-    echo -e "${RED}⚠️  MISSING ${MISSING_COUNT} file(s) from the dump. First 20:${NC}"
+    echo -e "${RED}⚠️  MISSING ${MISSING_COUNT} file(s) from the combined dump. First 20:${NC}"
     head -20 "$MISSING_TMP" | sed 's/^/      /'
     if [ "$MISSING_COUNT" -gt 20 ]; then
         echo -e "${RED}      ...and $((MISSING_COUNT - 20)) more.${NC}"
@@ -961,17 +1303,32 @@ else
     echo -e "${GREEN}✅ All ${TOTAL_FILES} files dumped successfully.${NC}"
 fi
 
+if [ "${#SPLIT_OUTPUTS[@]}" -gt 0 ]; then
+    echo ""
+    echo -e "${CYAN}🗂️  Split dumps written (${#SPLIT_OUTPUTS[@]}):${NC}"
+    for s in "${SPLIT_OUTPUTS[@]}"; do
+        n=$(grep -c "^${FILE_MARKER} " "$s" 2>/dev/null || echo 0)
+        printf "   • %-55s %3s files, %s\n" "$s" "$n" "$(du -h "$s" | cut -f1)"
+    done
+fi
+if [ "$SPLIT_FAILURES" -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}⚠️  ${SPLIT_FAILURES} split target(s) failed — see warnings above.${NC}"
+fi
+
+# v5.2: explicitly list timed-out files so they can be inspected.
 if [ -s "$POISON_FILE" ]; then
     POISON_COUNT_NOW=$(grep -c . "$POISON_FILE" || true)
     if [ "$POISON_COUNT_NOW" -gt 0 ]; then
         echo ""
-        echo -e "${YELLOW}⚠️  ${POISON_COUNT_NOW} poison file(s) recorded in ${POISON_FILE}:${NC}"
-        head -10 "$POISON_FILE" | sed 's/^/      /'
-        if [ "$POISON_COUNT_NOW" -gt 10 ]; then
-            echo -e "${YELLOW}      ...and $((POISON_COUNT_NOW - 10)) more.${NC}"
+        echo -e "${YELLOW}⏱️  Files skipped due to timeout (${POISON_COUNT_NOW}):${NC}"
+        head -20 "$POISON_FILE" | sed 's/^/      /'
+        if [ "$POISON_COUNT_NOW" -gt 20 ]; then
+            echo -e "${YELLOW}      ...and $((POISON_COUNT_NOW - 20)) more.${NC}"
         fi
         echo -e "${DIM}    These will be skipped instantly on the next run.${NC}"
         echo -e "${DIM}    Delete .dump_poison_files to retry them.${NC}"
+        echo -e "${DIM}    Hint: PER_FILE_TIMEOUT=60 ./$(basename "$0") to retry with more time.${NC}"
     fi
 fi
 

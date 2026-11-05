@@ -1,7 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Konva from 'konva';
 import { Box, CircularProgress, Typography } from '@mui/material';
-import api from '../../services/api';
 
 const BRAND_COLORS = {
   charcoal: '#333333',
@@ -17,7 +16,7 @@ const BRAND_COLORS = {
 const SEAT_SIZE = 24;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 3;
-
+const FONT_SIZE = 11; 
 const PADDING_TOP = 20;
 const PADDING_BOTTOM = 80; 
 const PADDING_SIDE = 40;
@@ -36,17 +35,11 @@ const getSeatStroke = (seat, isSelected) => {
 };
 
 const SeatingCanvas = forwardRef(({
-  eventId,
-  sessionId,
   selectedSeatIds = [],
   onSelectSeats,
   readOnly = false,
-  layoutData: externalLayoutData,
+  layoutData,
 }, ref) => {
-  const [layoutData, setLayoutData] = useState(externalLayoutData || null);
-  const [loading, setLoading] = useState(!externalLayoutData);
-  const [error, setError] = useState(null);
-  
   const containerRef = useRef(null);
   const stageRef = useRef(null);
   const layerRef = useRef(null);
@@ -62,36 +55,12 @@ const SeatingCanvas = forwardRef(({
   useEffect(() => { onSelectRef.current = onSelectSeats; }, [onSelectSeats]);
   useEffect(() => { readOnlyRef.current = readOnly; }, [readOnly]);
 
-  useEffect(() => {
-    if (externalLayoutData) {
-      setLayoutData(externalLayoutData);
-      setLoading(false);
-      return;
-    }
-    
-    const fetchLayout = async () => {
-      try {
-        const res = await api.get(`/events/${eventId}/seat-map/`, { 
-            params: sessionId ? { session: sessionId } : {} 
-        });
-        setLayoutData(res.data);
-      } catch (err) {
-        console.error(err);
-        setError('Failed to load seating layout.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    if (eventId) fetchLayout();
-  }, [eventId, sessionId, externalLayoutData]);
-
   const legendStats = useMemo(() => {
     if (!layoutData?.seats) return [];
     const stats = {};
     layoutData.seats.forEach(seat => {
       let groupName = 'General';
       let groupColor = '#94a3b8';
-      
       if (seat.status === 'sold' || seat.status === 'booked') {
         groupName = 'Sold / Unavailable';
         groupColor = '#e0e0e0';
@@ -102,11 +71,9 @@ const SeatingCanvas = forwardRef(({
         groupName = seat.category_name;
         groupColor = seat.category_color || '#94a3b8';
       }
-
       if (!stats[groupName]) stats[groupName] = { name: groupName, color: groupColor, count: 0 };
       stats[groupName].count++;
     });
-
     return Object.values(stats).sort((a, b) => {
       const isSpecialA = a.name.includes('Sold') || a.name.includes('Held');
       const isSpecialB = b.name.includes('Sold') || b.name.includes('Held');
@@ -121,40 +88,53 @@ const SeatingCanvas = forwardRef(({
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     layoutData.seats.forEach(seat => {
-      minX = Math.min(minX, seat.x_coord);
-      maxX = Math.max(maxX, seat.x_coord + SEAT_SIZE); 
-      minY = Math.min(minY, seat.y_coord);
-      maxY = Math.max(maxY, seat.y_coord + SEAT_SIZE); 
+        minX = Math.min(minX, seat.x_coord);
+        maxX = Math.max(maxX, seat.x_coord); 
+        minY = Math.min(minY, seat.y_coord);
+        maxY = Math.max(maxY, seat.y_coord); 
     });
 
-    const contentWidth = maxX - minX;
-    const contentHeight = maxY - minY;
+    // ✅ Add SEAT_SIZE so the bounding box includes the full seat, not just its top-left corner
+    const contentWidth = (maxX - minX) + SEAT_SIZE;
+    const contentHeight = (maxY - minY) + SEAT_SIZE;
     
     const w = container.clientWidth;
     const h = container.clientHeight;
-    const dynamicBottomPadding = h < 350 ? 20 : PADDING_BOTTOM; 
+
+    // Keep a reasonable reserve for the bottom overlays
+    const bottomReserve = 90;
+    const topReserve = 20;
 
     const availW = Math.max(100, w - (PADDING_SIDE * 2));
-    const availH = Math.max(100, h - (PADDING_TOP + dynamicBottomPadding));
-    
+    const availH = Math.max(100, h - (topReserve + bottomReserve));
+
     const scaleX = availW / contentWidth;
     const scaleY = availH / contentHeight;
-    const newScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
     
+    // Remove the artificial cap; let it grow to fill
+    const newScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY));
+
+    stage.scale({ x: newScale, y: newScale });
+
+    // Center horizontally
     const centerX = (w - (contentWidth * newScale)) / 2;
+    // Center vertically in the full container
     const centerY = (h - (contentHeight * newScale)) / 2;
-    
-    const targetPos = {
-      x: centerX - (minX * newScale),
-      y: centerY - (minY * newScale),
-    };
+
+    const targetX = centerX - (minX * newScale);
+    const targetY = centerY - (minY * newScale);
 
     if (animate) {
-      stage.to({ ...targetPos, scaleX: newScale, scaleY: newScale, duration: 0.2, onFinish: () => setZoomPct(Math.round(newScale * 100)) });
+        stage.to({
+            x: targetX, y: targetY,
+            scaleX: newScale, scaleY: newScale,
+            duration: 0.2,
+            onFinish: () => setZoomPct(Math.round(newScale * 100)),
+        });
     } else {
-      stage.scale({ x: newScale, y: newScale });
-      stage.position(targetPos);
-      setZoomPct(Math.round(newScale * 100));
+        stage.scale({ x: newScale, y: newScale });
+        stage.position({ x: targetX, y: targetY });
+        setZoomPct(Math.round(newScale * 100));
     }
   }, [layoutData]);
 
@@ -204,11 +184,12 @@ const SeatingCanvas = forwardRef(({
 
         const text = new Konva.Text({
           text: seatNumber,
-          fontSize: 9,
+          fontSize: FONT_SIZE,
           fill: isSelected ? '#ffffff' : BRAND_COLORS.charcoal,
           width: SEAT_SIZE,
           align: 'center',
-          y: 6,
+          // Offset centers the text: y = (SEAT_SIZE - FONT_SIZE) / 2 + (small nudge)
+          y: (SEAT_SIZE - FONT_SIZE) / 2 + 1,
           fontStyle: isSelected ? 'bold' : 'normal',
         });
 
@@ -327,7 +308,6 @@ const SeatingCanvas = forwardRef(({
     layer.batchDraw();
   }, [selectedSeatIds, layoutData]);
 
-  // ✅ Expose methods and state to parent via ref
   useImperativeHandle(ref, () => ({
     zoomIn: () => {
       const stage = stageRef.current;
@@ -361,19 +341,11 @@ const SeatingCanvas = forwardRef(({
     legendStats
   }), [zoomPct, legendStats, fitToContainer]);
 
-  if (loading) {
-    return (
-      <Box sx={{ p: 3, border: `1px solid ${BRAND_COLORS.border}`, display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
-        <CircularProgress sx={{ color: BRAND_COLORS.red }} />
-      </Box>
-    );
-  }
-
-  if (error || !layoutData?.seats?.length) {
+  if (!layoutData?.seats?.length) {
     return (
       <Box sx={{ p: 4, textAlign: 'center', border: `1px solid ${BRAND_COLORS.border}`, height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
         <Typography sx={{ color: BRAND_COLORS.darkGray }}>
-          {error || 'No seating layout has been configured for this venue yet.'}
+          No seating layout has been configured for this venue yet.
         </Typography>
       </Box>
     );

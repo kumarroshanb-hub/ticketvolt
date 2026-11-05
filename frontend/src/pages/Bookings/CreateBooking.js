@@ -134,6 +134,63 @@ const CreateBooking = () => {
     const [selectedSeats, setSelectedSeats] = useState([]);
     const [reservedAttendees, setReservedAttendees] = useState([]);
 
+    // ✅ Layout captured from SeatingCanvas via onLayoutLoaded — used to compute the legend in the parent
+    const [seatingLayout, setSeatingLayout] = useState(null);
+    const [seatingLayoutLoading, setSeatingLayoutLoading] = useState(false);
+
+    useEffect(() => {
+        if (!hasReservedSeating || !selectedEvent?.id) {
+            setSeatingLayout(null);
+            return;
+        }
+        let cancelled = false;
+        const load = async () => {
+            setSeatingLayoutLoading(true);
+            try {
+                const res = await api.get(`/events/${selectedEvent.id}/seat-map/`, {
+                    params: selectedSession?.id ? { session: selectedSession.id } : {},
+                });
+                if (!cancelled) setSeatingLayout(res.data);
+            } catch (e) {
+                console.error(e);
+                if (!cancelled) setSeatingLayout(null);
+            } finally {
+                if (!cancelled) setSeatingLayoutLoading(false);
+            }
+        };
+        load();
+        return () => { cancelled = true; };
+    }, [selectedEvent?.id, selectedSession?.id, hasReservedSeating]);
+
+    // ✅ Legend derived from layout — available on first render after fetch resolves
+    const seatingLegendStats = useMemo(() => {
+        if (!seatingLayout?.seats) return [];
+        const stats = {};
+        seatingLayout.seats.forEach(seat => {
+            let groupName = 'General';
+            let groupColor = '#94a3b8';
+            if (seat.status === 'sold' || seat.status === 'booked') {
+                groupName = 'Sold / Unavailable';
+                groupColor = '#e0e0e0';
+            } else if (seat.status === 'held') {
+                groupName = 'Held';
+                groupColor = BRAND_COLORS.warning;
+            } else if (seat.category_name) {
+                groupName = seat.category_name;
+                groupColor = seat.category_color || '#94a3b8';
+            }
+            if (!stats[groupName]) stats[groupName] = { name: groupName, color: groupColor, count: 0 };
+            stats[groupName].count++;
+        });
+        return Object.values(stats).sort((a, b) => {
+            const isSpecialA = a.name.includes('Sold') || a.name.includes('Held');
+            const isSpecialB = b.name.includes('Sold') || b.name.includes('Held');
+            if (isSpecialA && !isSpecialB) return 1;
+            if (!isSpecialA && isSpecialB) return -1;
+            return a.name.localeCompare(b.name);
+        });
+    }, [seatingLayout]);
+
     const isFreeRegistrationFlow =
         (eventDetails && eventDetails.event_flow === 'free_registration') ||
         (selectedEvent && selectedEvent.event_flow === 'free_registration');
@@ -385,6 +442,7 @@ const CreateBooking = () => {
         resetDraft(); setSubmitError(null); setSelectedEvent(event); setSelectedSession(null);
         setSlotPreferences([]); setSlotPreferencesInput(''); setTiers([]); setEventDetails(null);
         setDiscountInput(''); setAppliedDiscount(null); setSelectedSeats([]); setReservedAttendees([]);
+        setSeatingLayout(null);                 // ✅ reset layout
         loadEventDetails(event.id);
         const hasSessionsPreview = (event.session_count ?? event.sessions?.length ?? 0) > 0;
         setActiveStep(hasSessionsPreview ? STEP_KEYS.SLOT : nextNonSlotStep(event));
@@ -620,6 +678,13 @@ const CreateBooking = () => {
     // =========================================================================
     const renderTicketSelection = () => {
         if (hasReservedSeating) {
+            if (seatingLayoutLoading || !seatingLayout) {
+                return (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 320px)', minHeight: '500px' }}>
+                        <CircularProgress />
+                    </Box>
+                );
+            }
             return (
                 <Box sx={{ 
                     py: 2, 
@@ -627,32 +692,55 @@ const CreateBooking = () => {
                     flexDirection: 'column', 
                     gap: 2,
                     width: '100%',
-                    height: 'calc(100vh - 320px)', 
-                    minHeight: '500px',
+                    height: 'calc(100vh - 340px)',
+                    minHeight: '540px',
+                    maxHeight: '780px',
                 }}>
-                    <Alert severity="info" sx={{ mb: 1, flexShrink: 0 }}>
-                        <LocationIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                        Select your seats on the map below for <strong>{selectedEvent?.title}</strong>
-                        {selectedSession && (
-                            <span> • <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} /> Slot: {formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)}</span>
-                        )}
-                    </Alert>
                     
-                    {/* ✅ Relative wrapper holds both Canvas and Overlays */}
-                    <Box sx={{ flexGrow: 1, minHeight: 0, width: '100%', position: 'relative' }}>
+                    {/* ✅ Two-column header: Alert on left, Summary on right */}
+                    <Box sx={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                        <Alert 
+                            severity="info" 
+                            sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}
+                        >
+                            <LocationIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                            Select your seats on the map below for <strong>{selectedEvent?.title}</strong>
+                            {selectedSession && (
+                                <span> • <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} /> Slot: {formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)}</span>
+                            )}
+                        </Alert>
                         
-                        {/* 1. The Canvas - Fills the wrapper */}
+                        <Paper sx={{ 
+                            px: 3, 
+                            py: 1, 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            justifyContent: 'center',
+                            border: `1px solid ${BRAND_COLORS.border}`,
+                            borderRadius: 1,
+                            minWidth: '200px',
+                            bgcolor: '#f8fafc',
+                        }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                🎫 {selectedSeats.length} seat(s) selected
+                            </Typography>
+                            <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>
+                                {formatMoney(selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0))}
+                            </Typography>
+                        </Paper>
+                    </Box>
+                    
+                    <Box sx={{ flexGrow: 1, minHeight: 0, width: '100%', position: 'relative' }}>
                         <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
                             <SeatingCanvas
                                 ref={canvasRef}
-                                eventId={selectedEvent.id}
-                                sessionId={selectedSession?.id}
+                                layoutData={seatingLayout}
                                 selectedSeatIds={selectedSeats.map(s => s.id)}
                                 onSelectSeats={setSelectedSeats}
                             />
                         </Box>
 
-                        {/* 2. The Overlays - Siblings to the canvas, safely on top */}
+                        {/* Zoom Controls */}
                         <Stack
                             direction="row"
                             spacing={0.5}
@@ -668,7 +756,7 @@ const CreateBooking = () => {
                                 py: 0.5,
                                 boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
                                 border: `1px solid ${BRAND_COLORS.border}`,
-                                zIndex: 100 // Ensure it's above the canvas
+                                zIndex: 100
                             }}
                         >
                             <IconButton size="small" onClick={() => canvasRef.current?.zoomOut()} sx={{ width: 28, height: 28 }}>
@@ -685,6 +773,7 @@ const CreateBooking = () => {
                             </IconButton>
                         </Stack>
 
+                        {/* Legend */}
                         <Box sx={{ 
                             position: 'absolute', 
                             bottom: 16, 
@@ -703,7 +792,7 @@ const CreateBooking = () => {
                             flexWrap: 'wrap',
                             maxWidth: 'calc(100% - 160px)' 
                         }}>
-                            {canvasRef.current?.legendStats?.map((stat) => (
+                            {seatingLegendStats.map((stat) => (
                                 <Box key={stat.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                     <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: stat.color }} />
                                     <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>
@@ -722,24 +811,6 @@ const CreateBooking = () => {
                             )}
                         </Box>
                     </Box>
-                    
-                    {/* ✅ The summary box is ALWAYS rendered to prevent layout shifts */}
-                    <Paper sx={{ 
-                        mt: 1, 
-                        p: 2, 
-                        bgcolor: 'background.default', 
-                        borderRadius: 2, 
-                        flexShrink: 0,
-                        minHeight: '78px',
-                        visibility: selectedSeats.length > 0 ? 'visible' : 'hidden'
-                    }}>
-                        <Typography variant="subtitle1" sx={{ color: 'text.primary' }}>
-                            🎫 {selectedSeats.length} seat(s) selected
-                        </Typography>
-                        <Typography variant="h6" sx={{ color: 'primary.main' }}>
-                            Total: {formatMoney(selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0))}
-                        </Typography>
-                    </Paper>
                 </Box>
             );
         }

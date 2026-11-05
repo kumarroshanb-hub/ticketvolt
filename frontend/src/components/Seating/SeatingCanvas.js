@@ -1,12 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Konva from 'konva';
-import { Box, CircularProgress, Typography, IconButton, Stack, Paper } from '@mui/material';
-import { ZoomIn, ZoomOut, FitScreen } from '@mui/icons-material';
+import { Box, CircularProgress, Typography } from '@mui/material';
 import api from '../../services/api';
 
 const BRAND_COLORS = {
   charcoal: '#333333',
-  red: '#FF2A2A',
+  red: '#FF2A2A', 
   darkGray: '#555555',
   lightGray: '#f4f4f4',
   border: '#e2e8f0',
@@ -19,32 +18,31 @@ const SEAT_SIZE = 24;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 3;
 
-// Safe area constants
 const PADDING_TOP = 20;
 const PADDING_BOTTOM = 80; 
 const PADDING_SIDE = 40;
 
 const getSeatColor = (seat, isSelected) => {
-  if (isSelected) return BRAND_COLORS.red; 
+  if (isSelected) return '#333333'; 
   if (seat.status === 'booked' || seat.status === 'sold') return '#e0e0e0'; 
   if (seat.status === 'held') return BRAND_COLORS.warning; 
   return seat.category_color || '#94a3b8';
 };
 
 const getSeatStroke = (seat, isSelected) => {
-  if (isSelected) return BRAND_COLORS.charcoal;
+  if (isSelected) return '#000000'; 
   if (seat.status === 'booked' || seat.status === 'sold') return '#bdbdbd';
   return BRAND_COLORS.charcoal;
 };
 
-export default function SeatingCanvas({
+const SeatingCanvas = forwardRef(({
   eventId,
   sessionId,
   selectedSeatIds = [],
   onSelectSeats,
   readOnly = false,
   layoutData: externalLayoutData,
-}) {
+}, ref) => {
   const [layoutData, setLayoutData] = useState(externalLayoutData || null);
   const [loading, setLoading] = useState(!externalLayoutData);
   const [error, setError] = useState(null);
@@ -54,14 +52,13 @@ export default function SeatingCanvas({
   const layerRef = useRef(null);
   const nodesRef = useRef(new Map());
   
-  const selectedRef = useRef(selectedSeatIds);
   const onSelectRef = useRef(onSelectSeats);
   const readOnlyRef = useRef(readOnly);
+  const activeSelectionRef = useRef(new Set(selectedSeatIds.map(s => s.id || s)));
 
   const [zoomPct, setZoomPct] = useState(100);
   const [isStageReady, setIsStageReady] = useState(false);
 
-  useEffect(() => { selectedRef.current = selectedSeatIds; }, [selectedSeatIds]);
   useEffect(() => { onSelectRef.current = onSelectSeats; }, [onSelectSeats]);
   useEffect(() => { readOnlyRef.current = readOnly; }, [readOnly]);
 
@@ -69,12 +66,8 @@ export default function SeatingCanvas({
     if (externalLayoutData) {
       setLayoutData(externalLayoutData);
       setLoading(false);
+      return;
     }
-  }, [externalLayoutData]);
-
-  // Fetch Layout
-  useEffect(() => {
-    if (externalLayoutData) return;
     
     const fetchLayout = async () => {
       try {
@@ -92,7 +85,6 @@ export default function SeatingCanvas({
     if (eventId) fetchLayout();
   }, [eventId, sessionId, externalLayoutData]);
 
-  // DYNAMIC LEGEND
   const legendStats = useMemo(() => {
     if (!layoutData?.seats) return [];
     const stats = {};
@@ -124,59 +116,77 @@ export default function SeatingCanvas({
     });
   }, [layoutData]);
 
-  // =========================================================================
-  // ✅ BUILD STAGE (Safely waits for layout to settle)
-  // =========================================================================
-  useEffect(() => {
+  const fitToContainer = useCallback((stage, container, animate = false) => {
+    if (!stage || !container || !layoutData?.seats?.length) return;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    layoutData.seats.forEach(seat => {
+      minX = Math.min(minX, seat.x_coord);
+      maxX = Math.max(maxX, seat.x_coord + SEAT_SIZE); 
+      minY = Math.min(minY, seat.y_coord);
+      maxY = Math.max(maxY, seat.y_coord + SEAT_SIZE); 
+    });
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const dynamicBottomPadding = h < 350 ? 20 : PADDING_BOTTOM; 
+
+    const availW = Math.max(100, w - (PADDING_SIDE * 2));
+    const availH = Math.max(100, h - (PADDING_TOP + dynamicBottomPadding));
+    
+    const scaleX = availW / contentWidth;
+    const scaleY = availH / contentHeight;
+    const newScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
+    
+    const centerX = (w - (contentWidth * newScale)) / 2;
+    const centerY = (h - (contentHeight * newScale)) / 2;
+    
+    const targetPos = {
+      x: centerX - (minX * newScale),
+      y: centerY - (minY * newScale),
+    };
+
+    if (animate) {
+      stage.to({ ...targetPos, scaleX: newScale, scaleY: newScale, duration: 0.2, onFinish: () => setZoomPct(Math.round(newScale * 100)) });
+    } else {
+      stage.scale({ x: newScale, y: newScale });
+      stage.position(targetPos);
+      setZoomPct(Math.round(newScale * 100));
+    }
+  }, [layoutData]);
+
+  useLayoutEffect(() => {
     if (!containerRef.current || !layoutData?.seats?.length) return;
+    if (stageRef.current) return; 
 
     const el = containerRef.current;
     let stage = null;
     let layer = null;
     let animationFrameId = null;
-    let isDestroyed = false;
 
     const initKonva = () => {
-      if (isDestroyed) return;
-
-      // Measure the actual painted DOM element
       const w = el.clientWidth;
       const h = el.clientHeight;
 
-      // If still zero, wait for the next frame (flexbox layout settling)
       if (w === 0 || h === 0) {
         animationFrameId = requestAnimationFrame(initKonva);
         return;
       }
 
-      // Destroy old stage if it exists
-      if (stageRef.current) {
-        stageRef.current.destroy();
-        nodesRef.current.clear();
-      }
-
-      stage = new Konva.Stage({
-        container: el,
-        width: w,
-        height: h,
-        draggable: true,
-      });
+      stage = new Konva.Stage({ container: el, width: w, height: h, draggable: true });
       layer = new Konva.Layer();
       stage.add(layer);
       stageRef.current = stage;
       layerRef.current = layer;
 
-      const selectedSet = new Set(selectedRef.current);
-
-      // Draw Seats
       layoutData.seats.forEach((seat) => {
-        const isSelected = selectedSet.has(seat.id);
+        const isSelected = activeSelectionRef.current.has(seat.id);
         const seatNumber = seat.seat_number || seat.id.substring(0, 4);
         
-        const group = new Konva.Group({
-          x: seat.x_coord,
-          y: seat.y_coord,
-        });
+        const group = new Konva.Group({ x: seat.x_coord, y: seat.y_coord });
 
         const rect = new Konva.Rect({
           width: SEAT_SIZE,
@@ -185,11 +195,11 @@ export default function SeatingCanvas({
           fill: getSeatColor(seat, isSelected),
           stroke: getSeatStroke(seat, isSelected),
           strokeWidth: isSelected ? 2.5 : 1.5,
-          shadowColor: isSelected ? BRAND_COLORS.red : 'transparent',
+          shadowColor: isSelected ? '#000000' : 'transparent',
           shadowBlur: isSelected ? 10 : 0,
           shadowOpacity: 0.5,
           perfectDrawEnabled: false,
-          listening: seat.status === 'available' && !readOnly,
+          listening: seat.status === 'available' && !readOnlyRef.current,
         });
 
         const text = new Konva.Text({
@@ -207,14 +217,28 @@ export default function SeatingCanvas({
 
         group.on('click tap', () => {
           if (readOnlyRef.current || seat.status !== 'available') return;
-          const current = selectedRef.current;
-          const next = current.includes(seat.id) ? current.filter((id) => id !== seat.id) : [...current, seat.id];
-          const nextSeats = layoutData.seats.filter(s => next.includes(s.id));
-          onSelectRef.current?.(nextSeats);
+          
+          const nextSet = new Set(activeSelectionRef.current);
+          if (nextSet.has(seat.id)) nextSet.delete(seat.id);
+          else nextSet.add(seat.id);
+          activeSelectionRef.current = nextSet;
+
+          const newIsSelected = nextSet.has(seat.id);
+          rect.fill(getSeatColor(seat, newIsSelected));
+          rect.stroke(getSeatStroke(seat, newIsSelected));
+          rect.strokeWidth(newIsSelected ? 2.5 : 1.5);
+          rect.shadowColor(newIsSelected ? '#000000' : 'transparent');
+          rect.shadowBlur(newIsSelected ? 10 : 0);
+          text.fill(newIsSelected ? '#ffffff' : BRAND_COLORS.charcoal);
+          text.fontStyle(newIsSelected ? 'bold' : 'normal');
+          layer.batchDraw();
+
+          const nextSeats = layoutData.seats.filter(s => nextSet.has(s.id));
+          if (onSelectRef.current) onSelectRef.current(nextSeats);
         });
 
         group.on('mouseenter', () => {
-          if (seat.status === 'available' && !isSelected && !readOnly) {
+          if (seat.status === 'available' && !activeSelectionRef.current.has(seat.id) && !readOnlyRef.current) {
             stage.container().style.cursor = 'pointer';
             rect.fill(getSeatColor(seat, false) + 'CC'); 
             layer.batchDraw();
@@ -223,7 +247,7 @@ export default function SeatingCanvas({
         
         group.on('mouseleave', () => {
           stage.container().style.cursor = 'default';
-          if (!isSelected) {
+          if (!activeSelectionRef.current.has(seat.id)) {
             rect.fill(getSeatColor(seat, false));
             layer.batchDraw();
           }
@@ -233,189 +257,137 @@ export default function SeatingCanvas({
         nodesRef.current.set(seat.id, { group, rect, text });
       });
 
-      // Calculate Bounding Box
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      layoutData.seats.forEach(seat => {
-        minX = Math.min(minX, seat.x_coord);
-        maxX = Math.max(maxX, seat.x_coord + SEAT_SIZE); 
-        minY = Math.min(minY, seat.y_coord);
-        maxY = Math.max(maxY, seat.y_coord + SEAT_SIZE); 
-      });
-
-      const contentWidth = maxX - minX;
-      const contentHeight = maxY - minY;
-      
-      const availW = Math.max(100, w - (PADDING_SIDE * 2));
-      const availH = Math.max(100, h - (PADDING_TOP + PADDING_BOTTOM));
-      
-      const scaleX = availW / contentWidth;
-      const scaleY = availH / contentHeight;
-      const initialScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
-      
-      stage.scale({ x: initialScale, y: initialScale });
-      
-      const centerX = (w - (contentWidth * initialScale)) / 2;
-      const centerY = (h - (contentHeight * initialScale)) / 2;
-      
-      stage.position({
-        x: centerX - (minX * initialScale),
-        y: centerY - (minY * initialScale),
-      });
-      
-      setZoomPct(Math.round(initialScale * 100));
+      fitToContainer(stage, el, false);
       setIsStageReady(true);
 
-      // Zoom Handler
       stage.on('wheel', (e) => {
         if (!e.evt.ctrlKey && !e.evt.metaKey) return;
         e.evt.preventDefault();
-        
         const oldScale = stage.scaleX();
         const pointer = stage.getPointerPosition();
         if (!pointer) return;
-        
         const factor = e.evt.deltaY > 0 ? 1 / 1.15 : 1.15;
         const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale * factor));
-        
-        const mousePointTo = {
-          x: (pointer.x - stage.x()) / oldScale,
-          y: (pointer.y - stage.y()) / oldScale,
-        };
-        
+        const mousePointTo = { x: (pointer.x - stage.x()) / oldScale, y: (pointer.y - stage.y()) / oldScale };
         stage.scale({ x: newScale, y: newScale });
-        stage.position({
-          x: pointer.x - mousePointTo.x * newScale,
-          y: pointer.y - mousePointTo.y * newScale,
-        });
+        stage.position({ x: pointer.x - mousePointTo.x * newScale, y: pointer.y - mousePointTo.y * newScale });
         setZoomPct(Math.round(newScale * 100));
         layer.batchDraw();
       });
 
+      const ro = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0 && stage) {
+          stage.width(width);
+          stage.height(height);
+          fitToContainer(stage, el, false); 
+          layer.batchDraw();
+        }
+      });
+      ro.observe(el);
+      stage._ro = ro;
       layer.batchDraw();
     };
 
-    // Start the measurement loop
     animationFrameId = requestAnimationFrame(initKonva);
 
     return () => {
-      isDestroyed = true;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      if (stage) stage.destroy();
+      if (stage) {
+        if (stage._ro) stage._ro.disconnect();
+        stage.destroy();
+      }
       stageRef.current = null;
       layerRef.current = null;
       nodesRef.current.clear();
       setIsStageReady(false);
     };
-  }, [layoutData, readOnly]); 
+  }, [layoutData, fitToContainer]);
 
-  // Update Appearance on Selection Change
   useEffect(() => {
     const layer = layerRef.current;
     if (!layer || !layoutData) return;
-    const selectedSet = new Set(selectedSeatIds);
-    
+    const parentIds = new Set(selectedSeatIds.map(s => s.id || s));
+    activeSelectionRef.current = parentIds;
+
     layoutData.seats.forEach((seat) => {
       const node = nodesRef.current.get(seat.id);
       if (!node) return;
-      const isSelected = selectedSet.has(seat.id);
-      
+      const isSelected = parentIds.has(seat.id);
       node.rect.fill(getSeatColor(seat, isSelected));
       node.rect.stroke(getSeatStroke(seat, isSelected));
       node.rect.strokeWidth(isSelected ? 2.5 : 1.5);
-      node.rect.shadowColor(isSelected ? BRAND_COLORS.red : 'transparent');
+      node.rect.shadowColor(isSelected ? '#000000' : 'transparent');
       node.rect.shadowBlur(isSelected ? 10 : 0);
       node.text.fill(isSelected ? '#ffffff' : BRAND_COLORS.charcoal);
       node.text.fontStyle(isSelected ? 'bold' : 'normal');
     });
-    
     layer.batchDraw();
   }, [selectedSeatIds, layoutData]);
 
-  const zoomBy = useCallback((factor) => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const oldScale = stage.scaleX();
-    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale * factor));
-    const center = { x: stage.width() / 2, y: stage.height() / 2 };
-    const pointTo = {
-      x: (center.x - stage.x()) / oldScale,
-      y: (center.y - stage.y()) / oldScale,
-    };
-    stage.scale({ x: newScale, y: newScale });
-    stage.position({
-      x: center.x - pointTo.x * newScale,
-      y: center.y - pointTo.y * newScale,
-    });
-    stage.batchDraw();
-    setZoomPct(Math.round(newScale * 100));
-  }, []);
-
-  const handleFitToScreen = useCallback(() => {
-    if (!stageRef.current || !layoutData) return;
-    const stage = stageRef.current;
-    
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    layoutData.seats.forEach(seat => {
-      minX = Math.min(minX, seat.x_coord);
-      maxX = Math.max(maxX, seat.x_coord + SEAT_SIZE); 
-      minY = Math.min(minY, seat.y_coord);
-      maxY = Math.max(maxY, seat.y_coord + SEAT_SIZE); 
-    });
-
-    const contentWidth = maxX - minX;
-    const contentHeight = maxY - minY;
-    
-    const availW = Math.max(100, stage.width() - (PADDING_SIDE * 2));
-    const availH = Math.max(100, stage.height() - (PADDING_TOP + PADDING_BOTTOM));
-    
-    const scaleX = availW / contentWidth;
-    const scaleY = availH / contentHeight;
-    const newScale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, 1.5));
-    
-    stage.scale({ x: newScale, y: newScale });
-    
-    const centerX = (stage.width() - (contentWidth * newScale)) / 2;
-    const centerY = (stage.height() - (contentHeight * newScale)) / 2;
-    
-    stage.position({
-      x: centerX - (minX * newScale),
-      y: centerY - (minY * newScale),
-    });
-    
-    layerRef.current?.batchDraw();
-    setZoomPct(Math.round(newScale * 100));
-  }, [layoutData]);
+  // ✅ Expose methods and state to parent via ref
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const oldScale = stage.scaleX();
+      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale * 1.25));
+      const center = { x: stage.width() / 2, y: stage.height() / 2 };
+      const pointTo = { x: (center.x - stage.x()) / oldScale, y: (center.y - stage.y()) / oldScale };
+      stage.scale({ x: newScale, y: newScale });
+      stage.position({ x: center.x - pointTo.x * newScale, y: center.y - pointTo.y * newScale });
+      stage.batchDraw();
+      setZoomPct(Math.round(newScale * 100));
+    },
+    zoomOut: () => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const oldScale = stage.scaleX();
+      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale / 1.25));
+      const center = { x: stage.width() / 2, y: stage.height() / 2 };
+      const pointTo = { x: (center.x - stage.x()) / oldScale, y: (center.y - stage.y()) / oldScale };
+      stage.scale({ x: newScale, y: newScale });
+      stage.position({ x: center.x - pointTo.x * newScale, y: center.y - pointTo.y * newScale });
+      stage.batchDraw();
+      setZoomPct(Math.round(newScale * 100));
+    },
+    fitToScreen: () => {
+      if (!stageRef.current || !containerRef.current) return;
+      fitToContainer(stageRef.current, containerRef.current, true);
+    },
+    zoomPct,
+    legendStats
+  }), [zoomPct, legendStats, fitToContainer]);
 
   if (loading) {
     return (
-      <Paper sx={{ p: 3, borderRadius: 2, border: `1px solid ${BRAND_COLORS.border}`, display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
+      <Box sx={{ p: 3, border: `1px solid ${BRAND_COLORS.border}`, display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
         <CircularProgress sx={{ color: BRAND_COLORS.red }} />
-      </Paper>
+      </Box>
     );
   }
 
   if (error || !layoutData?.seats?.length) {
     return (
-      <Paper sx={{ p: 4, textAlign: 'center', border: `1px solid ${BRAND_COLORS.border}`, borderRadius: 2, height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
+      <Box sx={{ p: 4, textAlign: 'center', border: `1px solid ${BRAND_COLORS.border}`, height: '100%', minHeight: 400, bgcolor: BRAND_COLORS.lightGray }}>
         <Typography sx={{ color: BRAND_COLORS.darkGray }}>
           {error || 'No seating layout has been configured for this venue yet.'}
         </Typography>
-      </Paper>
+      </Box>
     );
   }
 
   return (
-    <Paper sx={{ 
+    <Box sx={{ 
       width: '100%',
       height: '100%',
       display: 'flex', 
       flexDirection: 'column', 
-      border: `1px solid ${BRAND_COLORS.border}`,
-      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
       overflow: 'hidden',
       position: 'relative',
       bgcolor: '#fafafa',
-      borderRadius: 2,
     }}>
       <Box sx={{ 
         flexShrink: 0,
@@ -432,7 +404,7 @@ export default function SeatingCanvas({
         SCREEN
       </Box>
 
-      <Box sx={{ flexGrow: 1, position: 'relative', minHeight: 300, overflow: 'hidden' }}>
+      <Box sx={{ flexGrow: 1, position: 'relative', minHeight: 300 }}>
         
         {!isStageReady && (
           <Box sx={{ position: 'absolute', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 5 }}>
@@ -441,82 +413,9 @@ export default function SeatingCanvas({
         )}
 
         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-        
-        <Stack
-          direction="row"
-          spacing={0.5}
-          alignItems="center"
-          sx={{ 
-            position: 'absolute', 
-            bottom: 16, 
-            right: 16, 
-            bgcolor: 'rgba(255, 255, 255, 0.95)', 
-            backdropFilter: 'blur(4px)',
-            borderRadius: 2, 
-            px: 1, 
-            py: 0.5,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            border: `1px solid ${BRAND_COLORS.border}`,
-            zIndex: 30
-          }}
-        >
-          <IconButton size="small" onClick={() => zoomBy(1 / 1.25)} sx={{ width: 28, height: 28 }}>
-            <ZoomOut fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
-          </IconButton>
-          <IconButton size="small" onClick={handleFitToScreen} sx={{ width: 28, height: 28 }}>
-            <FitScreen fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
-          </IconButton>
-          <Typography variant="caption" sx={{ minWidth: 42, textAlign: 'center', fontWeight: 600, color: BRAND_COLORS.charcoal }}>
-            {zoomPct}%
-          </Typography>
-          <IconButton size="small" onClick={() => zoomBy(1.25)} sx={{ width: 28, height: 28 }}>
-            <ZoomIn fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
-          </IconButton>
-        </Stack>
-
-        <Box sx={{ 
-          position: 'absolute', 
-          bottom: 16, 
-          left: 16, 
-          bgcolor: 'rgba(255, 255, 255, 0.95)', 
-          backdropFilter: 'blur(4px)',
-          borderRadius: 2, 
-          px: 2, 
-          py: 1,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          border: `1px solid ${BRAND_COLORS.border}`,
-          zIndex: 30,
-          display: 'flex',
-          gap: 1.5,
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          maxWidth: 'calc(100% - 160px)' 
-        }}>
-          {legendStats.map((stat) => (
-            <Box key={stat.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <Box sx={{ 
-                width: 12, 
-                height: 12, 
-                border: `1px solid ${BRAND_COLORS.charcoal}`, 
-                borderRadius: 0.5, 
-                bgcolor: stat.color 
-              }} />
-              <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>
-                {stat.name}: {stat.count}
-              </Typography>
-            </Box>
-          ))}
-          
-          {selectedSeatIds.length > 0 && (
-             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, pl: 1, borderLeft: `1px solid ${BRAND_COLORS.border}` }}>
-               <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: BRAND_COLORS.red }} />
-               <Typography variant="caption" sx={{ fontWeight: 700, color: BRAND_COLORS.red }}>
-                 Selected: {selectedSeatIds.length}
-               </Typography>
-             </Box>
-          )}
-        </Box>
       </Box>
-    </Paper>
+    </Box>
   );
-}
+});
+
+export default SeatingCanvas;

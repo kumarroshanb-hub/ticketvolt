@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Box, Typography, Paper, Stepper, Step, StepLabel, Button,
     CircularProgress, Alert, Grid, Divider, Card, CardContent,
-    TextField, IconButton, Chip, useMediaQuery, useTheme,
+    TextField, IconButton, Chip, useMediaQuery, useTheme, Stack,
 } from '@mui/material';
 import {
     ArrowBack as ArrowBackIcon, ArrowForward as ArrowForwardIcon,
@@ -11,7 +11,7 @@ import {
     Person as PersonIcon, Add as AddIcon, Remove as RemoveIcon,
     Schedule as ScheduleIcon, CalendarMonth as CalendarIcon,
     LocationOn as LocationIcon, People as PeopleIcon,
-    LocalOffer as LocalOfferIcon,
+    LocalOffer as LocalOfferIcon, ZoomIn, ZoomOut, FitScreen,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
@@ -24,6 +24,18 @@ import useBookingDraft from '../../hooks/useBookingDraft';
 import EventCard from '../../components/Common/EventCard';
 
 import SeatingCanvas from '../../components/Seating/SeatingCanvas';
+
+// Branding colors
+const BRAND_COLORS = {
+    charcoal: '#333333',
+    red: '#FF2A2A',
+    darkGray: '#555555',
+    lightGray: '#f4f4f4',
+    border: '#e2e8f0',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    info: '#3b82f6',
+};
 
 const STEP_KEYS = {
     EVENT: 'event', SLOT: 'slot', ENTRIES: 'entries',
@@ -140,6 +152,9 @@ const CreateBooking = () => {
         validate, buildPayload, freeEntries, freeAttendees,
         updateFreeEntries, updateFreeAttendee,
     } = draft;
+
+    // Ref to control the canvas externally
+    const canvasRef = React.useRef(null);
 
     useEffect(() => {
         if (hasReservedSeating) {
@@ -604,7 +619,6 @@ const CreateBooking = () => {
     // Step 3 — Ticket / Seat selection
     // =========================================================================
     const renderTicketSelection = () => {
-        // ✅ RESERVED SEATING BRANCH
         if (hasReservedSeating) {
             return (
                 <Box sx={{ 
@@ -613,8 +627,6 @@ const CreateBooking = () => {
                     flexDirection: 'column', 
                     gap: 2,
                     width: '100%',
-                    // ✅ CRITICAL FIX: Give this a definitive height so the Konva container
-                    // doesn't collapse to 0px before the observer fires.
                     height: 'calc(100vh - 320px)', 
                     minHeight: '500px',
                 }}>
@@ -626,24 +638,108 @@ const CreateBooking = () => {
                         )}
                     </Alert>
                     
-                    {/* ✅ This Box flexes, forcing the SeatingCanvas to fill it entirely */}
-                    <Box sx={{ flexGrow: 1, minHeight: 0, width: '100%', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-                        <SeatingCanvas
-                            eventId={selectedEvent.id}
-                            sessionId={selectedSession?.id}
-                            selectedSeatIds={selectedSeats.map(s => s.id)}
-                            onSelectSeats={setSelectedSeats}
-                        />
+                    {/* ✅ Relative wrapper holds both Canvas and Overlays */}
+                    <Box sx={{ flexGrow: 1, minHeight: 0, width: '100%', position: 'relative' }}>
+                        
+                        {/* 1. The Canvas - Fills the wrapper */}
+                        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
+                            <SeatingCanvas
+                                ref={canvasRef}
+                                eventId={selectedEvent.id}
+                                sessionId={selectedSession?.id}
+                                selectedSeatIds={selectedSeats.map(s => s.id)}
+                                onSelectSeats={setSelectedSeats}
+                            />
+                        </Box>
+
+                        {/* 2. The Overlays - Siblings to the canvas, safely on top */}
+                        <Stack
+                            direction="row"
+                            spacing={0.5}
+                            alignItems="center"
+                            sx={{ 
+                                position: 'absolute', 
+                                bottom: 16, 
+                                right: 16, 
+                                bgcolor: 'rgba(255, 255, 255, 0.95)', 
+                                backdropFilter: 'blur(4px)',
+                                borderRadius: 2, 
+                                px: 1, 
+                                py: 0.5,
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                                border: `1px solid ${BRAND_COLORS.border}`,
+                                zIndex: 100 // Ensure it's above the canvas
+                            }}
+                        >
+                            <IconButton size="small" onClick={() => canvasRef.current?.zoomOut()} sx={{ width: 28, height: 28 }}>
+                                <ZoomOut fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
+                            </IconButton>
+                            <IconButton size="small" onClick={() => canvasRef.current?.fitToScreen()} sx={{ width: 28, height: 28 }}>
+                                <FitScreen fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
+                            </IconButton>
+                            <Typography variant="caption" sx={{ minWidth: 42, textAlign: 'center', fontWeight: 600, color: BRAND_COLORS.charcoal }}>
+                                {canvasRef.current?.zoomPct || 100}%
+                            </Typography>
+                            <IconButton size="small" onClick={() => canvasRef.current?.zoomIn()} sx={{ width: 28, height: 28 }}>
+                                <ZoomIn fontSize="small" sx={{ color: BRAND_COLORS.charcoal }} />
+                            </IconButton>
+                        </Stack>
+
+                        <Box sx={{ 
+                            position: 'absolute', 
+                            bottom: 16, 
+                            left: 16, 
+                            bgcolor: 'rgba(255, 255, 255, 0.95)', 
+                            backdropFilter: 'blur(4px)',
+                            borderRadius: 2, 
+                            px: 2, 
+                            py: 1,
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                            border: `1px solid ${BRAND_COLORS.border}`,
+                            zIndex: 100,
+                            display: 'flex',
+                            gap: 1.5,
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            maxWidth: 'calc(100% - 160px)' 
+                        }}>
+                            {canvasRef.current?.legendStats?.map((stat) => (
+                                <Box key={stat.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: stat.color }} />
+                                    <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>
+                                        {stat.name}: {stat.count}
+                                    </Typography>
+                                </Box>
+                            ))}
+                            
+                            {selectedSeats.length > 0 && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, pl: 1, borderLeft: `1px solid ${BRAND_COLORS.border}` }}>
+                                    <Box sx={{ width: 12, height: 12, border: `1px solid #000000`, borderRadius: 0.5, bgcolor: '#333333' }} />
+                                    <Typography variant="caption" sx={{ fontWeight: 700, color: '#333333' }}>
+                                        Selected: {selectedSeats.length}
+                                    </Typography>
+                                </Box>
+                            )}
+                        </Box>
                     </Box>
                     
-                    {selectedSeats.length > 0 && (
-                        <Paper sx={{ mt: 1, p: 2, bgcolor: 'background.default', borderRadius: 2, flexShrink: 0 }}>
-                            <Typography variant="subtitle1" sx={{ color: 'text.primary' }}>🎫 {selectedSeats.length} seat(s) selected</Typography>
-                            <Typography variant="h6" sx={{ color: 'primary.main' }}>
-                                Total: {formatMoney(selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0))}
-                            </Typography>
-                        </Paper>
-                    )}
+                    {/* ✅ The summary box is ALWAYS rendered to prevent layout shifts */}
+                    <Paper sx={{ 
+                        mt: 1, 
+                        p: 2, 
+                        bgcolor: 'background.default', 
+                        borderRadius: 2, 
+                        flexShrink: 0,
+                        minHeight: '78px',
+                        visibility: selectedSeats.length > 0 ? 'visible' : 'hidden'
+                    }}>
+                        <Typography variant="subtitle1" sx={{ color: 'text.primary' }}>
+                            🎫 {selectedSeats.length} seat(s) selected
+                        </Typography>
+                        <Typography variant="h6" sx={{ color: 'primary.main' }}>
+                            Total: {formatMoney(selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0))}
+                        </Typography>
+                    </Paper>
                 </Box>
             );
         }

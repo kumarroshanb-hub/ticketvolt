@@ -46,7 +46,8 @@ import Organizations from './pages/Organizations';            // ✅ NEW
 import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
 import TeamMembers from './pages/Organizations/TeamMembers'; // ✅ NEW
 import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor'; // ✅ NEW
-
+import Membership from './pages/Membership/Membership';
+import { ManagePlans, ReviewOffline } from './pages/Membership';
 
 import { ROLES } from './constants';
 
@@ -211,7 +212,34 @@ const AppRoutes = () => {
                         </GuestAllowedRoute>
                     }
                 />
-
+                <Route
+                    path="membership"
+                    element={
+                        <ProtectedRoute>
+                            <Membership />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="membership/manage"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <ManagePlans />
+                        </RoleBasedRoute>
+                    }
+                />
+                <Route
+                    path="membership/review-offline"
+                    element={
+                        <RoleBasedRoute
+                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
+                        >
+                            <ReviewOffline />
+                        </RoleBasedRoute>
+                    }
+                />
                 <Route
                     path="dashboard"
                     element={

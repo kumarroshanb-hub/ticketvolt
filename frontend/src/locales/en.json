@@ -74,6 +74,8 @@
     "events": "Events",
     "venues": "Venues",
     "bookings": "Bookings",
+    "membership": "Membership",
+    "reviewOfflineMemberships": "Offline Requests",
     "checkin": "QR Scanner",
     "analytics": "Analytics",
     "discounts": "Discounts",

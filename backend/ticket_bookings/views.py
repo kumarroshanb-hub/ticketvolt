@@ -72,6 +72,7 @@ import logging
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
+from .services.tenancy import _active_membership_filter
 
 logger = logging.getLogger(__name__)
 
@@ -274,8 +275,7 @@ def get_user_role(user):
     # Manager check must run BEFORE the staff-membership check: a user
     # who is STAFF on org A and OWNER/ADMIN on org B is a manager, not
     # a scanner operator.
-    is_org_manager = OrganizationMembership.objects.filter(
-        user=user,
+    is_org_manager =  _active_membership_filter(user).filter(
         role__in=OrganizationMembership.MANAGER_ROLES,
     ).exists()
 
@@ -293,19 +293,13 @@ def get_user_role(user):
     # BUG 23/24: scanner-only membership gets its own label. This is
     # what makes the Checkin sidebar entry appear for STAFF users and
     # matches what `can_operate_org` already allows on the server.
-    is_org_staff = OrganizationMembership.objects.filter(
-        user=user,
-        role='staff',
-    ).exists()
+    is_org_staff = _active_membership_filter(user).filter(role='staff').exists()
 
     if is_org_staff:
         return 'staff'
 
     # ADDED FOR 6-TIER HIERARCHY: Check for member-only membership
-    is_org_member = OrganizationMembership.objects.filter(
-        user=user,
-        role='member',
-    ).exists()
+    is_org_member = _active_membership_filter(user).filter(role='member').exists()
 
     if is_org_member:
         return 'member'

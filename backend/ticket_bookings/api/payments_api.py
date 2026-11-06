@@ -18,6 +18,7 @@ from ..services.payments import get_provider
 from ..services.payment_fulfillment import fulfill_payment, fail_payment, PaymentStateError
 from ..services.tenancy import can_operate_org
 from ..models import SystemSettings
+from ..models_membership import MembershipPayment  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -191,23 +192,39 @@ def checkout_status(request, payment_id):
 # 4. WEBHOOKS (signature-verified + idempotent)
 # ---------------------------------------------------------------------------
 def _process_webhook(provider_name, body, headers):
+    from ..models_payments import WebhookEvent
+    from ..models_membership import MembershipPayment
+    from ..services import membership_fulfillment
+
     provider = get_provider(provider_name)
     result = provider.parse_webhook(body, headers)
     if not result.valid:
         return Response({'error': 'Invalid signature.'}, status=400)
 
-    # Idempotency ledger
-    if WebhookEvent.objects.filter(gateway=provider_name, provider_event_id=result.provider_event_id).exists():
+    if WebhookEvent.objects.filter(
+        gateway=provider_name, provider_event_id=result.provider_event_id,
+    ).exists():
         return Response({'status': 'duplicate'})
 
-    # Resolve payment by order id (primary) — provider payment id as fallback
+    # Resolve against ticket Payment first, then MembershipPayment.
     payment = None
+    membership_payment = None
+
     if result.provider_order_id:
         payment = Payment.objects.filter(provider_order_id=result.provider_order_id).first()
-    if payment is None and result.provider_payment_id:
+        if payment is None:
+            membership_payment = MembershipPayment.objects.filter(
+                provider_order_id=result.provider_order_id,
+            ).first()
+    if payment is None and membership_payment is None and result.provider_payment_id:
         payment = Payment.objects.filter(provider_payment_id=result.provider_payment_id).first()
+        if payment is None:
+            membership_payment = MembershipPayment.objects.filter(
+                provider_payment_id=result.provider_payment_id,
+            ).first()
 
     action_taken = 'ignored'
+
     if payment is not None:
         if result.action == 'paid':
             payment.provider_payment_id = result.provider_payment_id or payment.provider_payment_id
@@ -221,15 +238,35 @@ def _process_webhook(provider_name, body, headers):
             fail_payment(payment.id)
             action_taken = 'failed'
         elif result.action == 'refunded':
-            action_taken = 'refunded_noted'   # refund flow handled in refund endpoint
+            action_taken = 'refunded_noted'
+
+    elif membership_payment is not None:
+        if result.action == 'paid':
+            membership_payment.provider_payment_id = (
+                result.provider_payment_id or membership_payment.provider_payment_id
+            )
+            membership_payment.save(update_fields=['provider_payment_id', 'updated_at'])
+            try:
+                membership_fulfillment.fulfill_membership(membership_payment.id)
+                action_taken = 'membership_fulfilled'
+            except membership_fulfillment.MembershipStateError:
+                action_taken = 'already_processed'
+        elif result.action == 'failed':
+            membership_fulfillment.fail_membership_payment(membership_payment.id)
+            action_taken = 'membership_failed'
+        elif result.action == 'refunded':
+            action_taken = 'membership_refunded_noted'
 
     WebhookEvent.objects.create(
         gateway=provider_name,
         provider_event_id=result.provider_event_id,
         event_type=result.event_type,
-        payment=payment,
+        payment=payment,  # may be None for membership webhooks — audit trail still exists
         action=action_taken,
-        raw=result.raw,
+        raw={
+            **result.raw,
+            'membership_payment_id': str(membership_payment.id) if membership_payment else None,
+        },
     )
     return Response({'status': 'ok'})
 

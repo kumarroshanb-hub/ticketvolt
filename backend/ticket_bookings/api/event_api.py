@@ -39,36 +39,27 @@ from ..services.tenancy import (
     visible_events,
 )
 from rest_framework.exceptions import PermissionDenied
-
+from ..services.membership_access import can_access_event
 
 VALID_EVENT_FLOWS = {c[0] for c in Event.EventFlow.choices}
 
 
 # ---------------------------------------------------------------------------
-# Canonical "active ticket" definition
+# Canonical "active ticket" definitions
 # ---------------------------------------------------------------------------
-# Single source of truth for what counts as an active (sold) ticket.
-# Used by list(), retrieve(), public() and public_detail() so their numbers
-# cannot drift. A ticket counts as "active" iff:
-#   * its own status is not in EXCLUDED_TICKET_STATUSES, AND
-#   * its booking status is in SOLD_BOOKING_STATUSES.
-# This intentionally excludes tickets on pending/processing bookings, matching
-# the canonical revenue definition (canonical_revenue) and the semantics
-# that a pending booking is not yet a sale.
 def _active_ticket_q():
     return (
         ~Q(status__in=EXCLUDED_TICKET_STATUSES)
         & Q(booking__status__in=SOLD_BOOKING_STATUSES)
     )
-# For use inside Count('tickets', filter=...) / Sum('tickets__...') on an
-# Event queryset. Because Django resolves the filter from the Event side,
-# every Ticket field must be reached through the `tickets__` / `tickets__booking__`
-# prefix.
+
+
 def _active_ticket_q_via_event():
     return (
         ~Q(tickets__status__in=EXCLUDED_TICKET_STATUSES)
         & Q(tickets__booking__status__in=SOLD_BOOKING_STATUSES)
     )
+
 
 def _active_ticket_count(event_or_queryset):
     if hasattr(event_or_queryset, 'tickets'):
@@ -76,6 +67,7 @@ def _active_ticket_count(event_or_queryset):
     return Ticket.objects.filter(
         _active_ticket_q(), event__in=event_or_queryset,
     ).count()
+
 
 def _normalise_event_flow(raw):
     if raw is None:
@@ -149,7 +141,34 @@ class EventViewSet(viewsets.ModelViewSet):
         return EventDetailSerializer
 
     def get_queryset(self):
-        return visible_events(self.request.user)
+        """
+        Two-tier scoping:
+
+          1. ``visible_events(user)`` — every event the user can *see*
+             (public events for everyone, plus private/manager events
+             for tenant operators).
+
+          2. Anonymous-only additional filter: hide members-only events
+             from the public list so the landing page doesn't advertise
+             events anonymous visitors can't book.
+
+             Authenticated users still get every event in (1) — the
+             members-only gate is enforced per-event in ``retrieve()``
+             and in ``BookingViewSet.create()``. This keeps the list a
+             single query (no per-event Python check) and returns 403
+             rather than 404 when a logged-in non-member opens a
+             members-only event by URL.
+        """
+        qs = visible_events(self.request.user)
+
+        user = self.request.user
+        if not (user and user.is_authenticated):
+            qs = qs.filter(
+                members_only=False,
+                min_membership_tier__isnull=True,
+            )
+
+        return qs
 
     @staticmethod
     def _parse_dt(value):
@@ -235,7 +254,7 @@ class EventViewSet(viewsets.ModelViewSet):
         if not orgs:
             return None, Response(
                 {'organization_id':
-                 'You are not an owner or admin of any organization. '  # ✅ Updated for 6-tier
+                 'You are not an owner or admin of any organization. '
                  'Create an organization first.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -249,22 +268,13 @@ class EventViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _default_organizer_for(user, organization):
-        """Pick the default organizer when organizer_id is omitted.
-
-        Bug 5 fix: a platform superuser is not necessarily a member of the
-        organization. Defaulting them as organizer would break the invariant
-        that ``event.organizer`` is a member of ``event.organization``.
-
-        - Platform superuser      -> ``organization.owner`` (member by
-                                     construction).
-        - Regular org admin       -> ``user`` (preserves existing UX; the
-                                     membership check downstream still
-                                     validates it).
-        """
         if is_platform_admin(user):
             return organization.owner
         return user
 
+    # ------------------------------------------------------------------
+    # CREATE
+    # ------------------------------------------------------------------
     def create(self, request, *args, **kwargs):
         user = request.user
         if not _is_manager(user):
@@ -320,19 +330,6 @@ class EventViewSet(viewsets.ModelViewSet):
         if org_err is not None:
             return org_err
 
-        # ------------------------------------------------------------------
-        # Bug 5 fix: default organizer + membership invariant.
-        #
-        # - When organizer_id is omitted, fall back to a user who is
-        #   guaranteed to be a member of `organization`:
-        #     * platform superuser -> organization.owner
-        #     * everyone else      -> request.user (unchanged UX)
-        # - The membership check below now runs for ALL callers, including
-        #   platform superusers. A superuser who needs a different organizer
-        #   must pass organizer_id of a real member (or add membership
-        #   first). Defaulting the superuser themselves as organizer is no
-        #   longer possible, because it violated the invariant.
-        # ------------------------------------------------------------------
         default_organizer = self._default_organizer_for(user, organization)
 
         target_organizer, target_err = self._resolve_target_organizer(
@@ -341,8 +338,6 @@ class EventViewSet(viewsets.ModelViewSet):
         if target_err is not None:
             return target_err
 
-        # Invariant: event.organizer MUST be a member of event.organization.
-        # Enforced unconditionally (superusers included).
         if not OrganizationMembership.objects.filter(
             organization=organization, user=target_organizer,
         ).exists():
@@ -411,6 +406,8 @@ class EventViewSet(viewsets.ModelViewSet):
                     tickets_per_page=max(1, tickets_per_page),
                     cancellation_policy=cancellation_policy,
                     cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
+                    members_only=bool(data.get('members_only', False)),
+                    min_membership_tier_id=data.get('min_membership_tier_id') or None,
                 )
 
                 tiers_created = 0
@@ -492,6 +489,9 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    # ------------------------------------------------------------------
+    # LIST
+    # ------------------------------------------------------------------
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         manager = _is_manager(request.user)
@@ -504,9 +504,6 @@ class EventViewSet(viewsets.ModelViewSet):
 
         if manager:
             queryset = queryset.annotate(
-                # Canonical active ticket definition — see _active_ticket_q().
-                # Kept as an annotation (instead of a per-row .count()) so the
-                # list endpoint stays a single query.
                 active_tickets_count=Count(
                     'tickets',
                     filter=_active_ticket_q_via_event(),
@@ -540,16 +537,38 @@ class EventViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
+    # ------------------------------------------------------------------
+    # RETRIEVE
+    # ------------------------------------------------------------------
     def retrieve(self, request, *args, **kwargs):
+        """
+        Per-event membership gate.
+
+        ``visible_events(user)`` already scopes to what the user can
+        see (public + their own org's events). The membership check here
+        blocks the remaining case: an authenticated non-member opening
+        a members-only event by URL, or the same event being accessed
+        by someone who *can* see the org but isn't a paid member.
+        """
         queryset = self.get_queryset().prefetch_related(*_PUBLIC_PREFETCH)
+
+        # First fetch, then check. If the event isn't in `visible_events`
+        # (404) or exists but is members-only-gated (403), behave
+        # consistently with the booking endpoint.
         instance = get_object_or_404(queryset, pk=kwargs.get('pk'))
+
+        if not can_access_event(request.user, instance):
+            return Response(
+                {'error': 'This event is for members only.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         user = request.user
 
         serializer = self.get_serializer(instance, context={'request': request})
         data = serializer.data
 
         if _is_manager(user):
-            # Canonical active ticket count — same definition as list().
             active_tickets_count = _active_ticket_count(instance)
             actual_revenue = canonical_revenue(instance.bookings.all())
             active_bookings_count = instance.bookings.exclude(
@@ -564,6 +583,9 @@ class EventViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
+    # ------------------------------------------------------------------
+    # UPDATE
+    # ------------------------------------------------------------------
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
         data = request.data
@@ -633,8 +655,6 @@ class EventViewSet(viewsets.ModelViewSet):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                # Invariant: new organizer must be a member of the org.
-                # Enforced for all callers, superusers included.
                 if not OrganizationMembership.objects.filter(
                     organization=instance.organization,
                     user=target_organizer,
@@ -685,10 +705,16 @@ class EventViewSet(viewsets.ModelViewSet):
             'refundable_until',
             'cancellation_policy_text',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
+            'members_only',
         ]
         for field in fields:
             if field in data:
                 setattr(instance, field, data[field])
+
+        if 'min_membership_tier_id' in data:
+            raw_tier = data.get('min_membership_tier_id')
+            instance.min_membership_tier_id = raw_tier or None
+
         instance.save()
 
         if 'sessions' in data and isinstance(data['sessions'], list):
@@ -815,6 +841,9 @@ class EventViewSet(viewsets.ModelViewSet):
         serialized = _apply_effective_status(serialized, instance)
         return Response(serialized)
 
+    # ------------------------------------------------------------------
+    # DESTROY
+    # ------------------------------------------------------------------
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         user = request.user
@@ -835,6 +864,9 @@ class EventViewSet(viewsets.ModelViewSet):
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    # ------------------------------------------------------------------
+    # PUBLISH
+    # ------------------------------------------------------------------
     @action(detail=True, methods=['post'])
     def publish(self, request, pk=None):
         event = self.get_object()
@@ -857,6 +889,9 @@ class EventViewSet(viewsets.ModelViewSet):
         event.save(update_fields=['status'])
         return Response({'message': 'Event published successfully'})
 
+    # ------------------------------------------------------------------
+    # PUBLIC
+    # ------------------------------------------------------------------
     @action(
         detail=False,
         methods=['get'],
@@ -873,12 +908,15 @@ class EventViewSet(viewsets.ModelViewSet):
                 status__in=['active', 'published'],
                 is_public=True,
                 end_date__gte=now,
+                # Anonymous-access members-only events are hidden from the
+                # public list unless a paid member or operator is signed in.
+                members_only=False,
+                min_membership_tier__isnull=True,
             )
             .select_related('venue', 'organization')
             .prefetch_related('tiers', 'sessions', 'templates__template_type')
             .order_by('-start_date')
             .annotate(
-                # Canonical active ticket definition — see _active_ticket_q().
                 active_tickets_count=Count(
                     'tickets',
                     filter=_active_ticket_q_via_event(),
@@ -903,6 +941,9 @@ class EventViewSet(viewsets.ModelViewSet):
 
         return Response({'count': len(events_list), 'results': data})
 
+    # ------------------------------------------------------------------
+    # PUBLIC DETAIL
+    # ------------------------------------------------------------------
     @action(
         detail=True,
         methods=['get'],
@@ -931,7 +972,14 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Canonical active ticket count — same definition as list()/public()/retrieve().
+        # Members-only gate: same predicate used by retrieve() and
+        # BookingViewSet.create(). Anonymous callers are rejected.
+        if not can_access_event(request.user, event):
+            return Response(
+                {'error': 'This event is for members only.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         active_tickets_count = _active_ticket_count(event)
 
         serializer = PublicEventDetailSerializer(

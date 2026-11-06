@@ -23,6 +23,15 @@ from ..models_tenancy import (  # UPDATED: added OrganizationContact back
 )
 from ..services.cancellation_policy import validate_cancellation_rules
 
+# ============================================================
+# MEMBERSHIP SERIALIZERS
+# ============================================================
+from ..models_membership import (  # noqa: E402
+    Membership,
+    MembershipDependent,
+    MembershipPayment,
+    MembershipTier,
+)
 
 def get_user_effective_role(user):
     """
@@ -221,6 +230,7 @@ class PublicEventSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
+            'members_only', 'min_membership_tier',
             'start_date', 'end_date', 'timezone',
             'cover_image', 'gallery_images',
             'status', 'is_public',
@@ -414,6 +424,7 @@ class EventSerializer(serializers.ModelSerializer):
             'id', 'organizer', 'organizer_id', 'organizer_username', 'organizer_email',
             'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
+            'members_only', 'min_membership_tier',
             'start_date', 'end_date', 'timezone',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
@@ -534,6 +545,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'id', 'organizer', 'organizer_id', 'organizer_username', 'organizer_email',
             'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
+            'members_only', 'min_membership_tier',
             'start_date', 'end_date', 'timezone',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
@@ -1843,3 +1855,100 @@ class EventTemplateSerializer(serializers.ModelSerializer):
             except Exception:
                 return url
         return url
+
+class MembershipTierSerializer(serializers.ModelSerializer):
+    organization_details = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = MembershipTier
+        fields = [
+            'id', 'organization', 'organization_details',
+            'slug', 'name', 'description',
+            'price', 'currency_code', 'billing_period', 'duration_days',
+            'max_members', 'benefits',
+            'is_active', 'is_public',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'slug', 'organization', 'currency_code',
+            'duration_days', 'created_at', 'updated_at',
+        ]
+        extra_kwargs = {
+            'organization': {'required': False},
+        }
+
+    def get_organization_details(self, obj):
+        return {
+            'id': str(obj.organization.id),
+            'name': obj.organization.name,
+            'currency_code': obj.organization.currency_code,
+        }
+
+
+class MembershipDependentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MembershipDependent
+        fields = [
+            'id', 'membership', 'full_name', 'email', 'phone',
+            'date_of_birth', 'relationship', 'member_code',
+            'promoted_user', 'is_active', 'created_at',
+        ]
+        read_only_fields = [
+            'id', 'membership', 'member_code', 'promoted_user', 'created_at',
+        ]
+
+
+class MembershipSerializer(serializers.ModelSerializer):
+    tier = MembershipTierSerializer(read_only=True)
+    dependents = MembershipDependentSerializer(many=True, read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_name = serializers.SerializerMethodField()
+    is_active = serializers.SerializerMethodField()
+    seats_used = serializers.SerializerMethodField()
+    seats_max = serializers.SerializerMethodField()
+    reviewed_by_username = serializers.CharField(
+        source='reviewed_by.username', read_only=True, default=None,
+    )
+
+    class Meta:
+        model = Membership
+        fields = [
+            'id', 'organization', 'user', 'user_email', 'user_name',
+            'tier', 'price_paid', 'currency_code',
+            'status', 'payment_method', 'offline_reference',
+            'started_at', 'valid_until',
+            'cancelled_at', 'cancelled_reason',
+            'reviewed_by', 'reviewed_by_username', 'reviewed_at',
+            'dependents',
+            'is_active', 'seats_used', 'seats_max',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+    def get_user_name(self, obj):
+        if not obj.user_id:
+            return None
+        return obj.user.get_full_name() or obj.user.username
+
+    def get_is_active(self, obj):
+        return obj.is_active()
+
+    def get_seats_used(self, obj):
+        return obj.seats_used()
+
+    def get_seats_max(self, obj):
+        return obj.tier.max_members
+
+
+class MembershipPaymentSerializer(serializers.ModelSerializer):
+    tier = MembershipTierSerializer(read_only=True)
+
+    class Meta:
+        model = MembershipPayment
+        fields = [
+            'id', 'organization', 'user', 'tier', 'membership',
+            'gateway', 'provider_order_id', 'provider_payment_id',
+            'amount', 'currency', 'status', 'checkout',
+            'paid_at', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields

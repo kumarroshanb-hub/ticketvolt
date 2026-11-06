@@ -13,12 +13,25 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 class StripeProvider(PaymentProvider):
     name = 'stripe'
 
+    @staticmethod
+    def _description_for(payment):
+        desc = getattr(payment, 'description', None)
+        if desc:
+            return desc
+        event = getattr(payment, 'event', None)
+        if event is not None and getattr(event, 'title', None):
+            return event.title
+        return 'TicketVolt'
+
     def create_order(self, payment) -> dict:
         intent = stripe.PaymentIntent.create(
             amount=minor_units(payment.amount, payment.currency),
             currency=payment.currency.lower(),
-            metadata={'payment_id': str(payment.id)},
-            receipt_email=payment.customer_email or None,
+            metadata={
+                'payment_id': str(payment.id),
+                'description': self._description_for(payment)[:200],
+            },
+            receipt_email=getattr(payment, 'customer_email', None) or None,
             automatic_payment_methods={'enabled': True},
         )
         return {
@@ -31,7 +44,6 @@ class StripeProvider(PaymentProvider):
         }
 
     def verify_checkout(self, payment, params: dict) -> bool:
-        # Stripe relies on webhook + intent status; re-fetch the intent.
         try:
             intent = stripe.PaymentIntent.retrieve(payment.provider_order_id)
             return intent.status in ('succeeded', 'requires_capture')
@@ -43,7 +55,9 @@ class StripeProvider(PaymentProvider):
         res = WebhookResult(raw={})
         sig = headers.get('Stripe-Signature', '')
         try:
-            event = stripe.Webhook.construct_event(body, sig, settings.STRIPE_WEBHOOK_SECRET)
+            event = stripe.Webhook.construct_event(
+                body, sig, settings.STRIPE_WEBHOOK_SECRET,
+            )
         except (ValueError, stripe.error.SignatureVerificationError):
             logger.warning('🚫 Stripe webhook signature mismatch')
             return res
@@ -78,4 +92,4 @@ class StripeProvider(PaymentProvider):
         if not payment.provider_order_id:
             return 'created'
         intent = stripe.PaymentIntent.retrieve(payment.provider_order_id)
-        return intent.status   # requires_payment_method|succeeded|canceled|...
+        return intent.status

@@ -53,6 +53,8 @@
     "events": "活動",
     "venues": "場地",
     "bookings": "預訂",
+    "membership": "會籍",
+    "reviewOfflineMemberships": "離線申請",
     "checkin": "QR 掃描器",
     "analytics": "數據分析",
     "discounts": "折扣",

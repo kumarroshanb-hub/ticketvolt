@@ -4,7 +4,7 @@ import styled from 'styled-components';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';                       // ✅ NEW
+import { useTranslation } from 'react-i18next';
 import {
     Menu as MenuIcon,
     KeyboardArrowDown as KeyboardArrowDownIcon,
@@ -13,7 +13,7 @@ import {
 } from '@mui/icons-material';
 import { theme } from '../../theme/tokens';
 import LanguageSwitcher from '../LanguageSwitcher';
-import { ROLES } from '../../constants';
+import { ROLES, RoleUtils } from '../../constants';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -179,18 +179,22 @@ const RoleBadge = styled.span`
     background: ${props => {
         switch (props.role) {
             case 'super_admin': return `${C.success}1A`;
+            case 'owner':       return `${C.warning}1A`;
             case 'admin':       return `${C.info}1A`;
-            case 'organizer':   return `${C.warning}1A`;
-            case 'staff':       return `${C.secondary}1A`;      // ✅ NEW
+            case 'staff':       return `${C.secondary}1A`;
+            case 'member':      return `${C.primary}1A`;
+            case 'organizer':   return `${C.warning}1A`;   // legacy fallback
             default:            return C.bgInput;
         }
     }};
     color: ${props => {
         switch (props.role) {
             case 'super_admin': return C.successDark;
+            case 'owner':       return C.warningDark;
             case 'admin':       return C.infoDark;
-            case 'organizer':   return C.warningDark;
-            case 'staff':       return C.secondaryDark;         // ✅ NEW
+            case 'staff':       return C.secondaryDark;
+            case 'member':      return C.primaryDark;
+            case 'organizer':   return C.warningDark;      // legacy fallback
             default:            return C.textSecondary;
         }
     }};
@@ -285,7 +289,7 @@ const DropdownItem = styled.button`
 `;
 
 // ============================================
-// ✅ FIX: PAGE TITLES → translation keys
+// PAGE TITLES → translation keys
 // ============================================
 const PAGE_TITLE_KEYS = {
     '/app/dashboard':              'nav.dashboard',
@@ -298,6 +302,7 @@ const PAGE_TITLE_KEYS = {
     '/app/users':                  'nav.users',
     '/app/settings':               'nav.settings',
     '/app/profile':                'nav.profile',
+    '/app/membership':             'nav.membership',
     '/app/cancellation-policies':  'nav.cancellationPolicies',
     '/app/active-sessions':        'nav.activeSessions',
 };
@@ -317,6 +322,7 @@ const getPageTitleKeyFromPath = (pathname, isGuest) => {
     if (pathname.startsWith('/app/tickets/'))   return 'nav.bookings';
     if (pathname.startsWith('/app/events/'))    return 'nav.events';
     if (pathname.startsWith('/app/venues/'))    return 'nav.venues';
+    if (pathname.startsWith('/app/membership/')) return 'nav.membership';
 
     if (isGuest && pathname.includes('/bookings/create')) {
         return 'booking.registerForEvent';
@@ -331,10 +337,10 @@ const getPageTitleKeyFromPath = (pathname, isGuest) => {
 
 const Navbar = ({ onMenuToggle, isMobile = false }) => {
     const { user, logout, isAuthenticated } = useAuth();
-    const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
+    const { role } = useRole();
     const navigate = useNavigate();
     const location = useLocation();
-    const { t } = useTranslation();                                    // ✅ NEW
+    const { t } = useTranslation();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef(null);
@@ -363,12 +369,24 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         setMenuOpen(false);
     }, [location.pathname]);
 
+    // ============================================
+    // ✅ FIX: role label — branch on `role`, not on
+    // the derived `isAdmin`/`isOrganizer` aliases.
+    // `isAdmin` is true for admin/owner/super_admin,
+    // and `isOrganizer` is true for all of those too,
+    // so `member` used to fall through to "Regular User".
+    // ============================================
     const getRoleLabel = () => {
-        if (isSuperAdmin) return t('roles.superAdmin');                // ✅ FIX
-        if (isAdmin) return t('roles.admin');
-        if (isOrganizer) return t('roles.organizer');
-        if (role === ROLES.STAFF) return t('roles.staff');   // ✅ NEW
-        return t('roles.user');
+        const ROLE_I18N_KEYS = {
+            [ROLES.SUPER_ADMIN]: 'roles.superAdmin',
+            [ROLES.OWNER]:       'roles.owner',
+            [ROLES.ADMIN]:       'roles.admin',
+            [ROLES.STAFF]:       'roles.staff',
+            [ROLES.MEMBER]:      'roles.member',
+            [ROLES.USER]:        'roles.user',
+        };
+        const key = ROLE_I18N_KEYS[role] || 'roles.user';
+        return t(key, { defaultValue: RoleUtils.getLabel(role) });
     };
 
     const getInitial = () => {
@@ -390,15 +408,27 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         navigate('/app/profile');
     };
 
+    // Role badge emoji — now covers owner and member.
+    const getRoleBadgeEmoji = () => {
+        switch (role) {
+            case ROLES.SUPER_ADMIN: return '🔑';
+            case ROLES.OWNER:       return '📋';
+            case ROLES.ADMIN:       return '🛡️';
+            case ROLES.STAFF:       return '🎟️';
+            case ROLES.MEMBER:      return '⭐';
+            default:                return '👤';
+        }
+    };
+
     const pageTitleKey = getPageTitleKeyFromPath(location.pathname, !isAuthenticated);
-    const pageTitle = t(pageTitleKey);                                 // ✅ FIX
+    const pageTitle = t(pageTitleKey, { defaultValue: 'Dashboard' });
 
     return (
         <NavbarContainer $fixed={isMobile}>
             <NavLeft>
                 <MenuButton
                     onClick={onMenuToggle}
-                    aria-label={t('common.toggleNavigationMenu')}     // ✅ FIX
+                    aria-label={t('common.toggleNavigationMenu')}
                 >
                     <MenuIcon />
                 </MenuButton>
@@ -414,7 +444,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                     <UserMenuWrapper ref={menuRef}>
                         <UserInfo
                             onClick={() => setMenuOpen(prev => !prev)}
-                            aria-label={t('common.userMenu')}         // ✅ FIX
+                            aria-label={t('common.userMenu')}
                             aria-haspopup="menu"
                             aria-expanded={menuOpen}
                         >
@@ -426,7 +456,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                 <UserRole>{getRoleLabel()}</UserRole>
                             </UserDetails>
                             <RoleBadge role={role}>
-                                {isSuperAdmin ? '🔑' : isAdmin ? '🛡️' : isOrganizer ? '📋' : role === ROLES.STAFF ? '🎟️' : '👤'}
+                                {getRoleBadgeEmoji()}
                             </RoleBadge>
                             <Chevron $open={menuOpen} />
                         </UserInfo>
@@ -444,7 +474,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
 
                                 <DropdownItem role="menuitem" onClick={handleGoToProfile}>
                                     <PersonIcon />
-                                    {t('nav.profile')}                {/* ✅ FIX */}
+                                    {t('nav.profile')}
                                 </DropdownItem>
 
                                 <DropdownItem
@@ -453,7 +483,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                     onClick={handleLogout}
                                 >
                                     <LogoutIcon />
-                                    {t('nav.logout')}                 {/* ✅ FIX */}
+                                    {t('nav.logout')}
                                 </DropdownItem>
                             </Dropdown>
                         )}

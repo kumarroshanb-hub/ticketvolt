@@ -13,7 +13,12 @@ from .models_tenancy import (
     Organization, OrganizationMembership, OrganizationContact,
 )
 from ticket_bookings.services.qr_service import QRCodeService
-
+from .models_membership import (
+    Membership,
+    MembershipDependent,
+    MembershipPayment,
+    MembershipTier,
+)
 
 # ============================================================
 # INLINES
@@ -93,11 +98,104 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 @admin.register(OrganizationMembership)
 class OrganizationMembershipAdmin(admin.ModelAdmin):
-    list_display = ('user', 'organization', 'role', 'joined_at')
-    list_filter = ('role', 'organization')
+    list_display = ('user', 'organization', 'role', 'is_active', 'joined_at')
+    list_filter = ('role', 'is_active', 'organization')
     search_fields = ('user__username', 'user__email', 'organization__name')
     autocomplete_fields = ('user', 'organization')
     ordering = ('organization', '-joined_at')
+    readonly_fields = ('joined_at',)
+
+    fieldsets = (
+        ('Identity', {
+            'fields': ('user', 'organization', 'role', 'is_active'),
+        }),
+        ('Validity', {
+            'fields': ('valid_from', 'valid_until', 'joined_at'),
+            'description': (
+                'Leave valid_until blank for indefinite membership. '
+                'Expired memberships automatically lose tenant access.'
+            ),
+        }),
+    )
+
+
+@admin.register(MembershipTier)
+class MembershipTierAdmin(admin.ModelAdmin):
+    list_display = (
+        'name', 'organization', 'price', 'currency_code',
+        'billing_period', 'max_members', 'is_active', 'is_public',
+    )
+    list_filter = ('billing_period', 'is_active', 'is_public', 'organization')
+    search_fields = ('name', 'slug', 'organization__name')
+    autocomplete_fields = ('organization',)
+    readonly_fields = ('slug', 'duration_days', 'created_at', 'updated_at')
+
+
+@admin.register(Membership)
+class MembershipAdmin(admin.ModelAdmin):
+    list_display = (
+        'user', 'organization', 'tier', 'status',
+        'payment_method', 'offline_reference',
+        'started_at', 'valid_until', 'price_paid',
+        'reviewed_by', 'reviewed_at',
+    )
+    list_filter = ('status', 'payment_method', 'tier', 'organization')
+    search_fields = (
+        'user__username', 'user__email',
+        'organization__name', 'offline_reference',
+    )
+    autocomplete_fields = ('organization', 'user', 'tier', 'reviewed_by')
+    readonly_fields = ('created_at', 'updated_at', 'reviewed_at')
+    ordering = ('-created_at',)
+
+    fieldsets = (
+        ('Membership', {
+            'fields': ('user', 'organization', 'tier', 'status'),
+        }),
+        ('Payment', {
+            'fields': (
+                'price_paid', 'currency_code',
+                'payment_method', 'offline_reference',
+                'membership_payment_id',
+            ),
+        }),
+        ('Validity', {
+            'fields': ('started_at', 'valid_until'),
+        }),
+        ('Review (offline only)', {
+            'fields': ('reviewed_by', 'reviewed_at', 'cancelled_at', 'cancelled_reason'),
+            'classes': ('collapse',),
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
+@admin.register(MembershipDependent)
+class MembershipDependentAdmin(admin.ModelAdmin):
+    list_display = (
+        'full_name', 'membership', 'relationship',
+        'member_code', 'is_active',
+    )
+    list_filter = ('relationship', 'is_active')
+    search_fields = ('full_name', 'email', 'member_code')
+    autocomplete_fields = ('membership',)
+    readonly_fields = ('member_code', 'created_at')
+
+
+@admin.register(MembershipPayment)
+class MembershipPaymentAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'user', 'organization', 'tier', 'gateway',
+        'amount', 'currency', 'status', 'paid_at',
+    )
+    list_filter = ('status', 'gateway', 'organization')
+    search_fields = ('user__username', 'user__email', 'provider_order_id')
+    autocomplete_fields = ('organization', 'user', 'tier')
+    readonly_fields = ('created_at', 'updated_at')
+    ordering = ('-created_at',)
 
 
 @admin.register(OrganizationContact)

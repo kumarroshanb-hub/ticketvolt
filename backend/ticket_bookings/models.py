@@ -330,6 +330,25 @@ class Event(models.Model):
         ),
     )
 
+    # --- Paid-membership gating -------------------------------------------
+    members_only = models.BooleanField(
+        default=False,
+        help_text=(
+            'When true, only users with an active membership in this '
+            'organization may view or book.'
+        ),
+    )
+    min_membership_tier = models.ForeignKey(
+        'ticket_bookings.MembershipTier',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='events',
+        help_text=(
+            'If set, only members at this tier or higher may view/book '
+            'this event.'
+        ),
+    )
+
     @property
     def is_registration_only(self) -> bool:
         return self.event_flow in (

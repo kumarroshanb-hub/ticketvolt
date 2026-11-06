@@ -487,18 +487,47 @@ class BookingViewSet(viewsets.ModelViewSet):
             try:
                 event_obj = Event.objects.get(id=event_id)
                 if event_obj.status not in ['active', 'published']:
-                    return Response({'error': 'This event is not available for booking'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'error': 'This event is not available for booking'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 if event_obj.end_date and event_obj.end_date < timezone.now():
-                    return Response({'error': 'This event has already ended'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'error': 'This event has already ended'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 caller_can_operate = (
                     request.user.is_authenticated
                     and can_operate_org(request.user, event_obj.organization)
                 )
                 if not event_obj.is_public and not caller_can_operate:
-                    return Response({'error': 'This event is not available for public booking'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'error': 'This event is not available for public booking'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # ✅ MEMBERSHIP GATE
+                # Events flagged `members_only=True`, or gated by
+                # `min_membership_tier`, require the caller to hold an
+                # active paid membership in the event's organization.
+                # `can_access_event()` already whitelists:
+                #   • platform admins
+                #   • org managers (owner/admin)
+                # so staff, members, and anonymous users are the only
+                # callers that can be blocked here.
+                from ..services.membership_access import can_access_event
+                if not can_access_event(request.user, event_obj):
+                    return Response(
+                        {'error': 'This event is for members only.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
             except Event.DoesNotExist:
-                return Response({'error': 'Event not found'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': 'Event not found'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if event_obj and event_obj.event_flow == 'free_registration':
             return self._create_free_registration(request, event_obj, data)

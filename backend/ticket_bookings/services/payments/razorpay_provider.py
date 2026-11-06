@@ -14,16 +14,35 @@ class RazorpayProvider(PaymentProvider):
     name = 'razorpay'
 
     def __init__(self):
-        self.client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        self.client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+
+    # ---------- helpers ----------
+
+    @staticmethod
+    def _description_for(payment):
+        """Return a display title for ticket payments OR membership payments."""
+        # Membership payments carry an explicit description property.
+        desc = getattr(payment, 'description', None)
+        if desc:
+            return desc
+        event = getattr(payment, 'event', None)
+        if event is not None and getattr(event, 'title', None):
+            return event.title
+        return 'TicketVolt'
+
+    # ---------- interface ----------
 
     def create_order(self, payment) -> dict:
         order = self.client.order.create({
             'amount': minor_units(payment.amount, payment.currency),
             'currency': payment.currency.upper(),
             'receipt': str(payment.id),
-            'payment_capture': 1,                       # auto-capture
+            'payment_capture': 1,
             'notes': {'payment_id': str(payment.id)},
         })
+        org = getattr(payment, 'organization', None)
         return {
             'provider_order_id': order['id'],
             'client': {
@@ -31,12 +50,12 @@ class RazorpayProvider(PaymentProvider):
                 'order_id': order['id'],
                 'amount': minor_units(payment.amount, payment.currency),
                 'currency': payment.currency.upper(),
-                'name': payment.organization.name,
-                'description': payment.event.title,
+                'name': org.name if org else 'TicketVolt',
+                'description': self._description_for(payment),
                 'prefill': {
-                    'name': payment.customer_name,
-                    'email': payment.customer_email,
-                    'contact': payment.customer_phone,
+                    'name': getattr(payment, 'customer_name', '') or '',
+                    'email': getattr(payment, 'customer_email', '') or '',
+                    'contact': getattr(payment, 'customer_phone', '') or '',
                 },
             },
         }
@@ -57,7 +76,9 @@ class RazorpayProvider(PaymentProvider):
     def parse_webhook(self, body: bytes, headers: dict) -> WebhookResult:
         res = WebhookResult(raw={})
         signature = headers.get('X-Razorpay-Signature', '')
-        expected = hmac.new(settings.RAZORPAY_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+        expected = hmac.new(
+            settings.RAZORPAY_WEBHOOK_SECRET.encode(), body, hashlib.sha256,
+        ).hexdigest()
         if not hmac.compare_digest(expected, signature):
             logger.warning('🚫 Razorpay webhook signature mismatch')
             return res
@@ -71,8 +92,9 @@ class RazorpayProvider(PaymentProvider):
         entity = data.get('payload', {}).get('payment', {}).get('entity', {})
         res.provider_payment_id = entity.get('id')
         res.provider_order_id = entity.get('order_id')
-        # Razorpay has no guaranteed unique event id; build one.
-        res.provider_event_id = f"{event}:{res.provider_payment_id or res.provider_order_id or 'unknown'}"
+        res.provider_event_id = (
+            f"{event}:{res.provider_payment_id or res.provider_order_id or 'unknown'}"
+        )
 
         if event == 'payment.captured':
             res.action = 'paid'
@@ -93,4 +115,4 @@ class RazorpayProvider(PaymentProvider):
         if not payment.provider_payment_id:
             return 'created'
         p = self.client.payment.fetch(payment.provider_payment_id)
-        return p.get('status', 'unknown')   # created|authorized|captured|failed|refunded
+        return p.get('status', 'unknown')

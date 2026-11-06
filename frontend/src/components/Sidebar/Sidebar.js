@@ -19,6 +19,7 @@ import {
   Logout as LogoutIcon,
   Policy as PolicyIcon,
   Business as BusinessIcon,
+  WorkspacePremium as MembershipIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
@@ -319,6 +320,27 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
         ROLES.USER,
       ],
       section: 'main',
+    },
+    {
+      path: '/app/membership',
+      icon: <MembershipIcon />,
+      label: t('nav.membership', 'Membership'),
+      roles: [
+        ROLES.SUPER_ADMIN,
+        ROLES.OWNER,
+        ROLES.ADMIN,
+        ROLES.STAFF,
+        ROLES.MEMBER,
+        ROLES.USER,
+      ],
+      section: 'main',
+    },
+    {
+      path: '/app/membership/review-offline',
+      icon: <MembershipIcon />,   // reuse the same icon; or use `<ReceiptLong />`
+      label: t('nav.reviewOfflineMemberships', 'Offline Requests'),
+      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      section: 'management',
     },
     {
       path: '/app/checkin',

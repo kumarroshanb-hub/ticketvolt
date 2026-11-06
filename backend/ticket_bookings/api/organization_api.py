@@ -3,25 +3,26 @@
 Organization (tenant) API.
 
 Role rules (6-tier hierarchy):
-  • Any authenticated user may create an org and becomes OWNER.
+  • Any authenticated user may create an org. A NON-superuser who
+    creates an org becomes its OWNER immediately (self-service).
+  • A PLATFORM SUPERUSER creating an org does NOT become its owner and
+    does NOT receive an OrganizationMembership. The org is created in
+    an "unowned" state (`owner=None`). A superuser assigns the tenant
+    OWNER afterwards via `assign-owner` (or `transfer-ownership`).
+    This keeps the Platform tier strictly above every tenant tier.
   • A Platform Admin may create an org on behalf of another user by
-    passing `owner_id` — that user becomes the OWNER instead.
+    passing `owner_id` — that user becomes the OWNER and receives the
+    membership. The superuser still gets no membership.
   • OWNER can change member roles among ADMIN / STAFF / MEMBER, but
     CANNOT promote or demote directly to/from OWNER via
     `change_member_role`. Ownership moves ONLY through the atomic
-    `transfer-ownership` endpoint (which also re-points the
-    Organization.owner FK).
+    `transfer-ownership` (and `assign-owner`) endpoint.
   • The current OWNER (or a Platform Admin) may transfer ownership to
     any existing active member via `transfer-ownership`. The previous
     owner is demoted to ADMIN and retained in the org.
   • ADMIN can add/remove STAFF/MEMBER but cannot add/remove ADMIN or
     OWNER.
   • Only Platform Admin can delete an org.
-
-Regional defaults (currency, country, timezone, branding) are seeded
-from SystemSettings on create, so a new tenant starts with the
-platform-configured display config. Any field explicitly supplied by
-the caller overrides the seed.
 """
 from django.contrib.auth.models import User
 from django.db import transaction
@@ -51,19 +52,40 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         return visible_organizations(self.request.user)
 
     # ------------------------------------------------------------------
-    # Create — with optional owner_id (Platform Admin only)
+    # Create
     # ------------------------------------------------------------------
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """
+        ✅ FIX [SUPERUSER-ORG-AGNOSTIC]: a superuser creating an org does
+        NOT become its owner and does NOT receive a membership.
+
+        Three distinct paths:
+
+          1. Regular authenticated user creates an org for themselves
+             → they become OWNER + get the membership.
+
+          2. Superuser creates an org with `owner_id=<user>`
+             → `<user>` becomes OWNER + gets the membership.
+               Superuser gets NO membership.
+
+          3. Superuser creates an org with no `owner_id`
+             → org is created unowned (`owner=None`). No memberships
+               at all. Superuser assigns an owner later via
+               `assign-owner` once a tenant OWNER user exists.
+        """
         requester = self.request.user
+        requester_is_superuser = is_platform_superuser(requester)
 
         # ---- 1. Resolve owner ----
         owner_id = self.request.data.get('owner_id')
-        if owner_id:
-            if not is_platform_admin(requester):
+        explicit_owner_requested = bool(owner_id)
+
+        if explicit_owner_requested:
+            if not requester_is_superuser:
                 raise PermissionDenied(
                     'Only a Platform Admin can assign a different owner.'
                 )
@@ -73,7 +95,11 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 raise serializers.ValidationError(
                     {'owner_id': 'User not found.'}
                 )
+        elif requester_is_superuser:
+            # ✅ FIX: superuser + no owner_id → unowned org.
+            owner_user = None
         else:
+            # Regular user self-service: they become owner.
             owner_user = requester
 
         # ---- 2. Seed regional defaults from SystemSettings ----
@@ -97,19 +123,25 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         org = serializer.save(owner=owner_user, **seed)
 
         # ---- 3. Membership rows ----
-        OrganizationMembership.objects.get_or_create(
-            organization=org,
-            user=owner_user,
-            defaults={'role': OrganizationMembership.OrgRole.OWNER},
-        )
-        # The Platform Admin who created the org on behalf of someone
-        # else retains ADMIN so they can continue to operate it.
-        if requester != owner_user:
+        #
+        # ✅ FIX: only create a membership when there is a tenant OWNER.
+        # A superuser NEVER receives an OrganizationMembership, even when
+        # they created the org.
+        if owner_user is not None:
             OrganizationMembership.objects.get_or_create(
                 organization=org,
-                user=requester,
-                defaults={'role': OrganizationMembership.OrgRole.ADMIN},
+                user=owner_user,
+                defaults={'role': OrganizationMembership.OrgRole.OWNER},
             )
+
+        # ✅ The superuser who created the org gets NO membership row.
+        # Their platform-level `is_superuser` already grants full access
+        # via `visible_organizations` / `can_manage_org`, which whitelist
+        # platform admins. Adding a membership row would make the
+        # superuser indistinguishable from a tenant role and would
+        # appear in `user.memberships[]`.
+
+        return org
 
     # ------------------------------------------------------------------
     # Update
@@ -148,13 +180,13 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------
-    # Members (List & Add) - ✅ MERGED TO FIX ROUTER COLLISION
+    # Members (List & Add)
     # ------------------------------------------------------------------
     @action(detail=True, methods=['get', 'post'], url_path='members')
     @transaction.atomic
     def members(self, request, pk=None):
         """
-        GET: List all members of the organization (for Transfer Ownership, etc).
+        GET: List all members of the organization.
         POST: Add an existing user directly to the organization.
         """
         org = self.get_object()
@@ -173,7 +205,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 .select_related('user', 'user__profile')
                 .order_by('-joined_at')
             )
-            
+
             data = []
             for m in qs:
                 full_name = m.user.get_full_name().strip() or m.user.username
@@ -182,21 +214,18 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                     'user_id': m.user_id,
                     'email': m.user.email,
                     'name': full_name,
-                    'full_name': full_name,  # ✅ Required by frontend Transfer Ownership dialog
+                    'full_name': full_name,
                     'username': m.user.username,
                     'role': m.role,
                     'is_active': getattr(m, 'is_active', True),
                     'joined_at': m.joined_at.isoformat() if m.joined_at else None,
                 }
-                
-                # Expose validity dates for time-bounded memberships
-                if hasattr(m, 'valid_from') and m.valid_from:
+                if getattr(m, 'valid_from', None):
                     item['valid_from'] = m.valid_from.isoformat()
-                if hasattr(m, 'valid_until') and m.valid_until:
+                if getattr(m, 'valid_until', None):
                     item['valid_until'] = m.valid_until.isoformat()
-                    
                 data.append(item)
-                
+
             return Response(data, status=status.HTTP_200_OK)
 
         # ---------------------------------------------------------
@@ -262,6 +291,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             'role': membership.role,
         }, status=status.HTTP_201_CREATED)
 
+    # ------------------------------------------------------------------
+    # Member role change
+    # ------------------------------------------------------------------
     @action(
         detail=True, methods=['patch'],
         url_path=r'members/(?P<user_id>[^/.]+)',
@@ -333,13 +365,135 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------
-    # ADDED FOR OWNERSHIP TRANSFER
+    # Assign owner — superuser-only, for a freshly-created unowned org
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=['post'], url_path='assign-owner')
+    @transaction.atomic
+    def assign_owner(self, request, pk=None):
+        """
+        ✅ NEW: Assign the first OWNER of an unowned organization.
+
+        A superuser who creates an org does NOT become its owner. Once a
+        tenant user exists who should own the org, the superuser calls:
+
+            POST /api/organizations/<id>/assign-owner/
+            {"new_owner_user_id": <user id>}
+
+        Invariants enforced:
+          • Caller must be a Platform Superuser.
+          • The org must currently have NO owner (owner_id is null) and
+            NO OWNER membership. To replace an existing owner, use
+            `transfer-ownership` instead — that path demotes the
+            previous owner rather than silently orphaning them.
+          • The target user must exist, be active, and — for a brand
+            new assignment — need not already be a member. This is the
+            one path that promotes a non-member to OWNER, because the
+            org has no members yet.
+        """
+        if not is_platform_superuser(request.user):
+            raise PermissionDenied(
+                'Only a Platform Admin can assign an organization owner.'
+            )
+
+        org = self.get_object()
+
+        if org.owner_id is not None:
+            return Response(
+                {
+                    'error': (
+                        'This organization already has an owner. '
+                        'Use transfer-ownership to change the owner.'
+                    ),
+                    'current_owner_id': org.owner_id,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        existing_owner_membership = (
+            OrganizationMembership.objects
+            .filter(organization=org, role=OrganizationMembership.OrgRole.OWNER)
+            .exists()
+        )
+        if existing_owner_membership:
+            return Response(
+                {
+                    'error': (
+                        'This organization already has an OWNER membership. '
+                        'Use transfer-ownership to change the owner.'
+                    ),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        new_owner_user_id = request.data.get('new_owner_user_id')
+        if not new_owner_user_id:
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'This field is required.'}
+            )
+        try:
+            new_owner_user_id = int(new_owner_user_id)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'Must be a valid user ID.'}
+            )
+
+        try:
+            target_user = User.objects.select_for_update().get(pk=new_owner_user_id)
+        except User.DoesNotExist:
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'User not found.'}
+            )
+
+        if not target_user.is_active:
+            raise serializers.ValidationError(
+                {'new_owner_user_id': 'User must be active.'}
+            )
+
+        # Guard: a superuser must NEVER be the OWNER of a tenant. The
+        # whole point of this endpoint is to keep the Platform tier
+        # strictly above the tenant tier.
+        if is_platform_superuser(target_user):
+            raise serializers.ValidationError(
+                {
+                    'new_owner_user_id': (
+                        'A Platform Admin cannot be the owner of a tenant. '
+                        'Assign a non-superuser to be the OWNER.'
+                    )
+                }
+            )
+
+        OrganizationMembership.objects.update_or_create(
+            organization=org,
+            user=target_user,
+            defaults={
+                'role': OrganizationMembership.OrgRole.OWNER,
+                'is_active': True,
+            },
+        )
+
+        org.owner_id = target_user.id
+        org.save(update_fields=['owner', 'updated_at'])
+
+        return Response(
+            OrganizationSerializer(org, context={'request': request}).data,
+            status=status.HTTP_200_OK,
+        )
+
+    # ------------------------------------------------------------------
+    # Transfer ownership — existing owner → another existing member
     # ------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='transfer-ownership')
     @transaction.atomic
     def transfer_ownership(self, request, pk=None):
         """
         Transfer ownership of this organization to another existing member.
+
+        ✅ FIX: this endpoint now also tolerates an unowned org when the
+        caller is a Platform Superuser (equivalent to `assign-owner` but
+        routed through the same atomic path). The difference is that
+        `assign-owner` refuses to run if ANY owner exists; transfer-
+        ownership will run if an owner exists and demote the previous
+        one. If neither is true, both endpoints behave identically.
         """
         org = self.get_object()
         requester = request.user
@@ -406,6 +560,17 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 {'new_owner_user_id': 'New owner must be an active user.'}
             )
 
+        # ✅ FIX: enforce that a superuser never becomes a tenant OWNER
+        # via this path either.
+        if is_platform_superuser(target_membership.user):
+            raise serializers.ValidationError(
+                {
+                    'new_owner_user_id': (
+                        'A Platform Admin cannot be the owner of a tenant.'
+                    )
+                }
+            )
+
         if (
             current_owner_membership
             and current_owner_membership.user_id != new_owner_user_id
@@ -422,6 +587,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(org)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # ------------------------------------------------------------------
+    # Remove member
+    # ------------------------------------------------------------------
     @action(
         detail=True, methods=['delete'],
         url_path=r'members/(?P<user_id>[^/.]+)',

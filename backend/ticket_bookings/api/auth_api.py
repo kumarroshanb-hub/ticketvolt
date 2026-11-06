@@ -25,6 +25,15 @@ Security invariants
   • Inactive users can neither request nor redeem links.
   • Invite acceptance honours the validity window captured at invite time.
   • Ownership can NEVER be granted via invite (transfer-ownership only).
+
+2026-11-06 review fixes applied here
+-------------------------------------
+  • §2.2 — membership payload now carries ``is_currently_valid`` /
+    ``access_starts_at`` / ``access_ends_at`` (via ``as_dict``) so the UI
+    can render deferred-access memberships instead of silently hiding them.
+  • §2.3 — invite acceptance is soft-aware: re-inviting a soft-removed
+    member reactivates the existing row (preserving ``joined_at``) instead
+    of creating a new one, and writes an ``OrganizationMembershipEvent``.
 """
 import logging
 import secrets
@@ -35,6 +44,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -51,7 +61,10 @@ from ..models_tenancy import (
     Organization,
     OrganizationInvite,
     OrganizationMembership,
+    OrganizationMembershipEvent,
     OrgRole,
+    log_membership_event,
+    snapshot_membership,
 )
 from ..services import auth_emails
 from ..services.tenancy import (
@@ -112,7 +125,26 @@ def _unique_username(email):
 
 
 def _build_user_payload(user):
-    """Same shape as LoginView / MeView so the frontend hydrates instantly."""
+    """
+    Same shape as LoginView / MeView so the frontend hydrates instantly.
+
+    MEMBERSHIP-AS-PROPERTY MODEL: includes `memberships[]` and
+    `effective_role`; `role` remains for backward compatibility but is
+    a derived label, not a stored value.
+
+    Each membership dict now includes ``is_currently_valid`` and
+    ``access_starts_at`` / ``access_ends_at`` (2026-11-06 review §2.2),
+    so the UI can distinguish "member but access starts in 3 days" from
+    "member and active now" without re-implementing the window check.
+    """
+    from ..services.tenancy import (
+        effective_role_label,
+        user_memberships_payload,
+        user_org_ids,
+        user_operator_org_ids,
+    )
+
+    role_label = effective_role_label(user)
     return {
         'id': user.id,
         'username': user.username,
@@ -120,11 +152,13 @@ def _build_user_payload(user):
         'first_name': user.first_name,
         'last_name': user.last_name,
         'name': user.get_full_name() or user.username,
-        'role': get_user_role(user),
+        'role': role_label,
+        'effective_role': role_label,
         'is_superuser': user.is_superuser,
         'is_staff': user.is_staff,
         'org_ids': [str(o) for o in user_operator_org_ids(user)],
         'managed_org_ids': [str(o) for o in user_org_ids(user)],
+        'memberships': user_memberships_payload(user),
         **_user_profile_summary(user),
     }
 
@@ -236,6 +270,9 @@ def verify_magic_link(request):
     # ---------------------------------------------------------------
     # 2a. Organization invite token
     # ---------------------------------------------------------------
+    # ✅ 2026-11-06 §2.3: lock the invite row so two simultaneous
+    # verifications can't both accept it. The whole acceptance is one
+    # transaction so a failed audit write can't leave a half-applied state.
     invite = OrganizationInvite.objects.filter(token=token).first()
     if invite is not None:
         if invite.is_expired() or invite.accepted_at:
@@ -251,42 +288,97 @@ def verify_magic_link(request):
                 {'error': 'Invalid or expired link.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        user = User.objects.filter(email__iexact=invite.email).first()
-        if user is None:
-            # Passwordless account creation
-            user = User.objects.create_user(
-                username=_unique_username(invite.email),
-                email=invite.email,
-                password=secrets.token_urlsafe(32), # hashed once by create_user
+
+        with transaction.atomic():
+            # Re-fetch under a row lock to serialise concurrent accepts.
+            invite = (
+                OrganizationInvite.objects
+                .select_for_update()
+                .get(pk=invite.pk)
             )
-        if not user.is_active:
-            return Response(
-                {'error': 'Account is disabled.'},
-                status=status.HTTP_403_FORBIDDEN,
+            if invite.accepted_at or invite.is_expired():
+                return Response(
+                    {'error': 'Link expired or already used.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = User.objects.filter(email__iexact=invite.email).first()
+            if user is None:
+                # Passwordless account creation
+                user = User.objects.create_user(
+                    username=_unique_username(invite.email),
+                    email=invite.email,
+                    password=secrets.token_urlsafe(32),  # hashed once by create_user
+                )
+            if not user.is_active:
+                return Response(
+                    {'error': 'Account is disabled.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            UserProfile.objects.get_or_create(
+                user=user, defaults={'email': user.email},
             )
 
-        UserProfile.objects.get_or_create(
-            user=user, defaults={'email': user.email},
-        )
+            # ✅ 2026-11-06 §2.3: soft-aware upsert.
+            #   • existing row (any state) → update in place, clear removed_at,
+            #     preserve joined_at, emit ACCEPTED / REACTIVATED / ROLE_CHANGED.
+            #   • no row → create fresh, emit ACCEPTED.
+            existing = (
+                OrganizationMembership.objects
+                .select_for_update()
+                .filter(organization=invite.organization, user=user)
+                .first()
+            )
+            before = snapshot_membership(existing)
 
-        # Honour the validity window captured when the invite was sent.
-        OrganizationMembership.objects.update_or_create(
-            organization=invite.organization,
-            user=user,
-            defaults={
-                'role': invite.role,
-                'is_active': True,
-                'valid_from': invite.valid_from,
-                'valid_until': invite.valid_until,
-            },
-        )
+            if existing is None:
+                membership = OrganizationMembership.objects.create(
+                    organization=invite.organization,
+                    user=user,
+                    role=invite.role,
+                    is_active=True,
+                    valid_from=invite.valid_from,
+                    valid_until=invite.valid_until,
+                    removed_at=None,
+                )
+                event_type = OrganizationMembershipEvent.EventType.ACCEPTED
+            else:
+                was_removed = existing.removed_at is not None
+                role_changed = existing.role != invite.role
+                existing.role = invite.role
+                existing.is_active = True
+                existing.valid_from = invite.valid_from
+                existing.valid_until = invite.valid_until
+                existing.removed_at = None
+                existing.save(update_fields=[
+                    'role', 'is_active', 'valid_from', 'valid_until', 'removed_at',
+                ])
+                membership = existing
+                if was_removed:
+                    event_type = OrganizationMembershipEvent.EventType.REACTIVATED
+                elif role_changed:
+                    event_type = OrganizationMembershipEvent.EventType.ROLE_CHANGED
+                else:
+                    event_type = OrganizationMembershipEvent.EventType.ACCEPTED
 
-        invite.accepted_at = timezone.now()
-        invite.save(update_fields=['accepted_at'])
+            invite.accepted_at = timezone.now()
+            invite.save(update_fields=['accepted_at'])
+
+            log_membership_event(
+                organization=invite.organization,
+                membership=membership,
+                user=user,
+                event_type=event_type,
+                actor=invite.invited_by,
+                before=before,
+                after=snapshot_membership(membership),
+            )
 
         logger.info(
-            '✅ Invite accepted: user=%s org=%s role=%s',
-            user.username, invite.organization.slug, invite.role,
+            '✅ Invite accepted (%s): user=%s org=%s role=%s access_from=%s',
+            event_type, user.username, invite.organization.slug,
+            invite.role, invite.valid_from,
         )
         return Response(_issue_tokens(user), status=status.HTTP_200_OK)
 
@@ -540,6 +632,7 @@ def send_organization_invite(request, org_id):
             request.user.is_superuser
             or OrganizationMembership.objects.filter(
                 organization=org, user=request.user, role=OrgRole.OWNER,
+                removed_at__isnull=True,
             ).exists()
         )
         if not is_owner:
@@ -548,8 +641,11 @@ def send_organization_invite(request, org_id):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+    # ✅ §2.3: block re-inviting an existing *active* member, but allow
+    # re-inviting a soft-removed one (that's the whole point of the fix).
     if OrganizationMembership.objects.filter(
         organization=org, user__email__iexact=email,
+        removed_at__isnull=True, is_active=True,
     ).exists():
         return Response(
             {'error': 'User is already a member.'},
@@ -572,6 +668,21 @@ def send_organization_invite(request, org_id):
         valid_until=valid_until,
     )
 
+    # ✅ §2.3: audit the invite creation (best-effort).
+    log_membership_event(
+        organization=org,
+        user=None,           # invitee may not have an account yet
+        membership=None,     # membership is created on acceptance
+        event_type=OrganizationMembershipEvent.EventType.INVITED,
+        actor=request.user,
+        after={
+            'email': email,
+            'role': role,
+            'valid_from': valid_from.isoformat(),
+            'valid_until': valid_until.isoformat() if valid_until else None,
+        },
+    )
+
     invite_link = f"{settings.FRONTEND_URL}/invite/accept?token={invite.token}"
 
     # ✅ Aligned: non-blocking delivery; result surfaced to the caller.
@@ -587,4 +698,9 @@ def send_organization_invite(request, org_id):
         'message': f'Invite created for {email}.',
         'email_sent': email_result['success'],
         'email_error': email_result.get('error'),
+        # ✅ §2.2: surface the deferred-access window to the caller (and
+        #    ultimately the frontend can render it in the invite email copy).
+        'valid_from': invite.valid_from.isoformat(),
+        'valid_until': invite.valid_until.isoformat() if invite.valid_until else None,
+        'access_starts_in_future': invite.valid_from > timezone.now(),
     })

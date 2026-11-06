@@ -32,6 +32,7 @@ import {
 import { theme } from '../../theme/tokens';
 import PlatformSettingsTab from './PlatformSettingsTab';
 import { ROLES } from '../../constants';
+import { useRole } from '../../context/RoleContext';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -246,8 +247,8 @@ const Settings = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     // Platform settings tab is for admin / superadmin only.
-    const canManagePlatform =
-        user?.role === ROLES.SUPER_ADMIN;
+    const { isSuperAdmin } = useRole();
+    const canManagePlatform = isSuperAdmin;
 
     const [activeTab, setActiveTab] = useState('profile');
     const [loading, setLoading] = useState(false);

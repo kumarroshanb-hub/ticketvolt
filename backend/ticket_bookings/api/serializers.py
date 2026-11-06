@@ -22,6 +22,7 @@ from ..models_tenancy import (  # UPDATED: added OrganizationContact back
     Organization, OrganizationMembership, OrganizationContact, OrgRole,
 )
 from ..services.cancellation_policy import validate_cancellation_rules
+from ..services.tenancy import user_memberships_payload, effective_role_label
 
 # ============================================================
 # MEMBERSHIP SERIALIZERS
@@ -35,29 +36,16 @@ from ..models_membership import (  # noqa: E402
 
 def get_user_effective_role(user):
     """
-    Resolve the user's highest-priority role for the frontend.
-    Priority: superuser > highest org role > 'user' (guest)
+    DEPRECATED wrapper. Delegates to `tenancy.effective_role_label()`.
+
+    In the membership-as-property model there is no "the user's role";
+    the label is derived from the user's memberships. Kept so existing
+    callers keep working; new code should call
+    `tenancy.effective_role_label` directly.
+
+    Priority: superuser > highest org role > 'user' (guest / no membership).
     """
-    if not user or not user.is_authenticated:
-        return 'user'
-    if user.is_superuser:
-        return 'super_admin'
-
-    memberships = _active_user_memberships(user).order_by(
-        models.Case(
-            models.When(role=OrgRole.OWNER, then=models.Value(4)),
-            models.When(role=OrgRole.ADMIN, then=models.Value(3)),
-            models.When(role=OrgRole.STAFF, then=models.Value(2)),
-            models.When(role=OrgRole.MEMBER, then=models.Value(1)),
-            default=models.Value(0),
-            output_field=models.IntegerField(),
-        )
-    )
-
-    if memberships.exists():
-        return memberships.first().role
-
-    return 'user'
+    return effective_role_label(user)
 
 
 logger = logging.getLogger(__name__)
@@ -182,10 +170,11 @@ class TicketPayloadSerializer(serializers.Serializer):
 # tenants they belong to. `slug`, `owner`, `is_active` are managed
 # server-side; the client only supplies display fields.
 # ============================================================
+# backend/ticket_bookings/api/serializers.py  (excerpt — only OrganizationSerializer)
+
 class OrganizationSerializer(serializers.ModelSerializer):
-    owner_username = serializers.CharField(
-        source='owner.username', read_only=True,
-    )
+    # ✅ FIX [SUPERUSER-ORG-AGNOSTIC]: `owner` is nullable.
+    owner_username = serializers.SerializerMethodField(read_only=True)
     role = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -202,12 +191,16 @@ class OrganizationSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
 
+    def get_owner_username(self, obj):
+        # ✅ FIX: `obj.owner` may be None for a freshly-created org
+        # awaiting ownership assignment. Return None, not AttributeError.
+        return obj.owner.username if obj.owner_id else None
+
     def get_role(self, obj):
         """Return the requester's role in this org (or None)."""
         request = self.context.get('request')
         if not request or not request.user or not request.user.is_authenticated:
             return None
-        # UPDATED FOR 6-TIER HIERARCHY: use _active_user_memberships helper
         membership = _active_user_memberships(request.user).filter(
             organization=obj,
         ).first()
@@ -1457,54 +1450,56 @@ class UserProfileSummarySerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the User model in the user-management views.
+
+    `role` is a DERIVED label, not a stored field. The canonical
+    per-org roles live in `memberships[]`.
+    """
     role = serializers.SerializerMethodField()
+    effective_role = serializers.SerializerMethodField()
+    memberships = serializers.SerializerMethodField()
     organization_memberships = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role',
+            'role', 'effective_role', 'memberships',
             'is_active', 'is_staff', 'is_superuser',
             'organization_memberships',
             'date_joined', 'last_login',
         ]
         read_only_fields = [
             'id',
-            'username', # ✅ ADDED: Lock down username so it can never be edited via API 
-            'date_joined', 
+            'username',  # Lock down username so it can never be edited via API
+            'date_joined',
             'last_login',
-            'is_staff', 
-            'is_superuser', 
+            'is_staff',
+            'is_superuser',
             'profile',
         ]
 
     def get_role(self, obj):
-        return get_user_effective_role(obj)
+        return effective_role_label(obj)
+
+    def get_effective_role(self, obj):
+        return effective_role_label(obj)
+
+    def get_memberships(self, obj):
+        """
+        Canonical per-org role list. This is the source of truth for
+        any UI that needs to render per-org role badges.
+        """
+        return user_memberships_payload(obj)
 
     def get_organization_memberships(self, obj):
-        # UPDATED FOR 6-TIER HIERARCHY: use _active_user_memberships helper
-        memberships = _active_user_memberships(obj).select_related('organization')
-
-        result = []
-        for m in memberships:
-            item = {
-                'id': str(m.id),
-                'organization_id': str(m.organization.id),
-                'organization_name': m.organization.name,
-                'organization_slug': m.organization.slug,
-                'role': m.role,
-                'joined_at': m.joined_at.isoformat() if m.joined_at else None,
-                'is_active': getattr(m, 'is_active', True),
-            }
-            # ✅ NEW: Expose validity dates for time-bounded memberships
-            if hasattr(m, 'valid_from') and m.valid_from:
-                item['valid_from'] = m.valid_from.isoformat()
-            if hasattr(m, 'valid_until') and m.valid_until:
-                item['valid_until'] = m.valid_until.isoformat()
-            
-            result.append(item)
-        return result
+        """
+        Backwards-compatible alias for `memberships` used by older
+        frontend code paths. Kept with the same shape as before but
+        now sourced from `user_memberships_payload`.
+        """
+        return user_memberships_payload(obj)
 
 
 class UserProfileSerializer(serializers.ModelSerializer):

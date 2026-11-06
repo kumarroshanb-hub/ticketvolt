@@ -18,7 +18,7 @@ import {
 } from '../../components/Common';
 
 import Ticket from '../../components/Ticket/E-Ticket';
-import { ROLES } from '../../constants';
+import { MEMBERSHIP_ROLES } from '../../constants';
 import { useRole } from '../../context/RoleContext';
 import { theme as appTheme } from '../../theme/tokens';
 
@@ -43,13 +43,14 @@ const C = appTheme.colors;
 
 const Bookings = () => {
     const navigate = useNavigate();
-    const { role } = useRole();
+    const { hasOrgRole } = useRole();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    const isRegularUser = role === ROLES.USER || role === ROLES.MEMBER;
-    const canManageAllBookings =
-        role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN || role === ROLES.OWNER;
+    // "Regular user" = no owner/admin/staff rights in the current org.
+    // They see only their own bookings (the backend already scopes this).
+    const canManageAllBookings = hasOrgRole(MEMBERSHIP_ROLES.STAFF);
+    const isRegularUser = !canManageAllBookings;
 
     // ✅ 1. Initialize Platform Filter Hook
     const { 

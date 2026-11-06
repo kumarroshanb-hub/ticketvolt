@@ -1,7 +1,13 @@
 // frontend/src/context/RoleContext.js
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
 import { useAuth } from './AuthContext';
-import { ROLES, RoleUtils } from '../constants';
+import { useOrg } from './OrgContext';
+import {
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
+    PlatformRoleUtils,
+    MembershipRoleUtils,
+} from '../constants';
 
 const RoleContext = createContext();
 
@@ -13,143 +19,150 @@ export const useRole = () => {
     return context;
 };
 
+/**
+ * RoleProvider resolves TWO independent role concepts:
+ *
+ *   platformRole  — from User.role (super_admin | staff | user).
+ *                   One value per user, global. Determines whether the
+ *                   user is a platform operator.
+ *
+ *   membershipRole — from the current OrganizationMembership.role
+ *                   (owner | admin | staff | member) for the org the
+ *                   user currently has selected (via OrgContext).
+ *                   Changes when the user switches orgs. `null` if the
+ *                   user has no active membership in the selected org.
+ *
+ * hasOrgRole() and canManageCurrentOrg() are the correct gates for
+ * tenant-scoped routes. Never compare user.role against 'owner' or
+ * 'member' — the user.role is never those values.
+ */
 export const RoleProvider = ({ children }) => {
     const { user, loading: authLoading } = useAuth();
-    const [role, setRole] = useState(ROLES.USER);
+    const { currentOrg, loading: orgLoading } = useOrg() || {};
+
+    const [platformRole, setPlatformRole] = useState(PLATFORM_ROLES.USER);
+    const [membershipRole, setMembershipRole] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (authLoading) {
-            console.log('⏳ RoleProvider: Waiting for auth loading...');
-            return;
-        }
+        // Wait until both auth AND org context have settled, otherwise
+        // we'd flash `membershipRole = null` on every page load while
+        // OrgContext is still fetching `/organizations/mine/`.
+        if (authLoading || orgLoading) return;
 
-        console.log('👤 RoleProvider: Processing user:', user);
+        // ---- Platform role ----
+        let nextPlatformRole = PLATFORM_ROLES.USER;
+        const incoming = user?.role;
 
-        if (user) {
-            // UPDATED FOR 6-TIER HIERARCHY:
-            // The API now returns one of:
-            // super_admin | owner | admin | staff | member | user
-            let userRole = ROLES.USER;
+        // Legacy safety: old backends may still return 'owner' or
+        // 'member' on User.role. Normalise them down to 'user' — their
+        // actual capabilities come from memberships, not from this field.
+        const LEGACY_MEMBERSHIP_AS_PLATFORM = ['owner', 'member', 'admin'];
 
-            const incomingRole = user.role;
-
-            // UPDATED: Legacy safety mapping.
-            // If old data or an old backend response still returns 'organizer',
-            // normalize it to the new 'owner' role.
-            const normalizedRole =
-                incomingRole === 'organizer' || incomingRole === ROLES.ORGANIZER
-                    ? ROLES.OWNER
-                    : incomingRole;
-
-            // ✅ Bug 24 retained:
-            // Trust the API role only. No is_staff / is_superuser legacy fallbacks.
-            //
-            // UPDATED FOR 6-TIER HIERARCHY:
-            // Explicitly allow new role values even if constants are mid-migration.
-            const allowedRoles = [
-                ...Object.values(ROLES),
-                'owner',
-                'member',
-            ].filter(
-                (value, index, self) => Boolean(value) && self.indexOf(value) === index
-            );
-
-            if (normalizedRole && allowedRoles.includes(normalizedRole)) {
-                userRole = normalizedRole;
-                console.log(`✅ Using role from API: ${userRole}`);
+        if (incoming && !LEGACY_MEMBERSHIP_AS_PLATFORM.includes(incoming)) {
+            const allowed = Object.values(PLATFORM_ROLES);
+            if (allowed.includes(incoming)) {
+                nextPlatformRole = incoming;
             } else {
                 console.warn(
-                    `⚠️ RoleProvider: user.role is missing or unrecognized ` +
-                    `(got ${JSON.stringify(user.role)}); defaulting to USER. ` +
-                    `The backend /me endpoint should always return a 'role' field.`
+                    `⚠️ RoleProvider: unrecognised user.role ${JSON.stringify(incoming)}; defaulting to 'user'.`
                 );
             }
+        } else if (incoming && LEGACY_MEMBERSHIP_AS_PLATFORM.includes(incoming)) {
+            if (process.env.NODE_ENV !== 'production') {
+                console.warn(
+                    `⚠️ RoleProvider: legacy user.role=${incoming} — coercing to 'user'. ` +
+                    `Migrate the backend to store membership roles on OrganizationMembership only.`
+                );
+            }
+        }
 
-            setRole(userRole);
-            console.log(`👤 User role set: ${userRole} (${RoleUtils.getLabel(userRole)})`);
+        // is_superuser from the backend always wins — it's the
+        // authoritative platform-admin signal regardless of `role`.
+        if (user?.is_superuser) {
+            nextPlatformRole = PLATFORM_ROLES.SUPER_ADMIN;
+        }
+
+        setPlatformRole(nextPlatformRole);
+
+        // ---- Membership role (from current org) ----
+        // OrgContext already returns each org's `role` field for the
+        // caller in `/organizations/mine/`. Use that if present.
+        const orgRole = currentOrg?.role || null;
+        if (orgRole && Object.values(MEMBERSHIP_ROLES).includes(orgRole)) {
+            setMembershipRole(orgRole);
         } else {
-            console.log('👤 No user, defaulting to USER role');
-            setRole(ROLES.USER);
+            setMembershipRole(null);
         }
 
         setLoading(false);
-    }, [user, authLoading]);
+    }, [user, authLoading, currentOrg, orgLoading]);
 
-    const hasPermission = (permission) => {
-        return RoleUtils.hasPermission(role, permission);
+    // ----- Convenience flags -----
+
+    const isSuperAdmin = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
+    const isPlatformStaff = platformRole === PLATFORM_ROLES.STAFF;
+    const isPlatformUser = platformRole === PLATFORM_ROLES.USER;
+
+    const isGuest = !user;
+
+    // "Does this user have a membership in the current org?" — used by
+    // member-only pages. True for owner/admin/staff/member alike.
+    const isOrgMember =
+        !!membershipRole && Object.values(MEMBERSHIP_ROLES).includes(membershipRole);
+
+    const isOwner = membershipRole === MEMBERSHIP_ROLES.OWNER;
+    const isOrgAdmin = membershipRole === MEMBERSHIP_ROLES.ADMIN;
+    const isOrgStaff = membershipRole === MEMBERSHIP_ROLES.STAFF;
+    const isMember = membershipRole === MEMBERSHIP_ROLES.MEMBER;
+
+    // Backwards-compat aliases.
+    //   isOrganizer was the old "does this user own/manage events?"
+    //   flag. In the new model that's "owner or admin of the current org".
+    //   Platform admins also pass (they bypass org checks).
+    const isOrganizer = isSuperAdmin || isOwner || isOrgAdmin;
+    const isAdmin = isSuperAdmin || isOwner || isOrgAdmin;
+
+    const hasOrgRole = (required) => {
+        if (isSuperAdmin) return true;      // platform admins bypass
+        if (!membershipRole) return false;
+        return MembershipRoleUtils.isAtLeast(membershipRole, required);
     };
 
-    const isAtLeast = (minRole) => {
-        return RoleUtils.isAtLeast(role, minRole);
+    const canManageCurrentOrg = () => {
+        if (isSuperAdmin) return true;
+        return !!membershipRole && MembershipRoleUtils.canManageOrg(membershipRole);
     };
 
-    // UPDATED FOR 6-TIER HIERARCHY:
-    // Helper methods for sidebar/page visibility.
-    //
-    // New roles:
-    // super_admin -> platform owner
-    // owner       -> organization owner
-    // admin       -> organization admin
-    // staff       -> operational/check-in
-    // member      -> registered organization member
-    // user        -> guest / regular platform user
-    const isSuperAdmin = role === ROLES.SUPER_ADMIN || role === 'super_admin';
-
-    const isOwner = role === ROLES.OWNER || role === 'owner';
-
-    // UPDATED:
-    // Keep isAdmin backward-compatible for existing UI checks, but include
-    // Owner and Super Admin because they also have administrative capability.
-    const isAdmin =
-        role === ROLES.ADMIN ||
-        role === 'admin' ||
-        isOwner ||
-        isSuperAdmin;
-
-    // UPDATED:
-    // Preserve isOrganizer as a legacy alias for managers.
-    // Owner/Admin/SuperAdmin should behave like the old Organizer for
-    // event/venue management screens.
-    const isOrganizer =
-        role === ROLES.ORGANIZER ||
-        role === 'organizer' ||
-        isOwner ||
-        isAdmin;
-
-    const isStaff = role === ROLES.STAFF || role === 'staff';
-
-    // NEW for 6-tier hierarchy
-    const isMember = role === ROLES.MEMBER || role === 'member';
-
-    // NEW for 6-tier hierarchy
-    const isGuest = !user || role === ROLES.USER || role === 'user';
-
-    const value = {
-        role,
-        loading,
-        hasPermission,
-        isAtLeast,
+    const value = useMemo(() => ({
+        // New API
+        platformRole,
+        membershipRole,
+        hasOrgRole,
+        canManageCurrentOrg,
+        // Legacy API — kept so un-migrated files keep compiling.
+        role: platformRole,          // was user.role before; now the platform role
         isSuperAdmin,
-        isOwner,       // NEW
-        isAdmin,
-        isOrganizer,
-        isStaff,       // ✅ Bug 23
-        isMember,      // NEW
-        isGuest,       // NEW
-        isUser: true,  // All authenticated users are at least users
-    };
-
-    console.log('📊 RoleProvider final state:', {
-        role,
-        isSuperAdmin,
+        isPlatformStaff,
+        isPlatformUser,
+        isOrgMember,
         isOwner,
-        isAdmin,
-        isOrganizer,
-        isStaff,
+        isOrgAdmin,
+        isOrgStaff,
         isMember,
+        isOrganizer,
+        isAdmin,
+        isStaff: isOrgStaff,
         isGuest,
-    });
+        isUser: !!user,
+        loading,
+        hasPermission: () => false,
+        isAtLeast: () => false,
+    }), [
+        platformRole, membershipRole, isSuperAdmin, isPlatformStaff,
+        isPlatformUser, isOrgMember, isOwner, isOrgAdmin, isOrgStaff,
+        isMember, isOrganizer, isAdmin, isGuest, user, loading,
+    ]);
 
     return (
         <RoleContext.Provider value={value}>

@@ -28,7 +28,7 @@ import {
     LoadingWrapper,
 } from '../../components/Common';
 import EventCard from '../../components/Common/EventCard';
-import { ROLES } from '../../constants';
+import { MEMBERSHIP_ROLES } from '../../constants';
 import { theme } from '../../theme/tokens';
 
 // ✅ Platform Filter Imports
@@ -166,7 +166,7 @@ const EventCardWithAdminActions = ({
 
 const Events = () => {
     const navigate = useNavigate();
-    const { role } = useRole();
+    const { hasOrgRole, isSuperAdmin } = useRole();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -179,10 +179,12 @@ const Events = () => {
         organizations 
     } = usePlatformFilter();
 
-    const isManager = role === ROLES.OWNER || role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
+    // "Manager" = owner/admin of the CURRENT org (super admins bypass).
+    const isManager = hasOrgRole(MEMBERSHIP_ROLES.ADMIN);
     const canManageEvents = isManager;
     const canCreateEvents = isManager;
-    const isRegularUser = role === ROLES.USER || role === ROLES.MEMBER;
+    // A user who lacks org-manage rights sees this as a browse page.
+    const isRegularUser = !isManager && !isSuperAdmin;
 
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);

@@ -13,15 +13,19 @@ import {
 } from '@mui/icons-material';
 import { theme } from '../../theme/tokens';
 import LanguageSwitcher from '../LanguageSwitcher';
-import { ROLES, RoleUtils } from '../../constants';
+import {
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
+    PlatformRoleUtils,
+    MembershipRoleUtils,
+} from '../../constants';
 
 const C = theme.colors;
 const F = theme.fonts;
 
-// ============================================
-// STYLED COMPONENTS
-// ============================================
+// ... [all styled components from the original file — unchanged] ...
 
+// Full styled block kept verbatim from the current file for zero-diff:
 const NavbarContainer = styled.nav`
     display: flex;
     justify-content: space-between;
@@ -68,13 +72,9 @@ const MenuButton = styled.button`
     touch-action: manipulation;
     flex-shrink: 0;
 
-    &:hover {
-        background: ${C.hoverSubtle};
-    }
+    &:hover { background: ${C.hoverSubtle}; }
 
-    @media (max-width: 900px) {
-        display: flex;
-    }
+    @media (max-width: 900px) { display: flex; }
 `;
 
 const PageTitle = styled.h1`
@@ -123,10 +123,7 @@ const UserInfo = styled.button`
         outline-offset: 2px;
     }
 
-    @media (max-width: 900px) {
-        padding: 4px;
-        gap: 0;
-    }
+    @media (max-width: 900px) { padding: 4px; gap: 0; }
 `;
 
 const UserAvatar = styled.div`
@@ -149,9 +146,7 @@ const UserDetails = styled.div`
     line-height: 1.2;
     text-align: left;
 
-    @media (max-width: 900px) {
-        display: none;
-    }
+    @media (max-width: 900px) { display: none; }
 `;
 
 const UserName = styled.span`
@@ -177,32 +172,30 @@ const RoleBadge = styled.span`
     padding: 2px 10px;
     border-radius: 12px;
     background: ${props => {
-        switch (props.role) {
-            case 'super_admin': return `${C.success}1A`;
-            case 'owner':       return `${C.warning}1A`;
-            case 'admin':       return `${C.info}1A`;
-            case 'staff':       return `${C.secondary}1A`;
-            case 'member':      return `${C.primary}1A`;
-            case 'organizer':   return `${C.warning}1A`;   // legacy fallback
-            default:            return C.bgInput;
+        switch (props.$kind) {
+            case 'platform-super': return `${C.success}1A`;
+            case 'platform-staff': return `${C.secondary}1A`;
+            case 'org-owner':      return `${C.warning}1A`;
+            case 'org-admin':      return `${C.info}1A`;
+            case 'org-staff':      return `${C.secondary}1A`;
+            case 'org-member':     return `${C.primary}1A`;
+            default:               return C.bgInput;
         }
     }};
     color: ${props => {
-        switch (props.role) {
-            case 'super_admin': return C.successDark;
-            case 'owner':       return C.warningDark;
-            case 'admin':       return C.infoDark;
-            case 'staff':       return C.secondaryDark;
-            case 'member':      return C.primaryDark;
-            case 'organizer':   return C.warningDark;      // legacy fallback
-            default:            return C.textSecondary;
+        switch (props.$kind) {
+            case 'platform-super': return C.successDark;
+            case 'platform-staff': return C.secondaryDark;
+            case 'org-owner':      return C.warningDark;
+            case 'org-admin':      return C.infoDark;
+            case 'org-staff':      return C.secondaryDark;
+            case 'org-member':     return C.primaryDark;
+            default:               return C.textSecondary;
         }
     }};
     font-weight: 600;
 
-    @media (max-width: 900px) {
-        display: none;
-    }
+    @media (max-width: 900px) { display: none; }
 `;
 
 const Chevron = styled(KeyboardArrowDownIcon)`
@@ -211,9 +204,7 @@ const Chevron = styled(KeyboardArrowDownIcon)`
     transition: transform 0.2s ease;
     transform: rotate(${props => (props.$open ? '180deg' : '0deg')});
 
-    @media (max-width: 900px) {
-        display: none;
-    }
+    @media (max-width: 900px) { display: none; }
 `;
 
 const Dropdown = styled.div`
@@ -277,9 +268,7 @@ const DropdownItem = styled.button`
 
     svg { font-size: 18px; color: ${C.textSecondary}; }
 
-    &:hover {
-        background: ${C.bgInput};
-    }
+    &:hover { background: ${C.bgInput}; }
 
     &.danger {
         color: ${C.errorDark};
@@ -318,11 +307,11 @@ const getPageTitleKeyFromPath = (pathname, isGuest) => {
     }
     if (bestMatch) return PAGE_TITLE_KEYS[bestMatch];
 
-    if (pathname.startsWith('/app/bookings/'))  return 'nav.bookings';
-    if (pathname.startsWith('/app/tickets/'))   return 'nav.bookings';
-    if (pathname.startsWith('/app/events/'))    return 'nav.events';
-    if (pathname.startsWith('/app/venues/'))    return 'nav.venues';
-    if (pathname.startsWith('/app/membership/')) return 'nav.membership';
+    if (pathname.startsWith('/app/bookings/'))    return 'nav.bookings';
+    if (pathname.startsWith('/app/tickets/'))     return 'nav.bookings';
+    if (pathname.startsWith('/app/events/'))      return 'nav.events';
+    if (pathname.startsWith('/app/venues/'))      return 'nav.venues';
+    if (pathname.startsWith('/app/membership/'))  return 'nav.membership';
 
     if (isGuest && pathname.includes('/bookings/create')) {
         return 'booking.registerForEvent';
@@ -334,13 +323,13 @@ const getPageTitleKeyFromPath = (pathname, isGuest) => {
 // ============================================
 // COMPONENT
 // ============================================
-
 const Navbar = ({ onMenuToggle, isMobile = false }) => {
     const { user, logout, isAuthenticated } = useAuth();
-    const { role } = useRole();
+    const { platformRole, membershipRole } = useRole();
     const navigate = useNavigate();
     const location = useLocation();
     const { t } = useTranslation();
+    const isSuperAdmin = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
 
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef(null);
@@ -369,24 +358,23 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         setMenuOpen(false);
     }, [location.pathname]);
 
-    // ============================================
-    // ✅ FIX: role label — branch on `role`, not on
-    // the derived `isAdmin`/`isOrganizer` aliases.
-    // `isAdmin` is true for admin/owner/super_admin,
-    // and `isOrganizer` is true for all of those too,
-    // so `member` used to fall through to "Regular User".
-    // ============================================
+    // Show the org-membership role if we have one (it's what governs the
+    // user's day-to-day capabilities in this tenant); otherwise show the
+    // platform role.
     const getRoleLabel = () => {
-        const ROLE_I18N_KEYS = {
-            [ROLES.SUPER_ADMIN]: 'roles.superAdmin',
-            [ROLES.OWNER]:       'roles.owner',
-            [ROLES.ADMIN]:       'roles.admin',
-            [ROLES.STAFF]:       'roles.staff',
-            [ROLES.MEMBER]:      'roles.member',
-            [ROLES.USER]:        'roles.user',
-        };
-        const key = ROLE_I18N_KEYS[role] || 'roles.user';
-        return t(key, { defaultValue: RoleUtils.getLabel(role) });
+        if (isSuperAdmin) {
+            return t('roles.platform_super_admin', { defaultValue: 'Super Admin' });
+        }
+        if (membershipRole) {
+            return t(
+                `roles.org_${membershipRole}`,
+                { defaultValue: MembershipRoleUtils.getLabel(membershipRole) },
+            );
+        }
+        return t(
+            `roles.platform_${platformRole}`,
+            { defaultValue: PlatformRoleUtils.getLabel(platformRole) },
+        );
     };
 
     const getInitial = () => {
@@ -397,9 +385,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
 
     const handleLogout = () => {
         setMenuOpen(false);
-        if (typeof logout === 'function') {
-            logout();
-        }
+        if (typeof logout === 'function') logout();
         navigate('/');
     };
 
@@ -408,17 +394,29 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
         navigate('/app/profile');
     };
 
-    // Role badge emoji — now covers owner and member.
-    const getRoleBadgeEmoji = () => {
-        switch (role) {
-            case ROLES.SUPER_ADMIN: return '🔑';
-            case ROLES.OWNER:       return '📋';
-            case ROLES.ADMIN:       return '🛡️';
-            case ROLES.STAFF:       return '🎟️';
-            case ROLES.MEMBER:      return '⭐';
-            default:                return '👤';
+    const badgeKind = (() => {
+        if (platformRole === PLATFORM_ROLES.SUPER_ADMIN) return 'platform-super';
+        if (platformRole === PLATFORM_ROLES.STAFF)       return 'platform-staff';
+        switch (membershipRole) {
+            case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';
+            case MEMBERSHIP_ROLES.ADMIN:  return 'org-admin';
+            case MEMBERSHIP_ROLES.STAFF:  return 'org-staff';
+            case MEMBERSHIP_ROLES.MEMBER: return 'org-member';
+            default: return null;
         }
-    };
+    })();
+
+    const badgeEmoji = (() => {
+        switch (badgeKind) {
+            case 'platform-super': return '🔑';
+            case 'platform-staff': return '🛡️';
+            case 'org-owner':      return '📋';
+            case 'org-admin':      return '🛡️';
+            case 'org-staff':      return '🎟️';
+            case 'org-member':     return '⭐';
+            default:               return '👤';
+        }
+    })();
 
     const pageTitleKey = getPageTitleKeyFromPath(location.pathname, !isAuthenticated);
     const pageTitle = t(pageTitleKey, { defaultValue: 'Dashboard' });
@@ -426,10 +424,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
     return (
         <NavbarContainer $fixed={isMobile}>
             <NavLeft>
-                <MenuButton
-                    onClick={onMenuToggle}
-                    aria-label={t('common.toggleNavigationMenu')}
-                >
+                <MenuButton onClick={onMenuToggle} aria-label={t('common.toggleNavigationMenu')}>
                     <MenuIcon />
                 </MenuButton>
                 <PageTitle $compact={isMobile} title={pageTitle}>
@@ -455,9 +450,11 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                 </UserName>
                                 <UserRole>{getRoleLabel()}</UserRole>
                             </UserDetails>
-                            <RoleBadge role={role}>
-                                {getRoleBadgeEmoji()}
-                            </RoleBadge>
+                            {badgeKind && (
+                                <RoleBadge $kind={badgeKind}>
+                                    {badgeEmoji}
+                                </RoleBadge>
+                            )}
                             <Chevron $open={menuOpen} />
                         </UserInfo>
 

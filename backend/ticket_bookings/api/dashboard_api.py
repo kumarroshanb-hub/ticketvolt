@@ -25,17 +25,19 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from ..views import get_user_role 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from ..models import Event, Booking, Ticket, CheckInLog
+from ticket_bookings.views import get_user_role  # noqa: F401
 from ..services.tenancy import (
     visible_events,
     visible_bookings,
     visible_tickets,
     is_platform_admin,
     user_org_ids,
+    effective_role_label,
+    user_memberships_payload,
 )
 from ..managers import (
     SOLD_BOOKING_STATUSES,
@@ -211,7 +213,7 @@ class DashboardStatsView(APIView):
             # We import get_user_role here to avoid circular imports at the top.
             # This ensures the dashboard label matches the Sidebar/Profile exactly.
 
-            role_label = get_user_role(user) # Returns: super_admin, owner, admin, staff, member, or user
+            role_label = effective_role_label(user) # Returns: super_admin, owner, admin, staff, member, or user
             is_manager = bool(user_org_ids(user)) # True for Owner/Admin
 
             return Response({
@@ -228,10 +230,12 @@ class DashboardStatsView(APIView):
                 'popular_events': popular_events_data,
                 'role_info': {
                     'role': role_label,
+                    'effective_role': role_label,
                     'is_staff': user.is_staff,
                     'is_superuser': user.is_superuser,
                     'is_manager': is_manager,
                     'org_ids': [str(o) for o in user_org_ids(user)],
+                    'memberships': user_memberships_payload(user),
                     'shows_past_events': is_platform_admin(user) or is_manager,
                 },
             })

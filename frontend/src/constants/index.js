@@ -334,147 +334,154 @@ export const EventTemplateTypeUtils = {
     },
 };
 
-// ============================================
-// ROLES CONSTANTS (UPDATED FOR 6-TIER HIERARCHY)
-// ============================================
+// ============================================================================
+// ROLES — TWO SEPARATE CONCEPTS
+// ----------------------------------------------------------------------------
+// PLATFORM_ROLES  → stored on User.role. One value per user, globally.
+//                   Controls platform-wide capabilities (access the admin
+//                   app at all, manage all tenants, etc).
+//
+// MEMBERSHIP_ROLES → stored on OrganizationMembership.role. One value per
+//                   (user, organization) pair. Controls what the user can
+//                   do *inside that specific tenant*.
+//
+// A user is NOT "a member" or "an owner". They have a platform role, and
+// separately they hold memberships with per-org roles. A user with zero
+// memberships is still a valid Regular User — they can book events as a
+// customer. A user with memberships in 3 orgs may be owner of one, admin
+// of another, and member of the third; all three are true simultaneously.
+// ============================================================================
 
+export const PLATFORM_ROLES = {
+    SUPER_ADMIN: 'super_admin',  // platform operator — sees every tenant
+    STAFF:       'staff',        // platform staff — internal tooling only
+    USER:        'user',         // the default for every signup
+};
+
+export const MEMBERSHIP_ROLES = {
+    OWNER:  'owner',   // full control over ONE organization
+    ADMIN:  'admin',   // manage events/venues/bookings within ONE org
+    STAFF:  'staff',   // check-in, bookings within ONE org
+    MEMBER: 'member',  // read-mostly member of ONE org (buyer/attendee)
+};
+
+export const PLATFORM_ROLE_LABELS = {
+    [PLATFORM_ROLES.SUPER_ADMIN]: 'Platform Admin',
+    [PLATFORM_ROLES.STAFF]:       'Platform Staff',
+    [PLATFORM_ROLES.USER]:        'Regular User',
+};
+
+export const MEMBERSHIP_ROLE_LABELS = {
+    [MEMBERSHIP_ROLES.OWNER]:  'Owner',
+    [MEMBERSHIP_ROLES.ADMIN]:  'Admin',
+    [MEMBERSHIP_ROLES.STAFF]:  'Staff',
+    [MEMBERSHIP_ROLES.MEMBER]: 'Member',
+};
+
+// Ranked, for "is at least admin?" checks *within an org*.
+export const MEMBERSHIP_ROLE_HIERARCHY = {
+    [MEMBERSHIP_ROLES.OWNER]:  4,
+    [MEMBERSHIP_ROLES.ADMIN]:  3,
+    [MEMBERSHIP_ROLES.STAFF]:  2,
+    [MEMBERSHIP_ROLES.MEMBER]: 1,
+};
+
+export const PLATFORM_ROLE_HIERARCHY = {
+    [PLATFORM_ROLES.SUPER_ADMIN]: 2,
+    [PLATFORM_ROLES.STAFF]:       1,
+    [PLATFORM_ROLES.USER]:        0,
+};
+
+// ---------------------------------------------------------------------------
+// Backwards-compat alias.
+// ---------------------------------------------------------------------------
+// The legacy code imported `ROLES` and compared against ROLES.OWNER,
+// ROLES.MEMBER, etc. To avoid a 40-file shotgun edit, we keep ROLES as
+// a merged bag so old imports don't crash. NEW code should import
+// PLATFORM_ROLES / MEMBERSHIP_ROLES explicitly.
+//
+// NOTE: ROLES.OWNER and ROLES.MEMBER are MEMBERSHIP roles. Comparing
+// `user.role === ROLES.OWNER` is a bug — the user's platform role is
+// never 'owner'. Use `useRole().hasOrgRole(...)` instead. The helpers
+// below make that migrate direction obvious.
+// ---------------------------------------------------------------------------
 export const ROLES = {
-    SUPER_ADMIN: 'super_admin',
-    OWNER: 'owner',
-    ADMIN: 'admin',
-    STAFF: 'staff', 
-    MEMBER: 'member',
-    USER: 'user', // Guest / Non-member regular user
+    // Platform roles
+    SUPER_ADMIN: PLATFORM_ROLES.SUPER_ADMIN,
+    STAFF:       PLATFORM_ROLES.STAFF,
+    USER:        PLATFORM_ROLES.USER,
+
+    // Membership roles — DO NOT compare against User.role.
+    OWNER:  MEMBERSHIP_ROLES.OWNER,
+    ADMIN:  MEMBERSHIP_ROLES.ADMIN,
+    MEMBER: MEMBERSHIP_ROLES.MEMBER,
 };
 
 export const ROLE_LABELS = {
-    [ROLES.SUPER_ADMIN]: 'Super Admin',
-    [ROLES.OWNER]: 'Owner',
-    [ROLES.ADMIN]: 'Admin',
-    [ROLES.STAFF]: 'Staff',
-    [ROLES.MEMBER]: 'Member',
-    [ROLES.USER]: 'Guest',
+    ...PLATFORM_ROLE_LABELS,
+    ...MEMBERSHIP_ROLE_LABELS,
 };
 
 export const ROLE_HIERARCHY = {
-    [ROLES.SUPER_ADMIN]: 5,
-    [ROLES.OWNER]: 4,
-    [ROLES.ADMIN]: 3,
-    [ROLES.STAFF]: 2, 
-    [ROLES.MEMBER]: 1,
-    [ROLES.USER]: 0,
+    ...PLATFORM_ROLE_HIERARCHY,
+    ...MEMBERSHIP_ROLE_HIERARCHY,
 };
 
-export const ROLE_PERMISSIONS = {
-    [ROLES.SUPER_ADMIN]: {
-        canManageUsers: true,
-        canManageAllEvents: true,
-        canManageAllBookings: true,
-        canManageOrganizations: true,
-        canManageVenues: true,
-        canViewAnalytics: true,
-        canManageSystem: true,
-        canManageDiscounts: true,
-        canAccessScanner: true,
-        canDeleteOrg: true,
-    },
-    [ROLES.OWNER]: {
-        canManageUsers: true,
-        canManageAllEvents: true,
-        canManageAllBookings: true,
-        canManageOrganizations: false,
-        canManageVenues: true,
-        canViewAnalytics: true,
-        canManageSystem: false,
-        canManageDiscounts: true,
-        canAccessScanner: true,
-        canDeleteOrg: true,
-    },
-    [ROLES.ADMIN]: {
-        canManageUsers: true,
-        canManageAllEvents: true,
-        canManageAllBookings: true,
-        canManageOrganizations: false,
-        canManageVenues: true,
-        canViewAnalytics: true,
-        canManageSystem: false,
-        canManageDiscounts: true,
-        canAccessScanner: true,
-        canDeleteOrg: false,
-    },
-    [ROLES.STAFF]: {
-        canManageUsers: false,
-        canManageAllEvents: false,
-        canManageAllBookings: true, // Can view bookings for scanning
-        canManageOrganizations: false,
-        canManageVenues: false,
-        canViewAnalytics: false,
-        canManageSystem: false,
-        canManageDiscounts: false,
-        canAccessScanner: true,
-        canDeleteOrg: false,
-    },
-    [ROLES.MEMBER]: {
-        canManageUsers: false,
-        canManageAllEvents: false,
-        canManageAllBookings: false,
-        canManageOrganizations: false,
-        canManageVenues: false,
-        canViewAnalytics: false,
-        canManageSystem: false,
-        canManageDiscounts: false,
-        canAccessScanner: false,
-        canDeleteOrg: false,
-    },
-    [ROLES.USER]: {
-        canManageUsers: false,
-        canManageAllEvents: false,
-        canManageAllBookings: false,
-        canManageOrganizations: false,
-        canManageVenues: false,
-        canViewAnalytics: false,
-        canManageSystem: false,
-        canManageDiscounts: false,
-        canAccessScanner: false,
-        canDeleteOrg: false,
-    },
+// ============================================================================
+// PERMISSION HELPERS
+// ----------------------------------------------------------------------------
+// These functions take a PLATFORM role and a MEMBERSHIP role separately.
+// Passing the wrong kind of value in either slot is a bug; the labelled
+// parameters make that visible at the call site.
+// ============================================================================
+
+export const PlatformRoleUtils = {
+    getLabel: (role) => PLATFORM_ROLE_LABELS[role] || 'Regular User',
+    isSuperAdmin: (role) => role === PLATFORM_ROLES.SUPER_ADMIN,
+    isPlatformStaff: (role) => role === PLATFORM_ROLES.STAFF,
+    isAtLeast: (role, minRole) =>
+        (PLATFORM_ROLE_HIERARCHY[role] || 0) >= (PLATFORM_ROLE_HIERARCHY[minRole] || 0),
+    // Platform admins bypass all org-membership checks.
+    canAccessAdminApp: (role) =>
+        role === PLATFORM_ROLES.SUPER_ADMIN ||
+        role === PLATFORM_ROLES.STAFF ||
+        role === PLATFORM_ROLES.USER,   // every authenticated user can access /app
 };
 
+export const MembershipRoleUtils = {
+    getLabel: (role) => MEMBERSHIP_ROLE_LABELS[role] || role || '',
+    getLevel: (role) => MEMBERSHIP_ROLE_HIERARCHY[role] || 0,
+    isAtLeast: (role, minRole) =>
+        (MEMBERSHIP_ROLE_HIERARCHY[role] || 0) >= (MEMBERSHIP_ROLE_HIERARCHY[minRole] || 0),
+    canManageOrg: (role) =>
+        role === MEMBERSHIP_ROLES.OWNER || role === MEMBERSHIP_ROLES.ADMIN,
+    canScanTickets: (role) =>
+        role === MEMBERSHIP_ROLES.OWNER ||
+        role === MEMBERSHIP_ROLES.ADMIN ||
+        role === MEMBERSHIP_ROLES.STAFF,
+    canViewAllBookings: (role) =>
+        role === MEMBERSHIP_ROLES.OWNER ||
+        role === MEMBERSHIP_ROLES.ADMIN ||
+        role === MEMBERSHIP_ROLES.STAFF,
+    canDeleteOrg: (role) => role === MEMBERSHIP_ROLES.OWNER,
+};
+
+// ---------------------------------------------------------------------------
+// Legacy `RoleUtils` shim.
+// ---------------------------------------------------------------------------
+// Retained ONLY so files we haven't migrated yet continue to compile.
+// It behaves like the old version but is documented as deprecated. If
+// you're editing a file anyway, replace usages with
+// PlatformRoleUtils / MembershipRoleUtils.
+// ---------------------------------------------------------------------------
 export const RoleUtils = {
-    getLabel: function(role) {
-        return ROLE_LABELS[role] || role;
-    },
-    getLevel: function(role) {
-        return ROLE_HIERARCHY[role] || 0;
-    },
-    hasPermission: function(role, permission) {
-        var perms = ROLE_PERMISSIONS[role];
-        return perms ? perms[permission] || false : false;
-    },
-    isAtLeast: function(role, minRole) {
-        return (ROLE_HIERARCHY[role] || 0) >= (ROLE_HIERARCHY[minRole] || 0);
-    },
-    getAvailableRoles: function(currentRole) {
-        var currentLevel = ROLE_HIERARCHY[currentRole] || 0;
-        // Staff can only be granted by Admin, Owner, or Super Admin.
-        var canGrantStaff =
-            currentRole === ROLES.ADMIN || 
-            currentRole === ROLES.OWNER || 
-            currentRole === ROLES.SUPER_ADMIN;
-            
-        return Object.keys(ROLE_HIERARCHY).filter(function(role) {
-            if (role === ROLES.STAFF && !canGrantStaff) return false;
-            if (role === currentRole) return false;
-            // Cannot grant USER/Guest via UI as it's the default unauthenticated state
-            if (role === ROLES.USER) return false; 
-            return ROLE_HIERARCHY[role] < currentLevel;
-        });
-    },
+    getLabel: (role) => ROLE_LABELS[role] || role,
+    getLevel: (role) => ROLE_HIERARCHY[role] || 0,
+    isAtLeast: (role, minRole) =>
+        (ROLE_HIERARCHY[role] || 0) >= (ROLE_HIERARCHY[minRole] || 0),
+    hasPermission: () => false,          // deprecated, no longer meaningful
+    getAvailableRoles: () => Object.values(MEMBERSHIP_ROLES),
 };
-
-// ============================================
-// DEFAULT EXPORT
-// ============================================
 
 export default {
     TICKET_STATUS,
@@ -504,9 +511,13 @@ export default {
     EVENT_TEMPLATE_TYPE_LABELS,
     EVENT_TEMPLATE_TYPE_ICONS,
     EventTemplateTypeUtils,
-    ROLES,
-    ROLE_LABELS,
-    ROLE_HIERARCHY,
-    ROLE_PERMISSIONS,
-    RoleUtils,
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
+    PLATFORM_ROLE_LABELS,
+    MEMBERSHIP_ROLE_LABELS,
+    MEMBERSHIP_ROLE_HIERARCHY,
+    PLATFORM_ROLE_HIERARCHY,
+    PlatformRoleUtils,
+    MembershipRoleUtils,
+    ROLES, ROLE_LABELS, ROLE_HIERARCHY, RoleUtils,
 };

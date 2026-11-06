@@ -10,6 +10,7 @@ Read-only. No mutation of sessions here.
 import logging
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.sessions.models import Session
 from django.utils import timezone
@@ -19,11 +20,32 @@ from rest_framework.views import APIView
 
 from ticket_bookings.models import UserProfile
 
-# ✅ NEW: Import the centralized 6-tier role helper
-from ..views import get_user_role
+# ✅ FIX: dropped unused `get_user_role` import.
+from ..services.tenancy import (
+    effective_role_label,
+    is_platform_admin,
+    is_platform_staff,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+def _platform_role_label(user):
+    """
+    ✅ FIX: explicit platform-role label.
+
+    `effective_role_label` collapses `is_staff`-only users to 'user' —
+    correct for tenant gates, misleading on the Active Sessions page.
+    Emit the platform label separately so the UI can render "Staff".
+    """
+    if user is None:
+        return 'user'
+    if is_platform_admin(user):
+        return 'super_admin'
+    if is_platform_staff(user):
+        return 'staff'
+    return 'user'
 
 
 class ActiveSessionsView(APIView):
@@ -47,14 +69,16 @@ class ActiveSessionsView(APIView):
             idle_minutes = 30
         idle_threshold_seconds = max(0, idle_minutes) * 60
 
+        # ✅ FIX: use the actual configured session cookie age instead of
+        # hard-coding Django's default 8h.
+        session_cookie_age = getattr(settings, 'SESSION_COOKIE_AGE', 8 * 60 * 60)
+
         now = timezone.now()
         out = []
         unique_user_ids = set()
 
         # ─────────────────────────────────────────────────────────────
         # 1. Fetch Active JWT Users (Web App)
-        # Match the 12h JWT refresh lifetime so active users don't
-        # drop off the dashboard just because they stopped clicking.
         # ─────────────────────────────────────────────────────────────
         jwt_threshold = now - timedelta(hours=12)
         active_profiles = (
@@ -69,8 +93,7 @@ class ActiveSessionsView(APIView):
             jwt_user_ids.add(u.id)
             unique_user_ids.add(u.id)
 
-            # ✅ FIX: Use the centralized 6-tier role helper
-            role = get_user_role(u)
+            role = effective_role_label(u)
             idle_seconds = int((now - profile.last_active).total_seconds())
 
             out.append({
@@ -80,6 +103,7 @@ class ActiveSessionsView(APIView):
                 'email': u.email,
                 'full_name': f'{u.first_name} {u.last_name}'.strip() or u.username,
                 'role': role,
+                'platform_role': _platform_role_label(u),   # ✅ NEW
                 'is_staff': u.is_staff,
                 'is_superuser': u.is_superuser,
                 'expires_at': None,
@@ -92,11 +116,7 @@ class ActiveSessionsView(APIView):
             })
 
         # ─────────────────────────────────────────────────────────────
-        # ✅ FALLBACK: Always show the current SuperAdmin making this
-        # request. Middleware fires AFTER the view, so on the very first
-        # load of this page the requester themselves won't have a fresh
-        # last_active stamp yet. This guarantees the page is never empty
-        # for a SuperAdmin who is literally looking at it right now.
+        # FALLBACK: always show the current SuperAdmin making this request.
         # ─────────────────────────────────────────────────────────────
         if request.user.id not in jwt_user_ids:
             u = request.user
@@ -106,7 +126,8 @@ class ActiveSessionsView(APIView):
                 'username': u.username,
                 'email': u.email,
                 'full_name': f'{u.first_name} {u.last_name}'.strip() or u.username,
-                'role': get_user_role(u), # ✅ FIX: Will correctly return 'super_admin'
+                'role': effective_role_label(u),
+                'platform_role': _platform_role_label(u),   # ✅ NEW
                 'is_staff': u.is_staff,
                 'is_superuser': u.is_superuser,
                 'expires_at': None,
@@ -121,7 +142,6 @@ class ActiveSessionsView(APIView):
 
         # ─────────────────────────────────────────────────────────────
         # 2. Fetch Django Admin Sessions (cookie-based)
-        # Skip anyone already shown above to avoid duplicates.
         # ─────────────────────────────────────────────────────────────
         qs = Session.objects.filter(expire_date__gt=now).order_by('-expire_date')
         raw_sessions = list(qs)
@@ -163,12 +183,11 @@ class ActiveSessionsView(APIView):
             if user:
                 unique_user_ids.add(user.id)
 
-            # Django's default SESSION_COOKIE_AGE is 8 hours (28800s).
-            estimated_last_activity = sess.expire_date - timedelta(seconds=28800)
+            # ✅ FIX: estimate using the actual configured cookie age.
+            estimated_last_activity = sess.expire_date - timedelta(seconds=session_cookie_age)
             idle_seconds = int((now - estimated_last_activity).total_seconds())
 
-            # ✅ FIX: Use the centralized 6-tier role helper
-            role = get_user_role(user) if user else 'user'
+            role = effective_role_label(user) if user else 'user'
 
             out.append({
                 'session_key': sess.session_key[:8] + '…',
@@ -180,6 +199,7 @@ class ActiveSessionsView(APIView):
                     if user else None
                 ) or (user.username if user else None),
                 'role': role,
+                'platform_role': _platform_role_label(user),   # ✅ NEW
                 'is_staff': bool(user.is_staff) if user else False,
                 'is_superuser': bool(user.is_superuser) if user else False,
                 'expires_at': sess.expire_date.isoformat(),

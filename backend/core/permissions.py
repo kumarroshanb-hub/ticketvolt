@@ -4,14 +4,16 @@ Tenant-aware DRF permissions — core layer.
 
 6-tier role hierarchy:
   Platform : Super Admin  (User.is_superuser)          — NOT a membership
+  Platform : Staff        (User.is_staff, not superuser) — Django-admin only
   Tenant   : Owner > Admin > Staff > Member            — OrganizationMembership.role
   Public   : Member-less user / Guest                  — no membership row
 
 `is_staff` is Django admin-site access ONLY. It does not grant
-platform-admin privileges.
+platform-admin privileges, but it IS a distinct platform tier and must
+be checked explicitly when a view requires it.
 
 IMPORTANT (2026-11-02):
-Every predicate and permission class in this module now DELEGATES to
+Every predicate and permission class in this module DELEGATES to
 ``ticket_bookings.services.tenancy``. That service enforces:
   • ``is_active=True``
   • the time-bounded validity window (``valid_from <= now <= valid_until``)
@@ -33,6 +35,11 @@ def is_platform_admin(user):
     return tenancy.is_platform_admin(user)
 
 
+def is_platform_staff(user):
+    """Platform Staff = is_staff=True and not superuser. NOT a tenant role."""
+    return tenancy.is_platform_staff(user)
+
+
 def can_manage_org(user, org):
     """Create/edit events, venues, manage members (Owner + Admin)."""
     return tenancy.can_manage_org(user, org)
@@ -49,7 +56,14 @@ def can_delete_org(user, org):
 
 
 def user_org_ids(user):
-    """Org IDs where the user holds ANY valid membership role."""
+    """
+    Org IDs where the user holds ANY valid membership role.
+
+    NOTE: despite the name, this returns *membership* orgs (owner /
+    admin / staff / member). For manager-only IDs use
+    `user_manager_org_ids`. Kept for backward compatibility with
+    existing call sites.
+    """
     return tenancy.user_membership_org_ids(user)
 
 
@@ -64,6 +78,32 @@ def user_operator_org_ids(user):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_org_from_obj(obj):
+    """
+    ✅ FIX: return the related Organization, or None if `obj` has no
+    `.organization` relationship.
+
+    The old code did `getattr(obj, 'organization', obj)` and passed the
+    object itself to `can_manage_org` when the attribute was missing
+    (e.g. for a `Booking`). That silently returned False and looked like
+    a permissions bug. Returning None makes the miss explicit.
+    """
+    if obj is None:
+        return None
+    org = getattr(obj, 'organization', None)
+    if org is not None:
+        return org
+    # Some models expose `event__organization` instead.
+    event = getattr(obj, 'event', None)
+    if event is not None:
+        return getattr(event, 'organization', None)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # DRF Permission Classes — delegated, validity-aware
 # ---------------------------------------------------------------------------
 
@@ -74,11 +114,29 @@ class IsPlatformAdmin(BasePermission):
         return tenancy.is_platform_admin(request.user)
 
 
+class IsPlatformStaff(BasePermission):
+    """
+    ✅ NEW: Allows platform staff (is_staff=True, not superuser) and
+    platform admins. For internal-tooling surfaces that should be
+    reachable by platform staff but must not be granted to tenant
+    admins.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user and user.is_authenticated
+            and (tenancy.is_platform_admin(user) or tenancy.is_platform_staff(user))
+        )
+
+
 class CanManageOrganization(BasePermission):
     """Allows access to Owner and Admin of the organization."""
 
     def has_object_permission(self, request, view, obj):
-        org = getattr(obj, 'organization', obj)
+        org = _resolve_org_from_obj(obj)
+        if org is None:
+            return False
         return tenancy.can_manage_org(request.user, org)
 
 
@@ -86,7 +144,9 @@ class CanOperateOrganization(BasePermission):
     """Allows access to Owner, Admin, and Staff of the organization."""
 
     def has_object_permission(self, request, view, obj):
-        org = getattr(obj, 'organization', obj)
+        org = _resolve_org_from_obj(obj)
+        if org is None:
+            return False
         return tenancy.can_operate_org(request.user, org)
 
 
@@ -99,7 +159,9 @@ class IsTenantMember(BasePermission):
             return False
         if tenancy.is_platform_admin(user):
             return True
-        org = getattr(obj, 'organization', obj)
+        org = _resolve_org_from_obj(obj)
+        if org is None:
+            return False
         org_id = getattr(org, 'id', None)
         if org_id is None:
             return False

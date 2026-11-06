@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+// frontend/src/pages/Organizations/Organizations.js
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';                       // ✅ FIX [#1]
 import {
     Box, Grid, Card, CardContent, Typography, Paper, Button,
     Dialog, DialogTitle, DialogContent, DialogActions, DialogContentText,
@@ -13,12 +15,15 @@ import {
     Edit as EditIcon,
     Delete as DeleteIcon,
     SwapHoriz as TransferIcon,
-    PersonAdd as PersonAddIcon, // ✅ ADDED
-    Close as CloseIcon,         // ✅ ADDED
+    PersonAdd as PersonAddIcon,
+    Close as CloseIcon,
+    People as PeopleIcon,
+    AdminPanelSettings as AssignOwnerIcon,                             // ✅ FIX [#3]
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import api from '../../services/api';
 import { useOrg } from '../../context/OrgContext';
+import { useAuth } from '../../context/AuthContext';
 import {
     PageContainer, PageHeader, PageTitle, PageSubtitle,
     PageHeaderLeft, PageHeaderRight, PrimaryButton, OutlineButton,
@@ -27,7 +32,6 @@ import {
 
 const EMPTY_FORM = { name: '' };
 
-// ADDED FOR ORGANIZATION CRUD:
 const EMPTY_EDIT_FORM = {
     name: '',
     org_email: '',
@@ -37,14 +41,9 @@ const EMPTY_EDIT_FORM = {
     default_timezone: '',
 };
 
-// Two-stage dialog: 'form' collects input, 'confirm' asks the user to
-// acknowledge that creating an org makes them its owner (tenancy warning).
 const STAGE_FORM = 'form';
 const STAGE_CONFIRM = 'confirm';
 
-// ---------------------------------------------------------------------------
-// Owner-assignment grouping: candidates are either Superusers or Owners.
-// ---------------------------------------------------------------------------
 const OWNER_GROUP_ORDER = { 'Super Admin': 0, 'Owner': 1 };
 
 const ownerGroupLabel = (u) => {
@@ -53,36 +52,81 @@ const ownerGroupLabel = (u) => {
     return 'Owner';
 };
 
+const resolveOwnerIntent = ({ selectedOwner, isPlatformAdmin }) => {
+    if (selectedOwner) {
+        return {
+            kind: 'assigned',
+            label:
+                selectedOwner.name
+                || [selectedOwner.first_name, selectedOwner.last_name]
+                    .filter(Boolean).join(' ').trim()
+                || selectedOwner.username
+                || selectedOwner.email
+                || 'the selected user',
+            email: selectedOwner.email || null,
+        };
+    }
+    if (isPlatformAdmin) {
+        return { kind: 'unassigned', label: 'Unassigned — assign later', email: null };
+    }
+    return { kind: 'self', label: 'You', email: null };
+};
+
+// Format a Django-style error body into a single human-readable string.
+const formatApiError = (data, fallback = 'Request failed') => {
+    if (!data) return fallback;
+    if (typeof data === 'string') return data;
+    if (Array.isArray(data)) return data.map(String).join('; ');
+    if (typeof data === 'object') {
+        const firstKey = Object.keys(data)[0];
+        if (!firstKey) return fallback;
+        const firstVal = data[firstKey];
+        if (Array.isArray(firstVal)) return `${firstKey}: ${firstVal[0]}`;
+        if (firstVal && typeof firstVal === 'object') {
+            return formatApiError(firstVal, fallback);
+        }
+        return `${firstKey}: ${firstVal}`;
+    }
+    return fallback;
+};
+
 const Organizations = () => {
     const { organizations, loading, refresh, isPlatformAdmin } = useOrg();
+    const { user: currentUser } = useAuth();
+    const navigate = useNavigate();                                    // ✅ FIX [#1]
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [stage, setStage] = useState(STAGE_FORM);
     const [creating, setCreating] = useState(false);
     const [formData, setFormData] = useState(EMPTY_FORM);
-
     const [potentialOwners, setPotentialOwners] = useState([]);
     const [ownersLoading, setOwnersLoading] = useState(false);
     const [selectedOwner, setSelectedOwner] = useState(null);
 
-    // ADDED FOR ORGANIZATION CRUD + OWNERSHIP TRANSFER
+    // Org CRUD + ownership transfer
     const [menuAnchor, setMenuAnchor] = useState(null);
     const [selectedOrg, setSelectedOrg] = useState(null);
-
     const [editOpen, setEditOpen] = useState(false);
     const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM);
     const [saving, setSaving] = useState(false);
-
     const [transferOpen, setTransferOpen] = useState(false);
     const [members, setMembers] = useState([]);
     const [membersLoading, setMembersLoading] = useState(false);
     const [selectedNewOwner, setSelectedNewOwner] = useState(null);
     const [transferring, setTransferring] = useState(false);
-
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [deleting, setDeleting] = useState(false);
 
-    // ✅ NEW: Invite Member State
+    // ✅ FIX [#2/#3]: Assign-owner dialog for unowned orgs.
+    // Transfer-ownership requires an *existing* owner (it demotes the old one).
+    // Unowned orgs need the `assign-owner` endpoint instead.
+    const [assignOpen, setAssignOpen] = useState(false);
+    const [assignCandidates, setAssignCandidates] = useState([]);
+    const [assignLoading, setAssignLoading] = useState(false);
+    const [selectedAssignee, setSelectedAssignee] = useState(null);
+    const [assigning, setAssigning] = useState(false);
+
+    // Invite member
     const [openInvite, setOpenInvite] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
     const [inviteRole, setInviteRole] = useState('member');
@@ -90,21 +134,19 @@ const Organizations = () => {
     const [validUntil, setValidUntil] = useState('');
     const [isInviting, setIsInviting] = useState(false);
 
-    // ADDED FOR ORGANIZATION CRUD + OWNERSHIP TRANSFER: permission helpers
+    // Permission helpers
     const canManageOrg = (org) =>
         Boolean(org) && (isPlatformAdmin || ['owner', 'admin'].includes(org.role));
-
     const canTransferOrg = (org) =>
         Boolean(org) && (isPlatformAdmin || org.role === 'owner');
-
     const canDeleteOrg = () => Boolean(isPlatformAdmin);
 
-    // Load owner candidates when a Platform Admin opens the create dialog.
-    // We fetch both existing Owners and Superusers so the admin can
-    // deliberately assign the new tenant to either, grouped + badged in the UI.
+    // -----------------------------------------------------------------------
+    // Owner-candidate loader for the *create* dialog.
+    // Excludes the current user — a superuser must never assign themselves.
+    // -----------------------------------------------------------------------
     useEffect(() => {
         if (!isPlatformAdmin || !dialogOpen) return;
-
         let cancelled = false;
         setOwnersLoading(true);
 
@@ -117,17 +159,15 @@ const Organizations = () => {
                 const owners = ownerRes.data?.results || ownerRes.data || [];
                 const supers = superRes.data?.results || superRes.data || [];
 
-                // Merge + dedupe by id (a superuser can also be an owner).
                 const seen = new Set();
                 const merged = [];
                 for (const u of [...supers, ...owners]) {
                     if (!u || seen.has(u.id)) continue;
+                    if (currentUser && u.id === currentUser.id) continue;
                     seen.add(u.id);
                     merged.push(u);
                 }
 
-                // Sort so each role renders as one clean group:
-                // Super Admin first, then Owner; alphabetical within a group.
                 merged.sort((a, b) => {
                     const oa = OWNER_GROUP_ORDER[ownerGroupLabel(a)] ?? 99;
                     const ob = OWNER_GROUP_ORDER[ownerGroupLabel(b)] ?? 99;
@@ -149,7 +189,7 @@ const Organizations = () => {
         })();
 
         return () => { cancelled = true; };
-    }, [isPlatformAdmin, dialogOpen]);
+    }, [isPlatformAdmin, dialogOpen, currentUser]);
 
     const resetDialog = () => {
         setFormData(EMPTY_FORM);
@@ -169,18 +209,20 @@ const Organizations = () => {
         setDialogOpen(true);
     };
 
-    // ADDED FOR ORGANIZATION CRUD: action menu handlers
+    // -----------------------------------------------------------------------
+    // Action menu
+    // -----------------------------------------------------------------------
     const handleOpenMenu = (event, org) => {
         event.stopPropagation();
         setSelectedOrg(org);
         setMenuAnchor(event.currentTarget);
     };
 
-    const handleCloseMenu = () => {
-        setMenuAnchor(null);
-    };
+    const handleCloseMenu = () => setMenuAnchor(null);
 
-    // ADDED FOR ORGANIZATION CRUD: edit handlers
+    // -----------------------------------------------------------------------
+    // Edit
+    // -----------------------------------------------------------------------
     const handleOpenEdit = (org) => {
         setSelectedOrg(org);
         setEditForm({
@@ -204,12 +246,10 @@ const Organizations = () => {
 
     const handleSaveEdit = async () => {
         if (!selectedOrg) return;
-
         if (!editForm.name.trim()) {
             toast.error('Organization name is required');
             return;
         }
-
         setSaving(true);
         try {
             const payload = {
@@ -220,42 +260,40 @@ const Organizations = () => {
                 currency_code: editForm.currency_code.trim(),
                 default_timezone: editForm.default_timezone.trim(),
             };
-
             await api.patch(`/organizations/${selectedOrg.id}/`, payload);
-
             toast.success('Organization updated successfully.');
             setEditOpen(false);
             setEditForm(EMPTY_EDIT_FORM);
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            const data = err.response?.data;
-            let msg = 'Failed to update organization';
-
-            if (typeof data === 'string') {
-                msg = data;
-            } else if (data && typeof data === 'object') {
-                const firstKey = Object.keys(data)[0];
-                if (firstKey) {
-                    const firstVal = data[firstKey];
-                    msg = Array.isArray(firstVal)
-                        ? `${firstKey}: ${firstVal[0]}`
-                        : `${firstKey}: ${firstVal}`;
-                }
-            }
-
-            toast.error(msg);
+            toast.error(formatApiError(err.response?.data, 'Failed to update organization'));
         } finally {
             setSaving(false);
         }
     };
 
-    // ADDED FOR OWNERSHIP TRANSFER: handlers
-    const fetchOrganizationMembers = async (orgId) => {
+    // -----------------------------------------------------------------------
+    // Members loader (shared by transfer + assign flows)
+    // -----------------------------------------------------------------------
+    const fetchOrganizationMembers = useCallback(async (orgId) => {
+        const res = await api.get(`/organizations/${orgId}/members/`);
+        const list = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+        return list;
+    }, []);
+
+    // -----------------------------------------------------------------------
+    // Transfer ownership (owner → another member)
+    // -----------------------------------------------------------------------
+    const handleOpenTransfer = async (org) => {
+        setSelectedOrg(org);
+        setSelectedNewOwner(null);
+        setMembers([]);
+        setTransferOpen(true);
+        handleCloseMenu();
         setMembersLoading(true);
         try {
-            const res = await api.get(`/organizations/${orgId}/members/`);
-            const list = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+            const list = await fetchOrganizationMembers(org.id);
             setMembers(list);
         } catch {
             toast.error('Could not load organization members.');
@@ -263,16 +301,6 @@ const Organizations = () => {
         } finally {
             setMembersLoading(false);
         }
-    };
-
-    const handleOpenTransfer = async (org) => {
-        setSelectedOrg(org);
-        setSelectedNewOwner(null);
-        setMembers([]);
-        setTransferOpen(true);
-        handleCloseMenu();
-
-        await fetchOrganizationMembers(org.id);
     };
 
     const handleCloseTransfer = () => {
@@ -288,51 +316,102 @@ const Organizations = () => {
             toast.error('Please select a new owner.');
             return;
         }
-
         setTransferring(true);
         try {
             await api.post(`/organizations/${selectedOrg.id}/transfer-ownership/`, {
                 new_owner_user_id: selectedNewOwner.user_id,
             });
-
-            toast.success(`Ownership transferred to ${selectedNewOwner.full_name || selectedNewOwner.email}.`);
-
+            toast.success(
+                `Ownership transferred to ${selectedNewOwner.full_name || selectedNewOwner.email}.`
+            );
             setTransferOpen(false);
             setSelectedNewOwner(null);
             setMembers([]);
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            const data = err.response?.data;
-            let msg = 'Failed to transfer ownership';
-
-            if (typeof data === 'string') {
-                msg = data;
-            } else if (data && typeof data === 'object') {
-                if (data.new_owner_user_id) {
-                    msg = Array.isArray(data.new_owner_user_id)
-                        ? data.new_owner_user_id[0]
-                        : data.new_owner_user_id;
-                } else if (data.detail) {
-                    msg = data.detail;
-                } else {
-                    const firstKey = Object.keys(data)[0];
-                    if (firstKey) {
-                        const firstVal = data[firstKey];
-                        msg = Array.isArray(firstVal)
-                            ? `${firstKey}: ${firstVal[0]}`
-                            : `${firstKey}: ${firstVal}`;
-                    }
-                }
-            }
-
-            toast.error(msg);
+            toast.error(formatApiError(err.response?.data, 'Failed to transfer ownership'));
         } finally {
             setTransferring(false);
         }
     };
 
-    // ADDED FOR PLATFORM ADMIN DELETE: handlers
+    // -----------------------------------------------------------------------
+    // ✅ FIX [#2/#3]: Assign owner (for UNOWNED orgs).
+    //
+    // Endpoint: POST /organizations/<id>/assign-owner/
+    // Body:     { new_owner_user_id: <user_id> }
+    //
+    // Unlike transfer-ownership, this endpoint:
+    //   • refuses if any owner already exists (409),
+    //   • refuses to assign a superuser (400),
+    //   • creates the OWNER membership AND sets Organization.owner_id.
+    // So it is exactly what an unowned org needs.
+    // -----------------------------------------------------------------------
+    const handleOpenAssignOwner = async (org) => {
+        setSelectedOrg(org);
+        setSelectedAssignee(null);
+        setAssignCandidates([]);
+        setAssignOpen(true);
+        handleCloseMenu();
+
+        // Candidates: all active non-superuser users. If we only showed
+        // existing org members, an unowned org with no members would have
+        // an empty list. The backend guard rejects superusers itself, but
+        // we filter them out to avoid a pointless failed submit.
+        setAssignLoading(true);
+        try {
+            const res = await api.get('/users/', {
+                params: { page_size: 200, is_active: true },
+            });
+            const list = res.data?.results || res.data || [];
+            setAssignCandidates(
+                list.filter((u) => u && !u.is_superuser && u.is_active !== false)
+            );
+        } catch {
+            toast.error('Could not load users to assign.');
+            setAssignCandidates([]);
+        } finally {
+            setAssignLoading(false);
+        }
+    };
+
+    const handleCloseAssign = () => {
+        if (assigning) return;
+        setAssignOpen(false);
+        setSelectedAssignee(null);
+        setAssignCandidates([]);
+        setSelectedOrg(null);
+    };
+
+    const handleAssignOwner = async () => {
+        if (!selectedOrg || !selectedAssignee) {
+            toast.error('Please select a user to become the owner.');
+            return;
+        }
+        setAssigning(true);
+        try {
+            await api.post(`/organizations/${selectedOrg.id}/assign-owner/`, {
+                new_owner_user_id: selectedAssignee.id,
+            });
+            toast.success(
+                `Owner assigned: ${selectedAssignee.name || selectedAssignee.username || selectedAssignee.email}.`
+            );
+            setAssignOpen(false);
+            setSelectedAssignee(null);
+            setAssignCandidates([]);
+            setSelectedOrg(null);
+            await refresh();
+        } catch (err) {
+            toast.error(formatApiError(err.response?.data, 'Failed to assign owner'));
+        } finally {
+            setAssigning(false);
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Delete
+    // -----------------------------------------------------------------------
     const handleOpenDelete = (org) => {
         setSelectedOrg(org);
         setDeleteOpen(true);
@@ -347,7 +426,6 @@ const Organizations = () => {
 
     const handleDeleteOrg = async () => {
         if (!selectedOrg) return;
-
         setDeleting(true);
         try {
             await api.delete(`/organizations/${selectedOrg.id}/`);
@@ -356,20 +434,15 @@ const Organizations = () => {
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            const data = err.response?.data;
-            const msg =
-                data?.detail ||
-                data?.error ||
-                (typeof data === 'string' ? data : null) ||
-                'Failed to delete organization';
-
-            toast.error(msg);
+            toast.error(formatApiError(err.response?.data, 'Failed to delete organization'));
         } finally {
             setDeleting(false);
         }
     };
 
-    // ✅ NEW: Invite Member Handlers
+    // -----------------------------------------------------------------------
+    // Invite member
+    // -----------------------------------------------------------------------
     const handleOpenInvite = (org) => {
         setSelectedOrg(org);
         setInviteEmail('');
@@ -393,7 +466,6 @@ const Organizations = () => {
             toast.error('Please enter a valid email address.');
             return;
         }
-
         setIsInviting(true);
         try {
             const payload = {
@@ -402,78 +474,85 @@ const Organizations = () => {
                 valid_from: validFrom ? new Date(validFrom).toISOString() : undefined,
                 valid_until: validUntil ? new Date(validUntil).toISOString() : undefined,
             };
-
             await api.post(`/organizations/${selectedOrg.id}/invite/`, payload);
-            
             toast.success(`Invitation sent to ${payload.email}!`);
             handleCloseInvite();
         } catch (err) {
-            const errorMsg = err.response?.data?.error || 'Failed to send invitation.';
-            toast.error(errorMsg);
+            toast.error(formatApiError(err.response?.data, 'Failed to send invitation.'));
         } finally {
             setIsInviting(false);
         }
     };
 
-    // Stage 1 → Stage 2: basic validation, then show the confirmation.
+    // -----------------------------------------------------------------------
+    // Create — stage 1
+    // -----------------------------------------------------------------------
     const handleRequestCreate = () => {
         if (!formData.name.trim()) {
             toast.error('Organization name is required');
             return;
         }
+        if (
+            isPlatformAdmin &&
+            selectedOwner &&
+            currentUser &&
+            selectedOwner.id === currentUser.id
+        ) {
+            toast.error(
+                'A Platform Admin cannot own a tenant. Pick a different user, or leave the owner blank.'
+            );
+            return;
+        }
         setStage(STAGE_CONFIRM);
     };
 
-    // Stage 2 → submit.
+    // -----------------------------------------------------------------------
+    // Create — stage 2
+    // -----------------------------------------------------------------------
     const handleConfirmCreate = async () => {
         setCreating(true);
         try {
             const payload = { name: formData.name.trim() };
+
             if (isPlatformAdmin && selectedOwner) {
+                if (currentUser && selectedOwner.id === currentUser.id) {
+                    toast.error(
+                        'A Platform Admin cannot own a tenant. Pick a different user, or leave the owner blank.'
+                    );
+                    setCreating(false);
+                    setStage(STAGE_FORM);
+                    return;
+                }
                 payload.owner_id = selectedOwner.id;
             }
 
-            await api.post('/organizations/', payload);
+            const response = await api.post('/organizations/', payload);
+            const created = response.data || {};
 
-            const ownerLabel = selectedOwner
-                ? `${selectedOwner.name || selectedOwner.username || selectedOwner.email}`
-                : 'you';
+            const serverOwner = created.owner_username;
+            const ownerLabel = serverOwner
+                ? serverOwner
+                : isPlatformAdmin
+                    ? 'unassigned'
+                    : 'you';
+
             toast.success(`Organization created. Owner: ${ownerLabel}.`);
 
             setDialogOpen(false);
             resetDialog();
             await refresh();
         } catch (err) {
-            const data = err.response?.data;
-            let msg = 'Failed to create organization';
-
-            if (typeof data === 'string') {
-                msg = data;
-            } else if (data && typeof data === 'object') {
-                if (data.owner_id) {
-                    msg = Array.isArray(data.owner_id) ? data.owner_id[0] : data.owner_id;
-                } else if (data.name) {
-                    msg = Array.isArray(data.name) ? data.name[0] : data.name;
-                } else if (data.detail) {
-                    msg = data.detail;
-                } else {
-                    const firstKey = Object.keys(data)[0];
-                    if (firstKey) {
-                        const firstVal = data[firstKey];
-                        msg = Array.isArray(firstVal)
-                            ? `${firstKey}: ${firstVal[0]}`
-                            : `${firstKey}: ${firstVal}`;
-                    }
-                }
-            }
-            toast.error(msg);
-            // On failure, drop back to the form stage so the user can fix
-            // the input rather than staring at a failed confirmation.
+            toast.error(formatApiError(err.response?.data, 'Failed to create organization'));
             setStage(STAGE_FORM);
         } finally {
             setCreating(false);
         }
     };
+
+    const ownerIntent = useMemo(
+        () => resolveOwnerIntent({ selectedOwner, isPlatformAdmin }),
+        [selectedOwner, isPlatformAdmin]
+    );
 
     if (loading) {
         return (
@@ -482,14 +561,6 @@ const Organizations = () => {
             </LoadingWrapper>
         );
     }
-
-    const ownerDisplay = selectedOwner
-        ? selectedOwner.name
-            || [selectedOwner.first_name, selectedOwner.last_name]
-                .filter(Boolean).join(' ').trim()
-            || selectedOwner.username
-            || selectedOwner.email
-        : null;
 
     return (
         <PageContainer>
@@ -518,8 +589,10 @@ const Organizations = () => {
             {isPlatformAdmin && (
                 <Alert severity="info" sx={{ mb: 2 }}>
                     You are a Platform Admin — you can see every organization.
-                    When creating a new one, you may assign ownership to any
-                    existing user; otherwise you become the owner.
+                    New organizations you create will be <strong>unowned</strong>
+                    {' '}unless you explicitly assign an owner. Use{' '}
+                    <em>Assign Owner</em> from the organization's action menu
+                    once a tenant owner exists.
                 </Alert>
             )}
 
@@ -547,7 +620,6 @@ const Organizations = () => {
                                         <Typography variant="h6" sx={{ fontWeight: 700 }}>
                                             {org.name}
                                         </Typography>
-
                                         {(canManageOrg(org) || canTransferOrg(org) || canDeleteOrg()) && (
                                             <Tooltip title="Organization actions">
                                                 <IconButton
@@ -560,6 +632,7 @@ const Organizations = () => {
                                             </Tooltip>
                                         )}
                                     </Stack>
+
                                     <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
                                         <Chip
                                             size="small"
@@ -578,17 +651,19 @@ const Organizations = () => {
                                             <Chip size="small" label="manage" variant="outlined" />
                                         )}
                                     </Stack>
+
                                     <Typography
                                         variant="caption"
                                         sx={{ display: 'block', mt: 2, color: 'text.secondary' }}
                                     >
                                         {org.currency_code} · {org.default_timezone}
                                     </Typography>
+
                                     <Typography
                                         variant="caption"
                                         sx={{ display: 'block', color: 'text.secondary' }}
                                     >
-                                        Owner: {org.owner_username}
+                                        Owner: {org.owner_username || '— unassigned —'}
                                     </Typography>
                                 </CardContent>
                             </Card>
@@ -597,7 +672,7 @@ const Organizations = () => {
                 </Grid>
             )}
 
-            {/* ADDED FOR ORGANIZATION CRUD + TRANSFER: action menu */}
+            {/* ---- Action menu ---- */}
             <Menu
                 anchorEl={menuAnchor}
                 open={Boolean(menuAnchor)}
@@ -611,7 +686,19 @@ const Organizations = () => {
                     Edit Organization
                 </MenuItem>
 
-                {/* ✅ NEW: Invite Member Menu Item */}
+                <MenuItem
+                    disabled={!selectedOrg || !canManageOrg(selectedOrg)}
+                    onClick={() => {
+                        if (!selectedOrg) return;
+                        const id = selectedOrg.id;
+                        handleCloseMenu();
+                        navigate(`/app/organizations/${id}/team`);
+                    }}
+                >
+                    <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+                    Manage Members
+                </MenuItem>
+
                 <MenuItem
                     disabled={!selectedOrg || !canManageOrg(selectedOrg)}
                     onClick={() => selectedOrg && handleOpenInvite(selectedOrg)}
@@ -620,12 +707,32 @@ const Organizations = () => {
                     Invite Member
                 </MenuItem>
 
+                {/* ✅ FIX [#2/#3]: choose the right dialog based on current
+                    ownership. Unowned org → assign-owner. Owned org →
+                    transfer-ownership. Also update the label so the menu
+                    reflects what will actually happen. */}
                 <MenuItem
-                    disabled={!selectedOrg || !canTransferOrg(selectedOrg)}
-                    onClick={() => selectedOrg && handleOpenTransfer(selectedOrg)}
+                    disabled={!selectedOrg || !canManageOrg(selectedOrg)}
+                    onClick={() => {
+                        if (!selectedOrg) return;
+                        if (selectedOrg.owner_username) {
+                            handleOpenTransfer(selectedOrg);
+                        } else {
+                            handleOpenAssignOwner(selectedOrg);
+                        }
+                    }}
                 >
-                    <TransferIcon fontSize="small" sx={{ mr: 1 }} />
-                    Transfer Ownership
+                    {selectedOrg?.owner_username ? (
+                        <>
+                            <TransferIcon fontSize="small" sx={{ mr: 1 }} />
+                            Transfer Ownership
+                        </>
+                    ) : (
+                        <>
+                            <AssignOwnerIcon fontSize="small" sx={{ mr: 1 }} />
+                            Assign Owner
+                        </>
+                    )}
                 </MenuItem>
 
                 <MenuItem
@@ -638,6 +745,7 @@ const Organizations = () => {
                 </MenuItem>
             </Menu>
 
+            {/* ---- Create dialog ---- */}
             <Dialog
                 open={dialogOpen}
                 onClose={handleClose}
@@ -655,12 +763,14 @@ const Organizations = () => {
                                 <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
                                     As a Platform Admin, you may assign ownership of
                                     this new organization to another user. Leave the
-                                    owner blank to keep ownership yourself.
+                                    owner blank to create it <strong>unowned</strong>
+                                    {' '}— you will then assign an owner afterward
+                                    via <em>Assign Owner</em>.
                                 </Alert>
                             ) : (
                                 <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
                                     You will become the owner. You can invite other
-                                    Admins or Staff from the Users page afterwards.
+                                    Admins or Staff from the Team page afterwards.
                                 </Alert>
                             )}
 
@@ -740,7 +850,7 @@ const Organizations = () => {
                                         <TextField
                                             {...params}
                                             label="Assign Owner (optional)"
-                                            helperText="Pick an existing Owner or Superuser to own this organization. Leave blank to own it yourself."
+                                            helperText="Pick an existing Owner or Superuser to own this organization. Leave blank to create an unowned tenant (Platform Admin) or to own it yourself (Regular user)."
                                             disabled={creating}
                                             InputProps={{
                                                 ...params.InputProps,
@@ -763,25 +873,55 @@ const Organizations = () => {
                     {stage === STAGE_CONFIRM && (
                         <Box sx={{ mt: 1 }}>
                             <Alert severity="warning" icon={<WarningIcon />} sx={{ mb: 2 }}>
-                                {selectedOwner
-                                    ? `You're about to create a new tenant owned by ${ownerDisplay || 'the selected user'}. Venues, events, discounts, and policies created under it will belong to that organization.`
-                                    : "You're about to become the owner of a new tenant. Venues, events, discounts, and policies you create will belong to it."}
+                                {ownerIntent.kind === 'assigned' && (
+                                    <>
+                                        You're about to create a new tenant owned by{' '}
+                                        <strong>{ownerIntent.label}</strong>
+                                        {ownerIntent.email ? ` (${ownerIntent.email})` : ''}.
+                                        Venues, events, discounts, and policies
+                                        created under it will belong to that
+                                        organization.
+                                    </>
+                                )}
+                                {ownerIntent.kind === 'unassigned' && (
+                                    <>
+                                        You're about to create a new{' '}
+                                        <strong>unowned tenant</strong>. Use{' '}
+                                        <em>Assign Owner</em> afterwards to
+                                        hand it to a tenant owner. Venues, events,
+                                        discounts, and policies created under it
+                                        will belong to the organization, not to you.
+                                    </>
+                                )}
+                                {ownerIntent.kind === 'self' && (
+                                    <>
+                                        You're about to become the owner of a new
+                                        tenant. Venues, events, discounts, and
+                                        policies you create will belong to it.
+                                    </>
+                                )}
                             </Alert>
+
                             <Typography variant="body2" sx={{ mb: 0.5 }}>
                                 <strong>Name:</strong> {formData.name.trim()}
                             </Typography>
+
                             <Typography variant="body2">
                                 <strong>Owner:</strong>{' '}
-                                {ownerDisplay ? (
+                                {ownerIntent.kind === 'assigned' ? (
                                     <>
-                                        {ownerDisplay}
-                                        {selectedOwner?.email ? ` (${selectedOwner.email})` : ''}
+                                        {ownerIntent.label}
+                                        {ownerIntent.email ? ` (${ownerIntent.email})` : ''}
                                     </>
+                                ) : ownerIntent.kind === 'unassigned' ? (
+                                    <em>Unassigned — assign later</em>
                                 ) : (
                                     'You'
                                 )}
                             </Typography>
+
                             <Divider sx={{ my: 2 }} />
+
                             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                                 This action creates a new tenant and seeds its
                                 regional defaults (currency, country, timezone,
@@ -829,7 +969,7 @@ const Organizations = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* ADDED: EDIT ORGANIZATION DIALOG */}
+            {/* ---- Edit dialog ---- */}
             <Dialog
                 open={editOpen}
                 onClose={handleCloseEdit}
@@ -837,13 +977,11 @@ const Organizations = () => {
                 fullWidth
             >
                 <DialogTitle>Edit Organization</DialogTitle>
-
                 <DialogContent>
                     <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
                         Organization settings apply to all events, venues, discounts,
                         and policies under this tenant.
                     </Alert>
-
                     <TextField
                         fullWidth
                         label="Organization name"
@@ -852,7 +990,6 @@ const Organizations = () => {
                         sx={{ mb: 2 }}
                         disabled={saving}
                     />
-
                     <TextField
                         fullWidth
                         label="Organization email"
@@ -861,7 +998,6 @@ const Organizations = () => {
                         sx={{ mb: 2 }}
                         disabled={saving}
                     />
-
                     <TextField
                         fullWidth
                         label="Logo URL"
@@ -870,7 +1006,6 @@ const Organizations = () => {
                         sx={{ mb: 2 }}
                         disabled={saving}
                     />
-
                     <TextField
                         fullWidth
                         label="Email sender name"
@@ -879,7 +1014,6 @@ const Organizations = () => {
                         sx={{ mb: 2 }}
                         disabled={saving}
                     />
-
                     <Grid container spacing={2}>
                         <Grid item xs={12} sm={6}>
                             <TextField
@@ -890,7 +1024,6 @@ const Organizations = () => {
                                 disabled={saving}
                             />
                         </Grid>
-
                         <Grid item xs={12} sm={6}>
                             <TextField
                                 fullWidth
@@ -902,7 +1035,6 @@ const Organizations = () => {
                         </Grid>
                     </Grid>
                 </DialogContent>
-
                 <DialogActions>
                     <Button onClick={handleCloseEdit} disabled={saving}>
                         Cancel
@@ -918,7 +1050,7 @@ const Organizations = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* ADDED: TRANSFER OWNERSHIP DIALOG */}
+            {/* ---- Transfer ownership dialog (existing owner → new owner) ---- */}
             <Dialog
                 open={transferOpen}
                 onClose={handleCloseTransfer}
@@ -926,14 +1058,12 @@ const Organizations = () => {
                 fullWidth
             >
                 <DialogTitle>Transfer Ownership</DialogTitle>
-
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2, mt: 1 }}>
                         The selected member will become the new Owner of{' '}
                         <strong>{selectedOrg?.name}</strong>.
-                        You will retain access as Admin if you are the current owner.
+                        The current owner will be retained as Admin.
                     </Alert>
-
                     {membersLoading ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                             <CircularProgress />
@@ -941,9 +1071,9 @@ const Organizations = () => {
                     ) : (
                         <Autocomplete
                             options={members.filter((m) =>
-                                m.role !== 'owner' &&
-                                m.user_id !== selectedOrg?.owner &&
-                                m.is_active !== false
+                                m.role !== 'owner'
+                                && m.is_active !== false
+                                && (!selectedOrg?.owner || m.user_id !== selectedOrg.owner)
                             )}
                             value={selectedNewOwner}
                             onChange={(_, value) => setSelectedNewOwner(value)}
@@ -968,7 +1098,6 @@ const Organizations = () => {
                             )}
                         />
                     )}
-
                     {selectedNewOwner && (
                         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                             <Typography variant="subtitle2" gutterBottom>
@@ -983,7 +1112,6 @@ const Organizations = () => {
                         </Paper>
                     )}
                 </DialogContent>
-
                 <DialogActions>
                     <Button onClick={handleCloseTransfer} disabled={transferring}>
                         Cancel
@@ -999,7 +1127,97 @@ const Organizations = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* ADDED: DELETE ORGANIZATION DIALOG */}
+            {/* ---- ✅ FIX [#3]: Assign-owner dialog (unowned org → first owner) ---- */}
+            <Dialog
+                open={assignOpen}
+                onClose={handleCloseAssign}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Assign Owner</DialogTitle>
+                <DialogContent>
+                    <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
+                        <strong>{selectedOrg?.name}</strong> is currently unowned.
+                        Choose the user who will own it. The new owner will receive
+                        a full OWNER membership and become the canonical owner of
+                        this organization.
+                    </Alert>
+                    {assignLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                            <CircularProgress />
+                        </Box>
+                    ) : (
+                        <Autocomplete
+                            options={assignCandidates}
+                            value={selectedAssignee}
+                            onChange={(_, value) => setSelectedAssignee(value)}
+                            getOptionLabel={(option) => {
+                                if (!option) return '';
+                                const display =
+                                    option.name
+                                    || [option.first_name, option.last_name]
+                                        .filter(Boolean).join(' ').trim()
+                                    || option.username
+                                    || option.email
+                                    || '';
+                                return option.email ? `${display} (${option.email})` : display;
+                            }}
+                            isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
+                            filterOptions={(opts, state) => {
+                                const q = state.inputValue.trim().toLowerCase();
+                                if (!q) return opts;
+                                return opts.filter((o) => {
+                                    const hay = [
+                                        o.name, o.username, o.email,
+                                        o.first_name, o.last_name,
+                                    ].filter(Boolean).join(' ').toLowerCase();
+                                    return hay.includes(q);
+                                });
+                            }}
+                            noOptionsText="No eligible users found"
+                            renderInput={(params) => (
+                                <TextField
+                                    {...params}
+                                    label="New owner"
+                                    helperText="Must be an existing, active, non-superuser account."
+                                    disabled={assigning}
+                                />
+                            )}
+                        />
+                    )}
+                    {selectedAssignee && (
+                        <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                                Selected owner
+                            </Typography>
+                            <Typography variant="body2">
+                                {selectedAssignee.name
+                                    || [selectedAssignee.first_name, selectedAssignee.last_name]
+                                        .filter(Boolean).join(' ').trim()
+                                    || selectedAssignee.username}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                {selectedAssignee.email}
+                            </Typography>
+                        </Paper>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseAssign} disabled={assigning}>
+                        Cancel
+                    </Button>
+                    <Button
+                        variant="contained"
+                        onClick={handleAssignOwner}
+                        disabled={assigning || !selectedAssignee}
+                        startIcon={assigning ? <CircularProgress size={16} /> : <AssignOwnerIcon />}
+                    >
+                        Assign Owner
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* ---- Delete dialog ---- */}
             <Dialog
                 open={deleteOpen}
                 onClose={handleCloseDelete}
@@ -1007,7 +1225,6 @@ const Organizations = () => {
                 fullWidth
             >
                 <DialogTitle>Delete Organization</DialogTitle>
-
                 <DialogContent>
                     <DialogContentText>
                         Are you sure you want to delete{' '}
@@ -1016,7 +1233,6 @@ const Organizations = () => {
                         venues, bookings, discounts, and policies.
                     </DialogContentText>
                 </DialogContent>
-
                 <DialogActions>
                     <Button onClick={handleCloseDelete} disabled={deleting}>
                         Cancel
@@ -1033,14 +1249,14 @@ const Organizations = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* ✅ NEW: INVITE MEMBER DIALOG */}
+            {/* ---- Invite member dialog ---- */}
             <Dialog
                 open={openInvite}
                 onClose={handleCloseInvite}
                 maxWidth="sm"
                 fullWidth
                 PaperProps={{
-                    sx: { bgcolor: 'background.paper', borderRadius: 3 }
+                    sx: { bgcolor: 'background.paper', borderRadius: 3 },
                 }}
             >
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1049,11 +1265,12 @@ const Organizations = () => {
                         <CloseIcon />
                     </IconButton>
                 </DialogTitle>
-                
+
                 <form onSubmit={handleInviteSubmit}>
                     <DialogContent sx={{ pt: 1 }}>
                         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
-                            Enter the email address of the person you want to invite. They will receive a magic link to join your organization.
+                            Enter the email address of the person you want to invite.
+                            They will receive a magic link to join your organization.
                         </Typography>
 
                         <TextField
@@ -1075,11 +1292,14 @@ const Organizations = () => {
                             onChange={(e) => setInviteRole(e.target.value)}
                             sx={{ mb: 2.5 }}
                             disabled={isInviting}
+                            helperText="Ownership transfers only via Transfer Ownership."
                         >
                             <MenuItem value="member">Member</MenuItem>
                             <MenuItem value="staff">Staff</MenuItem>
                             <MenuItem value="admin">Admin</MenuItem>
-                            {selectedOrg?.role === 'owner' && <MenuItem value="owner">Owner</MenuItem>}
+                            {/* Owner intentionally omitted — backend rejects
+                                owner invites. Use Transfer Ownership for
+                                existing members or Assign Owner for unowned orgs. */}
                         </TextField>
 
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -1108,15 +1328,15 @@ const Organizations = () => {
                     </DialogContent>
 
                     <DialogActions sx={{ p: 2.5, pt: 0 }}>
-                        <Button 
-                            onClick={handleCloseInvite} 
+                        <Button
+                            onClick={handleCloseInvite}
                             disabled={isInviting}
                         >
                             Cancel
                         </Button>
-                        <Button 
-                            type="submit" 
-                            variant="contained" 
+                        <Button
+                            type="submit"
+                            variant="contained"
                             disabled={isInviting || !inviteEmail}
                             sx={{ minWidth: 120 }}
                         >
@@ -1125,7 +1345,6 @@ const Organizations = () => {
                     </DialogActions>
                 </form>
             </Dialog>
-
         </PageContainer>
     );
 };

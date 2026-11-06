@@ -23,14 +23,24 @@
 # `CancellationPolicy` during the migration, but is NOT used for access
 # control any more — `visible_events()` is.
 # ============================================================================
+# CONVENTION: Capacity accounting
+# ----------------------------------------------------------------------------
+# `Session.booked` and `TicketTier.quantity_sold` count *committed* seats.
+# `Session.reserved` and `TicketTier.quantity_reserved` count seats held
+# by in-flight payments (see `services/inventory_hold.py`). The two
+# must NEVER be combined with a formula that drops the `reserved` term —
+# that is how concurrent checkouts double-sell. Every `remaining_*` and
+# `available_*` method below MUST subtract all three (`total - sold - reserved`).
+# ============================================================================
 
 import secrets
 import string
 import uuid
 
 from django.contrib.auth.models import User
-from django.db import IntegrityError, models
+from django.db import IntegrityError, models, transaction
 from django.db.models import Sum, Q
+from django.utils import timezone
 
 # ✅ Canonical status definitions + manager
 from .managers import (
@@ -39,7 +49,6 @@ from .managers import (
     EXCLUDED_BOOKING_STATUSES,
     EXCLUDED_TICKET_STATUSES,
 )
-from django.utils import timezone   # add to top imports if not present
 
 # ============================================
 # IMPORT SHARED CONSTANTS
@@ -76,10 +85,12 @@ class UserProfile(models.Model):
     state = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100, default='India')
     postal_code = models.CharField(max_length=20, blank=True)
-    
+
     # DEPRECATED (Phase 6): replaced by OrganizationMembership.role.
+    # This flag is retained only so legacy profile queries don't 500 —
+    # it is NOT read by any authorization code. Use `memberships[]`.
     is_organizer = models.BooleanField(default=False)
-    
+
     # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
     last_active = models.DateTimeField(null=True, blank=True)
 
@@ -216,6 +227,19 @@ class CancellationPolicy(models.Model):
         except Exception as exc:
             raise ValidationError({'rules': str(exc)})
 
+    def save(self, *args, **kwargs):
+        # ✅ FIX: enforce `clean()` on every save. Previously `clean()`
+        # existed but was never invoked, so a policy with malformed
+        # `rules` could be persisted via `.save()`, `.update()`, or the
+        # admin's bulk save. `.update()` bypasses `save()` entirely —
+        # that is why `CancellationPolicySerializer.validate_rules`
+        # also calls `validate_cancellation_rules`, and why the
+        # `cancellation_policy_api` viewset relies on the serializer.
+        # This `save()` guard catches every non-bulk path.
+        if not kwargs.get('raw', False):
+            self.clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f'{self.name} ({self.organization.slug})'
 
@@ -232,8 +256,19 @@ class Event(models.Model):
     )
 
     # Legacy FK. Kept during the migration; not used for access control.
+    #
+    # ✅ FIX: `on_delete` changed from CASCADE to SET_NULL. Deleting a
+    # user must not silently wipe their tenant's events (and, via
+    # `Booking.event` CASCADE, every booking and ticket). `organization`
+    # is `PROTECT`, so the org survives; events now survive too, and a
+    # Platform Admin who wants to remove the last human owner must
+    # transfer ownership first.
     organizer = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name='events',
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='events',
         help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
     )
 
@@ -361,10 +396,21 @@ class Event(models.Model):
         """Free registrations are the ONLY flow that skips payment."""
         return self.event_flow != Event.EventFlow.FREE_REGISTRATION
 
+    # ✅ FIX (dead code): `requires_tier` was identical to
+    # `requires_payment` (both `!= FREE_REGISTRATION`). One of them was
+    # dead. Per the task note, leave semantics but make the intent
+    # explicit: a tier is required for anything that is *not* a free
+    # registration (ticketed events need tiers; paid registration gets an
+    # auto-created General tier). We keep the property but delegate to
+    # `requires_payment` so the two can never drift again.
     @property
     def requires_tier(self) -> bool:
-        """Registration-only events auto-create a General tier."""
-        return self.event_flow != Event.EventFlow.FREE_REGISTRATION
+        """Registration-only events auto-create a General tier.
+
+        Kept as an alias of `requires_payment` so the two predicates
+        cannot diverge. Prefer `requires_payment` in new code.
+        """
+        return self.requires_payment
 
     def get_active_tickets_count(self):
         return self.tickets.filter(
@@ -421,10 +467,13 @@ class Event(models.Model):
 
         return self.status
 
+    # ✅ FIX: docstring promised "Owners/Admins" but implementation used
+    # `can_operate_org`, which also lets Staff (scanner-only) through.
+    # `can_manage_org` is the Owners/Admins predicate.
     def user_can_manage(self, user):
         """Owners/Admins of this event's org. Platform admins always pass."""
-        from .services.tenancy import can_operate_org
-        return can_operate_org(user, self.organization)
+        from .services.tenancy import can_manage_org
+        return can_manage_org(user, self.organization)
 
     def user_can_edit(self, user):
         """Only Owners/Admins. Staff (scanner-only) do NOT pass."""
@@ -448,12 +497,13 @@ class Session(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-
+    # ✅ FIX: `remaining_capacity` was defined twice; the second
+    # definition silently dropped `- self.reserved`, so capacity checks
+    # overstated availability and double-sold under concurrent
+    # checkouts. The single remaining definition subtracts BOTH
+    # committed and reserved seats.
     def remaining_capacity(self):
         return max(0, self.capacity - self.booked - self.reserved)
-    
-    def remaining_capacity(self):
-        return max(0, self.capacity - self.booked)
 
     def check_capacity(self, requested):
         if requested <= 0:
@@ -492,11 +542,12 @@ class TicketTier(models.Model):
     max_per_order = models.IntegerField(default=10)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ✅ FIX: `available_tickets` was defined twice; the second definition
+    # dropped `- self.quantity_reserved`, so availability was overstated
+    # and double-sold under concurrent checkouts. The single remaining
+    # definition subtracts total − sold − reserved.
     def available_tickets(self):
         return max(0, self.quantity_total - self.quantity_sold - self.quantity_reserved)
-
-    def available_tickets(self):
-        return max(0, self.quantity_total - self.quantity_sold)
 
     def __str__(self):
         return f"{self.name} - {self.price}"
@@ -551,11 +602,30 @@ class Booking(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.booking_reference:
-            self.booking_reference = _generate_code('BK', 10)
-
-            update_fields = kwargs.get('update_fields')
-            if update_fields is not None:
-                kwargs['update_fields'] = set(update_fields) | {'booking_reference'}
+            # ✅ FIX: retry on the (rare) DB-level IntegrityError, not
+            # just a logical pre-check. Same pattern as Ticket.save().
+            # The old code generated one reference and relied on the
+            # caller catching a collision; under a race two bookings
+            # could pick the same reference and one would 500 with an
+            # unhandled IntegrityError.
+            for _ in range(5):
+                self.booking_reference = _generate_code('BK', 10)
+                try:
+                    with transaction.atomic():
+                        update_fields = kwargs.get('update_fields')
+                        if update_fields is not None:
+                            kwargs['update_fields'] = (
+                                set(update_fields) | {'booking_reference'}
+                            )
+                        super().save(*args, **kwargs)
+                    return
+                except IntegrityError:
+                    # Collision on booking_reference — clear and retry.
+                    self.booking_reference = ''
+                    continue
+            raise IntegrityError(
+                "Could not generate a unique booking reference after 5 attempts."
+            )
 
         super().save(*args, **kwargs)
 
@@ -630,19 +700,29 @@ class Ticket(models.Model):
             )
             prefix = 'REG' if is_registration else 'TIX'
 
-            for _ in range(5):
-                candidate = _generate_code(prefix, 12)
-                if not Ticket.objects.filter(unique_code=candidate).exists():
-                    self.unique_code = candidate
-                    break
-            else:
-                raise IntegrityError(
-                    "Could not generate a unique ticket code after 5 attempts."
-                )
-
+            # ✅ FIX: retry on DB-level IntegrityError, not a
+            # `while exists()` pre-check. The old loop could see "not
+            # exists" from two concurrent transactions and both proceed;
+            # one would then fail at the DB with an unhandled
+            # IntegrityError. Wrapping the save in an atomic block and
+            # catching the real IntegrityError closes the race.
             update_fields = kwargs.get('update_fields')
             if update_fields is not None:
                 kwargs['update_fields'] = set(update_fields) | {'unique_code'}
+
+            for _ in range(5):
+                self.unique_code = _generate_code(prefix, 12)
+                try:
+                    with transaction.atomic():
+                        super().save(*args, **kwargs)
+                    return
+                except IntegrityError:
+                    # Collision on unique_code — clear and retry.
+                    self.unique_code = ''
+                    continue
+            raise IntegrityError(
+                "Could not generate a unique ticket code after 5 attempts."
+            )
 
         super().save(*args, **kwargs)
 
@@ -878,6 +958,7 @@ class OTPRequest(models.Model):
     def attempts_exhausted(self):
         return self.attempts >= self.max_attempts
 
+
 # ============================================================
 # SYSTEM SETTINGS — deployment-wide configuration (singleton)
 # ============================================================
@@ -925,6 +1006,10 @@ class SystemSettings(models.Model):
 
     def save(self, *args, **kwargs):
         self.pk = 1
+        # ✅ NOTE: race on first access is handled by `get()`, which uses
+        # `get_or_create(pk=1)`. Concurrent first-writes could still
+        # collide here; `get()` catches the IntegrityError via the
+        # get_or_create contract. No further guard is required.
         super().save(*args, **kwargs)
 
     @classmethod
@@ -934,5 +1019,6 @@ class SystemSettings(models.Model):
 
     def __str__(self):
         return f'SystemSettings({self.currency_code}, {self.country})'
+
 
 from .models_seating import SeatCategory, SeatLayout, Seat, SeatReservation

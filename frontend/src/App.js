@@ -11,7 +11,7 @@ import muiTheme from './theme/muiTheme';
 import { GlobalStyle } from './styles/global';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { OrgProvider } from './context/OrgContext';           // ✅ NEW
+import { OrgProvider, useOrg } from './context/OrgContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { RoleProvider, useRole } from './context/RoleContext';
 
@@ -42,14 +42,17 @@ import Users from './pages/Users/Users';
 import Profile from './pages/Profile';
 import CancellationPolicies from './pages/CancellationPolicies';
 import ActiveSessions from './pages/ActiveSessions';
-import Organizations from './pages/Organizations';            // ✅ NEW
+import Organizations from './pages/Organizations';
 import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
-import TeamMembers from './pages/Organizations/TeamMembers'; // ✅ NEW
-import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor'; // ✅ NEW
+import TeamMembers from './pages/Organizations/TeamMembers';
+import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor';
 import Membership from './pages/Membership/Membership';
 import { ManagePlans, ReviewOffline } from './pages/Membership';
 
-import { ROLES } from './constants';
+import {
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
+} from './constants';
 
 // ---- Loading spinner ----
 const LoadingSpinner = () => {
@@ -121,12 +124,34 @@ const ProtectedRoute = ({ children }) => {
     return children;
 };
 
+// ---- RoleBasedRoute ----
+// PLATFORM-level gating only. allowedRoles must contain PLATFORM_ROLES values
+// (e.g. SUPER_ADMIN). Never pass membership roles here — use OrgRoleRoute.
 const RoleBasedRoute = ({ children, allowedRoles }) => {
     const { user, loading } = useAuth();
-    const { role } = useRole();
+    const { platformRole } = useRole();
     if (loading) return <LoadingSpinner />;
     if (!user) return <Navigate to="/login" replace />;
-    if (!allowedRoles || allowedRoles.includes(role)) return children;
+    if (!allowedRoles || allowedRoles.includes(platformRole)) return children;
+    return <Navigate to="/app/unauthorized" replace />;
+};
+
+// ---- OrgRoleRoute ----
+// Gates a route on the user's MEMBERSHIP role in the CURRENT organization.
+// Super admins bypass. A user with no memberships is redirected to
+// /app/organizations so they can create or join one.
+const OrgRoleRoute = ({ children, minOrgRole }) => {
+    const { user, loading } = useAuth();
+    const { isSuperAdmin, hasOrgRole } = useRole();
+    const { hasNoMemberships } = useOrg();
+
+    if (loading) return <LoadingSpinner />;
+    if (!user) return <Navigate to="/login" replace />;
+    if (isSuperAdmin) return children;
+    if (hasNoMemberships) {
+        return <Navigate to="/app/organizations" replace />;
+    }
+    if (hasOrgRole(minOrgRole)) return children;
     return <Navigate to="/app/unauthorized" replace />;
 };
 
@@ -149,33 +174,21 @@ const AppRoutes = () => {
                ============================================ */}
 
             <Route path="/" element={<Landing />} />
-
             <Route path="/gate" element={<GuestOrRegisterGate />} />
 
             <Route
                 path="/login"
-                element={
-                    <PublicOnlyRoute>
-                        <Login />
-                    </PublicOnlyRoute>
-                }
+                element={<PublicOnlyRoute><Login /></PublicOnlyRoute>}
             />
             <Route
                 path="/register"
-                element={
-                    <PublicOnlyRoute>
-                        <Register />
-                    </PublicOnlyRoute>
-                }
+                element={<PublicOnlyRoute><Register /></PublicOnlyRoute>}
             />
 
-            {/* Password Reset Routes (Public) */}
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
-            {/* ✅ NEW: Magic Link & Organization Invite Verification Routes */}
             <Route path="/auth/verify" element={<MagicLinkVerify />} />
             <Route path="/invite/accept" element={<MagicLinkVerify />} />
-
             <Route path="/unauthorized" element={<Unauthorized />} />
 
             {/* ============================================
@@ -184,215 +197,105 @@ const AppRoutes = () => {
             <Route path="/app" element={<Layout />}>
                 <Route index element={<Navigate to="/app/dashboard" replace />} />
 
-                {/* ✅ Organizations (tenant bootstrap) — visible to
-                    every logged-in user, since any user may create one
-                    and become its owner. */}
+                {/* Organizations — every authenticated user can see this. */}
                 <Route
                     path="organizations"
-                    element={
-                        <ProtectedRoute>
-                            <Organizations />
-                        </ProtectedRoute>
-                    }
+                    element={<ProtectedRoute><Organizations /></ProtectedRoute>}
                 />
-                {/* ✅ NEW: Dedicated Team Management Route */}
+
                 <Route
                     path="organizations/:orgId/team"
                     element={
-                        <RoleBasedRoute allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}>
+                        <OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}>
                             <TeamMembers />
-                        </RoleBasedRoute>
+                        </OrgRoleRoute>
                     }
+                />
+
+                {/* Bookings — everyone sees their own. */}
+                <Route
+                    path="bookings"
+                    element={<ProtectedRoute><Bookings /></ProtectedRoute>}
                 />
                 <Route
                     path="bookings/create"
-                    element={
-                        <GuestAllowedRoute>
-                            <CreateBooking />
-                        </GuestAllowedRoute>
-                    }
+                    element={<GuestAllowedRoute><CreateBooking /></GuestAllowedRoute>}
+                />
+
+                {/* Booking tickets view (nested under bookings, kept for parity) */}
+                <Route
+                    path="bookings/:bookingId/tickets"
+                    element={<ProtectedRoute><BookingTickets /></ProtectedRoute>}
+                />
+
+                {/* Org-admin pages: owner/admin membership in current org. */}
+                <Route
+                    path="events/*"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Events /></OrgRoleRoute>}
                 />
                 <Route
-                    path="membership"
-                    element={
-                        <ProtectedRoute>
-                            <Membership />
-                        </ProtectedRoute>
-                    }
+                    path="venues/*"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Venues /></OrgRoleRoute>}
+                />
+                <Route
+                    path="discounts"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Discounts /></OrgRoleRoute>}
+                />
+                <Route
+                    path="analytics"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Analytics /></OrgRoleRoute>}
+                />
+                <Route
+                    path="cancellation-policies"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><CancellationPolicies /></OrgRoleRoute>}
+                />
+                <Route
+                    path="users"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Users /></OrgRoleRoute>}
                 />
                 <Route
                     path="membership/manage"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <ManagePlans />
-                        </RoleBasedRoute>
-                    }
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><ManagePlans /></OrgRoleRoute>}
                 />
                 <Route
                     path="membership/review-offline"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <ReviewOffline />
-                        </RoleBasedRoute>
-                    }
-                />
-                <Route
-                    path="dashboard"
-                    element={
-                        <ProtectedRoute>
-                            <Dashboard />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="events/*"
-                    element={
-                        <ProtectedRoute>
-                            <Events />
-                        </ProtectedRoute>
-                    }
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><ReviewOffline /></OrgRoleRoute>}
                 />
 
-                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
-                <Route
-                    path="venues/*"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <Venues />
-                        </RoleBasedRoute>
-                    }
-                />
-
-                <Route
-                    path="bookings/:bookingId/tickets"
-                    element={
-                        <ProtectedRoute>
-                            <BookingTickets />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="bookings"
-                    element={
-                        <ProtectedRoute>
-                            <Bookings />
-                        </ProtectedRoute>
-                    }
-                />
-
-                {/* UPDATED FOR 6-TIER HIERARCHY: Added OWNER and STAFF for scanner access */}
+                {/* Scanner requires staff or higher in current org. */}
                 <Route
                     path="checkin"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.STAFF, ROLES.SUPER_ADMIN]}
-                        >
-                            <Checkin />
-                        </RoleBasedRoute>
-                    }
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.STAFF}><Checkin /></OrgRoleRoute>}
                 />
 
-                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
-                <Route
-                    path="analytics"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <Analytics />
-                        </RoleBasedRoute>
-                    }
-                />
-
-                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
-                <Route
-                    path="discounts"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <Discounts />
-                        </RoleBasedRoute>
-                    }
-                />
-
-                {/* UPDATED FOR 6-TIER HIERARCHY: Allow all authenticated roles to access Settings 
-                    (personal profile/password is available to all; platform/org settings are gated internally) */}
-                <Route
-                    path="settings"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN, ROLES.STAFF, ROLES.MEMBER, ROLES.USER]}
-                        >
-                            <Settings />
-                        </RoleBasedRoute>
-                    }
-                />
-
-                <Route
-                    path="profile"
-                    element={
-                        <ProtectedRoute>
-                            <Profile />
-                        </ProtectedRoute>
-                    }
-                />
-
-                <Route
-                    path="tickets/:ticketId"
-                    element={
-                        <ProtectedRoute>
-                            <TicketView />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="tickets/:ticketId/booking/:bookingId"
-                    element={
-                        <ProtectedRoute>
-                            <TicketView />
-                        </ProtectedRoute>
-                    }
-                />
-
-                {/* UPDATED FOR 6-TIER HIERARCHY: ORGANIZER -> OWNER */}
-                <Route
-                    path="cancellation-policies"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <CancellationPolicies />
-                        </RoleBasedRoute>
-                    }
-                />
-
-                {/* UPDATED FOR 6-TIER HIERARCHY: Added OWNER so they can manage org members */}
-                <Route
-                    path="users"
-                    element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.OWNER, ROLES.ADMIN, ROLES.SUPER_ADMIN]}
-                        >
-                            <Users />
-                        </RoleBasedRoute>
-                    }
-                />
-
+                {/* Platform-only routes. */}
                 <Route
                     path="active-sessions"
                     element={
-                        <RoleBasedRoute
-                            allowedRoles={[ROLES.SUPER_ADMIN]}
-                        >
+                        <RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}>
                             <ActiveSessions />
                         </RoleBasedRoute>
+                    }
+                />
+
+                {/* Any authenticated user. */}
+                <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                <Route path="dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                <Route path="membership" element={<ProtectedRoute><Membership /></ProtectedRoute>} />
+                <Route path="tickets/:ticketId" element={<ProtectedRoute><TicketView /></ProtectedRoute>} />
+                <Route
+                    path="tickets/:ticketId/booking/:bookingId"
+                    element={<ProtectedRoute><TicketView /></ProtectedRoute>}
+                />
+
+                {/* Venue Layout Editor — inside the shell so Layout (nav/auth) applies. */}
+                <Route
+                    path="venues/:venueId/layout"
+                    element={
+                        <OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}>
+                            <VenueLayoutEditor />
+                        </OrgRoleRoute>
                     }
                 />
             </Route>
@@ -408,12 +311,6 @@ const AppRoutes = () => {
                         : <Navigate to="/" replace />
                 }
             />
-            {/* ============================================
-                Venue Layout Editor (for SVG upload & seat detection) — NEW
-               ============================================ */}
-            <Route path="/app/venues/:venueId/layout" element={<VenueLayoutEditor />} />
-            {/* ============================================ */}
-
         </Routes>
     );
 };
@@ -448,9 +345,6 @@ const App = () => {
                 <GlobalStyle />
                 <Router>
                     <AuthProvider>
-                        {/* ✅ NEW: OrgProvider sits inside AuthProvider
-                            (needs the token) and outside SettingsProvider
-                            (settings don't depend on orgs). */}
                         <OrgProvider>
                             <SettingsProvider>
                                 <RoleProvider>

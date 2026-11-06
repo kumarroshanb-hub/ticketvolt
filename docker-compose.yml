@@ -43,6 +43,7 @@ services:
       - ./backend/.env.local     # ← Load from .env.local
     environment:
       ENVIRONMENT: local          # ← Selects local.py settings
+      RUN_MIGRATIONS: '0'       # ✅ Backend should NOT run migrations (handled by entrypoint.sh)
     depends_on:
       postgres:
         condition: service_healthy

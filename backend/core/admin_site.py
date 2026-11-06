@@ -23,8 +23,22 @@ class SuperuserOnlyAdminSite(AdminSite):
         )
 
     def login(self, request, extra_context=None):
+        # An authenticated non-superuser who lands on the login page
+        # gets an explicit 403 instead of the login form. They cannot
+        # brute-force a superuser password from here because they have
+        # no valid credentials to submit.
         if request.user.is_authenticated and not request.user.is_superuser:
             return HttpResponseForbidden(
                 'Django admin is restricted to Platform Admin accounts.'
             )
         return super().login(request, extra_context=extra_context)
+
+    def index(self, request, extra_context=None):
+        # Defence-in-depth: the URLconf gate in core/urls.py already
+        # rejects non-superusers, but the index view is also reachable
+        # if a superuser is demoted mid-session.
+        if not self.has_permission(request):
+            return HttpResponseForbidden(
+                'Django admin is restricted to Platform Admin accounts.'
+            )
+        return super().index(request, extra_context=extra_context)

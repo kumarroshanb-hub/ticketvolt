@@ -4,11 +4,13 @@ User management — tenant-aware.
 
 Role model (per matrix):
   • Platform Admin  = is_superuser=True  → every user, every org.
-  • Tenant Admin    = is_staff=True AND manager of ≥1 org → users who
-                      share an org, plus self; cannot see/edit
-                      superusers or other tenant admins.
-  • Org Owner/Admin = manager of ≥1 org, no is_staff → same visibility
-                      as Tenant Admin minus the "create staff" bit.
+  • Platform Staff  = is_staff=True, is_superuser=False → Django-admin
+                      access only; does NOT grant tenant scope.
+  • Tenant Admin    = manager of ≥1 org, optionally is_staff=True.
+                      Sees users who share an org, plus self; cannot
+                      see/edit superusers.
+  • Org Owner/Admin = manager of ≥1 org, is_staff=False → same visibility
+                      as Tenant Admin minus the "create platform staff" bit.
   • Regular User    = only themselves.
 
 The legacy `UserProfile.is_organizer` flag is retired. Tenant roles live
@@ -29,11 +31,11 @@ from rest_framework.pagination import PageNumberPagination
 
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth.hashers import make_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.conf import settings
+from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth.tokens import default_token_generator
@@ -45,8 +47,9 @@ from ..services.tenancy import (
     is_platform_superuser,
     user_org_ids,
     can_manage_org,
+    _active_membership_filter,   # ✅ FIX: validity-aware membership filter
 )
-from ..services import auth_emails  # ✅ NEW: Centralized email service
+from ..services import auth_emails
 from .serializers import (
     UserSerializer,
     UserProfileSerializer,
@@ -61,6 +64,35 @@ def _platform_country_default():
         return SystemSettings.get().country or 'India'
     except Exception:
         return 'India'
+
+
+def _active_membership_user_ids():
+    """
+    ✅ FIX: user IDs with at least one CURRENTLY VALID membership.
+
+    Used by the `role=` filters so an expired membership does not keep a
+    user categorised as `member` / `staff` / `owner`.
+    """
+    now = timezone.now()
+    return (
+        OrganizationMembership.objects
+        .filter(is_active=True, valid_from__lte=now)
+        .filter(Q(valid_until__isnull=True) | Q(valid_until__gte=now))
+        .values_list('user_id', flat=True)
+        .distinct()
+    )
+
+
+def _valid_role_user_ids(role):
+    """Return a queryset of user IDs holding a valid membership of `role`."""
+    now = timezone.now()
+    return (
+        OrganizationMembership.objects
+        .filter(role=role, is_active=True, valid_from__lte=now)
+        .filter(Q(valid_until__isnull=True) | Q(valid_until__gte=now))
+        .values_list('user_id', flat=True)
+        .distinct()
+    )
 
 
 class UserPagination(PageNumberPagination):
@@ -140,56 +172,52 @@ class UserViewSet(viewsets.ModelViewSet):
             )
             queryset = queryset.filter(id__in=list(org_user_ids))
 
-        # Helper: user IDs that are managers of ≥1 org.
-        manager_user_ids = (
-            OrganizationMembership.objects
-            .filter(role__in=OrganizationMembership.MANAGER_ROLES)
-            .values_list('user_id', flat=True)
-            .distinct()
-        )
-
-        # UPDATED FOR 6-TIER HIERARCHY: Filter by specific roles
+        # ✅ FIX: all role filters now use validity-aware membership IDs,
+        # so an expired membership does not keep a user in a role bucket.
         if role in ('organizer', 'owner'):
-            # Owner/Organizer = manager membership, NOT is_staff.
-            queryset = queryset.filter(id__in=list(manager_user_ids))
+            # Owner/Organizer = valid OWNER membership (NOT is_staff).
+            queryset = queryset.filter(
+                id__in=list(_valid_role_user_ids(OrganizationMembership.OrgRole.OWNER)),
+            )
 
         elif role == 'admin':
-            # Tenant Admin = is_staff=True, is_superuser=False AND a manager of ≥1 org.
+            # Tenant Admin = is_staff=True, is_superuser=False AND a valid
+            # ADMIN/OWNER membership.
+            manager_ids = list(
+                OrganizationMembership.objects
+                .filter(
+                    role__in=OrganizationMembership.MANAGER_ROLES,
+                    is_active=True,
+                    valid_from__lte=timezone.now(),
+                )
+                .filter(Q(valid_until__isnull=True) | Q(valid_until__gte=timezone.now()))
+                .values_list('user_id', flat=True)
+                .distinct()
+            )
             queryset = queryset.filter(
-                is_staff=True, is_superuser=False,
-            ).filter(id__in=list(manager_user_ids))
+                is_staff=True, is_superuser=False, id__in=manager_ids,
+            )
 
         elif role == 'super_admin':
             queryset = queryset.filter(is_superuser=True)
 
         elif role == 'staff':
-            staff_user_ids = (
-                OrganizationMembership.objects
-                .filter(role=OrganizationMembership.OrgRole.STAFF)
-                .values_list('user_id', flat=True)
-                .distinct()
+            # ✅ FIX: valid STAFF membership only.
+            queryset = queryset.filter(
+                id__in=list(_valid_role_user_ids(OrganizationMembership.OrgRole.STAFF)),
             )
-            queryset = queryset.filter(id__in=list(staff_user_ids))
 
         elif role == 'member':
-            member_user_ids = (
-                OrganizationMembership.objects
-                .filter(role=OrganizationMembership.OrgRole.MEMBER)
-                .values_list('user_id', flat=True)
-                .distinct()
+            # ✅ FIX: valid MEMBER membership only.
+            queryset = queryset.filter(
+                id__in=list(_valid_role_user_ids(OrganizationMembership.OrgRole.MEMBER)),
             )
-            queryset = queryset.filter(id__in=list(member_user_ids))
 
         elif role == 'user':
-            # Regular user: neither is_staff nor a member of any org.
-            all_org_user_ids = (
-                OrganizationMembership.objects
-                .values_list('user_id', flat=True)
-                .distinct()
-            )
+            # Regular user: neither is_staff nor a *valid* member of any org.
             queryset = queryset.filter(
                 is_staff=False, is_superuser=False,
-            ).exclude(id__in=list(all_org_user_ids))
+            ).exclude(id__in=list(_active_membership_user_ids()))
 
         return queryset.order_by('-date_joined')
 
@@ -203,8 +231,6 @@ class UserViewSet(viewsets.ModelViewSet):
         if is_platform_superuser(requester):
             return True
         if is_platform_admin(requester):
-            # Dead branch today (is_platform_admin == superuser). Kept in
-            # case a future widening of platform-admin is intentional.
             return not target_user.is_superuser
         # Tenant path: cannot see/edit any platform-level staff.
         if target_user.is_staff or target_user.is_superuser:
@@ -212,9 +238,16 @@ class UserViewSet(viewsets.ModelViewSet):
         requester_orgs = set(user_org_ids(requester))
         if not requester_orgs:
             return False
+        # ✅ FIX: only count *valid* target memberships.
+        now = timezone.now()
         target_orgs = set(
             OrganizationMembership.objects
-            .filter(user=target_user)
+            .filter(
+                user=target_user,
+                is_active=True,
+                valid_from__lte=now,
+            )
+            .filter(Q(valid_until__isnull=True) | Q(valid_until__gte=now))
             .values_list('organization_id', flat=True)
         )
         return bool(requester_orgs & target_orgs)
@@ -228,9 +261,7 @@ class UserViewSet(viewsets.ModelViewSet):
             if field in data:
                 setattr(profile, field, data[field] or '')
                 changed = True
-        # FIX: keep `profile.email` in sync when `user.email` changes —
-        # the column is unique=True, so a mismatch between the two is a
-        # latent bug (duplicate-email errors on create).
+        # Keep profile.email in sync when user.email changes.
         if 'email' in data:
             email_value = (data.get('email') or '').strip()
             if email_value and email_value != profile.email:
@@ -250,19 +281,16 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # FIX: a user editing themselves must not be able to flip their
-        # own `is_active` (that would let an admin lock themselves out,
-        # and it is not in the matrix).
+        # A user editing themselves must not be able to flip their own
+        # `is_active` (that would let an admin lock themselves out).
         if instance.id == request.user.id and 'is_active' in request.data:
             return Response(
                 {'error': 'You cannot change your own active status.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # FIX (BUG 19 follow-up): PATCH can also deactivate a user via
-        # `is_active`, bypassing toggle_active()'s guard. Enforce the
-        # same "at least one active superuser" invariant here. Only the
-        # active -> inactive transition on a superuser matters.
+        # PATCH can also deactivate a user via `is_active`; enforce the
+        # "at least one active superuser" invariant here too.
         if (
             'is_active' in request.data
             and instance.is_superuser
@@ -302,7 +330,7 @@ class UserViewSet(viewsets.ModelViewSet):
         kwargs['partial'] = True
         return self.update(request, *args, **kwargs)
 
-    def _coerce_bool(self, value):  # <-- Added 'self' here
+    def _coerce_bool(self, value):
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -321,10 +349,9 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         # ---- Resolve target org ----
-        # UPDATED: Allow Superusers to bypass org requirement for Admin/Owner creation
         target_org = None
         raw_org_id = request.data.get('organization_id')
-        
+
         if raw_org_id:
             try:
                 target_org = Organization.objects.get(id=raw_org_id)
@@ -375,16 +402,20 @@ class UserViewSet(viewsets.ModelViewSet):
 
         # ---- Validate role BEFORE creating the user ----
         requested_role = request.data.get('role', 'user')
-        valid_roles = ('user', 'member', 'staff', 'owner', 'organizer', 'admin', 'super_admin')
+        # ✅ FIX: `platform_staff` is a distinct value from tenant `staff`.
+        valid_roles = (
+            'user', 'member', 'staff', 'owner', 'organizer',
+            'admin', 'platform_staff', 'super_admin',
+        )
         if requested_role not in valid_roles:
             return Response(
                 {'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if requested_role == 'super_admin' and not is_platform_superuser(requester):
+        if requested_role in ('super_admin', 'platform_staff') and not is_platform_superuser(requester):
             return Response(
-                {'error': 'Only a super admin can create super admin users.'},
+                {'error': 'Only a super admin can create platform staff/super admins.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -394,7 +425,6 @@ class UserViewSet(viewsets.ModelViewSet):
                     {'error': 'You do not have permission to create admins.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            # Superusers can create Admins without an org (to be assigned later)
             if target_org is None and not is_platform_superuser(requester):
                 return Response(
                     {'error': 'organization_id is required to create admins.'},
@@ -412,7 +442,7 @@ class UserViewSet(viewsets.ModelViewSet):
                     {'error': 'You do not have permission to create owners in this organization.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-                
+
         if requested_role in ('staff', 'member'):
             if target_org is None:
                 return Response(
@@ -425,19 +455,18 @@ class UserViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        # ---- Build payload (inject organization_id so the serializer
-        #       does not need to know about it) ----
+        # ---- Build payload ----
         payload = (
             request.data.copy()
             if hasattr(request.data, 'copy')
             else dict(request.data)
         )
 
-        # ✅ FIX: Passwordless creation. If no password is provided by the 
-        # frontend, inject a secure, unguessable dummy password so the 
-        # serializer passes validation. The user will log in via Magic Link.
+        # ✅ FIX: pass PLAINTEXT to the serializer; it hashes exactly once.
+        # The old code passed `make_password(...)` which the serializer then
+        # hashed AGAIN, producing a double-hashed unusable password.
         if not payload.get('password'):
-            payload['password'] = make_password(secrets.token_urlsafe(32))
+            payload['password'] = secrets.token_urlsafe(32)
         if not payload.get('password_confirm'):
             payload['password_confirm'] = payload['password']
 
@@ -452,6 +481,18 @@ class UserViewSet(viewsets.ModelViewSet):
                 user.is_staff = True
                 user.is_superuser = True
                 user.save(update_fields=['is_staff', 'is_superuser'])
+
+            elif requested_role == 'platform_staff':
+                # ✅ FIX: platform staff = is_staff only, no superuser.
+                user.is_staff = True
+                user.is_superuser = False
+                user.save(update_fields=['is_staff', 'is_superuser'])
+                if target_org is not None:
+                    OrganizationMembership.objects.get_or_create(
+                        organization=target_org,
+                        user=user,
+                        defaults={'role': OrganizationMembership.OrgRole.STAFF},
+                    )
 
             elif requested_role == 'admin':
                 user.is_staff = True
@@ -470,7 +511,13 @@ class UserViewSet(viewsets.ModelViewSet):
                         user=user,
                         defaults={'role': OrganizationMembership.OrgRole.OWNER},
                     )
-
+                    # ✅ NEW: if the org is currently unowned, promote this user to
+                    # the canonical `Organization.owner` as well. This keeps the two
+                    # storage locations in sync so the Organizations page reflects
+                    # reality.
+                    if target_org.owner_id is None and requested_role == 'owner':
+                        target_org.owner_id = user.id
+                        target_org.save(update_fields=['owner', 'updated_at'])
             elif requested_role == 'staff':
                 if target_org is not None:
                     OrganizationMembership.objects.get_or_create(
@@ -495,8 +542,6 @@ class UserViewSet(viewsets.ModelViewSet):
                         defaults={'role': OrganizationMembership.OrgRole.MEMBER},
                     )
 
-            # FIX: apply is_active BEFORE the response, not after a
-            # branch that could `return` first.
             if 'is_active' in request.data:
                 user.is_active = self._coerce_bool(request.data['is_active'])
                 user.save(update_fields=['is_active'])
@@ -514,10 +559,10 @@ class UserViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
-        # ✅ FIX: Inject dummy password for passwordless flow
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        # ✅ FIX: plaintext password; serializer hashes once.
         if not data.get('password'):
-            data['password'] = make_password(secrets.token_urlsafe(32))
+            data['password'] = secrets.token_urlsafe(32)
             data['password_confirm'] = data['password']
 
         serializer = UserRegistrationSerializer(data=data)
@@ -554,11 +599,25 @@ class UserViewSet(viewsets.ModelViewSet):
             },
         }, status=status.HTTP_201_CREATED)
 
-    # ------------------------------------------------------------------
-    # Role update (Platform Admin only)
-    # ------------------------------------------------------------------
     @action(detail=True, methods=['post'])
     def update_role(self, request, pk=None):
+        """
+        Set a user's membership role within an organization, or set the
+        user's platform bits.
+
+        MEMBERSHIP-AS-PROPERTY MODEL:
+        - `role` is NOT a column on User. It is a property of the
+          user's OrganizationMembership in a specific org.
+        - 'super_admin'    → is_staff=True, is_superuser=True
+        - 'platform_staff' → is_staff=True, is_superuser=False
+        - 'admin'          → is_staff=True + ADMIN membership in `organization_id`
+        - 'owner'          → OWNER membership in `organization_id`
+        - 'staff'          → STAFF membership in `organization_id`
+        - 'member'         → MEMBER membership in `organization_id`
+        - 'user'           → strip all memberships
+
+        Only a Platform Super Admin may call this.
+        """
         target = self.get_object()
         requester = request.user
 
@@ -568,10 +627,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # FIX: nobody — not even a superuser — may change their own
-        # platform role via this endpoint. Promotion/demotion of self is
-        # an administrative act that must go through a second superuser
-        # or Django admin.
         if target.id == requester.id:
             return Response(
                 {'error': 'You cannot change your own role.'},
@@ -579,7 +634,10 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         role = request.data.get('role')
-        valid_roles = ('user', 'member', 'staff', 'owner', 'organizer', 'admin', 'super_admin')
+        valid_roles = (
+            'user', 'member', 'staff', 'owner', 'admin',
+            'platform_staff', 'super_admin',
+        )
         if role not in valid_roles:
             return Response(
                 {'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'},
@@ -587,23 +645,25 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         target_org = None
-        if role in ('admin', 'owner', 'organizer', 'staff', 'member'):
+        if role in ('admin', 'owner', 'staff', 'member', 'platform_staff'):
             raw_org_id = request.data.get('organization_id')
-            if not raw_org_id:
-                return Response(
-                    {'error': f'organization_id is required to promote a user to {role}.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            try:
-                target_org = Organization.objects.get(id=raw_org_id)
-            except (Organization.DoesNotExist, ValueError):
-                return Response(
-                    {'error': 'Organization not found.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            # ✅ FIX: platform_staff does NOT require an org.
+            if role != 'platform_staff':
+                if not raw_org_id:
+                    return Response(
+                        {'error': f'organization_id is required to promote a user to {role}.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            if raw_org_id:
+                try:
+                    target_org = Organization.objects.get(id=raw_org_id)
+                except (Organization.DoesNotExist, ValueError):
+                    return Response(
+                        {'error': 'Organization not found.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-        # FIX (BUG 19): never allow the last active superuser to be
-        # demoted out of the super_admin role.
+        # Never allow the last active superuser to be demoted out of super_admin.
         if target.is_superuser and role != 'super_admin':
             remaining_superusers = (
                 User.objects
@@ -618,12 +678,29 @@ class UserViewSet(viewsets.ModelViewSet):
                 )
 
         with transaction.atomic():
-            # Always clear both platform bits first; then re-set based on role.
+            # Clear platform bits first; role determines what we re-set.
             target.is_staff = False
             target.is_superuser = False
             target.save(update_fields=['is_staff', 'is_superuser'])
 
-            if role == 'admin':
+            if role == 'super_admin':
+                target.is_staff = True
+                target.is_superuser = True
+                target.save(update_fields=['is_staff', 'is_superuser'])
+
+            elif role == 'platform_staff':
+                # ✅ FIX: platform staff = is_staff only.
+                target.is_staff = True
+                target.is_superuser = False
+                target.save(update_fields=['is_staff', 'is_superuser'])
+                if target_org is not None:
+                    OrganizationMembership.objects.update_or_create(
+                        organization=target_org,
+                        user=target,
+                        defaults={'role': OrganizationMembership.OrgRole.STAFF},
+                    )
+
+            elif role == 'admin':
                 target.is_staff = True
                 target.save(update_fields=['is_staff'])
                 OrganizationMembership.objects.update_or_create(
@@ -632,18 +709,17 @@ class UserViewSet(viewsets.ModelViewSet):
                     defaults={'role': OrganizationMembership.OrgRole.ADMIN},
                 )
 
-            elif role == 'super_admin':
-                target.is_staff = True
-                target.is_superuser = True
-                target.save(update_fields=['is_staff', 'is_superuser'])
-
-            elif role in ('owner', 'organizer'):
+            elif role == 'owner':
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,
                     user=target,
                     defaults={'role': OrganizationMembership.OrgRole.OWNER},
                 )
-
+                # ✅ NEW: if the org has no canonical owner, this membership *is*
+                # the owner.
+                if target_org.owner_id is None:
+                    target_org.owner_id = target.id
+                    target_org.save(update_fields=['owner', 'updated_at'])
             elif role == 'staff':
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,
@@ -659,7 +735,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 )
 
             elif role == 'user':
-                # Strip all memberships to make them a pure Regular User
                 OrganizationMembership.objects.filter(user=target).delete()
 
         return Response({
@@ -810,7 +885,6 @@ class UserViewSet(viewsets.ModelViewSet):
             frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
             reset_link = f"{frontend_url}/reset-password/{uid}/{token}"
 
-            # ✅ Aligned: use centralized auth_emails service
             result = auth_emails.send_password_reset_email(user, reset_link)
             if not result['success']:
                 logger.error(f"Failed to send reset email to {email}: {result.get('error')}")
@@ -1003,7 +1077,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # FIX: never allow the last superuser to be deleted.
         if target.is_superuser:
             remaining_superusers = (
                 User.objects
@@ -1033,7 +1106,7 @@ class UserViewSet(viewsets.ModelViewSet):
         result = auth_emails.send_welcome_email(user)
         if not result['success']:
             logger.warning(
-                '⚠️ Welcome email failed for %s: %s', 
+                '⚠️ Welcome email failed for %s: %s',
                 user.email, result.get('error')
             )
         return result['success']

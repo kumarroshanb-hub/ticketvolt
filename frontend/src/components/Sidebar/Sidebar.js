@@ -17,16 +17,18 @@ import {
   People as PeopleIcon,
   Close as CloseIcon,
   Logout as LogoutIcon,
-  Policy as PolicyIcon,
   Business as BusinessIcon,
   WorkspacePremium as MembershipIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
-// UPDATED FOR 6-TIER HIERARCHY:
-// Use central constants instead of a separate constants/roles.js file.
-// This prevents build failures if roles.js is not maintained.
-import { ROLES, RoleUtils } from '../../constants';
+import {
+  PLATFORM_ROLES,
+  MEMBERSHIP_ROLES,
+  PlatformRoleUtils,
+  MembershipRoleUtils,
+  MEMBERSHIP_ROLE_LABELS,
+} from '../../constants';
 import Logo from '../Logo';
 import { theme } from '../../theme/tokens';
 
@@ -34,7 +36,7 @@ const C = theme.colors;
 const F = theme.fonts;
 
 // ============================================
-// STYLED COMPONENTS
+// STYLED COMPONENTS  (unchanged from original)
 // ============================================
 const SidebarContainer = styled.aside`
   position: ${props => (props.$drawer ? 'relative' : 'fixed')};
@@ -68,44 +70,49 @@ const LogoLink = styled(NavLink)`
   justify-content: center;
 `;
 
-const LogoImage = styled.img`
-  height: ${props => props.height || '84px'};
-  width: auto;
-  display: ${props => (props.hidden ? 'none' : 'block')};
-`;
-
 const RoleBadge = styled.div`
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: ${props => (props.collapsed ? '8px' : '10px 16px')};
   background: ${props => {
-    // UPDATED FOR 6-TIER HIERARCHY:
-    // Added explicit member styling and kept organizer as legacy fallback.
-    if (props.role === 'super_admin') return C.successDark;
-    if (props.role === 'owner') return C.warningDark;
-    if (props.role === 'admin') return C.infoDark;
-    if (props.role === 'staff') return C.secondaryDark;
-    if (props.role === 'member') return C.primaryDark;
-    if (props.role === 'organizer') return C.warningDark;
-    return C.textSecondary;
+    switch (props.$kind) {
+      case 'platform-super': return C.successDark;
+      case 'platform-staff': return C.secondaryDark;
+      case 'org-owner':      return C.warningDark;
+      case 'org-admin':      return C.infoDark;
+      case 'org-staff':      return C.secondaryDark;
+      case 'org-member':     return C.primaryDark;
+      default:               return C.textSecondary;
+    }
   }};
   border-radius: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
   justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
-  
+
   .role-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: currentColor;
+    display: inline-block;
+    margin-right: 8px;
   }
-  
+
   .role-label {
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     font-weight: 600;
     color: white;
     display: ${props => (props.collapsed ? 'none' : 'block')};
+    line-height: 1.3;
+  }
+
+  .role-sub {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: rgba(255,255,255,0.7);
+    display: ${props => (props.collapsed ? 'none' : 'block')};
+    line-height: 1.3;
   }
 `;
 
@@ -116,19 +123,13 @@ const NavItems = styled.nav`
   gap: 2px;
   overflow-y: auto;
   padding-bottom: 10px;
-  
-  &::-webkit-scrollbar {
-    width: 4px;
-  }
-  
+
+  &::-webkit-scrollbar { width: 4px; }
   &::-webkit-scrollbar-thumb {
     background: ${C.scrollbarThumb};
     border-radius: 4px;
   }
-  
-  &::-webkit-scrollbar-thumb:hover {
-    background: ${C.scrollbarThumbHover};
-  }
+  &::-webkit-scrollbar-thumb:hover { background: ${C.scrollbarThumbHover}; }
 `;
 
 const NavSection = styled.div`
@@ -156,19 +157,14 @@ const NavItem = styled(NavLink)`
   background: ${props => (props.isActive ? C.primaryDark : 'transparent')};
   transition: all 0.2s ease;
   justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
-  
+
   &:hover {
     background: ${props => (props.isActive ? C.primaryDark : C.bgHover)};
     color: ${props => (props.isActive ? 'white' : C.textPrimary)};
   }
-  
-  .icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 24px;
-  }
-  
+
+  .icon { display: flex; align-items: center; justify-content: center; min-width: 24px; }
+
   .label {
     font-size: 0.875rem;
     font-weight: ${props => (props.isActive ? '600' : '500')};
@@ -196,19 +192,10 @@ const LogoutButton = styled.button`
   width: 100%;
   transition: all 0.2s ease;
   justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
-  
-  &:hover {
-    background: ${C.bgHover};
-    color: ${C.textPrimary};
-  }
-  
-  .icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 24px;
-  }
-  
+
+  &:hover { background: ${C.bgHover}; color: ${C.textPrimary}; }
+
+  .icon { display: flex; align-items: center; justify-content: center; min-width: 24px; }
   .label {
     font-size: 0.875rem;
     font-weight: 500;
@@ -229,11 +216,8 @@ const ToggleButton = styled.button`
   cursor: pointer;
   margin-top: 12px;
   transition: all 0.2s ease;
-  
-  &:hover {
-    background: ${C.bgHover};
-    color: ${C.textPrimary};
-  }
+
+  &:hover { background: ${C.bgHover}; color: ${C.textPrimary}; }
 `;
 
 const DrawerCloseButton = styled.button`
@@ -249,185 +233,194 @@ const DrawerCloseButton = styled.button`
   display: flex;
   align-items: center;
   justify-content: center;
-  
-  &:hover {
-    background: ${C.bgHover};
-    color: ${C.textPrimary};
-  }
+
+  &:hover { background: ${C.bgHover}; color: ${C.textPrimary}; }
 `;
 
 // ============================================
 // COMPONENT
 // ============================================
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
-  const { role, isSuperAdmin } = useRole();
+  const {
+    platformRole,
+    membershipRole,
+    hasOrgRole,
+    isSuperAdmin,
+  } = useRole();
   const { logout, isAuthenticated } = useAuth();
   const { t } = useTranslation();
-  
+
   const isGuest = !isAuthenticated;
   const effectiveCollapsed = isGuest ? false : collapsed;
   const isDrawer = !!onNavigate;
-  
+
   const handleLogout = () => {
     logout();
     if (onNavigate) onNavigate();
   };
-  
-  // Navigation items with role-based visibility
-  // UPDATED FOR 6-TIER HIERARCHY:
-  // - MEMBER can see Dashboard, Bookings, Settings.
-  // - OWNER and ADMIN can see Organizations.
-  // - STAFF can see Scanner.
+
+  // ---------------------------------------------------------------
+  // Nav items now declare:
+  //   platformRoles   — which PLATFORM_ROLES see this item
+  //   minOrgRole      — the minimum MEMBERSHIP_ROLE required (if any)
+  //
+  // An item is visible iff:
+  //   • the user's platform role is in platformRoles (or super admin), AND
+  //   • if minOrgRole is set, the user has at least that membership role
+  //     in the CURRENT org (super admins bypass).
+  //
+  // A user with no memberships (Regular User only) sees dashboard,
+  // bookings, membership, and settings — but NOT the tenant management
+  // sections until they create/join an org.
+  // ---------------------------------------------------------------
   const navItems = [
     {
       path: '/app/dashboard',
       icon: <DashboardIcon />,
       label: t('nav.dashboard'),
-      roles: [
-        ROLES.SUPER_ADMIN,
-        ROLES.OWNER,
-        ROLES.ADMIN,
-        ROLES.STAFF,
-        ROLES.MEMBER,
-        ROLES.USER,
-      ],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
       section: 'main',
     },
     {
       path: '/app/events',
       icon: <EventIcon />,
       label: t('nav.events'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
     {
       path: '/app/venues',
       icon: <VenueIcon />,
       label: t('nav.venues'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
     {
       path: '/app/bookings',
       icon: <TicketIcon />,
       label: t('nav.bookings'),
-      roles: [
-        ROLES.SUPER_ADMIN,
-        ROLES.OWNER,
-        ROLES.ADMIN,
-        ROLES.STAFF,
-        ROLES.MEMBER,
-        ROLES.USER,
-      ],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
       section: 'main',
     },
     {
       path: '/app/membership',
       icon: <MembershipIcon />,
       label: t('nav.membership', 'Membership'),
-      roles: [
-        ROLES.SUPER_ADMIN,
-        ROLES.OWNER,
-        ROLES.ADMIN,
-        ROLES.STAFF,
-        ROLES.MEMBER,
-        ROLES.USER,
-      ],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
       section: 'main',
     },
     {
       path: '/app/membership/review-offline',
-      icon: <MembershipIcon />,   // reuse the same icon; or use `<ReceiptLong />`
+      icon: <MembershipIcon />,
       label: t('nav.reviewOfflineMemberships', 'Offline Requests'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
     {
       path: '/app/checkin',
       icon: <ScannerIcon />,
       label: t('nav.checkin'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN, ROLES.STAFF],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.STAFF,
       section: 'operations',
     },
     {
       path: '/app/discounts',
       icon: <DiscountIcon />,
       label: t('nav.discounts'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
     {
       path: '/app/analytics',
       icon: <AnalyticsIcon />,
       label: t('nav.analytics'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
     {
       path: '/app/users',
       icon: <PeopleIcon />,
       label: t('nav.users'),
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF],
+      // also visible to org owners/admins via the minOrgRole gate below
+      alsoVisibleToOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
     {
       path: '/app/organizations',
       icon: <BusinessIcon />,
       label: t('nav.organizations'),
-      // ✅ FIXED: Removed ROLES.USER. Only Admins/Owners/SuperAdmins see this.
-      roles: [ROLES.SUPER_ADMIN, ROLES.OWNER, ROLES.ADMIN],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      // every authenticated user can land here — it's where they CREATE
+      // a first org or accept an invite. Individual actions are gated inside.
       section: 'management',
     },
     {
       path: '/app/settings',
       icon: <SettingsIcon />,
       label: t('nav.settings'),
-      roles: [
-        ROLES.SUPER_ADMIN,
-        ROLES.OWNER,
-        ROLES.ADMIN,
-        ROLES.MEMBER,
-        ROLES.USER,
-      ],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
       section: 'main',
     },
   ];
-  
-  // Filter items based on role
-  const visibleItems = navItems.filter(item => 
-    item.roles.includes(role) || isSuperAdmin
-  );
-  
-  // Group items by section
+
+  const canSee = (item) => {
+    // Platform admin bypasses everything.
+    if (isSuperAdmin) return true;
+
+    const platformOk = item.platformRoles?.includes(platformRole);
+    const orgRoleOk = item.minOrgRole ? hasOrgRole(item.minOrgRole) : false;
+    const altOrgRoleOk = item.alsoVisibleToOrgRole
+      ? hasOrgRole(item.alsoVisibleToOrgRole)
+      : false;
+
+    // Visible if either (a) platform role permits and no org gate,
+    // or (b) the current-org membership role satisfies the gate.
+    if (platformOk && !item.minOrgRole) return true;
+    if (orgRoleOk) return true;
+    if (altOrgRoleOk) return true;
+    return false;
+  };
+
+  const visibleItems = navItems.filter(canSee);
+
   const mainItems = visibleItems.filter(item => item.section === 'main');
   const managementItems = visibleItems.filter(item => item.section === 'management');
   const operationsItems = visibleItems.filter(item => item.section === 'operations');
   const adminItems = visibleItems.filter(item => item.section === 'admin');
-  
-  // UPDATED FOR 6-TIER HIERARCHY:
-  // Added Owner / Member labels and safe fallbacks using RoleUtils.
-  const getRoleLabel = () => {
-    if (role === ROLES.SUPER_ADMIN) {
-      return t('roles.superAdmin', RoleUtils.getLabel(ROLES.SUPER_ADMIN));
+
+  // ---------------------------------------------------------------
+  // Two badges:
+  //   1. platform role (if super_admin or staff — Regular Users don't
+  //      need a "Regular User" label; it clutters the sidebar)
+  //   2. current-org membership role (only when a membership exists)
+  // ---------------------------------------------------------------
+  const showPlatformBadge =
+    platformRole === PLATFORM_ROLES.SUPER_ADMIN ||
+    platformRole === PLATFORM_ROLES.STAFF;
+
+  const platformBadgeKind =
+    platformRole === PLATFORM_ROLES.SUPER_ADMIN ? 'platform-super' :
+    platformRole === PLATFORM_ROLES.STAFF ? 'platform-staff' : null;
+
+  const orgBadgeKind = (() => {
+    // ✅ FIX: Superusers are platform-wide. Never show them an org role.
+    if (isSuperAdmin) return null;
+    switch (membershipRole) {
+      case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';
+      case MEMBERSHIP_ROLES.ADMIN:  return 'org-admin';
+      case MEMBERSHIP_ROLES.STAFF:  return 'org-staff';
+      case MEMBERSHIP_ROLES.MEMBER: return 'org-member';
+      default: return null;
     }
-    if (role === ROLES.OWNER) {
-      return t('roles.owner', RoleUtils.getLabel(ROLES.OWNER));
-    }
-    if (role === ROLES.ADMIN) {
-      return t('roles.admin', RoleUtils.getLabel(ROLES.ADMIN));
-    }
-    if (role === ROLES.STAFF) {
-      return t('roles.staff', RoleUtils.getLabel(ROLES.STAFF));
-    }
-    if (role === ROLES.MEMBER) {
-      return t('roles.member', RoleUtils.getLabel(ROLES.MEMBER));
-    }
-    if (role === ROLES.ORGANIZER || role === 'organizer') {
-      return t('roles.organizer', 'Organizer');
-    }
-    return t('roles.user', RoleUtils.getLabel(ROLES.USER));
-  };
-  
+  })();
+
   return (
     <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
       <LogoWrap>
@@ -450,14 +443,31 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
           </DrawerCloseButton>
         )}
       </LogoWrap>
-      
-      {!isGuest && (
-        <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
-          <span className="role-dot" />
-          <span className="role-label">{getRoleLabel()}</span>
+
+      {!isGuest && showPlatformBadge && (
+        <RoleBadge $kind={platformBadgeKind} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+          <span className="role-label">
+            <span className="role-dot" />
+            {PlatformRoleUtils.getLabel(platformRole)}
+          </span>
+          <span className="role-sub">
+            {t('roles.platformRole', 'platform-wide')}
+          </span>
         </RoleBadge>
       )}
-      
+
+      {!isGuest && orgBadgeKind && (
+        <RoleBadge $kind={orgBadgeKind} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+          <span className="role-label">
+            <span className="role-dot" />
+            {MembershipRoleUtils.getLabel(membershipRole)}
+          </span>
+          <span className="role-sub">
+            {t('roles.inCurrentOrg', 'in current organization')}
+          </span>
+        </RoleBadge>
+      )}
+
       <NavItems>
         {mainItems.length > 0 && (
           <NavSection>
@@ -473,7 +483,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             ))}
           </NavSection>
         )}
-        
+
         {managementItems.length > 0 && (
           <NavSection marginTop="16px">
             <SectionLabel collapsed={effectiveCollapsed}>
@@ -491,7 +501,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             ))}
           </NavSection>
         )}
-        
+
         {operationsItems.length > 0 && (
           <NavSection marginTop="16px">
             <SectionLabel collapsed={effectiveCollapsed}>
@@ -509,7 +519,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             ))}
           </NavSection>
         )}
-        
+
         {adminItems.length > 0 && (
           <NavSection marginTop="16px">
             <SectionLabel collapsed={effectiveCollapsed}>
@@ -528,7 +538,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
           </NavSection>
         )}
       </NavItems>
-      
+
       {!isGuest && (
         <LogoutSection>
           <LogoutButton
@@ -543,21 +553,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
           </LogoutButton>
         </LogoutSection>
       )}
-      
+
       <ToggleButton
         onClick={onToggle}
         $drawer={isDrawer}
-        aria-label={
-          collapsed
-            ? t('common.expandSidebar')
-            : t('common.collapseSidebar')
-        }
+        aria-label={collapsed ? t('common.expandSidebar') : t('common.collapseSidebar')}
       >
-        {collapsed ? (
-          <ChevronRight fontSize="small" />
-        ) : (
-          <ChevronLeft fontSize="small" />
-        )}
+        {collapsed ? <ChevronRight fontSize="small" /> : <ChevronLeft fontSize="small" />}
       </ToggleButton>
     </SidebarContainer>
   );

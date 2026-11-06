@@ -116,6 +116,28 @@ def _apply_effective_status(serialized, event_objs, now=None):
 _PUBLIC_PREFETCH = ('tiers', 'sessions', 'templates__template_type')
 
 
+def _membership_is_current(organization, user):
+    """
+    ✅ FIX: validity-aware membership existence check.
+
+    The old code used a bare `OrganizationMembership.objects.filter(...)`
+    which counted EXPIRED memberships as valid. Reuse the canonical
+    filter so organizer assignment cannot land on an expired member.
+    """
+    now = timezone.now()
+    return (
+        OrganizationMembership.objects
+        .filter(
+            organization=organization,
+            user=user,
+            is_active=True,
+            valid_from__lte=now,
+        )
+        .filter(Q(valid_until__isnull=True) | Q(valid_until__gte=now))
+        .exists()
+    )
+
+
 class EventViewSet(viewsets.ModelViewSet):
     queryset = Event.objects.all()
     throttle_classes = [ScopedRateThrottle]
@@ -144,20 +166,11 @@ class EventViewSet(viewsets.ModelViewSet):
         """
         Two-tier scoping:
 
-          1. ``visible_events(user)`` — every event the user can *see*
-             (public events for everyone, plus private/manager events
-             for tenant operators).
+          1. ``visible_events(user)`` — every event the user can *see*.
 
           2. Anonymous-only additional filter: hide members-only events
              from the public list so the landing page doesn't advertise
              events anonymous visitors can't book.
-
-             Authenticated users still get every event in (1) — the
-             members-only gate is enforced per-event in ``retrieve()``
-             and in ``BookingViewSet.create()``. This keeps the list a
-             single query (no per-event Python check) and returns 403
-             rather than 404 when a logged-in non-member opens a
-             members-only event by URL.
         """
         qs = visible_events(self.request.user)
 
@@ -192,16 +205,27 @@ class EventViewSet(viewsets.ModelViewSet):
         return parsed
 
     @staticmethod
-    def _resolve_cancellation_policy(user, policy_id):
+    def _resolve_cancellation_policy(user, policy_id, *, organization):
+        """
+        ✅ FIX: scope the policy lookup to `organization` so a caller
+        cannot probe foreign-org policy IDs by observing 400 vs 403.
+        """
         if not policy_id:
             return None, None
+
+        # Managers can only attach policies that belong to the target org.
+        qs = CancellationPolicy.objects.filter(id=policy_id)
+        if organization is not None:
+            qs = qs.filter(organization=organization)
+
         try:
-            policy = CancellationPolicy.objects.get(id=policy_id)
-        except (CancellationPolicy.DoesNotExist, ValueError):
+            policy = qs.get()
+        except (CancellationPolicy.DoesNotExist, ValueError, TypeError):
             return None, Response(
                 {'cancellation_policy_id': 'Policy not found.'},
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_404_NOT_FOUND,
             )
+
         if not can_manage_org(user, policy.organization):
             return None, Response(
                 {'cancellation_policy_id':
@@ -266,10 +290,19 @@ class EventViewSet(viewsets.ModelViewSet):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+
     @staticmethod
     def _default_organizer_for(user, organization):
+        """
+        ✅ FIX [SUPERUSER-ORG-AGNOSTIC]: an unowned org has no
+        Organization.owner. Returning `None` here causes the later
+        `_membership_is_current(organization, None)` check to fail with
+        a clear 400 ("Organizer is not a current member"), which is the
+        correct behaviour: the superuser MUST pass `organizer_id` when
+        creating an event in an unowned org.
+        """
         if is_platform_admin(user):
-            return organization.owner
+            return organization.owner_id and organization.owner or None
         return user
 
     # ------------------------------------------------------------------
@@ -338,22 +371,23 @@ class EventViewSet(viewsets.ModelViewSet):
         if target_err is not None:
             return target_err
 
-        if not OrganizationMembership.objects.filter(
-            organization=organization, user=target_organizer,
-        ).exists():
-            if is_platform_admin(user):
+        # ✅ FIX: validity-aware membership check.
+        if not _membership_is_current(organization, target_organizer):
+            if is_platform_admin(user) and organization.owner_id is None:
                 message = (
-                    'The specified organizer is not a member of this '
-                    'organization. Add an OrganizationMembership for them '
-                    'first, or omit organizer_id to default to the '
-                    'organization owner.'
+                    'This organization has no owner yet. Assign an owner '
+                    'first via /organizations/<id>/assign-owner/, or pass '
+                    'organizer_id explicitly.'
+                )
+            elif is_platform_admin(user):
+                message = (
+                    'The specified organizer is not a current member of this '
+                    'organization. Add or renew their OrganizationMembership '
+                    'first, or omit organizer_id to default to the organization owner.'
                 )
             else:
-                message = 'Organizer is not a member of this organization.'
-            return Response(
-                {'organizer_id': message},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+                message = 'Organizer is not a current member of this organization.'
+            return Response({'organizer_id': message}, status=400)
 
         venue = None
         venue_id = data.get('venue_id')
@@ -366,8 +400,9 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # ✅ FIX: pass `organization` so the policy lookup is scoped.
         cancellation_policy, err = self._resolve_cancellation_policy(
-            user, data.get('cancellation_policy_id')
+            user, data.get('cancellation_policy_id'), organization=organization,
         )
         if err is not None:
             return err
@@ -541,20 +576,8 @@ class EventViewSet(viewsets.ModelViewSet):
     # RETRIEVE
     # ------------------------------------------------------------------
     def retrieve(self, request, *args, **kwargs):
-        """
-        Per-event membership gate.
-
-        ``visible_events(user)`` already scopes to what the user can
-        see (public + their own org's events). The membership check here
-        blocks the remaining case: an authenticated non-member opening
-        a members-only event by URL, or the same event being accessed
-        by someone who *can* see the org but isn't a paid member.
-        """
         queryset = self.get_queryset().prefetch_related(*_PUBLIC_PREFETCH)
 
-        # First fetch, then check. If the event isn't in `visible_events`
-        # (404) or exists but is members-only-gated (403), behave
-        # consistently with the booking endpoint.
         instance = get_object_or_404(queryset, pk=kwargs.get('pk'))
 
         if not can_access_event(request.user, instance):
@@ -595,6 +618,16 @@ class EventViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': 'Permission denied'},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ✅ FIX: reject tenant reassignment. `organization_id` is not in
+        # `fields`, so the old code silently ignored it.
+        if 'organization_id' in data and str(data.get('organization_id') or '') != str(instance.organization_id):
+            return Response(
+                {'organization_id':
+                 'An event cannot be moved between organizations. '
+                 'Create a new event in the target organization instead.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if 'event_flow' in data:
@@ -655,13 +688,11 @@ class EventViewSet(viewsets.ModelViewSet):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                if not OrganizationMembership.objects.filter(
-                    organization=instance.organization,
-                    user=target_organizer,
-                ).exists():
+                # ✅ FIX: validity-aware membership check.
+                if not _membership_is_current(instance.organization, target_organizer):
                     return Response(
                         {'organizer_id':
-                         'Organizer is not a member of this organization.'},
+                         'Organizer is not a current member of this organization.'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 instance.organizer = target_organizer
@@ -677,7 +708,11 @@ class EventViewSet(viewsets.ModelViewSet):
                     id=data['venue_id'], organization=instance.organization,
                 )
             except (Venue.DoesNotExist, ValueError):
-                pass
+                # ✅ FIX: surface the failure instead of silently ignoring.
+                return Response(
+                    {'venue_id': 'Venue not found in this organization.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         data = data.copy() if hasattr(data, 'copy') else dict(data)
 
@@ -691,7 +726,10 @@ class EventViewSet(viewsets.ModelViewSet):
             if not raw:
                 instance.cancellation_policy = None
             else:
-                policy, err = self._resolve_cancellation_policy(user, raw)
+                # ✅ FIX: pass `organization` so the lookup is scoped.
+                policy, err = self._resolve_cancellation_policy(
+                    user, raw, organization=instance.organization,
+                )
                 if err is not None:
                     return err
                 instance.cancellation_policy = policy
@@ -738,6 +776,16 @@ class EventViewSet(viewsets.ModelViewSet):
                     sess.save(update_fields=['start_time', 'end_time', 'capacity'])
                     seen_ids.add(sess_id)
                 else:
+                    if sess_id:
+                        # ✅ FIX: a supplied `id` that is not in this event
+                        # would silently create a duplicate. Reject it.
+                        return Response(
+                            {'sessions': (
+                                f'Session id {sess_id!r} does not belong to '
+                                f'this event.'
+                            )},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                     if not s_start or not s_end:
                         continue
                     created = Session.objects.create(
@@ -797,6 +845,16 @@ class EventViewSet(viewsets.ModelViewSet):
                     ])
                     seen_ids.add(tier_id)
                 else:
+                    if tier_id:
+                        # ✅ FIX: reject foreign tier ids instead of
+                        # silently creating a duplicate.
+                        return Response(
+                            {'tiers': (
+                                f'Tier id {tier_id!r} does not belong to '
+                                f'this event.'
+                            )},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                     created = TicketTier.objects.create(
                         event=instance,
                         name=name,
@@ -908,8 +966,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 status__in=['active', 'published'],
                 is_public=True,
                 end_date__gte=now,
-                # Anonymous-access members-only events are hidden from the
-                # public list unless a paid member or operator is signed in.
                 members_only=False,
                 min_membership_tier__isnull=True,
             )
@@ -954,26 +1010,37 @@ class EventViewSet(viewsets.ModelViewSet):
     def public_detail(self, request, pk=None):
         now = timezone.now()
 
-        try:
-            event = (
-                Event.objects
-                .select_related('venue', 'organization')
-                .prefetch_related('tiers', 'sessions', 'templates__template_type')
-                .get(
-                    id=pk,
-                    status__in=['active', 'published'],
-                    is_public=True,
-                    end_date__gte=now,
-                )
+        # ✅ FIX: for anonymous callers, filter gated events out at the
+        # query level so they get a 404 (no existence leak). For
+        # authenticated callers, keep the event reachable and let
+        # `can_access_event` 403 the non-members.
+        qs = (
+            Event.objects
+            .select_related('venue', 'organization')
+            .prefetch_related('tiers', 'sessions', 'templates__template_type')
+            .filter(
+                id=pk,
+                status__in=['active', 'published'],
+                is_public=True,
+                end_date__gte=now,
             )
+        )
+
+        user = request.user
+        if not (user and user.is_authenticated):
+            qs = qs.filter(
+                members_only=False,
+                min_membership_tier__isnull=True,
+            )
+
+        try:
+            event = qs.get()
         except Event.DoesNotExist:
             return Response(
                 {'error': 'Event not found'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Members-only gate: same predicate used by retrieve() and
-        # BookingViewSet.create(). Anonymous callers are rejected.
         if not can_access_event(request.user, event):
             return Response(
                 {'error': 'This event is for members only.'},

@@ -12,6 +12,9 @@ Buyer-facing:
   DELETE /api/memberships/<id>/dependents/<dep_id>/              — remove a dependent
   POST   /api/memberships/<id>/dependents/<dep_id>/promote/      — promote to full user
 
+Org manager:
+  GET    /api/memberships/org-members/                           — list members of my org(s)
+
 Owner/Admin review (offline / cash):
   GET    /api/memberships/pending-offline/                       — pending queue
   POST   /api/memberships/<id>/review/                           — activate/reject one
@@ -42,7 +45,7 @@ from ..models_membership import (
     MembershipTier,
 )
 from ..models_tenancy import Organization
-from ..services import membership_fulfillment          # ✅ was missing
+from ..services import membership_fulfillment
 from ..services.membership_fulfillment import (
     MembershipReviewError,
     activate_offline_membership,
@@ -332,7 +335,8 @@ def _verify_checkout_impl(request):
             'status': 'paid',
             'membership': MembershipSerializer(
                 mp.membership, context={'request': request},
-            ).data,        })
+            ).data,
+        })
 
     provider = get_provider(mp.gateway)
     params = request.data.get('params') or request.data
@@ -372,6 +376,10 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MembershipSerializer
     permission_classes = [IsAuthenticated]
 
+    # FIX #1a: keep get_queryset narrow (own memberships only) so that
+    # detail mutating actions (cancel, dependents, promote) are not
+    # accidentally reachable by org managers on other users' rows.
+    # Org managers get their own read-only listing via `org_members` below.
     def get_queryset(self):
         qs = Membership.objects.select_related('tier', 'organization', 'user')
         if is_platform_admin(self.request.user):
@@ -394,18 +402,86 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def mine(self, request):
-        qs = self.get_queryset().order_by('-created_at')
+        # FIX #1b: scope explicitly to the requesting user, independent of
+        # get_queryset(), so this stays "my memberships" even if the base
+        # queryset is ever widened.
+        qs = (
+            Membership.objects
+            .filter(user=request.user)
+            .select_related('tier', 'organization', 'user')
+            .order_by('-created_at')
+        )
         return Response(
             MembershipSerializer(
                 qs, many=True, context={'request': request},
             ).data
         )
 
+    # ---- org manager listing (FIX #1c) ----
+
+    @action(detail=False, methods=['get'], url_path='org-members')
+    def org_members(self, request):
+        """
+        GET /api/memberships/org-members/?organization_id=<id>&status=<status>
+
+        Read-only listing of memberships in the org(s) the caller manages.
+        Platform admins see all orgs unless filtered.
+        """
+        user = request.user
+        qs = (
+            Membership.objects
+            .select_related('tier', 'organization', 'user')
+            .order_by('-created_at')
+        )
+
+        org_id = request.query_params.get('organization_id')
+
+        if is_platform_admin(user):
+            if org_id:
+                qs = qs.filter(organization_id=org_id)
+        else:
+            managed_ids = set(user_org_ids(user))
+            if not managed_ids:
+                return Response(
+                    {'error': 'You do not manage any organizations.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if org_id:
+                if org_id not in {str(x) for x in managed_ids}:
+                    return Response(
+                        {'error': 'Permission denied.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                qs = qs.filter(organization_id=org_id)
+            else:
+                qs = qs.filter(organization_id__in=managed_ids)
+
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            if status_filter not in Membership.Status.values:
+                return Response(
+                    {'error': f'Invalid status. Allowed: {sorted(Membership.Status.values)}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(status=status_filter)
+
+        return Response({
+            'count': qs.count(),
+            'results': MembershipSerializer(
+                qs, many=True, context={'request': request},
+            ).data,
+        })
+
     # ---- cancel ----
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         m = self.get_object()
+        # FIX #1d: ownership guard for detail mutations (defensive; get_queryset
+        # already scopes to request.user for non-admins).
+        if m.user_id != request.user.id and not is_platform_admin(request.user):
+            raise PermissionDenied('You do not have permission to modify this membership.')
+
         if not m.is_active():
             return Response({'error': 'Membership is not active.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -416,11 +492,15 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(
             MembershipSerializer(m, context={'request': request}).data
         )
+
     # ---- dependents ----
 
     @action(detail=True, methods=['post'], url_path='dependents')
     def add_dependent(self, request, pk=None):
         m = self.get_object()
+        if m.user_id != request.user.id and not is_platform_admin(request.user):
+            raise PermissionDenied('You do not have permission to modify this membership.')
+
         if not m.is_active():
             return Response({'error': 'Membership is not active.'}, status=status.HTTP_400_BAD_REQUEST)
         if not m.has_seat_available():
@@ -440,6 +520,8 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['delete'], url_path=r'dependents/(?P<dep_id>[^/.]+)')
     def remove_dependent(self, request, pk=None, dep_id=None):
         m = self.get_object()
+        if m.user_id != request.user.id and not is_platform_admin(request.user):
+            raise PermissionDenied('You do not have permission to modify this membership.')
         try:
             dep = m.dependents.get(id=dep_id)
         except MembershipDependent.DoesNotExist:
@@ -453,6 +535,8 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
     )
     def promote_dependent(self, request, pk=None, dep_id=None):
         m = self.get_object()
+        if m.user_id != request.user.id and not is_platform_admin(request.user):
+            raise PermissionDenied('You do not have permission to modify this membership.')
         try:
             dep = m.dependents.get(id=dep_id)
         except MembershipDependent.DoesNotExist:
@@ -596,6 +680,8 @@ def bulk_review_offline_memberships(request):
     Bulk activate or reject offline memberships.
 
     Body: {"action": "activate" | "reject", "membership_ids": [...], "reference": "...", "reason": "..."}
+
+    Response per-row status is one of: success | not_found | forbidden | conflict | error.
     """
     action_value = (request.data.get('action') or '').lower()
     if action_value not in ('activate', 'reject'):
@@ -619,11 +705,55 @@ def bulk_review_offline_memberships(request):
     reference = (request.data.get('reference') or '').strip()
     reason = (request.data.get('reason') or '').strip()
 
+    # FIX #3a: normalize ids to strings for stable lookups / echo.
+    ids = [str(mid) for mid in ids]
+
+    # FIX #3b: pre-validate existence and permission so we can bucket
+    # "not found" and "forbidden" distinctly, and fail fast on the caller
+    # having zero access to any of the requested orgs.
+    existing = {
+        str(m.id): m
+        for m in Membership.objects
+            .select_related('organization', 'user')
+            .filter(id__in=ids)
+    }
+
+    managed_ids = set(user_org_ids(request.user))
+    is_admin = is_platform_admin(request.user)
+
+    # FIX #3c: if the caller manages no orgs and isn't an admin, reject upfront.
+    if not is_admin and not managed_ids:
+        return Response(
+            {'error': 'You do not manage any organizations.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     results = []
     succeeded = 0
     failed = 0
-    
+    not_found = 0
+    forbidden = 0
+
     for mid in ids:
+        m_pre = existing.get(mid)
+        if m_pre is None:
+            not_found += 1
+            results.append({
+                'membership_id': mid,
+                'status': 'not_found',
+                'error': 'Not found',
+            })
+            continue
+
+        if not is_admin and m_pre.organization_id not in managed_ids:
+            forbidden += 1
+            results.append({
+                'membership_id': mid,
+                'status': 'forbidden',
+                'error': 'Permission denied for this organization.',
+            })
+            continue
+
         try:
             with transaction.atomic():
                 if action_value == 'activate':
@@ -642,23 +772,51 @@ def bulk_review_offline_memberships(request):
             results.append({
                 'membership_id': str(m.id),
                 'status': 'success',
-                'user_email': m.user.email,
+                # FIX #3d: email may be empty for magic-link users.
+                'user_email': m.user.email or m.user.username,
             })
         except Membership.DoesNotExist:
-            failed += 1
-            results.append({'membership_id': mid, 'status': 'failed', 'error': 'Not found'})
+            # Race: row disappeared between pre-validation and service call.
+            not_found += 1
+            results.append({
+                'membership_id': mid,
+                'status': 'not_found',
+                'error': 'Not found',
+            })
         except MembershipReviewError as exc:
-            failed += 1
-            results.append({'membership_id': mid, 'status': 'failed', 'error': str(exc)})
+            # Service-level rejection (e.g. wrong state / no permission
+            # resolved from the row itself). Bucket as forbidden when it
+            # looks like a permission problem, otherwise conflict.
+            msg = str(exc)
+            if 'permission' in msg.lower() or 'not allowed' in msg.lower():
+                forbidden += 1
+                results.append({
+                    'membership_id': mid,
+                    'status': 'forbidden',
+                    'error': msg,
+                })
+            else:
+                failed += 1
+                results.append({
+                    'membership_id': mid,
+                    'status': 'conflict',
+                    'error': msg,
+                })
         except Exception:  # noqa: BLE001
             logger.exception('Bulk review failed for %s', mid)
             failed += 1
-            results.append({'membership_id': mid, 'status': 'failed', 'error': 'Internal error'})
+            results.append({
+                'membership_id': mid,
+                'status': 'error',
+                'error': 'Internal error',
+            })
 
     return Response({
         'action': action_value,
         'requested': len(ids),
         'succeeded': succeeded,
         'failed': failed,
+        'not_found': not_found,
+        'forbidden': forbidden,
         'results': results,
     })

@@ -56,14 +56,23 @@
     "sendInvite": "Send Invite",
     "indefinite": "Indefinite"
   },
-  "roles": {
-    "super_admin": "Super Admin",
+"roles": {
+    "platform_super_admin": "Platform Admin",
+    "platform_staff":       "Platform Staff",
+    "platform_user":        "Regular User",
+    "org_owner":  "Owner",
+    "org_admin":  "Admin",
+    "org_staff":  "Staff",
+    "org_member": "Member",
+    "platformRole":   "platform-wide role",
+    "inCurrentOrg":   "in current organization",
+    "superAdmin": "Platform Admin",
     "owner": "Owner",
     "admin": "Admin",
     "staff": "Staff",
     "member": "Member",
     "user": "Regular User"
-  },
+},
   "sections": {
     "main": "Main",
     "management": "Management",
@@ -168,7 +177,9 @@
     "saveSuccess": "Profile updated successfully.",
     "saveFailed": "Failed to update profile.",
     "nameEmpty": "Name cannot be empty.",
-    "editingUnsupported": "Profile editing is not supported."
+    "editingUnsupported": "Profile editing is not supported.",
+    "platformRole": "Platform role",
+    "orgRole": "Organization role"
   },
   "forgotPassword": {
     "title": "Forgot Password",

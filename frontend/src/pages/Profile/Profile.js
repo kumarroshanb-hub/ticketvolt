@@ -4,6 +4,11 @@ import styled from 'styled-components';
 import { useTranslation } from 'react-i18next';                       // ✅ NEW
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
+import { useOrg } from '../../context/OrgContext';
+import {
+    PLATFORM_ROLE_LABELS,
+    MEMBERSHIP_ROLE_LABELS,
+} from '../../constants';
 import {
     Person as PersonIcon,
     Email as EmailIcon,
@@ -264,7 +269,8 @@ const Message = styled.div`
 
 const Profile = () => {
     const { user, updateProfile } = useAuth();
-    const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
+    const { platformRole, membershipRole } = useRole();
+    const { currentOrg } = useOrg();
     const { t } = useTranslation();                                    // ✅ NEW
     const navigate = useNavigate();
 
@@ -329,7 +335,16 @@ const Profile = () => {
                     <Avatar>{getInitial()}</Avatar>
                     <HeaderText>
                         <Name>{user?.name || user?.username || t('common.user')}</Name>
-                        <RolePill $role={role}>{getRoleLabel()}</RolePill>
+                        <RolePill $role={platformRole}>
+                            {t(`roles.platform_${platformRole}`, { defaultValue: PLATFORM_ROLE_LABELS[platformRole] })}
+                        </RolePill>
+                        {membershipRole && (
+                            <RolePill $role={`org_${membershipRole}`}>
+                                {t(`roles.org_${membershipRole}`, {
+                                    defaultValue: `${MEMBERSHIP_ROLE_LABELS[membershipRole]} · ${currentOrg?.name || ''}`,
+                                })}
+                            </RolePill>
+                        )}
                     </HeaderText>
                 </Header>
 
@@ -363,18 +378,23 @@ const Profile = () => {
                 <Field>
                     <FieldIcon><BadgeIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>{t('profile.username')}</FieldLabel>
-                        <FieldValue>{user?.username || '—'}</FieldValue>
+                        <FieldLabel>{t('profile.platformRole')}</FieldLabel>
+                        <FieldValue>{t(`roles.platform_${platformRole}`, { defaultValue: PLATFORM_ROLE_LABELS[platformRole] })}</FieldValue>
                     </FieldBody>
                 </Field>
 
-                <Field>
-                    <FieldIcon><BadgeIcon /></FieldIcon>
-                    <FieldBody>
-                        <FieldLabel>{t('profile.role')}</FieldLabel>
-                        <FieldValue>{getRoleLabel()}</FieldValue>
-                    </FieldBody>
-                </Field>
+                {membershipRole && currentOrg && (
+                    <Field>
+                        <FieldIcon><BadgeIcon /></FieldIcon>
+                        <FieldBody>
+                            <FieldLabel>{t('profile.orgRole', 'Organization role')}</FieldLabel>
+                            <FieldValue>
+                                {t(`roles.org_${membershipRole}`, { defaultValue: MEMBERSHIP_ROLE_LABELS[membershipRole] })}
+                                {' · '}{currentOrg.name}
+                            </FieldValue>
+                        </FieldBody>
+                    </Field>
+                )}
 
                 {message && (
                     <Message $error={message.error}>{message.text}</Message>

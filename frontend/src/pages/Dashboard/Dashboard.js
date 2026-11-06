@@ -29,7 +29,7 @@ import {
 } from '../../components/Common';
 
 import EventCard from '../../components/Common/EventCard';
-import { BOOKING_STATUS, ROLES } from '../../constants';
+import { BOOKING_STATUS, MEMBERSHIP_ROLES } from '../../constants';
 
 import { theme as appTheme } from '../../theme/tokens';
 
@@ -370,7 +370,7 @@ const NeedsOrganizationBanner = () => {
 // ============================================
 const Dashboard = () => {
     const { user } = useAuth();
-    const { role } = useRole();
+    const { hasOrgRole } = useRole();
     const { formatMoney } = useSettings();
     const { needsOrganization } = useOrg();
     const { t } = useTranslation();
@@ -387,10 +387,7 @@ const Dashboard = () => {
         organizations 
     } = usePlatformFilter();
 
-    const canManageEvents =
-        role === ROLES.ADMIN ||
-        role === ROLES.SUPER_ADMIN ||
-        role === ROLES.OWNER;
+    const canManageEvents = hasOrgRole(MEMBERSHIP_ROLES.ADMIN);
 
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState({

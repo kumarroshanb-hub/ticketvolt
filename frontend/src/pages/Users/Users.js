@@ -38,12 +38,16 @@ import {
 // ✅ Platform Filter Imports
 import usePlatformFilter from '../../hooks/usePlatformFilter';
 import { OrgFilterSelect } from '../../components/Common';
+import {
+  PLATFORM_ROLES, MEMBERSHIP_ROLES,
+  PLATFORM_ROLE_LABELS, MEMBERSHIP_ROLE_LABELS,
+} from '../../constants';
 
 const C = theme.colors;
 const F = theme.fonts;
 
 // ============================================
-// STYLED COMPONENTS
+// STYLED COMPONENTS (unchanged)
 // ============================================
 const PageContainer = styled.div`
   padding: 24px;
@@ -676,16 +680,9 @@ const EmptyText = styled.h3`font-size: 18px; font-weight: 600; color: ${C.textPr
 const EmptySubtext = styled.p`font-size: 14px; color: ${C.textSecondary}; margin: 0; font-family: ${F.family};`;
 
 // ============================================
-// HELPER FUNCTIONS
+// HELPERS
 // ============================================
-const AVATAR_COLORS = [
-  C.warning,
-  C.info,
-  C.secondary,
-  C.success,
-  C.error,
-  C.primary,
-];
+const AVATAR_COLORS = [C.warning, C.info, C.secondary, C.success, C.error, C.primary];
 
 const getInitials = (name) => {
   if (!name) return 'U';
@@ -701,25 +698,14 @@ const getAvatarColor = (name) => {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 };
 
-const getRoleLabel = (role) => {
-  const labels = {
-    'super_admin': 'Super Admin',
-    'owner': 'Owner',
-    'admin': 'Admin',
-    'staff': 'Staff',
-    'member': 'Member',
-    'organizer': 'Owner',
-    'user': 'Regular User'
-  };
-  return labels[role] || role;
-};
+const getRoleLabel = (role) =>
+  PLATFORM_ROLE_LABELS[role] || MEMBERSHIP_ROLE_LABELS[role] || role || 'Regular User';
 
 const getRoleIcon = (role) => {
-  if (role === 'super_admin') return <SupervisorAccount fontSize="small" />;
-  if (role === 'owner' || role === 'organizer') return <Storefront fontSize="small" />;
-  if (role === 'admin') return <AdminPanelSettings fontSize="small" />;
-  if (role === 'staff') return <Group fontSize="small" />;
-  if (role === 'member') return <Person fontSize="small" />;
+  if (role === PLATFORM_ROLES.SUPER_ADMIN) return <SupervisorAccount fontSize="small" />;
+  if (role === PLATFORM_ROLES.STAFF)       return <Group fontSize="small" />;
+  if (role === MEMBERSHIP_ROLES.OWNER)     return <Storefront fontSize="small" />;
+  if (role === MEMBERSHIP_ROLES.ADMIN)     return <AdminPanelSettings fontSize="small" />;
   return <Person fontSize="small" />;
 };
 
@@ -755,6 +741,27 @@ const normalizeUserResponse = (data) => {
   return { users: [], count: 0 };
 };
 
+// ============================================
+// ROLE OPTIONS
+// ------------------------------------------------------------
+// Platform role: stored on User (is_staff / is_superuser). Only a superuser
+// may change it.
+// Org role: stored on OrganizationMembership. Only set at create-time via
+// `requested_role`; after that, managed on the Organization Team page.
+// ============================================
+const PLATFORM_ROLE_OPTIONS = [
+  { value: PLATFORM_ROLES.USER,        label: 'Regular User' },
+  { value: PLATFORM_ROLES.STAFF,       label: 'Platform Staff' },
+  { value: PLATFORM_ROLES.SUPER_ADMIN, label: 'Platform Admin' },
+];
+
+const ORG_ROLE_OPTIONS = [
+  { value: MEMBERSHIP_ROLES.MEMBER, label: 'Member' },
+  { value: MEMBERSHIP_ROLES.STAFF,  label: 'Staff' },
+  { value: MEMBERSHIP_ROLES.ADMIN,  label: 'Admin' },
+  { value: MEMBERSHIP_ROLES.OWNER,  label: 'Owner' },
+];
+
 // ============================================================================
 // MODAL COMPONENTS
 // ============================================================================
@@ -770,9 +777,14 @@ const UserFormModal = ({
   showOrgPicker,
   isSuperuser,
   requesterOrgs,
+  isSubmitting,
 }) => {
   const isEdit = mode === 'edit';
   const phoneInvalid = !isEdit && formData.phone && !isValidPhone(formData.phone);
+
+  // In edit mode, the role selectors are read-only — the backend silently
+  // drops `role` changes and 403s on some platforms. Show a note and disable.
+  const roleEditable = !isEdit;
 
   return (
     <ModalOverlay onClick={onClose}>
@@ -789,8 +801,6 @@ const UserFormModal = ({
         <ModalBody>
           <form onSubmit={onSubmit}>
             <FormGrid>
-              {/* ✅ Username field completely removed. Backend auto-generates it from email. */}
-              
               <FormGroup>
                 <FormLabel>Email *</FormLabel>
                 <FormInput
@@ -812,16 +822,13 @@ const UserFormModal = ({
                   onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
                   placeholder="+91 9876543210"
                   required={!isEdit}
-                  style={{
-                    borderColor: phoneInvalid ? C.error : undefined,
-                  }}
+                  style={{ borderColor: phoneInvalid ? C.error : undefined }}
                 />
                 {phoneInvalid && (
                   <FormError>Enter a valid mobile number (7–15 digits)</FormError>
                 )}
               </FormGroup>
-              
-              {/* ✅ Passwordless Info Banner */}
+
               {!isEdit && (
                 <div style={{ gridColumn: '1 / -1', padding: '12px', borderRadius: 8, background: `${C.info}1A`, border: `1px solid ${C.info}4D` }}>
                   <p style={{ margin: 0, fontSize: '13px', color: C.infoDark, fontFamily: F.family }}>
@@ -886,57 +893,90 @@ const UserFormModal = ({
                   ))}
                 </FormSelect>
               </FormGroup>
-              
+
+              {/* Org picker: required for org-bound roles. */}
               {showOrgPicker && (
                 <FormGroup>
-                  <FormLabel>Organization {isSuperuser && formData.role !== 'owner' ? '(Optional)' : '*'}</FormLabel>
+                  <FormLabel>Organization *</FormLabel>
                   <FormSelect
                     value={formData.organization_id || ''}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setFormData(prev => ({
-                        ...prev,
-                        organization_id: val || null,
-                      }));
+                      setFormData(prev => ({ ...prev, organization_id: val || null }));
                     }}
-                    required={!isSuperuser || formData.role === 'owner'}
+                    required
+                    disabled={isEdit}
                   >
-                    <option value="">
-                      {isSuperuser && formData.role !== 'owner' ? 'None (Assign later via Organizations page)' : 'Select an organization…'}
-                    </option>
+                    <option value="">Select an organization…</option>
                     {requesterOrgs.map((org) => (
-                      <option key={org.id} value={org.id}>
-                        {org.name}
-                      </option>
+                      <option key={org.id} value={org.id}>{org.name}</option>
                     ))}
                   </FormSelect>
+                  {isEdit && (
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
+                      Organization can't be changed here — use the Organizations page.
+                    </p>
+                  )}
                 </FormGroup>
               )}
 
-              <FormGroup>
-                <FormLabel>Role</FormLabel>
-                <FormSelect
-                  value={formData.role}
-                  onChange={(e) => setFormData(prev => ({ ...prev, role: e.target.value }))}
-                >
-                  <option value="user">Regular User (Guest)</option>
-                  <option value="member">Member</option>
-                  <option value="staff">Staff</option>
-                  <option value="owner">Owner</option> {/* ✅ Added Owner Role */}
-                  {currentUser?.is_superuser && (
-                    <>
-                      <option value="admin">Admin</option>
-                      <option value="super_admin">Super Admin</option>
-                    </>
-                  )}
-                </FormSelect>
-                <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                  {formData.role === 'owner' 
-                    ? 'Owners have full control over the selected organization.' 
-                    : 'Organization Owners can also be managed via the Organizations page.'}
-                </p>
-              </FormGroup>
+              {/* Platform role — only superusers can change. Hidden on edit. */}
+              {!isEdit && isSuperuser && (
+                <FormGroup>
+                  <FormLabel>Platform Role</FormLabel>
+                  <FormSelect
+                    value={formData.platformRole || PLATFORM_ROLES.USER}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormData(prev => {
+                        // If switching to a platform role, clear org role selection
+                        const next = { ...prev, platformRole: val };
+                        if (val !== PLATFORM_ROLES.USER) {
+                          next.orgRole = '';
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {PLATFORM_ROLE_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </FormSelect>
+                  <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
+                    <strong>Platform role</strong> is system-wide (superuser / staff flags).
+                  </p>
+                </FormGroup>
+              )}
+
+              {/* Org role — shown when an org is selected and the target isn't platform staff. */}
+              {!isEdit && (showOrgPicker || !isSuperuser) && (
+                <FormGroup>
+                  <FormLabel>Organization Role</FormLabel>
+                  <FormSelect
+                    value={formData.orgRole || MEMBERSHIP_ROLES.MEMBER}
+                    onChange={(e) => setFormData(prev => ({ ...prev, orgRole: e.target.value }))}
+                    disabled={isSuperuser && formData.platformRole && formData.platformRole !== PLATFORM_ROLES.USER}
+                  >
+                    {ORG_ROLE_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </FormSelect>
+                  <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
+                    Membership in the selected organization. Can be changed later on the Team page.
+                  </p>
+                </FormGroup>
+              )}
+
+              {isEdit && (
+                <div style={{ gridColumn: '1 / -1', padding: '12px', borderRadius: 8, background: `${C.info}1A`, border: `1px solid ${C.info}4D` }}>
+                  <p style={{ margin: 0, fontSize: '13px', color: C.infoDark, fontFamily: F.family }}>
+                    ℹ️ Roles are read-only here. To change this user's organization role, use the
+                    Organization → Team page. Platform roles are managed by a superuser.
+                  </p>
+                </div>
+              )}
             </FormGrid>
+
             <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}` }}>
               <FormLabel style={{ marginBottom: '8px', display: 'block' }}>Account Status</FormLabel>
               <SwitchRow>
@@ -957,13 +997,13 @@ const UserFormModal = ({
           </form>
         </ModalBody>
         <ModalFooter>
-          <Button className="secondary" onClick={onClose}>
+          <Button className="secondary" onClick={onClose} disabled={isSubmitting}>
             <Cancel fontSize="small" />
             Cancel
           </Button>
-          <Button className="primary" type="button" onClick={onSubmit}>
+          <Button className="primary" type="button" onClick={onSubmit} disabled={isSubmitting}>
             <Save fontSize="small" />
-            {isEdit ? 'Save Changes' : 'Create User'}
+            {isSubmitting ? 'Saving…' : isEdit ? 'Save Changes' : 'Create User'}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1047,9 +1087,7 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
           </div>
         </ModalBody>
         <ModalFooter>
-          <Button className="secondary" onClick={onClose}>
-            Close
-          </Button>
+          <Button className="secondary" onClick={onClose}>Close</Button>
           <Button className="primary" onClick={() => onEdit(user)}>
             <Edit fontSize="small" />
             Edit
@@ -1060,7 +1098,7 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
   );
 };
 
-const DeleteUserModal = ({ user, onClose, onConfirm }) => {
+const DeleteUserModal = ({ user, onClose, onConfirm, isSubmitting }) => {
   if (!user) return null;
   return (
     <ModalOverlay onClick={onClose}>
@@ -1083,13 +1121,13 @@ const DeleteUserModal = ({ user, onClose, onConfirm }) => {
           </p>
         </ModalBody>
         <ModalFooter>
-          <Button className="secondary" onClick={onClose}>
+          <Button className="secondary" onClick={onClose} disabled={isSubmitting}>
             <Cancel fontSize="small" />
             Cancel
           </Button>
-          <Button className="danger" onClick={onConfirm}>
+          <Button className="danger" onClick={onConfirm} disabled={isSubmitting}>
             <Delete fontSize="small" />
-            Delete User
+            {isSubmitting ? 'Deleting…' : 'Delete User'}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1106,13 +1144,12 @@ const Users = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // ✅ 1. Initialize Platform Filter Hook
-  const { 
-    params: orgParams, 
-    isPlatformAdmin, 
-    orgFilter, 
-    setOrgFilter, 
-    organizations 
+  const {
+    params: orgParams,
+    isPlatformAdmin,
+    orgFilter,
+    setOrgFilter,
+    organizations,
   } = usePlatformFilter();
 
   const platformCountry = useMemo(() => {
@@ -1144,12 +1181,15 @@ const Users = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [lockStatus, setLockStatus] = useState({});
 
   const [requesterOrgs, setRequesterOrgs] = useState([]);
   const [orgsLoaded, setOrgsLoaded] = useState(false);
 
-  // ✅ Removed username from state
+  const isSuperuser = Boolean(currentUser?.is_superuser);
+
+  // Form state: `platformRole` and `orgRole` are separated.
   const [formData, setFormData] = useState({
     email: '',
     first_name: '',
@@ -1159,7 +1199,8 @@ const Users = () => {
     city: '',
     state: '',
     country: platformCountry,
-    role: 'user',
+    platformRole: PLATFORM_ROLES.USER,
+    orgRole: MEMBERSHIP_ROLES.MEMBER,
     is_active: true,
     organization_id: null,
   });
@@ -1179,36 +1220,29 @@ const Users = () => {
     return () => { cancelled = true; };
   }, []);
 
-  const isSuperuser = Boolean(currentUser?.is_superuser);
-  
-  // ✅ Updated showOrgPicker logic to handle Owner role properly
+  // Show org picker when creating a user bound to an org.
   const showOrgPicker = useMemo(() => {
-    const isMultiOrgAdmin = !isSuperuser && requesterOrgs.length > 1;
-    const isCreatingOrgRole = ['owner', 'admin', 'staff', 'member'].includes(formData.role);
-    
+    if (requesterOrgs.length === 0) return false;
+    // Superuser: show org picker unless creating a pure platform role
     if (isSuperuser) {
-      return isCreatingOrgRole; // Superusers need to pick an org for any org-bound role
+      return formData.platformRole === PLATFORM_ROLES.USER || !!formData.orgRole;
     }
-    // Non-superusers: show picker if they have multiple orgs, or if they are creating an Owner (to be explicit about which org)
-    return isMultiOrgAdmin || (formData.role === 'owner' && requesterOrgs.length > 0);
-  }, [isSuperuser, requesterOrgs.length, formData.role]);
+    // Non-superuser (org admin): always show picker (they must place user in an org)
+    return true;
+  }, [isSuperuser, requesterOrgs.length, formData.platformRole, formData.orgRole]);
 
   useEffect(() => {
     if (requesterOrgs.length === 1) {
-      setFormData((prev) => {
-        if (!prev.organization_id) {
-          return { ...prev, organization_id: requesterOrgs[0].id };
-        }
-        return prev;
-      });
+      setFormData((prev) => (
+        prev.organization_id ? prev : { ...prev, organization_id: requesterOrgs[0].id }
+      ));
     }
   }, [requesterOrgs]);
 
   useEffect(() => {
-    setFormData((prev) => {
-      if (prev.country && prev.country !== '') return prev;
-      return { ...prev, country: platformCountry };
-    });
+    setFormData((prev) => (
+      prev.country ? prev : { ...prev, country: platformCountry }
+    ));
   }, [platformCountry]);
 
   const [stats, setStats] = useState({
@@ -1223,19 +1257,19 @@ const Users = () => {
     setError(null);
     try {
       const params = {
-        page: page,
+        page,
         page_size: PAGE_SIZE,
         search: search || undefined,
         role: roleFilter !== 'all' ? roleFilter : undefined,
         is_active: statusFilter !== 'all' ? statusFilter === 'active' : undefined,
-        ...orgParams, // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+        ...orgParams,
       };
       const response = await api.get('/users/', { params });
       const { users: pageUsers, count } = normalizeUserResponse(response.data);
       setUsers(pageUsers);
       setTotalUsers(count);
       setTotalPages(Math.max(1, Math.ceil(count / PAGE_SIZE)));
-      
+
       setStats({
         total: count,
         active: pageUsers.filter((u) => u.is_active).length,
@@ -1249,11 +1283,9 @@ const Users = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, search, roleFilter, statusFilter, PAGE_SIZE, orgParams]); // ✅ 3. Added orgParams to dependency array
+  }, [page, search, roleFilter, statusFilter, PAGE_SIZE, orgParams]);
 
-  useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
 
   useEffect(() => {
     if (!users?.length) {
@@ -1282,7 +1314,6 @@ const Users = () => {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // ✅ Removed username from resetForm
   const resetForm = () => {
     setFormData({
       email: '',
@@ -1293,52 +1324,72 @@ const Users = () => {
       city: '',
       state: '',
       country: platformCountry,
-      role: 'user',
+      platformRole: PLATFORM_ROLES.USER,
+      orgRole: MEMBERSHIP_ROLES.MEMBER,
       is_active: true,
       organization_id: requesterOrgs.length === 1 ? requesterOrgs[0].id : null,
     });
   };
 
+  // Map a platform-role choice to flags the backend understands.
+  const platformRoleToFlags = (platformRole) => {
+    if (platformRole === PLATFORM_ROLES.SUPER_ADMIN) {
+      return { is_staff: true, is_superuser: true };
+    }
+    if (platformRole === PLATFORM_ROLES.STAFF) {
+      return { is_staff: true, is_superuser: false };
+    }
+    return { is_staff: false, is_superuser: false };
+  };
+
   const handleCreateUser = async (e) => {
     if (e?.preventDefault) e.preventDefault();
-    if (!formData.email) {
-      toast.error('Email is required');
-      return;
+    if (!formData.email) return toast.error('Email is required');
+    if (!formData.phone?.trim()) return toast.error('Mobile number is required');
+    if (!isValidPhone(formData.phone)) return toast.error('Enter a valid mobile number (7–15 digits)');
+
+    // Determine whether this user should be an org member
+    const wantsOrgMembership = !!formData.organization_id && !!formData.orgRole;
+    if (wantsOrgMembership && !formData.organization_id) {
+      return toast.error('Please select an organization for the membership role');
     }
-    if (!formData.phone?.trim()) {
-      toast.error('Mobile number is required');
-      return;
-    }
-    if (!isValidPhone(formData.phone)) {
-      toast.error('Enter a valid mobile number (7–15 digits)');
-      return;
-    }
-    
-    // ✅ Validation for Organization requirement based on role
-    const orgBoundRoles = ['owner', 'admin', 'staff', 'member'];
-    if (orgBoundRoles.includes(formData.role) && !formData.organization_id && !isSuperuser) {
-        toast.error('Please select an organization for this role');
-        return;
-    }
-    if (formData.role === 'owner' && !formData.organization_id) {
-        toast.error('An organization must be selected to create an Owner');
-        return;
+    if (!isSuperuser && !wantsOrgMembership) {
+      return toast.error('Please select an organization and role');
     }
 
+    // Build payload: `role` (platform) OR `requested_role` (org) — not both.
+    const payload = {
+      email: formData.email,
+      first_name: formData.first_name || '',
+      last_name: formData.last_name || '',
+      phone: normalisePhone(formData.phone),
+      whatsapp_number: formData.whatsapp_number
+        ? normalisePhone(formData.whatsapp_number)
+        : normalisePhone(formData.phone),
+      city: formData.city || '',
+      state: formData.state || '',
+      country: formData.country,
+      is_active: formData.is_active,
+    };
+
+    if (isSuperuser) {
+      // Platform role flags
+      Object.assign(payload, platformRoleToFlags(formData.platformRole));
+
+      // If an org is selected AND the target isn't a platform staff/superadmin,
+      // also request an org membership.
+      if (wantsOrgMembership && formData.platformRole === PLATFORM_ROLES.USER) {
+        payload.requested_role = formData.orgRole;
+        payload.organization_id = formData.organization_id;
+      }
+    } else {
+      // Org admin: only request an org membership; no platform role.
+      payload.requested_role = formData.orgRole;
+      payload.organization_id = formData.organization_id;
+    }
+
+    setSubmitting(true);
     try {
-      const payload = {
-        ...formData,
-        organization_id: formData.organization_id || undefined,
-        phone: normalisePhone(formData.phone),
-        whatsapp_number: formData.whatsapp_number
-          ? normalisePhone(formData.whatsapp_number)
-          : normalisePhone(formData.phone),
-      };
-      
-      // Ensure no legacy password fields are sent
-      delete payload.password;
-      delete payload.password_confirm;
-
       await api.post('/users/', payload);
       toast.success('User created successfully. A welcome email has been sent.');
       setShowCreateModal(false);
@@ -1346,7 +1397,7 @@ const Users = () => {
       loadUsers();
     } catch (err) {
       const errorData = err.response?.data;
-      
+
       if (errorData?.code === 'MULTI_ORG_REQUIRED') {
         if (Array.isArray(errorData.organizations) && errorData.organizations.length) {
           setRequesterOrgs(errorData.organizations);
@@ -1362,20 +1413,43 @@ const Users = () => {
         Object.values(errorData || {})[0] ||
         'Failed to create user';
       toast.error(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleUpdateUser = async (e) => {
     if (e?.preventDefault) e.preventDefault();
     if (!selectedUser) return;
-    
+
+    // Only send fields the backend update() accepts. `role` is a
+    // SerializerMethodField (read-only), so we deliberately omit it.
+    const payload = {
+      first_name: formData.first_name || '',
+      last_name: formData.last_name || '',
+      phone: formData.phone ? normalisePhone(formData.phone) : '',
+      whatsapp_number: formData.whatsapp_number
+        ? normalisePhone(formData.whatsapp_number)
+        : '',
+      city: formData.city || '',
+      state: formData.state || '',
+      country: formData.country,
+      is_active: formData.is_active,
+    };
+
+    // Platform role flags — only superusers may change them.
+    if (isSuperuser && formData.platformRole) {
+      const flags = platformRoleToFlags(formData.platformRole);
+      // Only include if it actually differs from current user flags.
+      const currentlyStaff = Boolean(selectedUser.is_staff);
+      const currentlySuper = Boolean(selectedUser.is_superuser);
+      if (flags.is_staff !== currentlyStaff) payload.is_staff = flags.is_staff;
+      if (flags.is_superuser !== currentlySuper) payload.is_superuser = flags.is_superuser;
+    }
+
+    setSubmitting(true);
     try {
-      const updateData = { ...formData };
-      delete updateData.password;
-      delete updateData.password_confirm;
-      
-      await api.patch(`/users/${selectedUser.id}/`, updateData);
-      
+      await api.patch(`/users/${selectedUser.id}/`, payload);
       toast.success('User updated successfully');
       setShowEditModal(false);
       setSelectedUser(null);
@@ -1383,17 +1457,30 @@ const Users = () => {
       loadUsers();
     } catch (err) {
       const errorData = err.response?.data;
+      const status = err.response?.status;
+
+      if (status === 403) {
+        toast.error(
+          errorData?.detail ||
+          'You do not have permission to change this user\'s role. Ask a superuser.'
+        );
+        return;
+      }
+
       const errorMsg =
         errorData?.error ||
         errorData?.detail ||
         Object.values(errorData || {})[0] ||
         'Failed to update user';
       toast.error(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
+    setSubmitting(true);
     try {
       await api.delete(`/users/${selectedUser.id}/`);
       toast.success('User deleted successfully');
@@ -1402,6 +1489,8 @@ const Users = () => {
       loadUsers();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Failed to delete user');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -1437,9 +1526,13 @@ const Users = () => {
     }
   };
 
-  // ✅ Removed username from handleEditUser
   const handleEditUser = (user) => {
     setSelectedUser(user);
+    // Derive the closest platform-role from flags.
+    let platformRole = PLATFORM_ROLES.USER;
+    if (user.is_superuser) platformRole = PLATFORM_ROLES.SUPER_ADMIN;
+    else if (user.is_staff) platformRole = PLATFORM_ROLES.STAFF;
+
     setFormData({
       email: user.email || '',
       first_name: user.first_name || '',
@@ -1449,7 +1542,9 @@ const Users = () => {
       city: user.profile?.city || '',
       state: user.profile?.state || '',
       country: normaliseCountryName(user.profile?.country) || platformCountry,
-      role: user.role || 'user',
+      // `role` from the API is an effective label — map it to platformRole if it matches.
+      platformRole,
+      orgRole: MEMBERSHIP_ROLES.MEMBER, // not used in edit
       is_active: user.is_active !== false,
       organization_id: user.organization_id || null,
     });
@@ -1554,7 +1649,6 @@ const Users = () => {
 
       <FilterCard>
         <FilterGrid>
-          {/* ✅ 4. Render the Organization Filter Dropdown */}
           <OrgFilterSelect
             isPlatformAdmin={isPlatformAdmin}
             organizations={organizations}
@@ -1580,8 +1674,8 @@ const Users = () => {
           >
             <option value="all">All Roles</option>
             <option value="super_admin">Super Admin</option>
-            <option value="owner">Owner</option>
             <option value="admin">Admin</option>
+            <option value="owner">Owner</option>
             <option value="staff">Staff</option>
             <option value="member">Member</option>
             <option value="user">Regular User</option>
@@ -1653,20 +1747,14 @@ const Users = () => {
                 <MobileUserActions>
                   <Button
                     className="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleViewUser(user);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); handleViewUser(user); }}
                   >
                     <Visibility fontSize="small" />
                     View
                   </Button>
                   <Button
                     className="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditUser(user);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); handleEditUser(user); }}
                   >
                     <Edit fontSize="small" />
                     Edit
@@ -1674,10 +1762,7 @@ const Users = () => {
                   {needsUnlock(user) && (
                     <Button
                       className="success"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleUnlock(user);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); handleUnlock(user); }}
                       disabled={actionBusy}
                     >
                       <LockOpen fontSize="small" />
@@ -1686,10 +1771,7 @@ const Users = () => {
                   )}
                   <Button
                     className="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleToggleActive(user);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); handleToggleActive(user); }}
                     style={{ color: user.is_active !== false ? C.error : C.success }}
                   >
                     {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
@@ -1742,25 +1824,16 @@ const Users = () => {
                   <TableCell>{formatDate(user.date_joined)}</TableCell>
                   <TableCell align="right">
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                      <ActionButton onClick={(e) => {
-                        e.stopPropagation();
-                        handleViewUser(user);
-                      }} title="View">
+                      <ActionButton onClick={(e) => { e.stopPropagation(); handleViewUser(user); }} title="View">
                         <Visibility fontSize="small" />
                       </ActionButton>
-                      <ActionButton onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditUser(user);
-                      }} title="Edit">
+                      <ActionButton onClick={(e) => { e.stopPropagation(); handleEditUser(user); }} title="Edit">
                         <Edit fontSize="small" />
                       </ActionButton>
                       {needsUnlock(user) && (
                         <ActionButton
                           className="success"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleUnlock(user);
-                          }}
+                          onClick={(e) => { e.stopPropagation(); handleUnlock(user); }}
                           title="Unlock & reactivate"
                           disabled={actionBusy}
                         >
@@ -1769,10 +1842,7 @@ const Users = () => {
                       )}
                       <ActionButton
                         className="danger"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleActive(user);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); handleToggleActive(user); }}
                         title={user.is_active !== false ? 'Deactivate' : 'Activate'}
                       >
                         {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
@@ -1851,6 +1921,7 @@ const Users = () => {
           showOrgPicker={showOrgPicker}
           isSuperuser={isSuperuser}
           requesterOrgs={requesterOrgs}
+          isSubmitting={submitting}
         />
       )}
       {showEditModal && selectedUser && (
@@ -1869,6 +1940,7 @@ const Users = () => {
           showOrgPicker={showOrgPicker}
           isSuperuser={isSuperuser}
           requesterOrgs={requesterOrgs}
+          isSubmitting={submitting}
         />
       )}
       {showViewModal && selectedUser && (
@@ -1893,6 +1965,7 @@ const Users = () => {
             setSelectedUser(null);
           }}
           onConfirm={handleDeleteUser}
+          isSubmitting={submitting}
         />
       )}
     </PageContainer>

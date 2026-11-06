@@ -14,11 +14,15 @@ from rest_framework.throttling import ScopedRateThrottle
 from ticket_bookings.constants import BookingStatus, TicketStatus
 from ticket_bookings.models import CheckInLog, Event, Ticket
 from ticket_bookings.services.qr_service import QRCodeService
+from ticket_bookings.services.scan_resolver import (
+    NOT_FOUND_CODE,
+    resolve_ticket_for_scan,
+)
 from ticket_bookings.services.tenancy import (
     can_operate_event_data,
     is_platform_admin,
     user_operator_org_ids,
-    visible_bookings,
+    visible_events,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +76,13 @@ def _validate_checkin_window(ticket, now=None):
 # The `undo` action is the ONE exception: it is `is_superuser`-only and
 # will remain so. Undo reverses a completed check-in and can invalidate
 # the audit trail.
+#
+# TENANT SCOPE
+# ------------
+# Ticket lookups are routed through `resolve_ticket_for_scan`, which scopes
+# by tenant in the queryset and returns the SAME "TICKET_NOT_FOUND" result
+# for "does not exist" and "exists but not yours". This closes the code
+# enumeration oracle. `stats` uses `visible_events` for the same reason.
 # =========================================================================
 
 class CheckInViewSet(viewsets.ViewSet):
@@ -79,18 +90,13 @@ class CheckInViewSet(viewsets.ViewSet):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'checkin'
 
+    # ------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------
+
     def _extract_ticket_code(self, code_data):
         decoded = QRCodeService.decode_ticket_qr(code_data)
         return decoded.get('code')
-
-    def _user_can_manage_event(self, user, event):
-        if not user or not user.is_authenticated:
-            return False
-        if is_platform_admin(user):
-            return True
-        if event is None:
-            return False
-        return can_operate_event_data(user, event)
 
     def _check_and_complete_booking(self, booking):
         if not booking:
@@ -218,6 +224,16 @@ class CheckInViewSet(viewsets.ViewSet):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    def _not_found_response(self, ticket_code):
+        # Single, uniform response for missing AND out-of-scope tickets.
+        return Response(
+            {
+                'detail': f'Ticket not found: {ticket_code}',
+                'code': NOT_FOUND_CODE,
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
     # ============================================================
     # CREATE
     # ============================================================
@@ -246,16 +262,11 @@ class CheckInViewSet(viewsets.ViewSet):
         logger.info("Processing check-in for code: %s", ticket_code)
 
         try:
-            ticket = get_object_or_404(
-                Ticket.objects.select_related('session', 'event', 'booking', 'event__organization'),
-                unique_code=ticket_code,
-            )
-
-            if not self._user_can_manage_event(request.user, ticket.event):
-                return Response(
-                    {'detail': 'You do not have permission to check in this ticket.'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+            # Tenant-scoped resolution: missing and out-of-scope both -> 404.
+            ticket, err = resolve_ticket_for_scan(request.user, ticket_code)
+            if err:
+                logger.warning("Ticket not found/out of scope: %s", ticket_code)
+                return self._not_found_response(ticket_code)
 
             existing = self._existing_checkin(ticket)
             if existing:
@@ -314,15 +325,6 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        except Ticket.DoesNotExist:
-            logger.warning("Ticket not found: %s", ticket_code)
-            return Response(
-                {
-                    'detail': f'Ticket not found: {ticket_code}',
-                    'code': 'TICKET_NOT_FOUND',
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
         except Exception:
             logger.exception("Error checking in ticket %s", ticket_code)
             return Response(
@@ -351,19 +353,15 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
         try:
-            ticket = get_object_or_404(
-                Ticket.objects.select_related('session', 'event', 'booking', 'event__organization'),
-                unique_code=ticket_code,
-            )
-
-            if not self._user_can_manage_event(request.user, ticket.event):
+            ticket, err = resolve_ticket_for_scan(request.user, ticket_code)
+            if err:
                 return Response(
                     {
                         'valid': False,
-                        'code': 'PERMISSION_DENIED',
-                        'detail': 'You do not have permission to validate this ticket.',
+                        'detail': f'Ticket not found: {ticket_code}',
+                        'code': NOT_FOUND_CODE,
                     },
-                    status=status.HTTP_403_FORBIDDEN,
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
             existing = self._existing_checkin(ticket)
@@ -414,15 +412,6 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        except Ticket.DoesNotExist:
-            return Response(
-                {
-                    'valid': False,
-                    'detail': f'Ticket not found: {ticket_code}',
-                    'code': 'TICKET_NOT_FOUND',
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
         except Exception:
             logger.exception("Error validating ticket %s", ticket_code)
             return Response(
@@ -489,19 +478,17 @@ class CheckInViewSet(viewsets.ViewSet):
 
         try:
             with transaction.atomic():
-                ticket = (
-                    Ticket.objects
-                    .select_for_update()
-                    .select_related('session', 'event', 'booking', 'event__organization')
-                    .get(unique_code=ticket_code)
+                # Scoped lookup happens BEFORE select_for_update, so a row
+                # from another tenant is never locked (no cross-tenant DoS).
+                ticket, err = resolve_ticket_for_scan(
+                    user, ticket_code, for_update=True,
                 )
-
-                if not self._user_can_manage_event(user, ticket.event):
+                if err:
                     return {
                         'code': ticket_code,
-                        'status': 'permission_denied',
-                        'code_type': 'PERMISSION_DENIED',
-                        'message': 'You do not have permission to check in this ticket.',
+                        'status': 'not_found',
+                        'code_type': NOT_FOUND_CODE,
+                        'message': 'Ticket not found',
                     }
 
                 if ticket.status in (
@@ -586,13 +573,6 @@ class CheckInViewSet(viewsets.ViewSet):
                     'booking_completed': booking_completed,
                 }
 
-        except Ticket.DoesNotExist:
-            return {
-                'code': code,
-                'status': 'not_found',
-                'code_type': 'TICKET_NOT_FOUND',
-                'message': 'Ticket not found',
-            }
         except Exception:
             logger.exception("Bulk check-in failed for code %s", code)
             return {
@@ -618,20 +598,15 @@ class CheckInViewSet(viewsets.ViewSet):
         ticket_code = self._extract_ticket_code(code)
 
         try:
-            ticket = (
-                Ticket.objects
-                .select_related('session', 'event', 'booking', 'event__organization')
-                .get(unique_code=ticket_code)
-            )
-
-            if not self._user_can_manage_event(request.user, ticket.event):
+            ticket, err = resolve_ticket_for_scan(request.user, ticket_code)
+            if err:
                 return Response(
                     {
                         'valid': False,
-                        'code': 'PERMISSION_DENIED',
-                        'detail': 'You do not have permission to verify this ticket.',
+                        'code': NOT_FOUND_CODE,
+                        'detail': 'Ticket not found',
                     },
-                    status=status.HTTP_403_FORBIDDEN,
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
             rejection = self._rejection_for(ticket)
@@ -670,15 +645,6 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        except Ticket.DoesNotExist:
-            return Response(
-                {
-                    'valid': False,
-                    'code': 'TICKET_NOT_FOUND',
-                    'detail': 'Ticket not found',
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
         except Exception:
             logger.exception("Error verifying ticket %s", ticket_code)
             return Response(
@@ -691,7 +657,7 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
     # ============================================================
-    # UNDO
+    # UNDO  (superuser-only, audit-sensitive)
     # ============================================================
 
     @action(detail=False, methods=['delete'])
@@ -713,11 +679,16 @@ class CheckInViewSet(viewsets.ViewSet):
         ticket_code = self._extract_ticket_code(code)
 
         try:
-            ticket = (
-                Ticket.objects
-                .select_for_update()
-                .get(unique_code=ticket_code)
+            # Superuser bypasses tenant scope, but we still use the shared
+            # resolver with for_update=True for consistency and locking.
+            ticket, err = resolve_ticket_for_scan(
+                request.user, ticket_code, for_update=True,
             )
+            if err:
+                return Response(
+                    {'detail': 'Ticket not found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
             checkin_log = self._existing_checkin(ticket)
             if not checkin_log:
@@ -753,6 +724,15 @@ class CheckInViewSet(viewsets.ViewSet):
                     ticket.booking.booking_reference,
                 )
 
+            # Audit the undo actor: the original log is now 'cancelled',
+            # so without this there is no record of WHO undid it.
+            logger.warning(
+                "Check-in for ticket %s undone by superuser %s (%s)",
+                ticket_code,
+                request.user.email,
+                request.user.pk,
+            )
+
             return Response(
                 {
                     'detail': 'Check-in undone successfully',
@@ -761,11 +741,6 @@ class CheckInViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        except Ticket.DoesNotExist:
-            return Response(
-                {'detail': 'Ticket not found'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
         except Exception:
             logger.exception("Error undoing check-in for %s", ticket_code)
             return Response(
@@ -787,13 +762,8 @@ class CheckInViewSet(viewsets.ViewSet):
             )
 
         try:
-            event = get_object_or_404(Event, id=event_id)
-
-            if not self._user_can_manage_event(request.user, event):
-                return Response(
-                    {'detail': 'You do not have permission to view stats for this event.'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+            # Tenant-scoped lookup: missing and out-of-scope both -> 404.
+            event = get_object_or_404(visible_events(request.user), id=event_id)
 
             tickets = Ticket.objects.filter(event=event)
             total_tickets = tickets.count()
@@ -871,6 +841,10 @@ class CheckInViewSet(viewsets.ViewSet):
                 query = query.filter(event__organization_id__in=org_ids)
 
             if event_id:
+                # Only filter by event if it's visible to this user. If not,
+                # the org scoping above already yields an empty queryset,
+                # so out-of-scope event IDs return [] rather than leaking
+                # existence via a different response shape.
                 query = query.filter(event_id=event_id)
 
             recent = (

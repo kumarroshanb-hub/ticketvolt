@@ -36,18 +36,28 @@
     "nA": "不適用",
     "actions": "操作"
   },
-  "roles": {
+"roles": {
+    "platform_super_admin": "平台管理員",
+    "platform_staff":       "平台職員",
+    "platform_user":        "普通用戶",
+    "org_owner":  "擁有者",
+    "org_admin":  "管理員",
+    "org_staff":  "職員",
+    "org_member": "會員",
+    "platformRole":   "平台角色",
+    "inCurrentOrg":   "目前組織角色",
     "superAdmin": "平台管理員",
+    "owner": "擁有者",
     "admin": "管理員",
-    "organizer": "主辦方",
-    "user": "用戶",
-    "regularUser": "普通用戶"
-  },
-  "sections": {
+    "staff": "職員",
+    "member": "會員",
+    "user": "普通用戶"
+},
+"sections": {
     "main": "主要",
     "management": "管理",
     "admin": "系統"
-  },
+},
   "nav": {
     "dashboard": "儀表板",
     "events": "活動",
@@ -155,7 +165,9 @@
     "saveSuccess": "個人資料已更新。",
     "saveFailed": "更新個人資料失敗。",
     "nameEmpty": "名稱不能為空。",
-    "editingUnsupported": "不支援編輯個人資料。"
+    "editingUnsupported": "不支援編輯個人資料。",
+    "platformRole": "平台角色",
+    "orgRole": "組織角色"
   },
   "forgotPassword": {
     "title": "忘記密碼",

@@ -1,9 +1,6 @@
 """
 Auth views for TicketVolt.
 
-(Header preserved verbatim from the original — see the "Auth views",
-"Scanner endpoints", and "Cron endpoints" comments in-line.)
-
 P0 AUTHORIZATION FIX (2026-10-30)
 ---------------------------------
 `get_user_role()` previously returned `'admin'` for ANY `is_staff=True`
@@ -14,13 +11,18 @@ matrix §0:
      (OWNER, ADMIN) on at least one org"
 
 An `is_staff=True` user with no org is now correctly reported as `'user'`.
-The frontend trusts `user.role` from this endpoint, so this single change
-also removes the Users / Settings / Checkin sidebar entries from
-org-less staff accounts.
+
+MEMBERSHIP-AS-PROPERTY MODEL (2026-11-06)
+-----------------------------------------
+`get_user_role()` is now a thin delegate to
+`tenancy.effective_role_label()`. The label is DERIVED, not stored.
+The canonical per-org roles are emitted under `user.memberships[]` and
+consumers should use those booleans (`is_owner`, `is_admin`, `is_staff`,
+`is_member`, `is_manager`, `is_operator`) for any per-org decision.
 
 Scanning access (STAFF on an org) is still `can_operate_org` — scanner
 operators do need it — but every MUTATING booking action (refund, mark
-payment, apply discount, issue tickets, cancel) is now gated by
+payment, apply discount, issue tickets, cancel) is gated by
 `can_manage_org` in `booking_api.py`. See that file's header.
 """
 import hashlib
@@ -28,6 +30,7 @@ import hmac
 import json
 import os
 import re
+import uuid as _uuid
 from datetime import timedelta
 
 from django.conf import settings
@@ -35,11 +38,13 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
 from django.db import transaction
-from django.shortcuts import get_object_or_404  # ✅ ADD THIS LINE
+from django.db.models import Q  # ✅ FIX [#12]: was missing; EventSeatMap uses Q()
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -54,15 +59,17 @@ from axes.handlers.proxy import AxesProxyHandler
 from axes.helpers import get_client_ip_address
 
 from .constants import BookingStatus, TicketStatus
-# ✅ FIX: Added Event to the imports
 from .models import Event, Ticket, CheckInLog, UserProfile
 from .models_tenancy import OrganizationMembership
 from .services.booking_status import reconcile_completed_booking
 from .services.tenancy import (
-    is_platform_admin,
     can_operate_org,
+    effective_role_label,
+    is_platform_admin,
+    user_memberships_payload,
     user_operator_org_ids,
     user_org_ids,
+    visible_events,
 )
 
 from .models_seating import SeatReservation, Seat
@@ -72,7 +79,6 @@ import logging
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
-from .services.tenancy import _active_membership_filter
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +102,11 @@ CHECKIN_LATE_GRACE = timedelta(minutes=15)
 _DUMMY_PASSWORD_HASH = make_password('dummy-password-for-timing-equalization')
 
 _SINGLE_SESSION = os.environ.get('SINGLE_SESSION_LOGIN', 'False') == 'True'
+
+# Booking statuses whose SeatReservation rows are still authoritative.
+# A reservation attached to a cancelled/refunded booking is stale and
+# must not make the seat appear unavailable.
+_LIVE_SEAT_RESERVATION_STATUSES = ('paid', 'confirmed', 'completed')
 
 
 # ---------------------------------------------------------------------------
@@ -224,124 +235,80 @@ def _validate_ticket_payload(data) -> tuple[dict | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# Role helpers
+# Role helpers — now delegating to tenancy.effective_role_label()
 # ---------------------------------------------------------------------------
 
 def get_user_role(user):
     """
-    Compute the effective role string for a user.
+    Compute the effective role *label* for a user.
 
-    UPDATED FOR 6-TIER HIERARCHY (2026-11-01):
-    ------------------------------------------
-    The permission matrix (§0) defines the roles as:
+    This is a pure delegate to `tenancy.effective_role_label()`. Kept as
+    a thin re-export because several modules import `get_user_role` from
+    here (active_sessions_api, dashboard_api, auth_api, serializers).
 
-        super_admin = is_superuser
-        owner       = membership in MANAGER_ROLES (OWNER/ADMIN), no is_staff
-        admin       = is_staff AND member of ≥1 org with role OWNER or ADMIN
-        staff       = membership with role STAFF, not a manager anywhere
-        member      = membership with role MEMBER only
-        user        = everyone else (no org membership)
-
-    Previously this returned `'organizer'` for managers who weren't
-    `is_staff`. The 6-tier hierarchy uses `'owner'` instead, which matches
-    the frontend's `ROLES.OWNER` constant and eliminates the need for
-    legacy fallback mapping in `RoleContext.js`.
-
-    Precedence (manager beats staff — a user may hold STAFF on one org
-    and OWNER on another):
-
-        superuser                                   → 'super_admin'
-        is_staff AND manager-anywhere               → 'admin'
-        manager-anywhere (not is_staff)             → 'owner'  # UPDATED: was 'organizer'
-        is_staff AND staff-anywhere                 → 'staff'
-        staff-anywhere (not is_staff)               → 'staff'
-        member-only (not manager, not staff)        → 'member' # NEW
-        otherwise                                   → 'user'
-
-    The P0 fix is preserved: an `is_staff=True` user with *no* org
-    membership matches none of the manager/staff branches and still
-    resolves to `'user'`.
-
-    Labels only drive the UI. Real authorization remains enforced
-    server-side by `can_manage_org` (mutating booking actions) and
-    `can_operate_org` (scanning).
+    The label is a UI convenience, NOT a source of truth. For per-org
+    access decisions, use `tenancy.can_manage_org` / `can_operate_org`
+    or the `memberships[]` array on the user payload.
     """
-    if not user or not user.is_authenticated:
-        return 'user'
-
-    if user.is_superuser:
-        return 'super_admin'
-
-    # Manager check must run BEFORE the staff-membership check: a user
-    # who is STAFF on org A and OWNER/ADMIN on org B is a manager, not
-    # a scanner operator.
-    is_org_manager =  _active_membership_filter(user).filter(
-        role__in=OrganizationMembership.MANAGER_ROLES,
-    ).exists()
-
-    if user.is_staff:
-        if is_org_manager:
-            return 'admin'
-        # NOTE: org-less is_staff users deliberately fall through. They
-        # may still be STAFF on an org — check that next before giving
-        # up and labelling them 'user'.
-
-    elif is_org_manager:
-        # UPDATED FOR 6-TIER HIERARCHY: Return 'owner' instead of 'organizer'
-        return 'owner'
-
-    # BUG 23/24: scanner-only membership gets its own label. This is
-    # what makes the Checkin sidebar entry appear for STAFF users and
-    # matches what `can_operate_org` already allows on the server.
-    is_org_staff = _active_membership_filter(user).filter(role='staff').exists()
-
-    if is_org_staff:
-        return 'staff'
-
-    # ADDED FOR 6-TIER HIERARCHY: Check for member-only membership
-    is_org_member = _active_membership_filter(user).filter(role='member').exists()
-
-    if is_org_member:
-        return 'member'
-
-    # Defensive: is_staff with no manager AND no staff membership means
-    # an org-less staff account has sneaked into the app. Log at warning
-    # so it's visible in production without failing the request. (This
-    # preserves the P0 fix's visibility.)
-    if user.is_staff:
-        logger.warning(
-            "Staff user %s (id=%s) has no org manager or staff membership; "
-            "labelling role as 'user'. Promote via OrganizationMembership "
-            "or unset is_staff.",
-            user.username, user.id,
-        )
-
-    return 'user'
+    return effective_role_label(user)
 
 
-def _user_profile_summary(user):
+# ---------------------------------------------------------------------------
+# Profile summary
+# ---------------------------------------------------------------------------
+def _user_profile_summary(user, memberships=None):
     try:
         profile = user.profile
     except UserProfile.DoesNotExist:
-        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False, 'is_owner': False}
+        profile = None
     except Exception:
         logger.warning(
             "Could not load UserProfile for user %r in _user_profile_summary",
             getattr(user, 'id', None),
             exc_info=True,
         )
-        return {'phone': '', 'whatsapp_number': '', 'is_organizer': False, 'is_owner': False}
+        profile = None
 
-    is_org = OrganizationMembership.objects.filter(
-        user=user,
-        role__in=OrganizationMembership.MANAGER_ROLES,
-    ).exists()
+    if memberships is None:
+        memberships = user_memberships_payload(user)
+
+    is_manager = any(m.get('is_manager') for m in memberships)
+    is_owner = any(m.get('is_owner') for m in memberships)
 
     return {
-        'phone': getattr(profile, 'phone', '') or '',
-        'whatsapp_number': getattr(profile, 'whatsapp_number', '') or '',
-        'is_organizer': is_org,  # Kept for backward compatibility
-        'is_owner': is_org,      # ADDED FOR 6-TIER HIERARCHY
+        'phone': getattr(profile, 'phone', '') if profile else '',
+        'whatsapp_number': getattr(profile, 'whatsapp_number', '') if profile else '',
+        'is_organizer': is_manager,  # legacy alias → manager of ≥1 org
+        'is_owner': is_owner,        # owner of ≥1 org
+    }
+
+
+def _build_user_payload(user):
+    """
+    Canonical user payload returned by LoginView / MeView / auth_api.
+    """
+    role_label = effective_role_label(user)
+    memberships = user_memberships_payload(user)
+
+    operate_org_ids = [str(oid) for oid in user_operator_org_ids(user)]
+    manager_org_ids = [str(oid) for oid in user_org_ids(user)]
+
+    return {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'name': user.get_full_name() or user.username,
+        'role': role_label,
+        'effective_role': role_label,
+        'is_superuser': user.is_superuser,
+        'is_staff': user.is_staff,
+        'is_active': user.is_active,
+        'org_ids': operate_org_ids,
+        'managed_org_ids': manager_org_ids,
+        'memberships': memberships,
+        **_user_profile_summary(user, memberships=memberships),
     }
 
 
@@ -354,13 +321,6 @@ def _get_user_by_email(email):
 def _user_can_manage_event(user, event):
     """
     Operators of the event's org, or platform admins.
-
-    NOTE (do NOT change to `can_manage_org`):
-    This predicate is used by scanning endpoints (checkin_verify,
-    checkin_manual, checkin_history, etc.). Scanner operators (STAFF)
-    MUST be able to reach those endpoints. Every *mutating* booking
-    action in booking_api.py uses `can_manage_org` instead, so STAFF
-    can scan but cannot refund.
     """
     if not user or not user.is_authenticated:
         return False
@@ -377,6 +337,11 @@ def _validate_checkin_window(ticket, now=None):
         return True, None
 
     session = ticket.session
+
+    # ✅ FIX [#20]: guard against None start/end on a session row.
+    if session.start_time is None or session.end_time is None:
+        return True, None
+
     window_start = session.start_time - CHECKIN_EARLY_GRACE
     window_end = session.end_time + CHECKIN_LATE_GRACE
 
@@ -469,7 +434,45 @@ def _rejection_for_ticket(ticket):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Centralised lookup: resolve a ticket by code, enforcing tenant access
+# *before* returning anything about its existence.
+# ---------------------------------------------------------------------------
+def _resolve_ticket_for_scan(user, code):
+    ticket = (
+        Ticket.objects
+        .select_related('event', 'event__organization', 'tier', 'session', 'booking')
+        .filter(unique_code=code)
+        .first()
+    )
+
+    if ticket is None:
+        return None
+
+    if not _user_can_manage_event(user, ticket.event):
+        # ✅ FIX [#14]: log the "exists but not accessible" case on the
+        # server so ops can diagnose expired-membership scanners. The
+        # HTTP response stays uniform (404-equivalent) to prevent
+        # enumeration.
+        if ticket.event is not None:
+            logger.warning(
+                "Scanner access denied: user=%s (id=%s) lacks operator "
+                "access to org=%s for ticket %s. Possibly an expired "
+                "membership.",
+                getattr(user, 'username', '?'),
+                getattr(user, 'id', '?'),
+                getattr(ticket.event, 'organization_id', '?'),
+                ticket.unique_code,
+            )
+        return None
+
+    return ticket
+
+
 def _perform_checkin(request, ticket, device_id):
+    """
+    Perform a check-in for `ticket`.
+    """
     checkin_log = CheckInLog.objects.create(
         ticket=ticket,
         event=ticket.event,
@@ -551,12 +554,17 @@ class LoginView(APIView):
             )
 
         if user is None:
+            # Constant-time comparison against a dummy hash so that
+            # "no user with that email" and "wrong password" take the
+            # same wall time.
             check_password(password, _DUMMY_PASSWORD_HASH)
-            AxesProxyHandler.user_login_failed(
-                sender=None,
-                credentials={'username': email, 'ip_address': client_ip},
-                request=raw_request,
-            )
+
+            # ✅ FIX [#8]: `AxesStandaloneBackend` (first in
+            # AUTHENTICATION_BACKENDS) already calls `user_login_failed`
+            # when `authenticate()` fails. The explicit call here was a
+            # SECOND registration, which double-counted each failed
+            # attempt toward AXES_FAILURE_LIMIT. Removed.
+
             return Response(
                 {'detail': 'Invalid credentials'},
                 status=status.HTTP_401_UNAUTHORIZED,
@@ -580,12 +588,11 @@ class LoginView(APIView):
                     BlacklistedToken.objects.get_or_create(token=outstanding)
 
         refresh = RefreshToken.for_user(user)
-        role = get_user_role(user)
+        role = effective_role_label(user)
 
         # `org_ids` in the JWT claim is the set of orgs the user can
-        # OPERATE (scan for). Every frontend / mobile client uses this
-        # to pre-populate org pickers. Do not change this to manager-only
-        # IDs — scanner operators need to see their org in the list.
+        # OPERATE (scan for). Do not change this to manager-only IDs —
+        # scanner operators need to see their org in the list.
         operate_org_ids = [str(oid) for oid in user_operator_org_ids(user)]
         manager_org_ids = [str(oid) for oid in user_org_ids(user)]
 
@@ -594,25 +601,10 @@ class LoginView(APIView):
         refresh['org_ids'] = operate_org_ids
         refresh['managed_org_ids'] = manager_org_ids
 
-        profile_summary = _user_profile_summary(user)
-
         return Response({
             'access': str(refresh.access_token),
             'refresh': str(refresh),
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'name': user.get_full_name() or user.username,
-                'role': role,
-                'is_superuser': user.is_superuser,
-                'is_staff': user.is_staff,
-                'org_ids': operate_org_ids,
-                'managed_org_ids': manager_org_ids,
-                **profile_summary,
-            },
+            'user': _build_user_payload(user),
         })
 
 
@@ -620,25 +612,7 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        role = get_user_role(user)
-        profile_summary = _user_profile_summary(user)
-
-        return Response({
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'name': user.get_full_name() or user.username,
-            'role': role,
-            'is_superuser': user.is_superuser,
-            'is_staff': user.is_staff,
-            'is_active': user.is_active,
-            'org_ids': [str(oid) for oid in user_operator_org_ids(user)],
-            'managed_org_ids': [str(oid) for oid in user_org_ids(user)],
-            **profile_summary,
-        })
+        return Response(_build_user_payload(request.user))
 
 
 # ===========================================================================
@@ -670,31 +644,22 @@ def checkin_verify(request):
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        # ✅ FIX [#5]: align with `checkin_perform` — a bad signature is
+        # a 400, not a 200 with `valid: false`.
         return Response(
-            {'valid': False, 'detail': 'Signature mismatch.'},
-            status=status.HTTP_200_OK,
+            {
+                'valid': False,
+                'detail': 'Signature mismatch.',
+                'code': 'SIGNATURE_MISMATCH',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
-    ticket = (
-        Ticket.objects
-        .select_related('event', 'tier', 'session', 'event__organization')
-        .filter(unique_code=payload['code'])
-        .first()
-    )
+    ticket = _resolve_ticket_for_scan(request.user, payload['code'])
     if ticket is None:
         return Response(
             {'valid': False, 'detail': 'Ticket not found.'},
             status=status.HTTP_200_OK,
-        )
-
-    if not _user_can_manage_event(request.user, ticket.event):
-        return Response(
-            {
-                'valid': False,
-                'code': 'PERMISSION_DENIED',
-                'detail': 'You do not have permission to verify this ticket.',
-            },
-            status=status.HTTP_403_FORBIDDEN,
         )
 
     rejection = _rejection_for_ticket(ticket)
@@ -750,20 +715,18 @@ def checkin_perform(request):
         ticket = (
             Ticket.objects
             .select_for_update(of=('self',))
-            .select_related('event', 'tier', 'session', 'booking', 'event__organization')
+            .select_related(
+                'event', 'event__organization',
+                'tier', 'session', 'booking',
+            )
             .filter(unique_code=payload['code'])
             .first()
         )
-        if ticket is None:
+
+        if ticket is None or not _user_can_manage_event(request.user, ticket.event):
             return Response(
                 {'detail': 'Ticket not found.'},
                 status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if not _user_can_manage_event(request.user, ticket.event):
-            return Response(
-                {'detail': 'You do not have permission to check in this ticket.'},
-                status=status.HTTP_403_FORBIDDEN,
             )
 
         rejection = _rejection_for_ticket(ticket)
@@ -820,30 +783,18 @@ def checkin_manual_verify(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    ticket = (
-        Ticket.objects
-        .select_related('event', 'tier', 'session', 'booking', 'event__organization')
-        .filter(unique_code=code)
-        .first()
-    )
+    ticket = _resolve_ticket_for_scan(request.user, code)
     if ticket is None:
+        # ✅ FIX [#1]: match `checkin_verify` — return 200 with
+        # `valid: false` rather than 404, so the manual and camera
+        # endpoints share the same enumeration-safe contract.
         return Response(
             {
                 'valid': False,
                 'detail': 'Ticket not found',
                 'code': 'TICKET_NOT_FOUND',
             },
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if not _user_can_manage_event(request.user, ticket.event):
-        return Response(
-            {
-                'valid': False,
-                'detail': 'You do not have permission to verify this ticket.',
-                'code': 'PERMISSION_DENIED',
-            },
-            status=status.HTTP_403_FORBIDDEN,
+            status=status.HTTP_200_OK,
         )
 
     rejection = _rejection_for_ticket(ticket)
@@ -884,26 +835,24 @@ def checkin_manual(request):
     device_id = (request.data.get('device_id') or 'admin-panel')[:255]
 
     with transaction.atomic():
+        # ✅ FIX [#2]: lock only the ticket row (not the joined event /
+        # session / booking) to match `checkin_perform` and avoid
+        # deadlocks against BookingViewSet writes.
         ticket = (
             Ticket.objects
-            .select_for_update()
-            .select_related('event', 'tier', 'session', 'booking', 'event__organization')
+            .select_for_update(of=('self',))
+            .select_related(
+                'event', 'event__organization',
+                'tier', 'session', 'booking',
+            )
             .filter(unique_code=code)
             .first()
         )
-        if ticket is None:
+
+        if ticket is None or not _user_can_manage_event(request.user, ticket.event):
             return Response(
                 {'detail': 'Ticket not found.', 'code': 'TICKET_NOT_FOUND'},
                 status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if not _user_can_manage_event(request.user, ticket.event):
-            return Response(
-                {
-                    'detail': 'You do not have permission to check in this ticket.',
-                    'code': 'PERMISSION_DENIED',
-                },
-                status=status.HTTP_403_FORBIDDEN,
             )
 
         rejection = _rejection_for_ticket(ticket)
@@ -942,12 +891,9 @@ def checkin_history(request):
     query = CheckInLog.objects.all()
 
     if not is_platform_admin(user):
-        # STAFF may view history for their org. This matches the matrix
-        # §4 ("Tenant admin: member list endpoint" is separate; §1.6
-        # grants STAFF read-only visibility on org bookings + check-in
-        # history). Do NOT narrow to user_org_ids here — that would
-        # lock scanner operators out of the page they use to review
-        # their own scans.
+        # STAFF may view history for their org. Do NOT narrow to
+        # user_org_ids here — that would lock scanner operators out of
+        # the page they use to review their own scans.
         org_ids = user_operator_org_ids(user)
         query = query.filter(event__organization_id__in=org_ids)
 
@@ -976,6 +922,9 @@ def checkin_history(request):
             'ticket_code': ticket_code,
             'scanned_at': scanned_iso,
             'scanner': scanner,
+            # ✅ FIX [#3]: expose stable IDs for the audit trail.
+            'scanner_user_id': log.scanner_user_id,
+            'event_id': str(log.event_id) if log.event_id else None,
             'code': ticket_code,
             'checked_in_at': scanned_iso,
             'attendee_name': attendee,
@@ -992,16 +941,21 @@ def checkin_history(request):
 # Cron endpoints
 # ===========================================================================
 
-import hmac as _hmac
+# ✅ FIX [#19]: use the top-level `hmac` import; drop the redundant alias.
+# (The top-level `import hmac` is already in scope.)
 
 
 def _cron_secret_matches(provided: str) -> bool:
     expected = os.environ.get('CRON_SECRET_TOKEN', '').strip()
     if not expected:
+        logger.error(
+            "🚨 CRON_SECRET_TOKEN is not set — all cron calls will be "
+            "rejected. Set it in the environment."
+        )
         return False
     if not provided:
         return False
-    return _hmac.compare_digest(expected, provided)
+    return hmac.compare_digest(expected, provided)
 
 
 @csrf_exempt
@@ -1009,7 +963,6 @@ def _cron_secret_matches(provided: str) -> bool:
 def run_scheduled_tasks(request):
     provided = (
         request.headers.get('X-Cron-Token')
-        or request.headers.get('X-CRON-TOKEN')
         or ''
     )
     if not provided:
@@ -1045,10 +998,10 @@ def run_scheduled_tasks(request):
             'sold_out': sold_out_result,
             'token_flush': token_flush_result,
         })
-    except Exception as exc:
+    except Exception:
         logger.exception('Cron task run failed')
         return JsonResponse(
-            {'error': 'Task execution failed', 'detail': str(exc)},
+            {'error': 'Task execution failed. See server logs.'},
             status=500,
         )
 
@@ -1071,35 +1024,76 @@ class EventSeatMapViewSet(viewsets.ViewSet):
     """
     API Endpoint to fetch the interactive seat map for an event.
     URL: /api/events/{event_id}/seat-map/
+
+    Access model
+    ------------
+      • accept anonymous callers only for events visible to anonymous
+        users (public, active, not members-only)
+      • accept authenticated callers for any event in `visible_events(user)`
+      • reject everything else with a uniform 404
     """
-    permission_classes = [AllowAny] # Allow guests to view the seat map
+    permission_classes = [AllowAny]
+    throttle_scope = 'public_read'
 
     def list(self, request, event_pk=None):
-        event = get_object_or_404(Event, id=event_pk)
-        
-        if not hasattr(event.venue, 'layout'):
+        try:
+            event_uuid = _uuid.UUID(str(event_pk))
+        except (ValueError, TypeError, AttributeError):
             return Response(
-                {'detail': 'No seating layout configured for this venue.'}, 
-                status=status.HTTP_404_NOT_FOUND
+                {'detail': 'Event not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        event = (
+            visible_events(request.user)
+            .select_related('venue', 'organization')
+            .filter(id=event_uuid)
+            .first()
+        )
+        if event is None:
+            return Response(
+                {'detail': 'Event not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from .services.membership_access import can_access_event
+        if not can_access_event(request.user, event):
+            return Response(
+                {'detail': 'Event not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not event.venue_id or not hasattr(event.venue, 'layout'):
+            return Response(
+                {'detail': 'No seating layout configured for this venue.'},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         layout = event.venue.layout
         session_id = request.query_params.get('session')
-        
-        # Fetch all active seats for this layout
-        seats_qs = layout.seats.filter(is_active=True).select_related('category')
-        
-        # Fetch real-time reservations for this event (and session if applicable)
+
+        seats_qs = (
+            layout.seats
+            .filter(is_active=True)
+            .select_related('category')
+        )
+
         reservations_qs = SeatReservation.objects.filter(event=event)
         if session_id:
             reservations_qs = reservations_qs.filter(session_id=session_id)
-            
-        # Filter out expired holds (e.g., 15-minute cart timeout)
+
         now = timezone.now()
-        reservations_qs = reservations_qs.exclude(status='held', held_until__lt=now)
-        
-        # Map reservations to a dictionary for fast lookup
-        reservation_map = {str(res.seat_id): res.status for res in reservations_qs}
+        reservations_qs = (
+            reservations_qs
+            .filter(
+                Q(booking__status__in=_LIVE_SEAT_RESERVATION_STATUSES)
+                | Q(status='held', held_until__gt=now)
+            )
+        )
+
+        reservation_map = {
+            str(res.seat_id): res.status for res in reservations_qs
+        }
 
         seats_data = []
         for seat in seats_qs:
@@ -1113,12 +1107,12 @@ class EventSeatMapViewSet(viewsets.ViewSet):
                 'category_name': seat.category.name if seat.category else 'General',
                 'category_color': seat.category.hex_color if seat.category else '#4CAF50',
                 'price': float(seat.category.price) if seat.category else 0.00,
-                'status': reservation_map.get(str(seat.id), 'available')
+                'status': reservation_map.get(str(seat.id), 'available'),
             })
 
         return Response({
             'canvas_width': layout.canvas_width,
             'canvas_height': layout.canvas_height,
             'background_image': layout.background_image,
-            'seats': seats_data
+            'seats': seats_data,
         })

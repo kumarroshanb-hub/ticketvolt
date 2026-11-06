@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+// frontend/src/pages/Organizations/TeamMembers.js
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
+import { useRole } from '../../context/RoleContext';               // ✅ FIX [#4]
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -10,47 +12,73 @@ import {
     CircularProgress, MenuItem, useMediaQuery, useTheme,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
 } from '@mui/material';
-import { PersonAdd as PersonAddIcon, Close as CloseIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import {
+    PersonAdd as PersonAddIcon,
+    Close as CloseIcon,
+    Delete as DeleteIcon,
+} from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
+import { MEMBERSHIP_ROLES } from '../../constants';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
 
+const formatApiError = (data, fallback = 'Request failed') => {
+    if (!data) return fallback;
+    if (typeof data === 'string') return data;
+    if (Array.isArray(data)) return data.map(String).join('; ');
+    if (typeof data === 'object') {
+        const firstKey = Object.keys(data)[0];
+        if (!firstKey) return fallback;
+        const firstVal = data[firstKey];
+        if (Array.isArray(firstVal)) return `${firstKey}: ${firstVal[0]}`;
+        return `${firstKey}: ${firstVal}`;
+    }
+    return fallback;
+};
+
 const TeamMembers = () => {
-    const { orgId } = useParams(); // Assuming route is /app/organizations/:orgId/team
+    const { orgId } = useParams();
     const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-    const { user } = useAuth();
+    useAuth();
+
+    // ✅ FIX [#4]: the caller's *org* role comes from RoleContext,
+    // not from user.role (which is the platform role).
+    const { hasOrgRole, isSuperAdmin } = useRole();
+    const canRemoveMembers =
+        isSuperAdmin || hasOrgRole(MEMBERSHIP_ROLES.OWNER);
 
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(true);
-    
-    // Invite Modal State
+    const [removingId, setRemovingId] = useState(null);
+
+    // Invite modal state
     const [openInvite, setOpenInvite] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
-    const [inviteRole, setInviteRole] = useState('member');
+    // ✅ FIX [#5]: default MEMBER. OWNER is not a valid invite role.
+    const [inviteRole, setInviteRole] = useState(MEMBERSHIP_ROLES.MEMBER);
     const [validFrom, setValidFrom] = useState(new Date().toISOString().split('T')[0]);
     const [validUntil, setValidUntil] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Fetch current members
-    useEffect(() => {
-        const fetchMembers = async () => {
-            try {
-                // Adjust this endpoint to match your actual backend route for listing org members
-                const response = await api.get(`/organizations/${orgId}/members/`);
-                setMembers(response.data.results || response.data || []);
-            } catch (err) {
-                console.error('Failed to fetch members:', err);
-                // Fallback for demo purposes if endpoint isn't ready yet
-                setMembers([]);
-            } finally {
-                setLoading(false);
-            }
-        };
-        if (orgId) fetchMembers();
+    // ✅ FIX [#4-adjacent]: fetch is reusable so mutations can refresh.
+    const fetchMembers = useCallback(async () => {
+        if (!orgId) return;
+        setLoading(true);
+        try {
+            const response = await api.get(`/organizations/${orgId}/members/`);
+            setMembers(response.data.results || response.data || []);
+        } catch (err) {
+            console.error('Failed to fetch members:', err);
+            setMembers([]);
+        } finally {
+            setLoading(false);
+        }
     }, [orgId]);
+
+    useEffect(() => { fetchMembers(); }, [fetchMembers]);
 
     const handleInvite = async (e) => {
         e.preventDefault();
@@ -69,27 +97,49 @@ const TeamMembers = () => {
             };
 
             await api.post(`/organizations/${orgId}/invite/`, payload);
-            
+
             toast.success(t('team.inviteSent', { email: payload.email }));
             setOpenInvite(false);
             setInviteEmail('');
             setValidUntil('');
-            // Optionally refresh member list if your backend returns pending invites in the same list
+            // Refresh in case the invitee accepted in another tab, or the
+            // backend has started returning pending invites inline.
+            await fetchMembers();
         } catch (err) {
-            const errorMsg = err.response?.data?.error || t('team.inviteFailed');
+            const errorMsg = formatApiError(err.response?.data, t('team.inviteFailed'));
             toast.error(errorMsg);
         } finally {
             setIsSubmitting(false);
         }
     };
 
+    // ✅ FIX [#4]: real removal handler wired to DELETE members/<user_id>/.
+    const handleRemoveMember = async (member) => {
+        const label = member.name || member.email || 'this member';
+        if (!window.confirm(`Remove ${label} from this organization?`)) return;
+        setRemovingId(member.user_id);
+        try {
+            await api.delete(
+                `/organizations/${orgId}/members/${member.user_id}/`
+            );
+            toast.success(`${label} removed from the organization.`);
+            await fetchMembers();
+        } catch (err) {
+            toast.error(
+                formatApiError(err.response?.data, 'Failed to remove member')
+            );
+        } finally {
+            setRemovingId(null);
+        }
+    };
+
     const getRoleColor = (role) => {
         switch (role) {
-            case 'owner': return C.warning;
-            case 'admin': return C.info;
-            case 'staff': return C.secondary;
+            case 'owner':  return C.warning;
+            case 'admin':  return C.info;
+            case 'staff':  return C.secondary;
             case 'member': return C.primary;
-            default: return C.textSecondary;
+            default:       return C.textSecondary;
         }
     };
 
@@ -141,62 +191,86 @@ const TeamMembers = () => {
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            members.map((member) => (
-                                <TableRow key={member.id} hover>
-                                    <TableCell>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                            <Box sx={{ width: 36, height: 36, borderRadius: '50%', bgcolor: `${getRoleColor(member.role)}20`, color: getRoleColor(member.role), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                                                {member.name?.charAt(0).toUpperCase() || member.email?.charAt(0).toUpperCase()}
+                            members.map((member) => {
+                                const memberLabel =
+                                    member.name
+                                    || member.full_name
+                                    || member.username
+                                    || member.email
+                                    || '?';
+                                return (
+                                    <TableRow key={member.id} hover>
+                                        <TableCell>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                                <Box sx={{
+                                                    width: 36, height: 36, borderRadius: '50%',
+                                                    bgcolor: `${getRoleColor(member.role)}20`,
+                                                    color: getRoleColor(member.role),
+                                                    display: 'flex', alignItems: 'center',
+                                                    justifyContent: 'center', fontWeight: 700,
+                                                }}>
+                                                    {String(memberLabel).charAt(0).toUpperCase()}
+                                                </Box>
+                                                <Box>
+                                                    <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
+                                                        {member.name || member.full_name || member.email}
+                                                    </Typography>
+                                                    <Typography variant="caption" sx={{ color: C.textSecondary }}>
+                                                        {member.email}
+                                                    </Typography>
+                                                </Box>
                                             </Box>
-                                            <Box>
-                                                <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>{member.name || member.email}</Typography>
-                                                <Typography variant="caption" sx={{ color: C.textSecondary }}>{member.email}</Typography>
-                                            </Box>
-                                        </Box>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Chip 
-                                            label={t(`roles.${member.role}`)} 
-                                            size="small" 
-                                            sx={{ 
-                                                bgcolor: `${getRoleColor(member.role)}15`, 
-                                                color: getRoleColor(member.role),
-                                                fontWeight: 600,
-                                                textTransform: 'capitalize'
-                                            }} 
-                                        />
-                                    </TableCell>
-                                    <TableCell>
-                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
-                                            {member.valid_from ? new Date(member.valid_from).toLocaleDateString() : '—'} 
-                                            {' → '} 
-                                            {member.valid_until ? new Date(member.valid_until).toLocaleDateString() : t('team.indefinite')}
-                                        </Typography>
-                                    </TableCell>
-                                    <TableCell align="right">
-                                        {member.role !== 'owner' && user?.role === 'owner' && (
-                                            <IconButton size="small" sx={{ color: C.error }}>
-                                                <DeleteIcon fontSize="small" />
-                                            </IconButton>
-                                        )}
-                                    </TableCell>
-                                </TableRow>
-                            ))
+                                        </TableCell>
+                                        <TableCell>
+                                            <Chip
+                                                label={t(`roles.org_${member.role}`, { defaultValue: member.role })}
+                                                size="small"
+                                                sx={{
+                                                    bgcolor: `${getRoleColor(member.role)}15`,
+                                                    color: getRoleColor(member.role),
+                                                    fontWeight: 600,
+                                                    textTransform: 'capitalize',
+                                                }}
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            <Typography variant="body2" sx={{ color: C.textPrimary }}>
+                                                {member.valid_from ? new Date(member.valid_from).toLocaleDateString() : '—'}
+                                                {' → '}
+                                                {member.valid_until ? new Date(member.valid_until).toLocaleDateString() : t('team.indefinite')}
+                                            </Typography>
+                                        </TableCell>
+                                        <TableCell align="right">
+                                            {member.role !== 'owner' && canRemoveMembers && (
+                                                <IconButton
+                                                    size="small"
+                                                    sx={{ color: C.error }}
+                                                    onClick={() => handleRemoveMember(member)}
+                                                    disabled={removingId === member.user_id}
+                                                    title={`Remove ${member.name || member.email}`}
+                                                >
+                                                    {removingId === member.user_id
+                                                        ? <CircularProgress size={16} sx={{ color: C.error }} />
+                                                        : <DeleteIcon fontSize="small" />}
+                                                </IconButton>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })
                         )}
                     </TableBody>
                 </Table>
             </TableContainer>
 
-            {/* ==========================================
-                INVITE MEMBER MODAL
-               ========================================== */}
-            <Dialog 
-                open={openInvite} 
+            {/* Invite dialog */}
+            <Dialog
+                open={openInvite}
                 onClose={() => !isSubmitting && setOpenInvite(false)}
                 maxWidth="sm"
                 fullWidth
                 PaperProps={{
-                    sx: { bgcolor: C.bgCard, border: `1px solid ${C.borderLight}`, borderRadius: 3 }
+                    sx: { bgcolor: C.bgCard, border: `1px solid ${C.borderLight}`, borderRadius: 3 },
                 }}
             >
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: C.textPrimary, fontWeight: 700 }}>
@@ -205,7 +279,7 @@ const TeamMembers = () => {
                         <CloseIcon />
                     </IconButton>
                 </DialogTitle>
-                
+
                 <form onSubmit={handleInvite}>
                     <DialogContent sx={{ pt: 1 }}>
                         <Typography variant="body2" sx={{ color: C.textSecondary, mb: 3 }}>
@@ -222,6 +296,7 @@ const TeamMembers = () => {
                             sx={{ mb: 2.5, '& .MuiOutlinedInput-root': { bgcolor: C.bgInput } }}
                         />
 
+                        {/* ✅ FIX [#5]: OWNER removed — backend rejects it. */}
                         <TextField
                             fullWidth
                             select
@@ -229,11 +304,11 @@ const TeamMembers = () => {
                             value={inviteRole}
                             onChange={(e) => setInviteRole(e.target.value)}
                             sx={{ mb: 2.5, '& .MuiOutlinedInput-root': { bgcolor: C.bgInput } }}
+                            helperText="Ownership transfers only via the Organizations page (Transfer Ownership / Assign Owner)."
                         >
-                            <MenuItem value="member">{t('roles.member')}</MenuItem>
-                            <MenuItem value="staff">{t('roles.staff')}</MenuItem>
-                            <MenuItem value="admin">{t('roles.admin')}</MenuItem>
-                            {user?.role === 'owner' && <MenuItem value="owner">{t('roles.owner')}</MenuItem>}
+                            <MenuItem value={MEMBERSHIP_ROLES.MEMBER}>{t('roles.org_member')}</MenuItem>
+                            <MenuItem value={MEMBERSHIP_ROLES.STAFF}>{t('roles.org_staff')}</MenuItem>
+                            <MenuItem value={MEMBERSHIP_ROLES.ADMIN}>{t('roles.org_admin')}</MenuItem>
                         </TextField>
 
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -260,23 +335,23 @@ const TeamMembers = () => {
                     </DialogContent>
 
                     <DialogActions sx={{ p: 2.5, pt: 0 }}>
-                        <Button 
-                            onClick={() => setOpenInvite(false)} 
+                        <Button
+                            onClick={() => setOpenInvite(false)}
                             disabled={isSubmitting}
                             sx={{ color: C.textSecondary, textTransform: 'none' }}
                         >
                             {t('common.cancel')}
                         </Button>
-                        <Button 
-                            type="submit" 
-                            variant="contained" 
+                        <Button
+                            type="submit"
+                            variant="contained"
                             disabled={isSubmitting || !inviteEmail}
-                            sx={{ 
-                                background: C.primaryGradient, 
-                                color: C.textInverse, 
-                                textTransform: 'none', 
+                            sx={{
+                                background: C.primaryGradient,
+                                color: C.textInverse,
+                                textTransform: 'none',
                                 fontWeight: 600,
-                                minWidth: 120
+                                minWidth: 120,
                             }}
                         >
                             {isSubmitting ? <CircularProgress size={20} sx={{ color: C.textInverse }} /> : t('team.sendInvite')}

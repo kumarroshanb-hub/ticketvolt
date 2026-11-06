@@ -3,25 +3,23 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.exceptions import PermissionDenied, NotFound
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import F, Q, Count, Case, When, Value, IntegerField, Sum
 from django.contrib.auth.models import User
-from django.core.mail import send_mail, EmailMultiAlternatives
-from django.core.exceptions import ValidationError, PermissionDenied
+from django.core.exceptions import ValidationError
 from django.conf import settings
-from django.template.loader import render_to_string
-from ..utils.money import format_money
-from django.utils.html import strip_tags
 import logging
-import uuid
-import qrcode
-from io import BytesIO
-import base64
 import json
 import re
 import copy
+import qrcode
+from io import BytesIO
+import base64
+
+from ..utils.money import format_money
 from ..services import booking_emails
 
 from ticket_bookings.models import (
@@ -66,6 +64,21 @@ from ..constants import BookingStatus, TicketStatus
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Tenant-safe event resolver
+# ---------------------------------------------------------------------------
+def _get_visible_event_or_404(user, event_id):
+    """
+    Resolve an Event that the caller is allowed to *see*.
+
+    Raises DRF ``NotFound`` (404) if the event does not exist OR is not
+    in ``visible_events(user)``. Never reveals which case applied.
+    """
+    qs = visible_events(user)
+    try:
+        return qs.get(id=event_id)
+    except Event.DoesNotExist:
+        raise NotFound("Event not found.")
 
 
 def _with_total_display(serializer_data, booking):
@@ -147,8 +160,53 @@ class BookingViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return [permissions.AllowAny()]
         if self.action in admin_actions:
-            return [IsBookingManager()]  # ✅ UPDATED NAME
+            return [IsBookingManager()]
         return [permissions.IsAuthenticated()]
+
+    # ============================================================
+    # FIX: split permission predicates.
+    #
+    # The original `_can_manage_booking` conflated "owns this booking"
+    # with "administers this booking". That let a customer pass through
+    # admin-only mutation endpoints (issue tickets, mark paid, cancel,
+    # refund, apply discount) for their OWN booking — bypassing the
+    # cancellation policy, DiscountUsage caps, and first-time-buyer
+    # gates. Below we separate read-visibility, admin-management, and
+    # the narrow customer self-service cancel path.
+    # ============================================================
+    def _can_view_booking(self, user, booking):
+        """Read access: booking owner, org operator (any tier), or platform admin."""
+        if is_platform_admin(user):
+            return True
+        if booking.user_id == user.id:
+            return True
+        if booking.event and can_operate_org(user, booking.event.organization):
+            return True
+        return False
+
+    def _can_manage_booking(self, user, booking):
+        """Administrative mutations: platform admin, or org OWNER/ADMIN.
+
+        Deliberately excludes `booking.user_id` — a customer is never an
+        administrator of their own booking.
+        """
+        if is_platform_admin(user):
+            return True
+        if booking.event and can_manage_org(user, booking.event.organization):
+            return True
+        return False
+
+    def _can_cancel_own_booking(self, user, booking):
+        """Customer self-service cancel/refund path (must route through policy)."""
+        return (
+            user.is_authenticated
+            and booking.user_id == user.id
+            and booking.status not in (
+                BookingStatus.CANCELLED,
+                BookingStatus.REFUNDED,
+                BookingStatus.COMPLETED,
+            )
+        )
 
     def _count_requested_tickets(self, data):
         def _len(x):
@@ -215,7 +273,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         return None, 'no-tiers-available'
 
     # ============================================================
-    # ✅ NEW: RESERVED SEATING HELPER — release locked seats
+    # Reserved seating helper — release locked seats
     # ============================================================
     def _release_reserved_seats(self, booking):
         """Delete SeatReservation rows tied to a booking so seats return to the pool."""
@@ -484,71 +542,75 @@ class BookingViewSet(viewsets.ModelViewSet):
         event_id = data.get('event') or data.get('event_id')
         event_obj = None
         if event_id:
-            try:
-                event_obj = Event.objects.get(id=event_id)
-                if event_obj.status not in ['active', 'published']:
-                    return Response(
-                        {'error': 'This event is not available for booking'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                if event_obj.end_date and event_obj.end_date < timezone.now():
-                    return Response(
-                        {'error': 'This event has already ended'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+            event_obj = _get_visible_event_or_404(request.user, event_id)
 
-                caller_can_operate = (
-                    request.user.is_authenticated
-                    and can_operate_org(request.user, event_obj.organization)
-                )
-                if not event_obj.is_public and not caller_can_operate:
-                    return Response(
-                        {'error': 'This event is not available for public booking'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                # ✅ MEMBERSHIP GATE
-                # Events flagged `members_only=True`, or gated by
-                # `min_membership_tier`, require the caller to hold an
-                # active paid membership in the event's organization.
-                # `can_access_event()` already whitelists:
-                #   • platform admins
-                #   • org managers (owner/admin)
-                # so staff, members, and anonymous users are the only
-                # callers that can be blocked here.
-                from ..services.membership_access import can_access_event
-                if not can_access_event(request.user, event_obj):
-                    return Response(
-                        {'error': 'This event is for members only.'},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-
-            except Event.DoesNotExist:
+            if event_obj.status not in ['active', 'published']:
                 return Response(
-                    {'error': 'Event not found'},
+                    {'error': 'This event is not available for booking'},
                     status=status.HTTP_400_BAD_REQUEST,
+                )
+            if event_obj.end_date and event_obj.end_date < timezone.now():
+                return Response(
+                    {'error': 'This event has already ended'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            caller_can_operate = (
+                request.user.is_authenticated
+                and can_operate_org(request.user, event_obj.organization)
+            )
+            if not event_obj.is_public and not caller_can_operate:
+                return Response(
+                    {'error': 'This event is not available for public booking'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ..services.membership_access import can_access_event
+            if not can_access_event(request.user, event_obj):
+                return Response(
+                    {'error': 'This event is for members only.'},
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
         if event_obj and event_obj.event_flow == 'free_registration':
             return self._create_free_registration(request, event_obj, data)
 
+        # FIX: scope tier/seat price lookup to the event to prevent a
+        # caller from using a foreign-event tier_id to distort total.
+        # The serializer later rejects foreign tiers fail-closed, but we
+        # no longer query across tenants at all.
         if 'total_amount' not in data or data['total_amount'] is None:
             tickets = data.get('tickets', [])
-            total = 0
+            total = 0.0
+            tier_ids = [t.get('tier_id') for t in tickets if t.get('tier_id')]
+
+            tiers_by_id = {}
+            if event_obj is not None and tier_ids:
+                tiers_by_id = {
+                    str(t.id): t
+                    for t in TicketTier.objects.filter(
+                        event=event_obj, id__in=tier_ids,
+                    )
+                }
+
             for ticket in tickets:
                 tier_id = ticket.get('tier_id')
                 if tier_id:
-                    try:
-                        tier = TicketTier.objects.get(id=tier_id)
+                    tier = tiers_by_id.get(str(tier_id))
+                    if tier is not None:
                         total += float(tier.price)
-                    except TicketTier.DoesNotExist:
-                        pass
+                    continue  # don't fall through to seat pricing
                 # ✅ RESERVED SEATING: price from seat category when no tier_id
                 seat_id = ticket.get('seat_id')
-                if not tier_id and seat_id:
+                if seat_id and event_obj is not None:
                     try:
                         from ..models_seating import Seat
-                        seat = Seat.objects.filter(id=seat_id).select_related('category').first()
+                        seat = (
+                            Seat.objects
+                            .filter(id=seat_id, layout__event=event_obj)
+                            .select_related('category')
+                            .first()
+                        )
                         if seat and seat.category:
                             total += float(seat.category.price)
                     except Exception:
@@ -582,8 +644,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 serializer.is_valid(raise_exception=True)
                 self.perform_create(serializer)
 
-                # ✅ RESERVED SEATING: lock the selected physical seats to this
-                # booking immediately so concurrent bookings cannot double-sell them.
                 try:
                     from ..models_seating import Seat, SeatReservation
                     booking_instance = serializer.instance
@@ -645,6 +705,9 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def cancel_tickets(self, request, pk=None):
         booking = self.get_object()
+        # get_object() already enforced _can_view_booking.
+        # Customers may cancel their own tickets — but only through the
+        # policy engine below (not via the admin cancel_booking helper).
         if booking.status in [BookingStatus.CANCELLED, BookingStatus.REFUNDED, BookingStatus.COMPLETED]:
             return Response({'error': f'Booking is already {booking.status}'}, status=status.HTTP_400_BAD_REQUEST)
         ticket_ids = request.data.get('ticket_ids') or []
@@ -739,7 +802,7 @@ class BookingViewSet(viewsets.ModelViewSet):
             'policy_name': (booking.cancellation_policy_snapshot or {}).get('policy_name'),
         })
 
-    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    @action(detail=False, methods=['post', 'get'])
     def validate_discount(self, request):
         from decimal import Decimal
         from ticket_bookings.models import Discount, DiscountUsage
@@ -752,24 +815,33 @@ class BookingViewSet(viewsets.ModelViewSet):
         if not code:
             return Response({'valid': False, 'reason': 'No code provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            discount = Discount.objects.get(code__iexact=code, is_active=True)
-        except Discount.DoesNotExist:
-            return Response({'valid': False, 'reason': 'Invalid or inactive code.'}, status=status.HTTP_200_OK)
+        # FIX: scope the discount lookup to the event's organization before
+        # branching. Cross-org codes and unknown codes return identical
+        # responses — no enumeration oracle.
+        generic_invalid = {'valid': False, 'reason': 'Invalid or inactive code.'}
 
-        event = None
         if event_id:
             try:
-                event = Event.objects.get(id=event_id)
-            except Event.DoesNotExist:
-                return Response({'valid': False, 'reason': 'Event not found.'}, status=status.HTTP_400_BAD_REQUEST)
-            # Cross-tenant safety: the discount must be from the same org
-            # as the event.
-            if discount.organization_id != event.organization_id:
-                return Response({'valid': False, 'reason': 'This code is not valid for this event.'}, status=status.HTTP_200_OK)
+                event = _get_visible_event_or_404(request.user, event_id)
+            except NotFound:
+                return Response(generic_invalid, status=status.HTTP_200_OK)
+
+            discount = Discount.objects.filter(
+                code__iexact=code,
+                is_active=True,
+                organization_id=event.organization_id,
+            ).first()
+            if discount is None:
+                return Response(generic_invalid, status=status.HTTP_200_OK)
+
             scoped_ids = list(discount.applicable_events.values_list('id', flat=True))
             if scoped_ids and event.id not in scoped_ids:
-                return Response({'valid': False, 'reason': 'This code is not valid for this event.'}, status=status.HTTP_200_OK)
+                return Response(generic_invalid, status=status.HTTP_200_OK)
+        else:
+            # No event context; fail closed unless a global discount exists.
+            discount = Discount.objects.filter(code__iexact=code, is_active=True).first()
+            if discount is None:
+                return Response(generic_invalid, status=status.HTTP_200_OK)
 
         now = timezone.now()
         if discount.valid_from and discount.valid_from > now:
@@ -856,16 +928,14 @@ class BookingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return visible_bookings(self.request.user)
 
+    # FIX: get_object uses _can_view_booking (read visibility), not
+    # _can_manage_booking. Individual mutation actions re-check the
+    # manager predicate.
     def get_object(self):
         obj = super().get_object()
         user = self.request.user
-        if is_platform_admin(user):
+        if self._can_view_booking(user, obj):
             return obj
-        if obj.user_id == user.id:
-            return obj
-        if obj.event and can_operate_org(user, obj.event.organization):
-            return obj
-        from rest_framework.exceptions import PermissionDenied
         raise PermissionDenied("You do not have permission to access this booking.")
 
     @action(detail=False, methods=['get'])
@@ -1012,7 +1082,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         if len(booking_ids) > MAX_BULK:
             return Response({'error': f'Maximum {MAX_BULK} bookings per bulk action.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Cross-tenant safety: only operate on bookings the caller can see.
         scoped = visible_bookings(request.user).filter(id__in=booking_ids)
         allowed_ids = {str(b.id) for b in scoped}
         permission_denied = [
@@ -1192,15 +1261,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                     })
         return {'valid': valid, 'invalid': invalid}
 
-    def _can_manage_booking(self, user, booking):
-        if is_platform_admin(user):
-            return True
-        if booking.user_id == user.id:
-            return True
-        if booking.event and can_manage_org(user, booking.event.organization):
-            return True
-        return False
-
     def _confirm_payment_for_booking(self, booking):
         if booking.status in ['paid', 'confirmed', 'completed']:
             return {'warning': f'Booking is already {booking.status}'}
@@ -1232,9 +1292,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         logger.info(f"✅ Booking {booking.booking_reference} status set to confirmed (payment + tickets)")
         tickets_result = self._issue_tickets_for_booking(booking)
         if 'error' in tickets_result:
-            # ✅ FIX: roll back BOTH status and paid_at so the booking stays
-            # eligible for Mark Payment / Confirm & Issue retries instead of
-            # getting stuck in validation_failed forever.
             booking.status = 'pending'
             booking.paid_at = None
             booking.save(update_fields=['status', 'paid_at', 'updated_at'])
@@ -1419,7 +1476,6 @@ class BookingViewSet(viewsets.ModelViewSet):
         valid_tiers = {str(t.id): t for t in TicketTier.objects.filter(event=booking.event)}
         tiers_in_order = list(valid_tiers.values())
 
-        # ✅ RESERVED SEATING support
         from ..models_seating import Seat, SeatReservation
         has_seat_tickets = any(isinstance(t, dict) and t.get('seat_id') for t in tickets_data)
 
@@ -1436,7 +1492,6 @@ class BookingViewSet(viewsets.ModelViewSet):
             attendee_email = (ticket_data.get('attendee_email') or booking.customer_email) if is_dict else booking.customer_email
             attendee_phone = (ticket_data.get('attendee_phone') or booking.customer_phone) if is_dict else booking.customer_phone
 
-            # ✅ 1) Resolve the physical seat (reserved seating)
             seat = None
             seat_id = ticket_data.get('seat_id') if is_dict else None
             if seat_id:
@@ -1446,7 +1501,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                     fallback_log.append({'index': idx, 'attendee_name': attendee_name, 'reason': 'seat-not-found', 'created': False})
                     continue
 
-            # ✅ 2) Resolve tier: explicit tier_id → mirror of seat category → legacy fallback
             tier = None
             fallback_reason = None
             raw_tier_id = str(ticket_data.get('tier_id') or '') if is_dict else ''
@@ -1457,8 +1511,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 cat_name = (seat.category.name or '').strip().lower()
                 tier = next((t for t in tiers_in_order if (t.name or '').strip().lower() == cat_name), None)
                 if tier is None:
-                    # Auto-create a mirror tier from the SeatCategory so reserved
-                    # seating events never need manual tier configuration.
                     seat_count = Seat.objects.filter(layout=seat.layout, category=seat.category).count()
                     tier, _created = TicketTier.objects.get_or_create(
                         event=booking.event,
@@ -1503,7 +1555,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                     attendee_email=attendee_email,
                     attendee_phone=attendee_phone,
                 )
-                # Attach the physical seat only if the Ticket.seat FK migration was applied
                 if seat is not None and hasattr(Ticket, 'seat'):
                     ticket_kwargs['seat'] = seat
 
@@ -1515,7 +1566,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 booking.event.total_tickets_sold += 1
                 booking.event.save(update_fields=['total_tickets_sold'])
 
-                # ✅ 3) Permanently lock the physical seat to this booking
                 if seat is not None:
                     SeatReservation.objects.update_or_create(
                         event=booking.event,
@@ -1655,6 +1705,7 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def issue_tickets(self, request, pk=None):
         booking = self.get_object()
+        # FIX: manager-only. The customer must not issue their own tickets.
         if not self._can_manage_booking(request.user, booking):
             return Response({'status': 'forbidden', 'error': 'You do not have permission to issue tickets for this booking'}, status=status.HTTP_403_FORBIDDEN)
         existing_tickets = booking.tickets.filter(status='active')
@@ -1771,10 +1822,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='cancelled')
         release_session_seats(booking, seats_to_release)
-        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
+        self._release_reserved_seats(booking)
         self._update_event_counts(booking.event)
         try:
-            email_result = booking_emails.send_cancellation_email(booking)
+            email_result = booking_emails.send_cancellation(booking)
         except Exception as e:
             logger.warning(f"⚠️ Cancellation email failed (not blocking): {str(e)}")
             email_result = {'success': False, 'error': str(e)}
@@ -1792,7 +1843,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='refunded')
         release_session_seats(booking, seats_to_release)
-        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
+        self._release_reserved_seats(booking)
         self._update_event_counts(booking.event)
         try:
             email_result = booking_emails.send_refund_email(booking)
@@ -1822,7 +1873,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def status_info(self, request, pk=None):
-        pass
+        return self.retrieve(request, pk=pk)
 
     @action(detail=True, methods=['post'])
     def confirm_payment_and_issue_tickets(self, request, pk=None):
@@ -1879,8 +1930,14 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def cancel_booking(self, request, pk=None):
         booking = self.get_object()
+        # FIX: manager-only. Customers must use cancel_tickets (policy engine).
         if not self._can_manage_booking(request.user, booking):
-            return Response({'error': 'You do not have permission to cancel this booking'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({
+                'error': 'Customers cannot cancel whole bookings via this endpoint. '
+                         'Use POST /bookings/{id}/cancel_tickets/ with the specific '
+                         'ticket_ids to apply the cancellation policy.',
+                'code': 'USE_CANCEL_TICKETS',
+            }, status=status.HTTP_403_FORBIDDEN)
         if booking.status in ['cancelled', 'refunded', 'completed']:
             return Response({'error': f'Booking is already {booking.status}'}, status=status.HTTP_400_BAD_REQUEST)
         event = booking.event
@@ -1889,7 +1946,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='cancelled')
         release_session_seats(booking, seats_to_release)
-        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
+        self._release_reserved_seats(booking)
         self._update_event_counts(event)
         try:
             email_result = booking_emails.send_cancellation(booking)
@@ -1901,13 +1958,18 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def refund_booking(self, request, pk=None):
         booking = self.get_object()
+        # FIX: manager-only. Customers route through cancel_tickets.
         if not self._can_manage_booking(request.user, booking):
-            return Response({'error': 'You do not have permission to refund this booking'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({
+                'error': 'Customers cannot refund whole bookings via this endpoint. '
+                         'Use POST /bookings/{id}/cancel_tickets/ with the specific '
+                         'ticket_ids to apply the refund policy.',
+                'code': 'USE_CANCEL_TICKETS',
+            }, status=status.HTTP_403_FORBIDDEN)
         if booking.status not in ['paid', 'confirmed']:
             return Response({'error': f'Only paid or confirmed bookings can be refunded. Current status: {booking.status}'}, status=status.HTTP_400_BAD_REQUEST)
         if booking.status == 'refunded':
-            return Response({'error': 'Booking is already refunded'}
-            if False else {'error': 'Booking is already refunded'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Booking is already refunded'}, status=status.HTTP_400_BAD_REQUEST)
         if booking.status == 'completed':
             return Response({'error': 'Cannot refund a completed booking (all tickets already used)'}, status=status.HTTP_400_BAD_REQUEST)
         event = booking.event
@@ -1916,7 +1978,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         booking.tickets.filter(status='active').update(status='refunded')
         release_session_seats(booking, seats_to_release)
-        self._release_reserved_seats(booking)  # ✅ FREE the physical seats again
+        self._release_reserved_seats(booking)
         self._update_event_counts(event)
         try:
             email_result = booking_emails.send_refund_email(booking)
@@ -1960,48 +2022,170 @@ class BookingViewSet(viewsets.ModelViewSet):
     def refund(self, request, pk=None):
         return self.refund_booking(request, pk)
 
+    # ============================================================
+    # FIX: apply_discount rewritten.
+    #
+    # Original problems:
+    #   • customer could apply a discount to their OWN booking,
+    #     bypassing checkout validate_discount, DiscountUsage caps,
+    #     and first_time_buyers_only;
+    #   • Discount.objects.get(code=...) was global before the org
+    #     check, leaking cross-org code existence via 404 vs. reason;
+    #   • no DiscountUsage row was created and used_count was
+    #     incremented without any per-user accounting.
+    #
+    # New behavior:
+    #   • managers-only;
+    #   • discount lookup scoped to the event's organization — foreign
+    #     codes look identical to unknown codes;
+    #   • full validation mirroring validate_discount;
+    #   • atomic DiscountUsage write + used_count increment under
+    #     select_for_update so caps can't be raced.
+    # ============================================================
     @action(detail=True, methods=['post'])
     def apply_discount(self, request, pk=None):
-        booking = self.get_object()
-        discount_code = request.data.get('discount_code')
-        user = request.user
-        if not is_platform_admin(user):
-            if not can_manage_org(user, booking.event.organization) and booking.user_id != user.id:
-                return Response({'error': 'You cannot apply discounts to this booking'}, status=status.HTTP_403_FORBIDDEN)
-        if not discount_code:
-            return Response({'error': 'discount_code is required'}, status=status.HTTP_400_BAD_REQUEST)
-        from ticket_bookings.models import Discount
-        try:
-            discount = Discount.objects.get(code=discount_code, is_active=True)
-            if not is_platform_admin(user):
-                if discount.organization_id != booking.event.organization_id:
-                    return Response({'error': 'Invalid discount code'}, status=status.HTTP_404_NOT_FOUND)
-            if discount.valid_from and discount.valid_from > timezone.now():
-                return Response({'error': 'Discount is not yet valid'}, status=status.HTTP_400_BAD_REQUEST)
-            if discount.valid_to and discount.valid_to < timezone.now():
-                return Response({'error': 'Discount has expired'}, status=status.HTTP_400_BAD_REQUEST)
-            if discount.max_uses and discount.used_count >= discount.max_uses:
-                return Response({'error': 'Discount has reached maximum uses'}, status=status.HTTP_400_BAD_REQUEST)
-            if discount.type == 'percentage':
-                discount_amount = (booking.total_amount * discount.value) / 100
-                if discount.max_discount and discount_amount > discount.max_discount:
-                    discount_amount = discount.max_discount
-            else:
-                discount_amount = discount.value
-                if discount_amount > booking.total_amount:
-                    discount_amount = booking.total_amount
-            booking.discount_applied = discount_amount
-            booking.discount_code = discount_code
-            booking.save()
-            discount.used_count += 1
-            discount.save()
-            return Response({'status': 'success', 'booking_id': str(booking.id), 'reference': booking.booking_reference, 'discount_applied': discount_amount, 'discount_code': discount_code, 'new_total': booking.total_amount - discount_amount}, status=status.HTTP_200_OK)
-        except Discount.DoesNotExist:
-            return Response({'error': 'Invalid discount code'}, status=status.HTTP_404_NOT_FOUND)
+        from decimal import Decimal
+        from ticket_bookings.models import Discount, DiscountUsage
 
+        booking = self.get_object()
+
+        if not self._can_manage_booking(request.user, booking):
+            return Response(
+                {'error': 'You cannot apply discounts to this booking'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        discount_code = (request.data.get('discount_code') or '').strip().upper()
+        if not discount_code:
+            return Response({'error': 'discount_code is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        event = booking.event
+        if event is None:
+            return Response({'error': 'Booking has no associated event'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        subtotal = Decimal(str(booking.total_amount or 0))
+        ticket_count = booking.tickets.filter(status='active').count()
+
+        discount = Discount.objects.filter(
+            code__iexact=discount_code,
+            is_active=True,
+            organization_id=event.organization_id,
+        ).first()
+        if discount is None:
+            return Response({'error': 'Invalid discount code'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        scoped_ids = list(discount.applicable_events.values_list('id', flat=True))
+        if scoped_ids and event.id not in scoped_ids:
+            return Response({'error': 'Invalid discount code'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        now = timezone.now()
+        if discount.valid_from and discount.valid_from > now:
+            return Response({'error': 'Discount is not yet valid'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if discount.valid_to and discount.valid_to < now:
+            return Response({'error': 'Discount has expired'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            # Re-read under lock so max_uses can't be raced.
+            discount = Discount.objects.select_for_update().get(pk=discount.pk)
+
+            if discount.max_uses and discount.used_count >= discount.max_uses:
+                return Response({'error': 'Discount has reached maximum uses'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            if discount.max_uses_per_user and booking.user_id:
+                used = DiscountUsage.objects.filter(
+                    discount=discount,
+                    user_id=booking.user_id,
+                    reversed_at__isnull=True,
+                ).count()
+                if used >= discount.max_uses_per_user:
+                    return Response({'error': 'This customer has already used this code'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+            if discount.first_time_buyers_only and booking.user_id:
+                prior = (
+                    Booking.objects
+                    .filter(user_id=booking.user_id, status__in=SOLD_BOOKING_STATUSES)
+                    .exclude(pk=booking.pk)
+                    .exists()
+                )
+                if prior:
+                    return Response({'error': 'This code is only for first-time buyers'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+            if discount.min_order_amount and subtotal < Decimal(str(discount.min_order_amount)):
+                return Response(
+                    {'error': f'Minimum order {format_money(discount.min_order_amount)} required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if discount.min_ticket_count and ticket_count < discount.min_ticket_count:
+                return Response(
+                    {'error': f'Minimum {discount.min_ticket_count} tickets required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if discount.type == 'percentage':
+                discount_amount = (subtotal * Decimal(str(discount.value))
+                                   / Decimal('100')).quantize(Decimal('0.01'))
+                if discount.max_discount and discount_amount > Decimal(str(discount.max_discount)):
+                    discount_amount = Decimal(str(discount.max_discount))
+            else:
+                discount_amount = Decimal(str(discount.value))
+                if discount_amount > subtotal:
+                    discount_amount = subtotal
+
+            # Reverse any prior application on this booking so usage is honest.
+            DiscountUsage.objects.filter(
+                discount=discount, booking=booking, reversed_at__isnull=True,
+            ).update(reversed_at=now)
+
+            booking.discount_applied = discount_amount
+            booking.discount_code = discount.code
+            booking.save(update_fields=['discount_applied', 'discount_code', 'updated_at'])
+
+            DiscountUsage.objects.create(
+                discount=discount,
+                user_id=booking.user_id,
+                booking=booking,
+                amount=discount_amount,
+            )
+            Discount.objects.filter(pk=discount.pk).update(
+                used_count=F('used_count') + 1,
+            )
+
+        return Response({
+            'status': 'success',
+            'booking_id': str(booking.id),
+            'reference': booking.booking_reference,
+            'discount_applied': float(discount_amount),
+            'discount_code': discount.code,
+            'new_total': float(booking.total_amount - discount_amount),
+        }, status=status.HTTP_200_OK)
+
+    # ============================================================
+    # FIX: resend_tickets requires owner OR org manager (no staff-only).
+    # ============================================================
     @action(detail=True, methods=['post'])
     def resend_tickets(self, request, pk=None):
         booking = self.get_object()
+
+        is_owner = booking.user_id == request.user.id
+        is_manager = (
+            booking.event is not None
+            and can_manage_org(request.user, booking.event.organization)
+        )
+        if not (is_owner or is_manager):
+            return Response(
+                {'error': 'You do not have permission to resend tickets for this booking.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         client_supplied_email = None
         if isinstance(request.data, dict):
             client_supplied_email = request.data.get('email')

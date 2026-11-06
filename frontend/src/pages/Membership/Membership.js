@@ -21,7 +21,6 @@ import {
 
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
-import api from '../../services/api';
 import membershipService from '../../services/membershipService';
 import { useAuth } from '../../context/AuthContext';
 import { useOrg } from '../../context/OrgContext';
@@ -52,6 +51,26 @@ const EMPTY_DEP = {
     relationship: 'other',
 };
 
+// ✅ FIX [RAZORPAY-SCRIPT]: load the SDK once via effect, not JSX.
+const loadRazorpayScript = () =>
+    new Promise((resolve) => {
+        if (window.Razorpay) return resolve(true);
+        const existing = document.querySelector(
+            'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
+        );
+        if (existing) {
+            existing.addEventListener('load', () => resolve(true));
+            existing.addEventListener('error', () => resolve(false));
+            return;
+        }
+        const s = document.createElement('script');
+        s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        s.async = true;
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.body.appendChild(s);
+    });
+
 const Membership = () => {
     const navigate = useNavigate();
     const theme = useTheme();
@@ -74,6 +93,11 @@ const Membership = () => {
     const [depTarget, setDepTarget] = useState(null);
     const [depForm, setDepForm] = useState(EMPTY_DEP);
     const [depSaving, setDepSaving] = useState(false);
+
+    // ✅ FIX [RAZORPAY-SCRIPT]: preload SDK once.
+    useEffect(() => {
+        loadRazorpayScript();
+    }, []);
 
     // --- Load ---
 
@@ -146,7 +170,7 @@ const Membership = () => {
             setProcessing(false);
         }
     };
-    
+
     const startOfflineRequest = async (tier) => {
         setProcessing(true);
         try {
@@ -173,8 +197,10 @@ const Membership = () => {
                 gateway: 'razorpay',
             });
 
-            if (!window.Razorpay) {
+            const loaded = await loadRazorpayScript();
+            if (!loaded || !window.Razorpay) {
                 toast.error('Razorpay SDK not loaded. Please refresh and try again.');
+                setProcessing(false);
                 return;
             }
 
@@ -192,6 +218,11 @@ const Membership = () => {
                         await loadAll();
                     } catch (err) {
                         toast.error(err.response?.data?.error || 'Payment verification failed.');
+                    } finally {
+                        // ✅ FIX [RAZORPAY-DOUBLE-CHARGE]:
+                        // Reset only AFTER the handler resolves, not in
+                        // the outer finally (which ran before payment).
+                        setProcessing(false);
                     }
                 },
                 modal: {
@@ -201,14 +232,28 @@ const Membership = () => {
                     },
                 },
             });
+            // ✅ NOTE: `processing` stays true until handler/ondismiss.
             rzp.open();
         } catch (err) {
             toast.error(err.response?.data?.error || 'Could not start checkout.');
-        } finally {
             setProcessing(false);
         }
+        // ✅ NOTE: no `finally { setProcessing(false) }` here — the
+        // handler and ondismiss callbacks own the flag.
     };
 
+    // ============================================================
+    // ✅ FIX [STRIPE-DEAD-ROUTE]:
+    // Old code redirected to /app/membership/stripe-checkout?mp=...
+    // which is not registered in App.js — users hit a 404 after
+    // their card was authorised. New behaviour:
+    //   1. createCheckout({gateway:'stripe'}) on the backend;
+    //   2. if the backend returns a hosted-checkout URL, redirect
+    //      there (real Stripe Checkout);
+    //   3. otherwise surface the client_secret and tell the user
+    //      the Stripe page isn't configured — do NOT navigate to a
+    //      route that doesn't exist.
+    // ============================================================
     const startStripeCheckout = async (tier) => {
         setProcessing(true);
         try {
@@ -216,16 +261,28 @@ const Membership = () => {
                 tierId: tier.id,
                 gateway: 'stripe',
             });
-            // Stripe uses a hosted payment page — redirect with the client_secret.
-            // In your real Stripe setup, you'd redirect to a dedicated page
-            // that uses Stripe.js Elements with order.client.client_secret.
-            // For v1, we surface the secret so the caller can drive their
-            // existing Stripe Elements page.
-            toast.info('Redirecting to Stripe…');
-            window.location.href = `/app/membership/stripe-checkout?mp=${order.membership_payment_id}`;
+
+            const hostedUrl =
+                order?.client?.url ||
+                order?.client?.checkout_url ||
+                order?.checkout_url;
+
+            if (hostedUrl) {
+                // Real Stripe Checkout Session — safe to redirect.
+                toast.info('Redirecting to Stripe…');
+                window.location.assign(hostedUrl);
+                return;
+            }
+
+            // Embedded Elements path — the app has no dedicated page
+            // for it yet, so be explicit rather than 404ing.
+            toast.error(
+                'Stripe embedded checkout is not enabled on this deployment. ' +
+                'Please use Razorpay or pay at the office.'
+            );
+            setProcessing(false);
         } catch (err) {
             toast.error(err.response?.data?.error || 'Could not start Stripe checkout.');
-        } finally {
             setProcessing(false);
         }
     };
@@ -296,6 +353,10 @@ const Membership = () => {
         [myMemberships],
     );
 
+    const canManageOrg = ['owner', 'admin', 'super_admin'].includes(
+        organizations.find((o) => String(o.id) === String(currentOrgId))?.role
+    );
+
     // --- Render ---
 
     if (loading) {
@@ -325,10 +386,7 @@ const Membership = () => {
                     >
                         Refresh
                     </OutlineButton>
-                    {/* ✅ NEW: quick jump to plan management, gated by role */}
-                    {['owner', 'admin', 'super_admin'].includes(
-                        organizations.find((o) => String(o.id) === String(currentOrgId))?.role
-                    ) && (
+                    {canManageOrg && (
                         <PrimaryButton
                             variant="contained"
                             startIcon={<AddIcon />}
@@ -337,9 +395,7 @@ const Membership = () => {
                             Manage Plans
                         </PrimaryButton>
                     )}
-                    {['owner', 'admin', 'super_admin'].includes(
-                        organizations.find((o) => String(o.id) === String(currentOrgId))?.role
-                    ) && (
+                    {canManageOrg && (
                         <OutlineButton
                             startIcon={<ReceiptIcon />}
                             onClick={() => navigate('/app/membership/review-offline')}
@@ -702,8 +758,8 @@ const Membership = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* Razorpay script loader */}
-            <script src="https://checkout.razorpay.com/v1/checkout.js" async />
+            {/* ✅ FIX [RAZORPAY-SCRIPT]: removed inline <script> from JSX.
+                SDK is loaded once via loadRazorpayScript() in useEffect. */}
         </PageContainer>
     );
 };

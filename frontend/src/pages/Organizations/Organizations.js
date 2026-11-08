@@ -1,6 +1,6 @@
 // frontend/src/pages/Organizations/Organizations.js
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';                       // ✅ FIX [#1]
+import { useNavigate } from 'react-router-dom';
 import {
     Box, Grid, Card, CardContent, Typography, Paper, Button,
     Dialog, DialogTitle, DialogContent, DialogActions, DialogContentText,
@@ -18,7 +18,7 @@ import {
     PersonAdd as PersonAddIcon,
     Close as CloseIcon,
     People as PeopleIcon,
-    AdminPanelSettings as AssignOwnerIcon,                             // ✅ FIX [#3]
+    AdminPanelSettings as AssignOwnerIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import api from '../../services/api';
@@ -72,7 +72,6 @@ const resolveOwnerIntent = ({ selectedOwner, isPlatformAdmin }) => {
     return { kind: 'self', label: 'You', email: null };
 };
 
-// Format a Django-style error body into a single human-readable string.
 const formatApiError = (data, fallback = 'Request failed') => {
     if (!data) return fallback;
     if (typeof data === 'string') return data;
@@ -90,10 +89,21 @@ const formatApiError = (data, fallback = 'Request failed') => {
     return fallback;
 };
 
+const displayName = (u) => {
+    if (!u) return '';
+    return (
+        u.name
+        || [u.first_name, u.last_name].filter(Boolean).join(' ').trim()
+        || u.username
+        || u.email
+        || ''
+    );
+};
+
 const Organizations = () => {
     const { organizations, loading, refresh, isPlatformAdmin } = useOrg();
     const { user: currentUser } = useAuth();
-    const navigate = useNavigate();                                    // ✅ FIX [#1]
+    const navigate = useNavigate();
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [stage, setStage] = useState(STAGE_FORM);
@@ -117,9 +127,7 @@ const Organizations = () => {
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [deleting, setDeleting] = useState(false);
 
-    // ✅ FIX [#2/#3]: Assign-owner dialog for unowned orgs.
-    // Transfer-ownership requires an *existing* owner (it demotes the old one).
-    // Unowned orgs need the `assign-owner` endpoint instead.
+    // Assign-owner dialog for unowned orgs.
     const [assignOpen, setAssignOpen] = useState(false);
     const [assignCandidates, setAssignCandidates] = useState([]);
     const [assignLoading, setAssignLoading] = useState(false);
@@ -140,6 +148,21 @@ const Organizations = () => {
     const canTransferOrg = (org) =>
         Boolean(org) && (isPlatformAdmin || org.role === 'owner');
     const canDeleteOrg = () => Boolean(isPlatformAdmin);
+
+    // Resolve the *live* owner label for an org. This is defensive: if the
+    // serializer returns `owner_username` we use it directly. If it doesn't
+    // (e.g. backend drops the field), we look up the freshest value from the
+    // `organizations` list that the OrgContext keeps in sync. Never returns
+    // null for an org that actually has an owner.
+    const getOrgOwnerUsername = useCallback(
+        (org) => {
+            if (!org) return null;
+            if (org.owner_username) return org.owner_username;
+            const live = organizations.find((o) => o.id === org.id);
+            return live?.owner_username || null;
+        },
+        [organizations],
+    );
 
     // -----------------------------------------------------------------------
     // Owner-candidate loader for the *create* dialog.
@@ -311,6 +334,16 @@ const Organizations = () => {
         setSelectedOrg(null);
     };
 
+    // Build the candidate list for transfer. We filter out anyone whose role
+    // is already `owner` (that is the current owner — they cannot transfer to
+    // themselves). The old code also compared `m.user_id !== selectedOrg.owner`
+    // but `owner` is not part of the serializer and comparing user_id against
+    // a username was always false. The `role !== 'owner'` check already
+    // excludes the current owner, so that extra clause is removed.
+    const transferCandidates = useMemo(() => {
+        return members.filter((m) => m.role !== 'owner' && m.is_active !== false);
+    }, [members]);
+
     const handleTransferOwnership = async () => {
         if (!selectedOrg || !selectedNewOwner) {
             toast.error('Please select a new owner.');
@@ -337,16 +370,10 @@ const Organizations = () => {
     };
 
     // -----------------------------------------------------------------------
-    // ✅ FIX [#2/#3]: Assign owner (for UNOWNED orgs).
+    // Assign owner (for UNOWNED orgs).
     //
     // Endpoint: POST /organizations/<id>/assign-owner/
     // Body:     { new_owner_user_id: <user_id> }
-    //
-    // Unlike transfer-ownership, this endpoint:
-    //   • refuses if any owner already exists (409),
-    //   • refuses to assign a superuser (400),
-    //   • creates the OWNER membership AND sets Organization.owner_id.
-    // So it is exactly what an unowned org needs.
     // -----------------------------------------------------------------------
     const handleOpenAssignOwner = async (org) => {
         setSelectedOrg(org);
@@ -529,7 +556,13 @@ const Organizations = () => {
             const response = await api.post('/organizations/', payload);
             const created = response.data || {};
 
-            const serverOwner = created.owner_username;
+            // Prefer the server-reported owner. If the backend assigned the
+            // owner we requested but the serializer hasn't caught up, fall
+            // back to the locally selected user so the toast is accurate.
+            const serverOwner = created.owner_username
+                || (isPlatformAdmin && selectedOwner
+                    ? (selectedOwner.username || selectedOwner.email || null)
+                    : null);
             const ownerLabel = serverOwner
                 ? serverOwner
                 : isPlatformAdmin
@@ -561,6 +594,11 @@ const Organizations = () => {
             </LoadingWrapper>
         );
     }
+
+    // The effective owner label for the currently selected org. Uses the
+    // live value from the organizations list when available, otherwise
+    // falls back to the snapshot on `selectedOrg`.
+    const selectedOrgOwner = getOrgOwnerUsername(selectedOrg);
 
     return (
         <PageContainer>
@@ -699,30 +737,21 @@ const Organizations = () => {
                     Manage Members
                 </MenuItem>
 
-                <MenuItem
-                    disabled={!selectedOrg || !canManageOrg(selectedOrg)}
-                    onClick={() => selectedOrg && handleOpenInvite(selectedOrg)}
-                >
-                    <PersonAddIcon fontSize="small" sx={{ mr: 1 }} />
-                    Invite Member
-                </MenuItem>
-
-                {/* ✅ FIX [#2/#3]: choose the right dialog based on current
-                    ownership. Unowned org → assign-owner. Owned org →
-                    transfer-ownership. Also update the label so the menu
-                    reflects what will actually happen. */}
+                {/* Choose the right dialog based on the *live* owner. Uses
+                    `selectedOrgOwner` so we don't rely solely on the stale
+                    snapshot if the backend serializer lags. */}
                 <MenuItem
                     disabled={!selectedOrg || !canManageOrg(selectedOrg)}
                     onClick={() => {
                         if (!selectedOrg) return;
-                        if (selectedOrg.owner_username) {
+                        if (selectedOrgOwner) {
                             handleOpenTransfer(selectedOrg);
                         } else {
                             handleOpenAssignOwner(selectedOrg);
                         }
                     }}
                 >
-                    {selectedOrg?.owner_username ? (
+                    {selectedOrgOwner ? (
                         <>
                             <TransferIcon fontSize="small" sx={{ mr: 1 }} />
                             Transfer Ownership
@@ -793,13 +822,7 @@ const Organizations = () => {
                                     groupBy={ownerGroupLabel}
                                     getOptionLabel={(option) => {
                                         if (!option) return '';
-                                        const display =
-                                            option.name
-                                            || [option.first_name, option.last_name]
-                                                .filter(Boolean).join(' ')
-                                                .trim()
-                                            || option.username
-                                            || option.email;
+                                        const display = displayName(option);
                                         return option.email ? `${display} (${option.email})` : display;
                                     }}
                                     isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
@@ -821,11 +844,7 @@ const Organizations = () => {
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                                                     <Box sx={{ flex: 1, minWidth: 0 }}>
                                                         <Typography variant="body2" noWrap>
-                                                            {option.name
-                                                                || [option.first_name, option.last_name]
-                                                                    .filter(Boolean).join(' ')
-                                                                    .trim()
-                                                                || option.username}
+                                                            {displayName(option)}
                                                         </Typography>
                                                         <Typography variant="caption" color="text.secondary" noWrap>
                                                             {option.email}
@@ -1070,11 +1089,7 @@ const Organizations = () => {
                         </Box>
                     ) : (
                         <Autocomplete
-                            options={members.filter((m) =>
-                                m.role !== 'owner'
-                                && m.is_active !== false
-                                && (!selectedOrg?.owner || m.user_id !== selectedOrg.owner)
-                            )}
+                            options={transferCandidates}
                             value={selectedNewOwner}
                             onChange={(_, value) => setSelectedNewOwner(value)}
                             getOptionLabel={(option) => {
@@ -1127,7 +1142,7 @@ const Organizations = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* ---- ✅ FIX [#3]: Assign-owner dialog (unowned org → first owner) ---- */}
+            {/* ---- Assign-owner dialog (unowned org → first owner) ---- */}
             <Dialog
                 open={assignOpen}
                 onClose={handleCloseAssign}
@@ -1153,13 +1168,7 @@ const Organizations = () => {
                             onChange={(_, value) => setSelectedAssignee(value)}
                             getOptionLabel={(option) => {
                                 if (!option) return '';
-                                const display =
-                                    option.name
-                                    || [option.first_name, option.last_name]
-                                        .filter(Boolean).join(' ').trim()
-                                    || option.username
-                                    || option.email
-                                    || '';
+                                const display = displayName(option);
                                 return option.email ? `${display} (${option.email})` : display;
                             }}
                             isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
@@ -1191,10 +1200,7 @@ const Organizations = () => {
                                 Selected owner
                             </Typography>
                             <Typography variant="body2">
-                                {selectedAssignee.name
-                                    || [selectedAssignee.first_name, selectedAssignee.last_name]
-                                        .filter(Boolean).join(' ').trim()
-                                    || selectedAssignee.username}
+                                {displayName(selectedAssignee)}
                             </Typography>
                             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                                 {selectedAssignee.email}

@@ -354,7 +354,6 @@ export const EventTemplateTypeUtils = {
 
 export const PLATFORM_ROLES = {
     SUPER_ADMIN: 'super_admin',  // platform operator — sees every tenant
-    STAFF:       'staff',        // platform staff — internal tooling only
     USER:        'user',         // the default for every signup
 };
 
@@ -367,7 +366,6 @@ export const MEMBERSHIP_ROLES = {
 
 export const PLATFORM_ROLE_LABELS = {
     [PLATFORM_ROLES.SUPER_ADMIN]: 'Platform Admin',
-    [PLATFORM_ROLES.STAFF]:       'Platform Staff',
     [PLATFORM_ROLES.USER]:        'Regular User',
 };
 
@@ -388,7 +386,6 @@ export const MEMBERSHIP_ROLE_HIERARCHY = {
 
 export const PLATFORM_ROLE_HIERARCHY = {
     [PLATFORM_ROLES.SUPER_ADMIN]: 2,
-    [PLATFORM_ROLES.STAFF]:       1,
     [PLATFORM_ROLES.USER]:        0,
 };
 
@@ -408,9 +405,7 @@ export const PLATFORM_ROLE_HIERARCHY = {
 export const ROLES = {
     // Platform roles
     SUPER_ADMIN: PLATFORM_ROLES.SUPER_ADMIN,
-    STAFF:       PLATFORM_ROLES.STAFF,
     USER:        PLATFORM_ROLES.USER,
-
     // Membership roles — DO NOT compare against User.role.
     OWNER:  MEMBERSHIP_ROLES.OWNER,
     ADMIN:  MEMBERSHIP_ROLES.ADMIN,
@@ -438,13 +433,11 @@ export const ROLE_HIERARCHY = {
 export const PlatformRoleUtils = {
     getLabel: (role) => PLATFORM_ROLE_LABELS[role] || 'Regular User',
     isSuperAdmin: (role) => role === PLATFORM_ROLES.SUPER_ADMIN,
-    isPlatformStaff: (role) => role === PLATFORM_ROLES.STAFF,
     isAtLeast: (role, minRole) =>
         (PLATFORM_ROLE_HIERARCHY[role] || 0) >= (PLATFORM_ROLE_HIERARCHY[minRole] || 0),
     // Platform admins bypass all org-membership checks.
     canAccessAdminApp: (role) =>
         role === PLATFORM_ROLES.SUPER_ADMIN ||
-        role === PLATFORM_ROLES.STAFF ||
         role === PLATFORM_ROLES.USER,   // every authenticated user can access /app
 };
 

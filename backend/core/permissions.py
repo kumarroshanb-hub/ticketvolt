@@ -20,10 +20,28 @@ Every predicate and permission class in this module DELEGATES to
 
 Do NOT re-implement membership queries here — that silently re-introduces
 the expired-membership bypass. Keep this file a thin delegation layer.
+
+IMPORTANT (2026-11-03 — B.2 consolidation):
+  • ``IsPlatformStaff`` is now **read-only** — platform staff may only
+    perform SAFE_METHODS; platform admins retain full access.
+  • The duplicated ``IsTenantManager`` semantics are replaced by four
+    explicit classes:
+        IsAnyOrgManager   — manager of ≥1 org   (list/create endpoints)
+        IsAnyOrgOperator  — operator of ≥1 org  (list endpoints)
+        IsOrgManager      — manager of obj's org (object-level)
+        IsOrgOperator     — operator of obj's org (object-level)
+  • Legacy names (``IsOrganizerOrAdmin``, ``IsOrganizerUser``,
+    ``IsTenantManager``, ``IsTenantOperator``) are kept as thin
+    deprecated shims that log a warning. Remove once every caller has
+    migrated.
 """
-from rest_framework.permissions import BasePermission
+import logging
+
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from ticket_bookings.services import tenancy
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +121,15 @@ def _resolve_org_from_obj(obj):
     return None
 
 
+def _deprecated(old_name, new_name):
+    """Emit a deprecation warning from a legacy permission class."""
+    logger.warning(
+        "permissions.%s is deprecated — use permissions.%s instead.",
+        old_name,
+        new_name,
+    )
+
+
 # ---------------------------------------------------------------------------
 # DRF Permission Classes — delegated, validity-aware
 # ---------------------------------------------------------------------------
@@ -116,42 +143,82 @@ class IsPlatformAdmin(BasePermission):
 
 class IsPlatformStaff(BasePermission):
     """
-    ✅ NEW: Allows platform staff (is_staff=True, not superuser) and
-    platform admins. For internal-tooling surfaces that should be
-    reachable by platform staff but must not be granted to tenant
-    admins.
+    ✅ B.2: Read-only cross-tenant support tier.
+
+    Platform admins (superusers) retain full access; platform staff
+    (``is_staff=True``, not superuser) are restricted to SAFE_METHODS.
+    Anonymous users are denied.
+
+    This lets support tooling read tenant data for diagnostics without
+    allowing platform staff to mutate tenant state.
     """
 
     def has_permission(self, request, view):
         user = request.user
-        return bool(
-            user and user.is_authenticated
-            and (tenancy.is_platform_admin(user) or tenancy.is_platform_staff(user))
-        )
+        if not (user and user.is_authenticated):
+            return False
+        if tenancy.is_platform_admin(user):
+            return True
+        if tenancy.is_platform_staff(user):
+            return request.method in SAFE_METHODS
+        return False
 
 
-class CanManageOrganization(BasePermission):
-    """Allows access to Owner and Admin of the organization."""
+# --- Object-level org permissions (the canonical pair) ---------------------
+
+class IsOrgManager(BasePermission):
+    """
+    Owner/Admin of the object's org.
+
+    Object-level only: use ``IsAnyOrgManager`` on list/create endpoints,
+    since object-level checks never run on list views.
+    """
 
     def has_object_permission(self, request, view, obj):
         org = _resolve_org_from_obj(obj)
-        if org is None:
-            return False
-        return tenancy.can_manage_org(request.user, org)
+        return org is not None and tenancy.can_manage_org(request.user, org)
 
 
-class CanOperateOrganization(BasePermission):
-    """Allows access to Owner, Admin, and Staff of the organization."""
+class IsOrgOperator(BasePermission):
+    """
+    Owner/Admin/Staff of the object's org.
+
+    Object-level only: use ``IsAnyOrgOperator`` on list endpoints.
+    """
 
     def has_object_permission(self, request, view, obj):
         org = _resolve_org_from_obj(obj)
-        if org is None:
-            return False
-        return tenancy.can_operate_org(request.user, org)
+        return org is not None and tenancy.can_operate_org(request.user, org)
+
+
+# --- Collection-level org permissions (list/create endpoints) --------------
+
+class IsAnyOrgManager(BasePermission):
+    """
+    Manager of ≥1 org. For list/create endpoints.
+
+    Viewsets that need to scope results by org should combine this with
+    a queryset filter using ``user_manager_org_ids(request.user)``.
+    """
+
+    def has_permission(self, request, view):
+        return tenancy.is_tenant_admin(request.user)
+
+
+class IsAnyOrgOperator(BasePermission):
+    """
+    Operator of ≥1 org. For list endpoints on scanner-related models.
+
+    Combines with ``user_operator_org_ids(request.user)`` for queryset
+    scoping.
+    """
+
+    def has_permission(self, request, view):
+        return tenancy.is_tenant_operator(request.user)
 
 
 class IsTenantMember(BasePermission):
-    """Allows access to any valid member of the organization."""
+    """Allows access to any valid member of the organization (object-level)."""
 
     def has_object_permission(self, request, view, obj):
         user = request.user
@@ -168,32 +235,76 @@ class IsTenantMember(BasePermission):
         return org_id in tenancy.user_membership_org_ids(user)
 
 
+# --- Backwards-compatible aliases (canonical names above) ------------------
+
+class CanManageOrganization(IsOrgManager):
+    """
+    DEPRECATED alias for ``IsOrgManager``.
+    Kept because existing viewsets import this name.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        _deprecated("CanManageOrganization", "IsOrgManager")
+        return super().has_object_permission(request, view, obj)
+
+
+class CanOperateOrganization(IsOrgOperator):
+    """
+    DEPRECATED alias for ``IsOrgOperator``.
+    Kept because existing viewsets import this name.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        _deprecated("CanOperateOrganization", "IsOrgOperator")
+        return super().has_object_permission(request, view, obj)
+
+
 # ---------------------------------------------------------------------------
 # Legacy aliases — names still imported by several viewsets/decorators.
-# They now resolve to the tenant-correct, validity-aware thing.
+#
+# These are thin deprecated shims. Every one of them now maps to the
+# tenant-correct, validity-aware class. Remove once callers migrate
+# (grep for each name across the codebase before deleting).
 # ---------------------------------------------------------------------------
 
-class IsOrganizerOrAdmin(CanManageOrganization):
-    """Legacy name. Now: manager of the target org, or platform admin."""
-    pass
+class IsOrganizerOrAdmin(IsOrgManager):
+    """Legacy name → ``IsOrgManager`` (manager of the target org)."""
+
+    def has_object_permission(self, request, view, obj):
+        _deprecated("IsOrganizerOrAdmin", "IsOrgManager")
+        return super().has_object_permission(request, view, obj)
 
 
-class IsOrganizerUser(CanOperateOrganization):
-    """Legacy name for operational access (Owner/Admin/Staff, any valid org)."""
+class IsOrganizerUser(IsAnyOrgOperator):
+    """
+    Legacy name → ``IsAnyOrgOperator``.
 
-    def has_permission(self, request, view):
-        return tenancy.is_tenant_operator(request.user)
-
-
-class IsTenantManager(BasePermission):
-    """Allows access to users who manage at least one organization."""
-
-    def has_permission(self, request, view):
-        return tenancy.is_tenant_admin(request.user)
-
-
-class IsTenantOperator(BasePermission):
-    """Allows access to users who operate at least one organization."""
+    Historically this granted operational access to any valid org the
+    user operates. Mapped to the any-org operator class, which matches
+    that historical ``has_permission`` behaviour.
+    """
 
     def has_permission(self, request, view):
-        return tenancy.is_tenant_operator(request.user)
+        _deprecated("IsOrganizerUser", "IsAnyOrgOperator")
+        return super().has_permission(request, view)
+
+
+class IsTenantManager(IsAnyOrgManager):
+    """
+    Legacy name → ``IsAnyOrgManager``.
+
+    ⚠️ NOTE: this was previously duplicated in ``template_api.py``.
+    Delete that copy and import from here instead.
+    """
+
+    def has_permission(self, request, view):
+        _deprecated("IsTenantManager", "IsAnyOrgManager")
+        return super().has_permission(request, view)
+
+
+class IsTenantOperator(IsAnyOrgOperator):
+    """Legacy name → ``IsAnyOrgOperator``."""
+
+    def has_permission(self, request, view):
+        _deprecated("IsTenantOperator", "IsAnyOrgOperator")
+        return super().has_permission(request, view)

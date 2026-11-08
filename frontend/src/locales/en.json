@@ -58,7 +58,6 @@
   },
 "roles": {
     "platform_super_admin": "Platform Admin",
-    "platform_staff":       "Platform Staff",
     "platform_user":        "Regular User",
     "org_owner":  "Owner",
     "org_admin":  "Admin",

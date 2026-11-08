@@ -19,6 +19,13 @@ in `OrganizationMembership.role`. This file never writes `is_organizer`.
 `update_role` is Platform-Admin-only. It handles the platform bit
 (is_staff / is_superuser) and the "attach to an org" convenience. Moving
 a user between orgs is done via the OrganizationMembership admin.
+
+OWNERSHIP INVARIANT:
+  Ownership (Organization.owner + OrganizationMembership(OWNER)) is written
+  ONLY by the dedicated assign-owner / transfer-ownership endpoints. Neither
+  `create` nor `update_role` may grant OWNER — they return 400 with a pointer
+  to those endpoints. This keeps the canonical Organization.owner field and
+  the OWNER membership in lock-step through a single write path.
 """
 import secrets
 import logging
@@ -123,6 +130,10 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         role = self.request.query_params.get('role', None)
+        # `platform_role` filters on Django's is_staff / is_superuser flags,
+        # independent of OrganizationMembership. This disambiguates the
+        # historical overload where role='staff' meant *tenant* STAFF.
+        platform_role = self.request.query_params.get('platform_role', None)
         is_active_param = self.request.query_params.get('is_active', None)
         search = self.request.query_params.get('search', None)
         organization_id = self.request.query_params.get('organization_id', None)
@@ -172,6 +183,11 @@ class UserViewSet(viewsets.ModelViewSet):
             )
             queryset = queryset.filter(id__in=list(org_user_ids))
 
+        # `role` is the TENANT-membership axis: owner / admin / staff / member /
+        # organizer / user. (role='super_admin' is retained for backward compat
+        # and is equivalent to platform_role=superuser.) Use `platform_role` for
+        # the Django is_staff / is_superuser axis.
+        #
         # ✅ FIX: all role filters now use validity-aware membership IDs,
         # so an expired membership does not keep a user in a role bucket.
         if role in ('organizer', 'owner'):
@@ -199,10 +215,11 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         elif role == 'super_admin':
+            # Backward-compat alias for platform_role=superuser.
             queryset = queryset.filter(is_superuser=True)
 
         elif role == 'staff':
-            # ✅ FIX: valid STAFF membership only.
+            # ✅ FIX: valid STAFF membership only (TENANT staff).
             queryset = queryset.filter(
                 id__in=list(_valid_role_user_ids(OrganizationMembership.OrgRole.STAFF)),
             )
@@ -218,6 +235,15 @@ class UserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(
                 is_staff=False, is_superuser=False,
             ).exclude(id__in=list(_active_membership_user_ids()))
+
+        # ---- Platform-bits axis (separate from tenant `role`) ----
+        if platform_role == 'superuser':
+            queryset = queryset.filter(is_superuser=True)
+        elif platform_role == 'staff':
+            # Platform Staff = is_staff=True AND NOT superuser (Django-admin only).
+            queryset = queryset.filter(is_staff=True, is_superuser=False)
+        elif platform_role == 'none':
+            queryset = queryset.filter(is_staff=False, is_superuser=False)
 
         return queryset.order_by('-date_joined')
 
@@ -402,14 +428,25 @@ class UserViewSet(viewsets.ModelViewSet):
 
         # ---- Validate role BEFORE creating the user ----
         requested_role = request.data.get('role', 'user')
-        # ✅ FIX: `platform_staff` is a distinct value from tenant `staff`.
+        # `platform_staff` is a distinct value from tenant `staff`.
+        # NOTE: 'owner' is intentionally NOT a valid role for user creation —
+        # ownership is granted only via assign-owner / transfer-ownership.
         valid_roles = (
-            'user', 'member', 'staff', 'owner', 'organizer',
+            'user', 'member', 'staff', 'organizer',
             'admin', 'platform_staff', 'super_admin',
         )
         if requested_role not in valid_roles:
             return Response(
                 {'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Ownership is never granted through user creation. The canonical
+        # Organization.owner and the OWNER membership are written only by
+        # the assign-owner / transfer-ownership endpoints.
+        if requested_role == 'owner':
+            return Response(
+                {'error': 'Ownership is assigned via assign-owner / transfer-ownership.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -431,15 +468,15 @@ class UserViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if requested_role in ('organizer', 'owner'):
+        if requested_role == 'organizer':
             if target_org is None and not is_platform_superuser(requester):
                 return Response(
-                    {'error': 'organization_id is required to create owners.'},
+                    {'error': 'organization_id is required to create organizers.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if target_org is not None and not can_manage_org(requester, target_org):
                 return Response(
-                    {'error': 'You do not have permission to create owners in this organization.'},
+                    {'error': 'You do not have permission to create organizers in this organization.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -504,20 +541,17 @@ class UserViewSet(viewsets.ModelViewSet):
                         defaults={'role': OrganizationMembership.OrgRole.ADMIN},
                     )
 
-            elif requested_role in ('organizer', 'owner'):
+            elif requested_role == 'organizer':
+                # Retired alias — `organizer` maps to a tenant MEMBER-ish role
+                # in the legacy UI; it is never OWNER. Ownership goes through
+                # assign-owner / transfer-ownership only.
                 if target_org is not None:
                     OrganizationMembership.objects.get_or_create(
                         organization=target_org,
                         user=user,
-                        defaults={'role': OrganizationMembership.OrgRole.OWNER},
+                        defaults={'role': OrganizationMembership.OrgRole.MEMBER},
                     )
-                    # ✅ NEW: if the org is currently unowned, promote this user to
-                    # the canonical `Organization.owner` as well. This keeps the two
-                    # storage locations in sync so the Organizations page reflects
-                    # reality.
-                    if target_org.owner_id is None and requested_role == 'owner':
-                        target_org.owner_id = user.id
-                        target_org.save(update_fields=['owner', 'updated_at'])
+
             elif requested_role == 'staff':
                 if target_org is not None:
                     OrganizationMembership.objects.get_or_create(
@@ -611,10 +645,13 @@ class UserViewSet(viewsets.ModelViewSet):
         - 'super_admin'    → is_staff=True, is_superuser=True
         - 'platform_staff' → is_staff=True, is_superuser=False
         - 'admin'          → is_staff=True + ADMIN membership in `organization_id`
-        - 'owner'          → OWNER membership in `organization_id`
         - 'staff'          → STAFF membership in `organization_id`
         - 'member'         → MEMBER membership in `organization_id`
         - 'user'           → strip all memberships
+
+        'owner' is NOT accepted here. Ownership is written only by the
+        assign-owner / transfer-ownership endpoints so that the canonical
+        Organization.owner field and the OWNER membership stay in sync.
 
         Only a Platform Super Admin may call this.
         """
@@ -635,7 +672,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
         role = request.data.get('role')
         valid_roles = (
-            'user', 'member', 'staff', 'owner', 'admin',
+            'user', 'member', 'staff', 'admin',
             'platform_staff', 'super_admin',
         )
         if role not in valid_roles:
@@ -644,8 +681,14 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if role == 'owner':
+            return Response(
+                {'error': 'Ownership is assigned via assign-owner / transfer-ownership.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         target_org = None
-        if role in ('admin', 'owner', 'staff', 'member', 'platform_staff'):
+        if role in ('admin', 'staff', 'member', 'platform_staff'):
             raw_org_id = request.data.get('organization_id')
             # ✅ FIX: platform_staff does NOT require an org.
             if role != 'platform_staff':
@@ -709,17 +752,6 @@ class UserViewSet(viewsets.ModelViewSet):
                     defaults={'role': OrganizationMembership.OrgRole.ADMIN},
                 )
 
-            elif role == 'owner':
-                OrganizationMembership.objects.update_or_create(
-                    organization=target_org,
-                    user=target,
-                    defaults={'role': OrganizationMembership.OrgRole.OWNER},
-                )
-                # ✅ NEW: if the org has no canonical owner, this membership *is*
-                # the owner.
-                if target_org.owner_id is None:
-                    target_org.owner_id = target.id
-                    target_org.save(update_fields=['owner', 'updated_at'])
             elif role == 'staff':
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,

@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
-import { useRole } from '../../context/RoleContext';               // ✅ FIX [#4]
+import { useRole } from '../../context/RoleContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -37,6 +37,16 @@ const formatApiError = (data, fallback = 'Request failed') => {
     return fallback;
 };
 
+// Local (not UTC) YYYY-MM-DD so the default "valid from" date matches the
+// user's calendar day rather than shifting a day east/west of UTC.
+const todayLocalISO = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
 const TeamMembers = () => {
     const { orgId } = useParams();
     const { t } = useTranslation();
@@ -44,8 +54,8 @@ const TeamMembers = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     useAuth();
 
-    // ✅ FIX [#4]: the caller's *org* role comes from RoleContext,
-    // not from user.role (which is the platform role).
+    // The caller's *org* role comes from RoleContext, not user.role
+    // (which is the platform role).
     const { hasOrgRole, isSuperAdmin } = useRole();
     const canRemoveMembers =
         isSuperAdmin || hasOrgRole(MEMBERSHIP_ROLES.OWNER);
@@ -57,13 +67,12 @@ const TeamMembers = () => {
     // Invite modal state
     const [openInvite, setOpenInvite] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
-    // ✅ FIX [#5]: default MEMBER. OWNER is not a valid invite role.
+    // Default MEMBER. OWNER is not a valid invite role.
     const [inviteRole, setInviteRole] = useState(MEMBERSHIP_ROLES.MEMBER);
-    const [validFrom, setValidFrom] = useState(new Date().toISOString().split('T')[0]);
+    const [validFrom, setValidFrom] = useState(todayLocalISO());
     const [validUntil, setValidUntil] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // ✅ FIX [#4-adjacent]: fetch is reusable so mutations can refresh.
     const fetchMembers = useCallback(async () => {
         if (!orgId) return;
         setLoading(true);
@@ -102,8 +111,6 @@ const TeamMembers = () => {
             setOpenInvite(false);
             setInviteEmail('');
             setValidUntil('');
-            // Refresh in case the invitee accepted in another tab, or the
-            // backend has started returning pending invites inline.
             await fetchMembers();
         } catch (err) {
             const errorMsg = formatApiError(err.response?.data, t('team.inviteFailed'));
@@ -113,15 +120,21 @@ const TeamMembers = () => {
         }
     };
 
-    // ✅ FIX [#4]: real removal handler wired to DELETE members/<user_id>/.
+    // Removal handler wired to DELETE members/<user_id>/.
+    // Guard against a missing user_id so we never fire /members/undefined/.
     const handleRemoveMember = async (member) => {
-        const label = member.name || member.email || 'this member';
+        const userId = member.user_id;
+        if (!userId) {
+            toast.error('Cannot remove member: missing user id.');
+            return;
+        }
+
+        const label = member.name || member.full_name || member.email || 'this member';
         if (!window.confirm(`Remove ${label} from this organization?`)) return;
-        setRemovingId(member.user_id);
+
+        setRemovingId(userId);
         try {
-            await api.delete(
-                `/organizations/${orgId}/members/${member.user_id}/`
-            );
+            await api.delete(`/organizations/${orgId}/members/${userId}/`);
             toast.success(`${label} removed from the organization.`);
             await fetchMembers();
         } catch (err) {
@@ -198,6 +211,10 @@ const TeamMembers = () => {
                                     || member.username
                                     || member.email
                                     || '?';
+                                const canRemoveRow =
+                                    member.role !== 'owner'
+                                    && canRemoveMembers
+                                    && Boolean(member.user_id);
                                 return (
                                     <TableRow key={member.id} hover>
                                         <TableCell>
@@ -213,7 +230,7 @@ const TeamMembers = () => {
                                                 </Box>
                                                 <Box>
                                                     <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
-                                                        {member.name || member.full_name || member.email}
+                                                        {memberLabel}
                                                     </Typography>
                                                     <Typography variant="caption" sx={{ color: C.textSecondary }}>
                                                         {member.email}
@@ -241,13 +258,13 @@ const TeamMembers = () => {
                                             </Typography>
                                         </TableCell>
                                         <TableCell align="right">
-                                            {member.role !== 'owner' && canRemoveMembers && (
+                                            {canRemoveRow && (
                                                 <IconButton
                                                     size="small"
                                                     sx={{ color: C.error }}
                                                     onClick={() => handleRemoveMember(member)}
                                                     disabled={removingId === member.user_id}
-                                                    title={`Remove ${member.name || member.email}`}
+                                                    title={`Remove ${memberLabel}`}
                                                 >
                                                     {removingId === member.user_id
                                                         ? <CircularProgress size={16} sx={{ color: C.error }} />
@@ -296,7 +313,8 @@ const TeamMembers = () => {
                             sx={{ mb: 2.5, '& .MuiOutlinedInput-root': { bgcolor: C.bgInput } }}
                         />
 
-                        {/* ✅ FIX [#5]: OWNER removed — backend rejects it. */}
+                        {/* OWNER intentionally excluded — backend rejects it.
+                            Ownership transfers only via the Organizations page. */}
                         <TextField
                             fullWidth
                             select

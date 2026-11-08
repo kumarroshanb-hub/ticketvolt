@@ -19,11 +19,16 @@ A single user may be OWNER of org A, ADMIN of org B, and a plain
 regular user with respect to every other org — simultaneously. Any
 predicate that reduces this to one string is a bug.
 
+``User.is_staff`` is NOT a role. It is a Django admin-site flag and
+must not be used for application authorization. The only platform-level
+authorization flag is ``User.is_superuser`` (see ``is_platform_admin``).
+
 Every predicate in this module delegates to
 ``ticket_bookings.services.tenancy`` so the validity window
 (``valid_from <= now <= valid_until``) and ``is_active`` flag are
 enforced in exactly one place.
 """
+import warnings
 from functools import wraps
 
 from django.http import JsonResponse
@@ -82,8 +87,8 @@ def platform_admin_required(view_func):
     """
     Allow only Platform Super Admins (``User.is_superuser``).
 
-    ``is_staff`` alone does NOT qualify — that is a platform-level
-    admin-site flag, not a tenant role.
+    ``is_staff`` alone does NOT qualify — that is a Django admin-site
+    flag, not a tenant role and not a platform authorization role.
     """
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
@@ -159,25 +164,58 @@ def tenant_operator_required(view_func):
     return wrapper
 
 
-# Backwards-compat aliases for the old flat names.
+# ---------------------------------------------------------------------------
+# Deprecated backwards-compat aliases
 #
-# The old file exposed:
+# The old file exposed flat names:
 #   • organizer_required  → "organizer or above"
 #   • admin_required      → "admin or above"
 #
-# In the 6-tier model:
+# In the current model:
 #   • "organizer" was a tenant role that has been replaced by OWNER.
-#   • "admin" was a platform role that has been replaced by
-#     tenant ADMIN + platform is_staff.
+#   • "admin" was a platform role that has been replaced by tenant
+#     ADMIN (plus platform ``is_superuser`` for global admin).
 #
-# We map them to the closest correct semantics rather than the old
-# (broken) `is_staff → admin` inference:
-#
-#   admin_required     = tenant_manager_required
-#   organizer_required = tenant_operator_required  (so existing call
-#                        sites in check-in code keep working)
-admin_required = tenant_manager_required
-organizer_required = tenant_operator_required
+# These shims map the old names to the closest correct semantics and
+# emit a DeprecationWarning so call sites get migrated. They are kept
+# only so legacy imports keep resolving; delete them once
+# ``grep -rn organizer_required backend/`` (and ``admin_required``)
+# returns no callers.
+# ---------------------------------------------------------------------------
+
+def _deprecated_alias(name, replacement, replacement_name):
+    def shim(view_func):
+        warnings.warn(
+            f"core.decorators.{name} is deprecated; "
+            f"use core.decorators.{replacement_name} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return replacement(view_func)
+    shim.__name__ = name
+    shim.__doc__ = (
+        f"Deprecated alias for ``{replacement_name}``. "
+        f"Use ``{replacement_name}`` instead."
+    )
+    return shim
+
+
+# organizer_required → tenant_operator_required
+#   (legacy check-in call sites keep working; Staff-inclusive gate)
+organizer_required = _deprecated_alias(
+    'organizer_required',
+    tenant_operator_required,
+    'tenant_operator_required',
+)
+
+# admin_required → tenant_manager_required
+#   (Owner/Admin gate; platform is_superuser still passes via the
+#    underlying decorator's is_platform_admin check)
+admin_required = _deprecated_alias(
+    'admin_required',
+    tenant_manager_required,
+    'tenant_manager_required',
+)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +304,10 @@ def current_user_role_payload(request):
     Kept here so a plain-Django view can annotate a JSON response with
     the caller's platform role + effective (highest) membership role
     without importing the whole views module.
+
+    ``platform_role`` is one of:
+      • ``super_admin`` — ``User.is_superuser``
+      • ``user``        — everyone else (``is_staff`` is NOT a role)
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -277,8 +319,7 @@ def current_user_role_payload(request):
 
     return {
         'platform_role': (
-            'super_admin' if is_platform_admin(user)
-            else ('staff' if user.is_staff else 'user')
+            'super_admin' if is_platform_admin(user) else 'user'
         ),
         'effective_role': effective_role_label(user),
         'memberships': [

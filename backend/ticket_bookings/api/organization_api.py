@@ -23,6 +23,23 @@ Role rules (6-tier hierarchy):
   • ADMIN can add/remove STAFF/MEMBER but cannot add/remove ADMIN or
     OWNER.
   • Only Platform Admin can delete an org.
+
+DB invariant (single-live-OWNER constraint):
+  There is a partial unique constraint (DB-level) enforcing at most
+  one live OWNER membership per organization. Every mutation path in
+  this module that touches OWNER role/`org.owner_id` must run inside
+  a single transaction that never leaves two live OWNERs visible at
+  a statement boundary. The `@transaction.atomic` decorators below
+  plus the "demote-then-promote" ordering in `transfer_ownership`
+  satisfy this. `select_for_update()` on the org row serialises
+  concurrent ownership mutations.
+
+Soft-delete model:
+  Membership removal is a soft-delete (`removed_at` set, `is_active`
+  False). Re-invitation reactivates the existing row so that
+  `joined_at` is preserved (per the promise in `models_tenancy.py`).
+  All OWNER-count invariants count only LIVE rows
+  (`removed_at__isnull=True, is_active=True`).
 """
 from django.contrib.auth.models import User
 from django.db import transaction
@@ -33,7 +50,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from ..models import SystemSettings
-from ..models_tenancy import Organization, OrganizationMembership
+from ..models_tenancy import (
+    Organization,
+    OrganizationMembership,
+    OrganizationMembershipEvent,
+    log_membership_event,
+    snapshot_membership,
+)
 from ..services.tenancy import (
     can_manage_org,
     is_platform_admin,
@@ -58,24 +81,27 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
+    @transaction.atomic
     def perform_create(self, serializer):
         """
-        ✅ FIX [SUPERUSER-ORG-AGNOSTIC]: a superuser creating an org does
-        NOT become its owner and does NOT receive a membership.
+        Three paths:
 
-        Three distinct paths:
+        1. Regular authenticated user creates an org → they become OWNER
+            (membership row), org has them as live owner.
 
-          1. Regular authenticated user creates an org for themselves
-             → they become OWNER + get the membership.
+        2. Superuser creates an org with ``owner_id`` → ``<user>`` becomes
+            OWNER (membership row), superuser gets NO membership.
 
-          2. Superuser creates an org with `owner_id=<user>`
-             → `<user>` becomes OWNER + gets the membership.
-               Superuser gets NO membership.
+        3. Superuser creates an org without ``owner_id`` → unowned org;
+            no membership row at all. Ownership assigned later via
+            ``assign-owner``.
 
-          3. Superuser creates an org with no `owner_id`
-             → org is created unowned (`owner=None`). No memberships
-               at all. Superuser assigns an owner later via
-               `assign-owner` once a tenant OWNER user exists.
+        IMPORTANT: ownership is stored ONLY on
+        ``OrganizationMembership(role=OWNER)``. There is no writable
+        ``Organization.owner`` FK on the model any more. Do not reintroduce
+        a ``serializer.save(owner=...)`` kwarg — the serializer does not
+        accept it (``owner`` is not in ``Meta.fields``) and the model does
+        not have it as a settable attribute.
         """
         requester = self.request.user
         requester_is_superuser = is_platform_superuser(requester)
@@ -95,11 +121,13 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 raise serializers.ValidationError(
                     {'owner_id': 'User not found.'}
                 )
+            if is_platform_superuser(owner_user):
+                raise serializers.ValidationError(
+                    {'owner_id': 'A Platform Admin cannot be the owner of a tenant.'}
+                )
         elif requester_is_superuser:
-            # ✅ FIX: superuser + no owner_id → unowned org.
             owner_user = None
         else:
-            # Regular user self-service: they become owner.
             owner_user = requester
 
         # ---- 2. Seed regional defaults from SystemSettings ----
@@ -116,30 +144,23 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             'email_from_name': platform.email_from_name,
         }
         for key in list(seed.keys()):
-            value = self.request.data.get(key)
-            if value:
+            if self.request.data.get(key):
                 seed.pop(key, None)
 
-        org = serializer.save(owner=owner_user, **seed)
+        # ---- 3. Create the org — NO ``owner=`` kwarg ----
+        org = serializer.save(**seed)
 
-        # ---- 3. Membership rows ----
-        #
-        # ✅ FIX: only create a membership when there is a tenant OWNER.
-        # A superuser NEVER receives an OrganizationMembership, even when
-        # they created the org.
+        # ---- 4. Create the OWNER membership ----
         if owner_user is not None:
             OrganizationMembership.objects.get_or_create(
                 organization=org,
                 user=owner_user,
-                defaults={'role': OrganizationMembership.OrgRole.OWNER},
+                defaults={
+                    'role': OrganizationMembership.OrgRole.OWNER,
+                    'is_active': True,
+                    'removed_at': None,
+                },
             )
-
-        # ✅ The superuser who created the org gets NO membership row.
-        # Their platform-level `is_superuser` already grants full access
-        # via `visible_organizations` / `can_manage_org`, which whitelist
-        # platform admins. Adding a membership row would make the
-        # superuser indistinguishable from a tenant role and would
-        # appear in `user.memberships[]`.
 
         return org
 
@@ -188,6 +209,17 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         """
         GET: List all members of the organization.
         POST: Add an existing user directly to the organization.
+
+        The POST path NEVER creates an OWNER — `allowed_roles` excludes
+        OWNER unconditionally, so the single-live-OWNER DB constraint
+        can never be tripped from here. Ownership is only ever created
+        via `perform_create` / `assign_owner` / `transfer_ownership`.
+
+        Soft-delete re-invitation:
+          If the user was previously removed via soft-delete
+          (`removed_at` set, `is_active=False`), the same row is
+          reactivated in place — `joined_at` is preserved, and the
+          caller sees the same success shape as a fresh add.
         """
         org = self.get_object()
         if not can_manage_org(request.user, org):
@@ -220,6 +252,8 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                     'is_active': getattr(m, 'is_active', True),
                     'joined_at': m.joined_at.isoformat() if m.joined_at else None,
                 }
+                if getattr(m, 'removed_at', None):
+                    item['removed_at'] = m.removed_at.isoformat()
                 if getattr(m, 'valid_from', None):
                     item['valid_from'] = m.valid_from.isoformat()
                 if getattr(m, 'valid_until', None):
@@ -235,6 +269,10 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         user_id = request.data.get('user_id')
         role = (request.data.get('role') or 'member').strip().lower()
 
+        # ✅ OWNER is intentionally NOT in `allowed_roles` under any
+        # permission level. Even a superuser cannot create an OWNER
+        # membership through this endpoint; the single-live-OWNER DB
+        # constraint is therefore unreachable from here.
         allowed_roles = {
             OrganizationMembership.OrgRole.STAFF,
             OrganizationMembership.OrgRole.MEMBER,
@@ -270,26 +308,71 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        membership, created = OrganizationMembership.objects.get_or_create(
-            organization=org,
-            user=target_user,
-            defaults={'role': role},
+        # ✅ FIX: reactivate soft-removed memberships instead of
+        # returning 409. The whole point of `removed_at` is to allow
+        # re-invitation while preserving `joined_at`.
+        existing = (
+            OrganizationMembership.objects
+            .select_for_update()
+            .filter(organization=org, user=target_user)
+            .first()
         )
-        if not created:
+
+        if existing is not None and existing.removed_at is None and existing.is_active:
             return Response(
                 {
                     'error': 'User is already a member of this organization.',
-                    'role': membership.role,
+                    'role': existing.role,
                 },
                 status=status.HTTP_409_CONFLICT,
             )
 
+        if existing is not None:
+            # Reactivate the soft-removed row in place.
+            before = snapshot_membership(existing)
+            existing.role = role
+            existing.is_active = True
+            existing.removed_at = None
+            existing.save(update_fields=['role', 'is_active', 'removed_at'])
+            membership = existing
+            created = False
+
+            log_membership_event(
+                organization=org,
+                membership=membership,
+                user=membership.user,
+                event_type=OrganizationMembershipEvent.EventType.ADDED,
+                actor=request.user,
+                before=before,
+                after=snapshot_membership(membership),
+            )
+        else:
+            membership = OrganizationMembership.objects.create(
+                organization=org,
+                user=target_user,
+                role=role,
+                is_active=True,
+                removed_at=None,
+            )
+            created = True
+
+            log_membership_event(
+                organization=org,
+                membership=membership,
+                user=membership.user,
+                event_type=OrganizationMembershipEvent.EventType.ADDED,
+                actor=request.user,
+                before=None,
+                after=snapshot_membership(membership),
+            )
+
+        # Return the same shape regardless of created vs. reactivated.
         return Response({
             'user_id': target_user.id,
             'username': target_user.username,
             'email': target_user.email,
             'role': membership.role,
-        }, status=status.HTTP_201_CREATED)
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     # ------------------------------------------------------------------
     # Member role change
@@ -323,25 +406,37 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Demotion from OWNER: refuse to orphan the org.
+        # ✅ FIX: count only LIVE owner rows — soft-removed OWNER rows
+        # must not be counted, or the org can end up with zero live
+        # owners.
         if (
             membership.role == OrganizationMembership.OrgRole.OWNER
             and new_role != OrganizationMembership.OrgRole.OWNER
         ):
-            owner_count = OrganizationMembership.objects.filter(
+            live_owner_count = OrganizationMembership.objects.filter(
                 organization=org,
                 role=OrganizationMembership.OrgRole.OWNER,
+                removed_at__isnull=True,
+                is_active=True,
             ).count()
-            if owner_count <= 1:
+            if live_owner_count <= 1:
                 return Response(
                     {
                         'error': (
-                            'Cannot demote the last OWNER. '
+                            'Cannot demote the last live OWNER. '
                             'Use the transfer-ownership endpoint instead.'
                         )
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
 
+        # Promotion to OWNER: physically impossible here by design.
+        # The pre-check below returns 403 BEFORE any DB write, so the
+        # single-live-OWNER DB constraint is a second line of defence
+        # rather than the primary guard. A test should assert that
+        # this path returns 403 and that the DB constraint would also
+        # reject the write if the pre-check were bypassed.
         if (
             new_role == OrganizationMembership.OrgRole.OWNER
             and membership.role != OrganizationMembership.OrgRole.OWNER
@@ -356,8 +451,19 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        before = snapshot_membership(membership)
         membership.role = new_role
         membership.save(update_fields=['role'])
+
+        log_membership_event(
+            organization=org,
+            membership=membership,
+            user=membership.user,
+            event_type=OrganizationMembershipEvent.EventType.ROLE_CHANGED,
+            actor=request.user,
+            before=before,
+            after=snapshot_membership(membership),
+        )
 
         return Response({
             'user_id': membership.user_id,
@@ -385,43 +491,41 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             NO OWNER membership. To replace an existing owner, use
             `transfer-ownership` instead — that path demotes the
             previous owner rather than silently orphaning them.
-          • The target user must exist, be active, and — for a brand
-            new assignment — need not already be a member. This is the
-            one path that promotes a non-member to OWNER, because the
-            org has no members yet.
+          • The target user must exist, be active, non-superuser, and —
+            for a brand new assignment — need not already be a member.
+            This is the one path that promotes a non-member to OWNER,
+            because the org has no members yet.
+
+        Concurrency:
+          • `Organization.objects.select_for_update()` serialises two
+            concurrent `assign-owner` calls on the same org, so the
+            second one sees the first one's committed owner and returns
+            409 instead of racing to create a second OWNER membership.
         """
         if not is_platform_superuser(request.user):
             raise PermissionDenied(
                 'Only a Platform Admin can assign an organization owner.'
             )
 
-        org = self.get_object()
-
-        if org.owner_id is not None:
-            return Response(
-                {
-                    'error': (
-                        'This organization already has an owner. '
-                        'Use transfer-ownership to change the owner.'
-                    ),
-                    'current_owner_id': org.owner_id,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        existing_owner_membership = (
-            OrganizationMembership.objects
-            .filter(organization=org, role=OrganizationMembership.OrgRole.OWNER)
-            .exists()
+        # ✅ Serialise concurrent ownership mutations on this org.
+        org = (
+            Organization.objects
+            .select_for_update()
+            .get(pk=self.get_object().pk)
         )
-        if existing_owner_membership:
+
+        # Defence-in-depth: the two checks below are equivalent given
+        # the single-live-OWNER DB constraint, but we check both so the
+        # error is informative if the invariant is ever violated by a
+        # data migration.
+        if OrganizationMembership.objects.filter(
+            organization=org,
+            role=OrganizationMembership.OrgRole.OWNER,
+            removed_at__isnull=True,
+            is_active=True,
+        ).exists():
             return Response(
-                {
-                    'error': (
-                        'This organization already has an OWNER membership. '
-                        'Use transfer-ownership to change the owner.'
-                    ),
-                },
+                {'error': 'This organization already has an owner. Use transfer-ownership.'},
                 status=status.HTTP_409_CONFLICT,
             )
 
@@ -462,17 +566,31 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        OrganizationMembership.objects.update_or_create(
+        prior = OrganizationMembership.objects.filter(
+            organization=org, user=target_user,
+        ).first()
+        before = snapshot_membership(prior) if prior else None
+
+        membership, created = OrganizationMembership.objects.update_or_create(
             organization=org,
             user=target_user,
             defaults={
                 'role': OrganizationMembership.OrgRole.OWNER,
                 'is_active': True,
+                'removed_at': None,
             },
         )
 
-        org.owner_id = target_user.id
-        org.save(update_fields=['owner', 'updated_at'])
+        log_membership_event(
+            organization=org,
+            membership=membership,
+            user=membership.user,
+            event_type=OrganizationMembershipEvent.EventType.OWNER_ASSIGNED,
+            actor=request.user,
+            before=None if created else snapshot_membership(membership),
+            after=snapshot_membership(membership),
+        )
+        # No org.owner_id write — the membership row IS the ownership record.
 
         return Response(
             OrganizationSerializer(org, context={'request': request}).data,
@@ -494,8 +612,35 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         `assign-owner` refuses to run if ANY owner exists; transfer-
         ownership will run if an owner exists and demote the previous
         one. If neither is true, both endpoints behave identically.
+
+        Permission matrix:
+          • Org has a live OWNER membership → current OWNER or Platform
+            Admin may transfer.
+          • Org has NO live OWNER membership (unowned) → only a Platform
+            Superuser may transfer (same rule as `assign-owner`).
+
+        Concurrency / DB constraint:
+          • `Organization.objects.select_for_update()` serialises
+            concurrent ownership mutations on this org.
+          • Within the locked transaction we demote the current OWNER
+            to ADMIN *before* promoting the target to OWNER, so the
+            single-live-OWNER DB constraint is never observed as
+            violated at any statement boundary. The whole block is one
+            atomic transaction — if either `save()` fails, both roll
+            back together.
+
+        Soft-delete awareness:
+          • The current-owner lookup filters on live state
+            (`removed_at__isnull=True, is_active=True`). A soft-removed
+            OWNER row must not be treated as the current owner, and
+            must not be demoted.
         """
-        org = self.get_object()
+        # ✅ Serialise concurrent ownership mutations on this org.
+        org = (
+            Organization.objects
+            .select_for_update()
+            .get(pk=self.get_object().pk)
+        )
         requester = request.user
 
         new_owner_user_id = request.data.get('new_owner_user_id')
@@ -510,38 +655,59 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 {'new_owner_user_id': 'Must be a valid user ID.'}
             )
 
+        # ✅ FIX: only LIVE OWNER rows count as the current owner.
         current_owner_membership = (
             OrganizationMembership.objects
             .select_for_update()
             .filter(
                 organization=org,
                 role=OrganizationMembership.OrgRole.OWNER,
+                removed_at__isnull=True,
+                is_active=True,
             )
             .first()
         )
 
-        requester_is_owner = bool(
-            current_owner_membership
-            and current_owner_membership.user_id == requester.id
-        )
-
-        if not (requester_is_owner or is_platform_admin(requester)):
-            raise PermissionDenied(
-                'Only the current OWNER or a Platform Admin can transfer ownership.'
+        if current_owner_membership is None:
+            # Unowned org: only a Platform Superuser may assign the
+            # first OWNER here, mirroring `assign_owner` semantics.
+            # (Platform *Admin* without superuser cannot bootstrap a
+            # tenant OWNER.)
+            if not is_platform_superuser(requester):
+                raise PermissionDenied(
+                    'This organization has no owner yet. Only a Platform '
+                    'Admin can assign the first owner.'
+                )
+        else:
+            requester_is_owner = (
+                current_owner_membership.user_id == requester.id
             )
+            if not (requester_is_owner or is_platform_admin(requester)):
+                raise PermissionDenied(
+                    'Only the current OWNER or a Platform Admin can '
+                    'transfer ownership.'
+                )
+            if current_owner_membership.user_id == new_owner_user_id:
+                raise serializers.ValidationError(
+                    {
+                        'new_owner_user_id': (
+                            'This user is already the organization owner.'
+                        )
+                    }
+                )
 
-        if (
-            current_owner_membership
-            and current_owner_membership.user_id == new_owner_user_id
-        ):
-            raise serializers.ValidationError(
-                {'new_owner_user_id': 'This user is already the organization owner.'}
-            )
-
+        # ✅ FIX: the target must be a LIVE member. A soft-removed row
+        # is not eligible to become OWNER without first being
+        # reactivated (which goes through the `members` POST path).
         target_membership = (
             OrganizationMembership.objects
             .select_for_update()
-            .filter(organization=org, user_id=new_owner_user_id)
+            .filter(
+                organization=org,
+                user_id=new_owner_user_id,
+                removed_at__isnull=True,
+                is_active=True,
+            )
             .select_related('user')
             .first()
         )
@@ -550,7 +716,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 {
                     'new_owner_user_id': (
-                        'New owner must already be a member of this organization.'
+                        'New owner must already be an active member of this organization.'
                     )
                 }
             )
@@ -571,18 +737,39 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 }
             )
 
+        # ✅ Order matters: demote old OWNER → ADMIN *first*, then
+        # promote the target to OWNER. At no statement boundary are
+        # there two live OWNER rows, so the single-live-OWNER DB
+        # constraint never fires mid-transaction.
         if (
             current_owner_membership
             and current_owner_membership.user_id != new_owner_user_id
         ):
+            before_old = snapshot_membership(current_owner_membership)
             current_owner_membership.role = OrganizationMembership.OrgRole.ADMIN
             current_owner_membership.save(update_fields=['role'])
+            log_membership_event(
+                organization=org,
+                membership=current_owner_membership,
+                user=current_owner_membership.user,
+                event_type=OrganizationMembershipEvent.EventType.ROLE_CHANGED,
+                actor=requester,
+                before=before_old,
+                after=snapshot_membership(current_owner_membership),
+            )
 
+        before_new = snapshot_membership(target_membership)
         target_membership.role = OrganizationMembership.OrgRole.OWNER
         target_membership.save(update_fields=['role'])
-
-        org.owner_id = new_owner_user_id
-        org.save(update_fields=['owner', 'updated_at'])
+        log_membership_event(
+            organization=org,
+            membership=target_membership,
+            user=target_membership.user,
+            event_type=OrganizationMembershipEvent.EventType.OWNER_TRANSFERRED,
+            actor=requester,
+            before=before_new,
+            after=snapshot_membership(target_membership),
+        )
 
         serializer = self.get_serializer(org)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -596,6 +783,20 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     )
     @transaction.atomic
     def remove_member(self, request, pk=None, user_id=None):
+        """
+        Soft-remove a member.
+
+        ✅ FIX: previously did a hard `membership.delete()`, which:
+          • Broke the audit trail (no removal event was written).
+          • Made re-invitation impossible without recreating the row,
+            losing `joined_at` — contradicting the docstring in
+            `models_tenancy.py` that promises to preserve `joined_at`
+            on re-invitation.
+
+        We now call `soft_remove()` (sets `removed_at` + `is_active=False`)
+        and emit a `REMOVED` audit event. Re-invitation via
+        `members` POST will reactivate this exact row.
+        """
         org = self.get_object()
         if not can_manage_org(request.user, org):
             raise PermissionDenied(
@@ -604,11 +805,14 @@ class OrganizationViewSet(viewsets.ModelViewSet):
 
         try:
             membership = OrganizationMembership.objects.get(
-                organization=org, user_id=user_id,
+                organization=org,
+                user_id=user_id,
+                removed_at__isnull=True,
+                is_active=True,
             )
         except OrganizationMembership.DoesNotExist:
             return Response(
-                {'error': 'Membership not found.'},
+                {'error': 'Active membership not found.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -628,5 +832,20 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        membership.delete()
+        # ✅ Soft-delete preserves the row (and `joined_at`) so the
+        # user can be re-invited later without losing history.
+        before = snapshot_membership(membership)
+        membership.soft_remove()
+        membership.save(update_fields=['removed_at', 'is_active'])
+
+        log_membership_event(
+            organization=org,
+            membership=membership,
+            user=membership.user,
+            event_type=OrganizationMembershipEvent.EventType.REMOVED,
+            actor=request.user,
+            before=before,
+            after=snapshot_membership(membership),
+        )
+
         return Response(status=status.HTTP_204_NO_CONTENT)

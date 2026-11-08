@@ -27,7 +27,6 @@ import {
   MEMBERSHIP_ROLES,
   PlatformRoleUtils,
   MembershipRoleUtils,
-  MEMBERSHIP_ROLE_LABELS,
 } from '../../constants';
 import Logo from '../Logo';
 import { theme } from '../../theme/tokens';
@@ -78,7 +77,6 @@ const RoleBadge = styled.div`
   background: ${props => {
     switch (props.$kind) {
       case 'platform-super': return C.successDark;
-      case 'platform-staff': return C.secondaryDark;
       case 'org-owner':      return C.warningDark;
       case 'org-admin':      return C.infoDark;
       case 'org-staff':      return C.secondaryDark;
@@ -260,7 +258,11 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
   };
 
   // ---------------------------------------------------------------
-  // Nav items now declare:
+  // Platform roles are now strictly two-tier:
+  //   PLATFORM_ROLES.SUPER_ADMIN — full platform-wide bypass
+  //   PLATFORM_ROLES.USER        — every other authenticated user
+  //
+  // Nav items declare:
   //   platformRoles   — which PLATFORM_ROLES see this item
   //   minOrgRole      — the minimum MEMBERSHIP_ROLE required (if any)
   //
@@ -278,14 +280,14 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/dashboard',
       icon: <DashboardIcon />,
       label: t('nav.dashboard'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
     },
     {
       path: '/app/events',
       icon: <EventIcon />,
       label: t('nav.events'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
@@ -293,7 +295,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/venues',
       icon: <VenueIcon />,
       label: t('nav.venues'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
@@ -301,21 +303,21 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/bookings',
       icon: <TicketIcon />,
       label: t('nav.bookings'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
     },
     {
       path: '/app/membership',
       icon: <MembershipIcon />,
       label: t('nav.membership', 'Membership'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
     },
     {
       path: '/app/membership/review-offline',
       icon: <MembershipIcon />,
       label: t('nav.reviewOfflineMemberships', 'Offline Requests'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
@@ -323,7 +325,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/checkin',
       icon: <ScannerIcon />,
       label: t('nav.checkin'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       minOrgRole: MEMBERSHIP_ROLES.STAFF,
       section: 'operations',
     },
@@ -331,7 +333,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/discounts',
       icon: <DiscountIcon />,
       label: t('nav.discounts'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
@@ -339,7 +341,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/analytics',
       icon: <AnalyticsIcon />,
       label: t('nav.analytics'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       minOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
     },
@@ -347,7 +349,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/users',
       icon: <PeopleIcon />,
       label: t('nav.users'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
       // also visible to org owners/admins via the minOrgRole gate below
       alsoVisibleToOrgRole: MEMBERSHIP_ROLES.ADMIN,
       section: 'management',
@@ -356,7 +358,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/organizations',
       icon: <BusinessIcon />,
       label: t('nav.organizations'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       // every authenticated user can land here — it's where they CREATE
       // a first org or accept an invite. Individual actions are gated inside.
       section: 'management',
@@ -365,7 +367,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/settings',
       icon: <SettingsIcon />,
       label: t('nav.settings'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.STAFF, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
     },
   ];
@@ -397,20 +399,16 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
 
   // ---------------------------------------------------------------
   // Two badges:
-  //   1. platform role (if super_admin or staff — Regular Users don't
-  //      need a "Regular User" label; it clutters the sidebar)
+  //   1. platform role — only super admins get a "Super Admin" label.
+  //      Regular Users don't need a "Regular User" label; it clutters
+  //      the sidebar.
   //   2. current-org membership role (only when a membership exists)
   // ---------------------------------------------------------------
-  const showPlatformBadge =
-    platformRole === PLATFORM_ROLES.SUPER_ADMIN ||
-    platformRole === PLATFORM_ROLES.STAFF;
-
-  const platformBadgeKind =
-    platformRole === PLATFORM_ROLES.SUPER_ADMIN ? 'platform-super' :
-    platformRole === PLATFORM_ROLES.STAFF ? 'platform-staff' : null;
+  const showPlatformBadge = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
+  const platformBadgeKind = showPlatformBadge ? 'platform-super' : null;
 
   const orgBadgeKind = (() => {
-    // ✅ FIX: Superusers are platform-wide. Never show them an org role.
+    // ✅ Superusers are platform-wide. Never show them an org role.
     if (isSuperAdmin) return null;
     switch (membershipRole) {
       case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';

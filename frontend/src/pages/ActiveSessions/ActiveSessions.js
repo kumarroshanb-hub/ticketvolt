@@ -74,11 +74,13 @@ const formatTimeToExpiry = (seconds) => {
     return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
 };
 
+// NOTE: No STAFF branch — backend `_platform_role_label` emits only
+// super_admin / admin / owner / user. Any unknown role falls through to default.
 const roleChipColor = (role) => {
     switch (role) {
         case ROLES.SUPER_ADMIN: return { bg: `${C.success}1A`, color: C.successDark };
         case ROLES.ADMIN:       return { bg: `${C.info}1A`,    color: C.infoDark };
-        case ROLES.OWNER: return { bg: `${C.warning}1A`, color: C.warningDark };
+        case ROLES.OWNER:       return { bg: `${C.warning}1A`, color: C.warningDark };
         default:                return { bg: C.bgInput,        color: C.textSecondary };
     }
 };
@@ -288,7 +290,7 @@ const ActiveSessions = () => {
                             <Select
                                 value={idleMinutes}
                                 label="Idle threshold"
-                                onChange={(e) => setIdleMinutes(e.target.value)}
+                                onChange={(e) => setIdleMinutes(Number(e.target.value))}
                             >
                                 <MenuItem value={10}>10 min</MenuItem>
                                 <MenuItem value={30}>30 min</MenuItem>

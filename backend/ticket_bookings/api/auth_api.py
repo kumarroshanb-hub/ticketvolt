@@ -34,6 +34,9 @@ Security invariants
   • §2.3 — invite acceptance is soft-aware: re-inviting a soft-removed
     member reactivates the existing row (preserving ``joined_at``) instead
     of creating a new one, and writes an ``OrganizationMembershipEvent``.
+  • C.3  — defence-in-depth: invite acceptance rejects ``role == OWNER``
+    even though invite-send already blocks it (and the DB constraint
+    backs it up). Ownership moves only via transfer-ownership.
 """
 import logging
 import secrets
@@ -289,6 +292,20 @@ def verify_magic_link(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ✅ C.3 defence-in-depth: invite-send already rejects role=OWNER,
+        #    and the DB constraint backs it up — but never trust that a
+        #    persisted invite row is well-formed. Ownership moves only
+        #    via transfer-ownership, never via invite acceptance.
+        if invite.role == OrgRole.OWNER:
+            logger.warning(
+                '🚫 Blocked invite acceptance with OWNER role: invite=%s org=%s',
+                invite.pk, invite.organization_id,
+            )
+            return Response(
+                {'error': 'Ownership cannot be transferred via invite.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         with transaction.atomic():
             # Re-fetch under a row lock to serialise concurrent accepts.
             invite = (
@@ -299,6 +316,19 @@ def verify_magic_link(request):
             if invite.accepted_at or invite.is_expired():
                 return Response(
                     {'error': 'Link expired or already used.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ✅ C.3: re-check under the lock — the row could have been
+            #    mutated between the unlocked read and the lock acquisition.
+            if invite.role == OrgRole.OWNER:
+                logger.warning(
+                    '🚫 Blocked invite acceptance with OWNER role (locked): '
+                    'invite=%s org=%s',
+                    invite.pk, invite.organization_id,
+                )
+                return Response(
+                    {'error': 'Ownership cannot be transferred via invite.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -622,6 +652,11 @@ def send_organization_invite(request, org_id):
             {'error': f'Invalid role: {role!r}'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    # ⚠️ Ownership is deliberately rejected here. This is the primary guard;
+    #    it is backed by (a) the defensive check in verify_magic_link's
+    #    invite-acceptance path (C.3) and (b) a DB constraint on
+    #    OrganizationInvite.role that excludes OWNER. Ownership moves only
+    #    via transfer-ownership — never via invite.
     if role == OrgRole.OWNER:
         return Response(
             {'error': 'Ownership moves only via transfer-ownership.'},

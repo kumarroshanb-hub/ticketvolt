@@ -24,6 +24,13 @@ from ..models_tenancy import (  # UPDATED: added OrganizationContact back
 from ..services.cancellation_policy import validate_cancellation_rules
 from ..services.tenancy import user_memberships_payload, effective_role_label
 
+# ✅ SECURITY FIX: import the canonical membership filter and the
+# superuser predicate from the tenancy service.
+from ..services.tenancy import (
+    _active_membership_filter,
+    is_platform_superuser,
+)
+
 # ============================================================
 # MEMBERSHIP SERIALIZERS
 # ============================================================
@@ -50,22 +57,15 @@ def get_user_effective_role(user):
 
 logger = logging.getLogger(__name__)
 
-# ADDED FOR 6-TIER HIERARCHY SAFETY:
-# Some deployments of OrganizationMembership carry is_active; some do not.
-# These helpers keep every membership query safe across both schemas.
-def _membership_has_is_active():
-    try:
-        OrganizationMembership._meta.get_field('is_active')
-        return True
-    except FieldDoesNotExist:
-        return False
 
-
+# ✅ SECURITY FIX: `_active_user_memberships` now delegates to the canonical
+# tenancy filter, which applies is_active / valid_from / valid_until /
+# removed_at. The old `_membership_has_is_active` probe and the inline
+# `.filter(is_active=True)` are gone — they treated expired or soft-removed
+# memberships as active.
 def _active_user_memberships(user):
-    qs = OrganizationMembership.objects.filter(user=user)
-    if _membership_has_is_active():
-        qs = qs.filter(is_active=True)
-    return qs
+    """Legacy alias — delegates to the canonical tenancy filter."""
+    return _active_membership_filter(user)
 
 
 # Hard cap — a single booking may not contain more than this many tickets.
@@ -104,9 +104,19 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 # Organizer eligibility helper
 # ============================================================
 def _user_can_own_events(user):
+    """
+    Determine whether `user` may be assigned as an event organizer.
+
+    ✅ SECURITY FIX: `is_staff` is no longer honored here. After the
+    Platform Staff removal, `is_staff` is either deleted (dead code) or
+    a legacy flag on superusers only (already caught by `is_superuser`).
+    Honoring a stale `is_staff=True` row would let a demoted user with
+    no membership be assigned as an organizer. Use the canonical
+    superuser predicate instead.
+    """
     if user is None:
         return False
-    if user.is_staff or user.is_superuser:
+    if is_platform_superuser(user):  # is_superuser only
         return True
     # In the 6-tier hierarchy, any user with an active organization membership
     # can be assigned as an event organizer. The specific organization membership
@@ -173,37 +183,59 @@ class TicketPayloadSerializer(serializers.Serializer):
 # backend/ticket_bookings/api/serializers.py  (excerpt — only OrganizationSerializer)
 
 class OrganizationSerializer(serializers.ModelSerializer):
-    # ✅ FIX [SUPERUSER-ORG-AGNOSTIC]: `owner` is nullable.
     owner_username = serializers.SerializerMethodField(read_only=True)
     role = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Organization
         fields = [
-            'id', 'name', 'slug', 'owner', 'owner_username', 'role',
+            'id', 'name', 'slug',
+            'owner_username', 'role',
             'currency_code', 'currency_symbol', 'currency_locale',
             'country', 'country_code', 'default_timezone',
             'org_email', 'org_logo_url', 'email_from_name',
             'is_active', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'slug', 'owner', 'role', 'is_active',
+            'id', 'slug', 'role', 'is_active',
             'created_at', 'updated_at',
         ]
 
     def get_owner_username(self, obj):
-        # ✅ FIX: `obj.owner` may be None for a freshly-created org
-        # awaiting ownership assignment. Return None, not AttributeError.
-        return obj.owner.username if obj.owner_id else None
+        """
+        Read the live OWNER via the ``Organization.owner`` @property
+        (or the FK, if you kept it as a cache). Tolerates ``None``
+        for unowned orgs.
+        """
+        owner = getattr(obj, 'owner', None)
+        return getattr(owner, 'username', None)
 
     def get_role(self, obj):
-        """Return the requester's role in this org (or None)."""
+        """
+        Tenant role for the requesting user in this org, or ``None``.
+
+        ``is_superuser`` is intentionally NOT collapsed into ``role``:
+        the frontend already has ``is_superuser`` on the user payload
+        for the platform badge. Returning a synthetic 'superuser' here
+        breaks ``MembershipRoleUtils.isAtLeast`` on the client, which
+        expects ``role ∈ {owner, admin, staff, member}`` or ``null``.
+        """
         request = self.context.get('request')
-        if not request or not request.user or not request.user.is_authenticated:
+        user = getattr(request, 'user', None) if request else None
+        if not user or not user.is_authenticated:
             return None
-        membership = _active_user_memberships(request.user).filter(
-            organization=obj,
-        ).first()
+
+        # Superusers belong to no org. Do not invent a role.
+        if user.is_superuser:
+            return None
+
+        try:
+            membership = _active_user_memberships(user).filter(
+                organization=obj,
+            ).first()
+        except Exception:
+            return None
+
         return membership.role if membership else None
 
 

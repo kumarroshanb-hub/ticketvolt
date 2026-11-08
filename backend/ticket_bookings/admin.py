@@ -79,7 +79,6 @@ class OrganizationAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'country')
     search_fields = ('name', 'slug', 'owner__username', 'owner__email')
     readonly_fields = ('slug', 'created_at', 'updated_at')
-    autocomplete_fields = ('owner',)
 
     fieldsets = (
         ('Identity', {'fields': ('name', 'slug', 'owner', 'is_active')}),
@@ -94,7 +93,10 @@ class OrganizationAdmin(admin.ModelAdmin):
         }),
         ('Audit', {'fields': ('created_at', 'updated_at')}),
     )
-
+    @admin.display(description='Owner')
+    def live_owner_username(self, obj):
+        owner = obj.owner   # the new @property
+        return owner.username if owner else '— unassigned —'
 
 @admin.register(OrganizationMembership)
 class OrganizationMembershipAdmin(admin.ModelAdmin):
@@ -117,6 +119,28 @@ class OrganizationMembershipAdmin(admin.ModelAdmin):
             ),
         }),
     )
+
+    def save_model(self, request, obj, form, change):
+        """Prevent creating a second live OWNER for the same organization."""
+        if (
+            obj.role == OrganizationMembership.OrgRole.OWNER
+            and obj.removed_at is None
+            and obj.is_active
+        ):
+            qs = OrganizationMembership.objects.filter(
+                organization=obj.organization,
+                role=OrganizationMembership.OrgRole.OWNER,
+                removed_at__isnull=True,
+                is_active=True,
+            ).exclude(pk=obj.pk)
+            if qs.exists():
+                messages.error(
+                    request,
+                    'This organization already has a live OWNER. '
+                    'Use the Assign Owner / Transfer Ownership endpoint.',
+                )
+                return
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(MembershipTier)
@@ -223,7 +247,7 @@ class EventAdmin(admin.ModelAdmin):
     readonly_fields = (
         'created_at', 'updated_at',
         'total_tickets_sold', 'total_revenue',
-        'organizer',  # legacy FK — now auto-set to the creator
+        'organizer',  # legacy FK — now SET_NULL; kept read-only for audit
     )
     autocomplete_fields = ('organization',)
     fieldsets = (
@@ -488,7 +512,7 @@ class BookingAdmin(admin.ModelAdmin):
     event_link.short_description = 'Event'
     event_link.admin_order_field = 'event__title'
 
-    # ---------- Bulk actions (unchanged from your original) ----------
+    # ---------- Bulk actions ----------
 
     def confirm_payment_and_issue_tickets(self, request, queryset):
         processed = errors = 0

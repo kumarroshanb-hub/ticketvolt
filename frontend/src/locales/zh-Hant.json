@@ -38,7 +38,6 @@
   },
 "roles": {
     "platform_super_admin": "平台管理員",
-    "platform_staff":       "平台職員",
     "platform_user":        "普通用戶",
     "org_owner":  "擁有者",
     "org_admin":  "管理員",

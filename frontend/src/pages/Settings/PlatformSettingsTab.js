@@ -5,10 +5,10 @@ import {
     MenuItem, Divider, Alert, CircularProgress, Paper,
     Stack, InputAdornment, Switch, FormControlLabel
 } from '@mui/material';
-import { 
-    Save as SaveIcon, 
-    Refresh as RefreshIcon, 
-    Payment as PaymentIcon 
+import {
+    Save as SaveIcon,
+    Refresh as RefreshIcon,
+    Payment as PaymentIcon
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import api from '../../services/api';
@@ -27,7 +27,7 @@ const INITIAL_FORM = {
     org_email: '',
     org_logo_url: '',
     email_from_name: '',
-    payments_enabled: false, // ✅ NEW: Global payment toggle
+    payments_enabled: false, // Global payment toggle
 };
 
 const PlatformSettingsTab = () => {
@@ -57,7 +57,7 @@ const PlatformSettingsTab = () => {
                 org_email: data.org_email ?? prev.org_email,
                 org_logo_url: data.org_logo_url ?? prev.org_logo_url,
                 email_from_name: data.email_from_name ?? prev.email_from_name,
-                payments_enabled: data.payments_enabled ?? prev.payments_enabled, // ✅ NEW
+                payments_enabled: data.payments_enabled ?? prev.payments_enabled,
             }));
             if (data.catalog) {
                 setCatalog({
@@ -74,7 +74,7 @@ const PlatformSettingsTab = () => {
         }
     };
 
-    useEffect(() => { load(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const countryOptions = useMemo(() => {
         return (catalog.countries || []).map((c) => ({
@@ -97,7 +97,7 @@ const PlatformSettingsTab = () => {
     }, [catalog.currency_codes]);
 
     const handleChange = (field) => (e) => {
-        // ✅ Handle Switch (boolean) vs TextField (string)
+        // Handle Switch (boolean) vs TextField (string)
         const value = field === 'payments_enabled' ? e.target.checked : e.target.value;
         setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -136,13 +136,13 @@ const PlatformSettingsTab = () => {
                 org_email: form.org_email,
                 org_logo_url: form.org_logo_url,
                 email_from_name: form.email_from_name,
-                payments_enabled: form.payments_enabled, // ✅ NEW
+                payments_enabled: form.payments_enabled,
             };
-            
+
             const { data } = await api.patch('/settings/', payload);
             toast.success('Platform settings saved');
-            
-            // ✅ Force global context refresh so ALL pages re-render with new currency
+
+            // Force global context refresh so ALL pages re-render with new currency
             if (typeof refresh === 'function') {
                 await refresh();
             }
@@ -249,7 +249,7 @@ const PlatformSettingsTab = () => {
             )}
 
             <Grid container spacing={3}>
-                {/* ✅ NEW: Global Payment Gateways Toggle */}
+                {/* Global Payment Gateways Toggle */}
                 <Grid item xs={12}>
                     <Card sx={{ border: '2px solid', borderColor: form.payments_enabled ? 'success.main' : 'divider' }}>
                         <CardContent>

@@ -9,6 +9,10 @@ const OrgContext = createContext(null);
 
 const STORAGE_KEY = 'current_org_id';
 
+// Defensive sentinel the backend may emit for superusers viewing an org
+// they are not a member of. Treated as "no tenant role" on the frontend.
+const PLATFORM_ADMIN_SENTINEL = 'platform_admin';
+
 /**
  * Organization context.
  *
@@ -21,6 +25,12 @@ const STORAGE_KEY = 'current_org_id';
  * IMPORTANT: A user can be a member of multiple orgs with different
  * roles in each. The role for the CURRENT org is
  * `currentOrg?.role` — never a value on the User object.
+ *
+ * NOTE: A superuser viewing an org they do not belong to may receive
+ * `role: 'platform_admin'` from the backend (or `null`). Both are
+ * normalized to `null` in `currentOrgRole` so tenant role checks never
+ * see the sentinel. Platform-wide admin is exposed separately via
+ * `isPlatformAdmin` / `isPlatformAdminOfCurrentOrg`.
  */
 export const OrgProvider = ({ children }) => {
     const { isAuthenticated, user } = useAuth();
@@ -79,10 +89,19 @@ export const OrgProvider = ({ children }) => {
     );
 
     // The caller's MEMBERSHIP role in the currently-selected org.
-    // null when the user hasn't selected an org or has no memberships.
-    const currentOrgRole = currentOrg?.role || null;
+    // null when the user hasn't selected an org, has no memberships,
+    // or the backend returned the 'platform_admin' sentinel.
+    const rawRole = currentOrg?.role || null;
+    const currentOrgRole = (
+        rawRole && String(rawRole).toLowerCase() !== PLATFORM_ADMIN_SENTINEL
+    ) ? rawRole : null;
 
     const isPlatformAdmin = Boolean(user?.is_staff || user?.is_superuser);
+
+    // Superuser with no tenant membership in the current org.
+    // Useful for consumers that need to distinguish "platform admin
+    // who also owns this org" from "platform admin viewing a foreign org".
+    const isPlatformAdminOfCurrentOrg = isPlatformAdmin && !currentOrgRole;
 
     const value = useMemo(() => ({
         organizations,
@@ -93,6 +112,7 @@ export const OrgProvider = ({ children }) => {
         loading,
         refresh: load,
         isPlatformAdmin,
+        isPlatformAdminOfCurrentOrg,
         // True when the caller is a Regular User with zero memberships.
         // Any tenant page will prompt them to create/join an org.
         hasNoMemberships:
@@ -104,7 +124,8 @@ export const OrgProvider = ({ children }) => {
             organizations.length === 0,
     }), [
         organizations, currentOrg, currentOrgId, currentOrgRole,
-        setCurrentOrgId, loading, load, isPlatformAdmin, isAuthenticated,
+        setCurrentOrgId, loading, load, isPlatformAdmin,
+        isPlatformAdminOfCurrentOrg, isAuthenticated,
     ]);
 
     return <OrgContext.Provider value={value}>{children}</OrgContext.Provider>;

@@ -20,6 +20,21 @@ Role hierarchy (6-tier):
   Tenant tier   : Owner > Admin > Staff > Member               — OrganizationMembership.role
   Public tier   : Member-less registered user / Guest          — no membership row
 
+  NOTE: "Platform Staff" is NOT a role — the platform tier is the
+  boolean pair `User.is_superuser` / `User.is_staff`. Do not add a
+  membership role for platform operators.
+
+Single-owner invariant (2026-11-06):
+  An Organization has AT MOST ONE live OWNER at any time. This is
+  enforced at three layers:
+    1. DB   — UniqueConstraint `one_live_owner_per_org` on
+              OrganizationMembership.
+    2. Model — OrganizationMembership.save() refuses a second live OWNER.
+    3. Service — assign_owner / transfer_ownership are the ONLY endpoints
+              that may create or mutate a live OWNER membership.
+  `Organization.owner` is a DERIVED property (live OWNER membership's
+  user), NOT a stored FK. There is no denormalized owner column.
+
 IMPORTANT (2026-11-06 — membership-as-property model):
   • A `User` is ALWAYS a "regular user" — a person with a login.
   • A user's *roles* are properties of their **memberships**, not of
@@ -39,14 +54,19 @@ The security model remains:
   • `owns_org(user, org)`        → user is OWNER of `org`.
 None of these look at any global "user.role".
 """
+import logging
 import secrets
 import uuid
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import slugify
+
+logger = logging.getLogger(__name__)
 
 
 class Organization(models.Model):
@@ -57,33 +77,18 @@ class Organization(models.Model):
     Organization. Everyone else is scoped to the Organizations they are
     a member of.
 
-    ✅ FIX [SUPERUSER-ORG-AGNOSTIC]: `owner` is nullable.
+    ✅ FIX [OWNER-AS-PROPERTY]: there is no `owner` FK column. Ownership
+    is derived from the live OWNER `OrganizationMembership` row. This
+    keeps the Platform tier strictly above every tenant tier and removes
+    the dual-source-of-truth bug class (owner FK out of sync with
+    memberships).
 
-    A superuser creating an org does NOT become its owner and does NOT
-    receive an OrganizationMembership. Ownership is assigned
-    separately, once a user with OrgRole.OWNER exists, via the
-    `assign-owner` / `transfer-ownership` endpoints. This keeps the
-    Platform tier strictly above every tenant tier.
+    The org can exist in an *unowned* state until a superuser assigns a
+    tenant OWNER via the `assign-owner` / `transfer-ownership` endpoints.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True)
-
-    # ✅ FIX: nullable. The org can exist in an unowned state until a
-    # superuser assigns a tenant OWNER. `on_delete=PROTECT` still
-    # prevents deleting the last human with ownership rights.
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name='owned_organizations',
-        null=True,
-        blank=True,
-        help_text=(
-            'The tenant OWNER. Null until a Platform Admin assigns an '
-            'owner. Superusers are never owners of a tenant they '
-            'created — they sit above every org.'
-        ),
-    )
 
     # Per-tenant display config. Mirrors the fields that used to live
     # on SystemSettings; seeded from SystemSettings on create so a new
@@ -121,6 +126,30 @@ class Organization(models.Model):
     def __str__(self):
         return self.name
 
+    # ---- Derived owner (no FK column) ----------------------------------
+    #
+    # These are read-only conveniences. Writes MUST go through
+    # services.tenancy.assign_owner / transfer_ownership.
+
+    @property
+    def owner(self):
+        """The user holding the live OWNER membership, or None.
+
+        Relies on the `one_live_owner_per_org` DB constraint, so
+        `.first()` is safe and deterministic.
+        """
+        m = self.memberships.filter(
+            role=OrganizationMembership.OrgRole.OWNER,
+            removed_at__isnull=True,
+            is_active=True,
+        ).select_related('user').first()
+        return m.user if m else None
+
+    @property
+    def owner_id(self):
+        o = self.owner
+        return o.id if o else None
+
 
 class OrganizationMembership(models.Model):
     """
@@ -133,8 +162,15 @@ class OrganizationMembership(models.Model):
     different role. There is no single "user role" in the data model —
     `user.effective_role` is a UI label derived from these rows.
 
+    Single-owner invariant:
+      At most one live (role=OWNER, removed_at IS NULL, is_active=True)
+      membership exists per Organization. Enforced by
+      `one_live_owner_per_org`. `save()` is guarded too, so callers that
+      bypass the service layer fail loudly instead of silently creating a
+      second owner.
+
     History (2026-11-06 review §2.3):
-      Removing a member is now a SOFT delete (`removed_at` + `is_active=False`)
+      Removing a member is a SOFT delete (`removed_at` + `is_active=False`)
       rather than a row deletion, so re-inviting the same user preserves the
       original `joined_at` and the gap between stints. A role change
       (`transfer_ownership`) writes an `OrganizationMembershipEvent` row.
@@ -149,6 +185,8 @@ class OrganizationMembership(models.Model):
         # NOTE: 'customer' removed in the 6-tier refactor.
         # A person who merely bought a ticket and has no account is a
         # Guest (no membership row); one who has an account is a Member.
+        # NOTE: "Platform Staff" is not a tenant role — it is
+        # `User.is_staff`. Do not add it here.
 
     # Roles that can manage the tenant (see events, bookings, etc.)
     MANAGER_ROLES = (OrgRole.OWNER, OrgRole.ADMIN)
@@ -193,6 +231,10 @@ class OrganizationMembership(models.Model):
     )
 
     class Meta:
+        # Historical row-per-(org,user) uniqueness. Because removal is a
+        # soft delete and re-invite uses update_or_create on the same
+        # (org, user) pair, this remains correct — a soft-removed row is
+        # mutated back to live rather than duplicated.
         unique_together = [('organization', 'user')]
         ordering = ['-joined_at']
         indexes = [
@@ -201,9 +243,53 @@ class OrganizationMembership(models.Model):
             # Speeds up the "is there an active membership?" lookups.
             models.Index(fields=['organization', 'user', 'removed_at']),
         ]
+        constraints = [
+            # At most one live OWNER per org.
+            models.UniqueConstraint(
+                fields=['organization'],
+                condition=Q(role='owner', removed_at__isnull=True, is_active=True),
+                name='one_live_owner_per_org',
+            ),
+            # At most one live membership per (org, user).
+            # (Redundant with unique_together for *rows*, but guards the
+            #  live set explicitly so a future re-introduction of removed
+            #  rows as separate records cannot break the active-membership
+            #  invariant.)
+            models.UniqueConstraint(
+                fields=['organization', 'user'],
+                condition=Q(removed_at__isnull=True),
+                name='one_live_membership_per_user_per_org',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.user.username} @ {self.organization.slug} ({self.role})'
+
+    def save(self, *args, **kwargs):
+        """Refuse a second live OWNER outside the ownership endpoints.
+
+        The DB constraint is the backstop; this check raises a clear
+        domain error before we hit an IntegrityError. assign_owner /
+        transfer_ownership are expected to demote the previous OWNER
+        first, inside a transaction.
+        """
+        if (
+            self.role == self.OrgRole.OWNER
+            and self.removed_at is None
+            and self.is_active
+        ):
+            qs = OrganizationMembership.objects.filter(
+                organization=self.organization,
+                role=self.OrgRole.OWNER,
+                removed_at__isnull=True,
+                is_active=True,
+            ).exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError(
+                    'This organization already has a live OWNER. '
+                    'Use transfer-ownership or assign-owner.'
+                )
+        super().save(*args, **kwargs)
 
     # ---- Role predicates (per-org, not per-user) ----
 
@@ -424,7 +510,10 @@ class OrganizationMembershipEvent(models.Model):
     class EventType(models.TextChoices):
         INVITED = 'invited', 'Invited'
         ACCEPTED = 'accepted', 'Accepted'
+        ADDED = 'added', 'Added'                                  # ← new
         ROLE_CHANGED = 'role_changed', 'Role changed'
+        OWNER_ASSIGNED = 'owner_assigned', 'Owner assigned'        # ← new
+        OWNER_TRANSFERRED = 'owner_transferred', 'Owner transferred'  # ← new
         VALIDITY_CHANGED = 'validity_changed', 'Validity changed'
         DEACTIVATED = 'deactivated', 'Deactivated'
         REACTIVATED = 'reactivated', 'Reactivated'
@@ -507,8 +596,7 @@ def log_membership_event(
             after=after or {},
         )
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception(
+        logger.exception(
             'Failed to write membership audit event %s for org=%s user=%s',
             event_type, getattr(organization, 'pk', None), getattr(user, 'pk', None),
         )

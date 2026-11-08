@@ -125,8 +125,14 @@ const ProtectedRoute = ({ children }) => {
 };
 
 // ---- RoleBasedRoute ----
-// PLATFORM-level gating only. allowedRoles must contain PLATFORM_ROLES values
-// (e.g. SUPER_ADMIN). Never pass membership roles here — use OrgRoleRoute.
+// PLATFORM-level gating only. allowedRoles must contain PLATFORM_ROLES values.
+// As of the removal of PLATFORM_ROLES.STAFF, the only valid value is
+// PLATFORM_ROLES.SUPER_ADMIN. Never pass membership roles here — use
+// OrgRoleRoute for org-scoped gating.
+//
+// NOTE: Do NOT pass PLATFORM_ROLES.STAFF — it no longer exists (undefined),
+// which would cause allowedRoles.includes(platformRole) to silently fail and
+// the route to never match.
 const RoleBasedRoute = ({ children, allowedRoles }) => {
     const { user, loading } = useAuth();
     const { platformRole } = useRole();
@@ -268,7 +274,9 @@ const AppRoutes = () => {
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.STAFF}><Checkin /></OrgRoleRoute>}
                 />
 
-                {/* Platform-only routes. */}
+                {/* Platform-only routes.
+                    Only PLATFORM_ROLES.SUPER_ADMIN is valid here.
+                    (PLATFORM_ROLES.STAFF has been removed.) */}
                 <Route
                     path="active-sessions"
                     element={

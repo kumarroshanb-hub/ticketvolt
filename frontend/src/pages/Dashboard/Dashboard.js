@@ -1,5 +1,5 @@
 // frontend/src/pages/Dashboard/Dashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Paper,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -379,17 +379,18 @@ const Dashboard = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     // ✅ 1. Initialize Platform Filter Hook
-    const { 
-        params: orgParams, 
-        isPlatformAdmin, 
-        orgFilter, 
-        setOrgFilter, 
-        organizations 
+    const {
+        params: orgParams,
+        isPlatformAdmin,
+        orgFilter,
+        setOrgFilter,
+        organizations,
     } = usePlatformFilter();
 
     const canManageEvents = hasOrgRole(MEMBERSHIP_ROLES.ADMIN);
 
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [stats, setStats] = useState({
         total_events: 0,
         active_events: 0,
@@ -404,25 +405,33 @@ const Dashboard = () => {
         popular_events: [],
     });
 
-    const loadDashboard = async () => {
-        setLoading(true);
+    // ✅ 2. Serialize orgParams so object identity changes don't refetch endlessly
+    const orgParamsKey = useMemo(() => JSON.stringify(orgParams || {}), [orgParams]);
+
+    const loadDashboard = useCallback(async ({ silent = false } = {}) => {
+        if (silent) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
         try {
-            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            // ✅ 3. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
             const response = await api.get('/dashboard/stats/', { params: orgParams });
             console.log('📊 Dashboard stats:', response.data);
             setStats(response.data);
         } catch (error) {
             console.error('Dashboard error:', error);
             toast.error(t('dashboard.loadFailed'));
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
         }
-        setLoading(false);
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgParamsKey, t]);
 
     useEffect(() => {
         loadDashboard();
-    // ✅ 3. Added orgParams to dependency array so it refetches when filter changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [orgParams]);
+    }, [loadDashboard]);
 
     if (loading) {
         return (
@@ -460,12 +469,17 @@ const Dashboard = () => {
                         orgFilter={orgFilter}
                         setOrgFilter={setOrgFilter}
                     />
-                    <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadDashboard}>
+                    <OutlineButton
+                        variant="outlined"
+                        startIcon={refreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
+                        onClick={() => loadDashboard({ silent: true })}
+                        disabled={refreshing}
+                    >
                         {t('common.refresh')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
-            
+
             {needsOrganization && canManageEvents && <NeedsOrganizationBanner />}
 
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>

@@ -317,6 +317,8 @@ const RoleBadge = styled.span`
      background: ${C.success}1A;
      color: ${C.successDark};
  }
+ /* .organizer is a DEPRECATED legacy alias for tenant OWNER — kept for
+    backward compatibility with older API payloads. Do not use for new work. */
  &.owner, &.organizer {
      background: ${C.warning}1A;
      color: ${C.warningDark};
@@ -325,6 +327,9 @@ const RoleBadge = styled.span`
      background: ${C.info}1A;
      color: ${C.infoDark};
  }
+ /* .staff is reserved for TENANT staff members only (OrganizationMembership
+    role=staff). Platform is_staff without an org membership is reported by
+    the API as role='user', so it will NOT receive this class. */
  &.staff {
      background: ${C.secondary}1A;
      color: ${C.secondaryDark};
@@ -703,7 +708,6 @@ const getRoleLabel = (role) =>
 
 const getRoleIcon = (role) => {
   if (role === PLATFORM_ROLES.SUPER_ADMIN) return <SupervisorAccount fontSize="small" />;
-  if (role === PLATFORM_ROLES.STAFF)       return <Group fontSize="small" />;
   if (role === MEMBERSHIP_ROLES.OWNER)     return <Storefront fontSize="small" />;
   if (role === MEMBERSHIP_ROLES.ADMIN)     return <AdminPanelSettings fontSize="small" />;
   return <Person fontSize="small" />;
@@ -745,13 +749,16 @@ const normalizeUserResponse = (data) => {
 // ROLE OPTIONS
 // ------------------------------------------------------------
 // Platform role: stored on User (is_staff / is_superuser). Only a superuser
-// may change it.
+// may change it. NOTE: the legacy "Platform Staff" option (is_staff=True,
+// is_superuser=False) has been removed — tenant staff are now expressed via
+// org memberships, not platform flags.
 // Org role: stored on OrganizationMembership. Only set at create-time via
 // `requested_role`; after that, managed on the Organization Team page.
+// OWNER is intentionally NOT selectable here — ownership is assigned via
+// the Organizations page (Assign Owner / Transfer Ownership).
 // ============================================
 const PLATFORM_ROLE_OPTIONS = [
   { value: PLATFORM_ROLES.USER,        label: 'Regular User' },
-  { value: PLATFORM_ROLES.STAFF,       label: 'Platform Staff' },
   { value: PLATFORM_ROLES.SUPER_ADMIN, label: 'Platform Admin' },
 ];
 
@@ -759,7 +766,6 @@ const ORG_ROLE_OPTIONS = [
   { value: MEMBERSHIP_ROLES.MEMBER, label: 'Member' },
   { value: MEMBERSHIP_ROLES.STAFF,  label: 'Staff' },
   { value: MEMBERSHIP_ROLES.ADMIN,  label: 'Admin' },
-  { value: MEMBERSHIP_ROLES.OWNER,  label: 'Owner' },
 ];
 
 // ============================================================================
@@ -943,7 +949,7 @@ const UserFormModal = ({
                     ))}
                   </FormSelect>
                   <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                    <strong>Platform role</strong> is system-wide (superuser / staff flags).
+                    <strong>Platform role</strong> is system-wide (superuser only).
                   </p>
                 </FormGroup>
               )}
@@ -963,6 +969,10 @@ const UserFormModal = ({
                   </FormSelect>
                   <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
                     Membership in the selected organization. Can be changed later on the Team page.
+                  </p>
+                  <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
+                    Ownership is assigned via the Organizations page
+                    (Transfer Ownership / Assign Owner).
                   </p>
                 </FormGroup>
               )}
@@ -1078,6 +1088,8 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
               {user.is_active !== false ? <CheckCircle fontSize="small" /> : <Block fontSize="small" />}
               {user.is_active !== false ? 'Active' : 'Inactive'}
             </Badge>
+            {/* Legacy flag indicator: is_staff no longer maps to a platform role
+                option, but the underlying boolean may still be set. */}
             {user.is_staff && (
               <Badge className="active">
                 <AdminPanelSettings fontSize="small" />
@@ -1273,6 +1285,7 @@ const Users = () => {
       setStats({
         total: count,
         active: pageUsers.filter((u) => u.is_active).length,
+        // 'organizer' is a deprecated legacy alias for tenant OWNER.
         owners: pageUsers.filter((u) => u.role === 'owner' || u.role === 'organizer').length,
         admins: pageUsers.filter((u) => ['admin', 'super_admin'].includes(u.role)).length,
       });
@@ -1332,12 +1345,11 @@ const Users = () => {
   };
 
   // Map a platform-role choice to flags the backend understands.
+  // NOTE: PLATFORM_ROLES.STAFF has been removed from the selector; only
+  // SUPER_ADMIN and USER are valid inputs here.
   const platformRoleToFlags = (platformRole) => {
     if (platformRole === PLATFORM_ROLES.SUPER_ADMIN) {
       return { is_staff: true, is_superuser: true };
-    }
-    if (platformRole === PLATFORM_ROLES.STAFF) {
-      return { is_staff: true, is_superuser: false };
     }
     return { is_staff: false, is_superuser: false };
   };
@@ -1386,6 +1398,14 @@ const Users = () => {
       // Org admin: only request an org membership; no platform role.
       payload.requested_role = formData.orgRole;
       payload.organization_id = formData.organization_id;
+    }
+
+    // Safety guard: ownership is NEVER assignable via user creation. The
+    // backend rejects it for non-superusers (and superusers should use
+    // assign_owner / transfer_ownership on the Organizations page).
+    if (payload.requested_role === MEMBERSHIP_ROLES.OWNER) {
+      toast.error('Ownership is assigned via Organizations → Transfer Ownership.');
+      return;
     }
 
     setSubmitting(true);
@@ -1438,6 +1458,8 @@ const Users = () => {
     };
 
     // Platform role flags — only superusers may change them.
+    // After removing STAFF from the options, platformRoleToFlags will never
+    // produce is_staff=true without is_superuser=true.
     if (isSuperuser && formData.platformRole) {
       const flags = platformRoleToFlags(formData.platformRole);
       // Only include if it actually differs from current user flags.
@@ -1528,10 +1550,14 @@ const Users = () => {
 
   const handleEditUser = (user) => {
     setSelectedUser(user);
-    // Derive the closest platform-role from flags.
+    // Derive the closest platform-role from flags. With STAFF removed from
+    // the selector, is_staff without is_superuser maps to USER (the legacy
+    // flag is preserved on the server and only cleared if the operator
+    // explicitly changes the platform role via the form).
     let platformRole = PLATFORM_ROLES.USER;
-    if (user.is_superuser) platformRole = PLATFORM_ROLES.SUPER_ADMIN;
-    else if (user.is_staff) platformRole = PLATFORM_ROLES.STAFF;
+    if (user.is_superuser) {
+      platformRole = PLATFORM_ROLES.SUPER_ADMIN;
+    }
 
     setFormData({
       email: user.email || '',
@@ -1674,7 +1700,7 @@ const Users = () => {
           >
             <option value="all">All Roles</option>
             <option value="super_admin">Super Admin</option>
-            <option value="admin">Admin</option>
+            <option value="admin">Tenant Admin</option>
             <option value="owner">Owner</option>
             <option value="staff">Staff</option>
             <option value="member">Member</option>

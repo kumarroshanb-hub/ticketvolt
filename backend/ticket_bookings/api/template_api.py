@@ -9,6 +9,8 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from PIL import Image as PILImage, UnidentifiedImageError
 
+from core.permissions import IsAnyOrgManager
+
 from ..models import EventTemplate, EventTemplateType, Event
 from ..constants import TemplateTypes, TEMPLATE_TYPE_MAP
 from ..services.tenancy import (
@@ -107,29 +109,6 @@ IMAGE_SPECS = {
 }
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
-
-
-class IsTenantManager(permissions.BasePermission):
-    """
-    Class-level permission gate for manager-only endpoints.
-
-    Unlike ``IsOrgManager`` (which primarily enforces at the object level),
-    this check runs in ``has_permission`` so it works even when no object
-    is available (e.g. list/create endpoints). It allows:
-
-    * platform admins, OR
-    * authenticated users who manage at least one org.
-    """
-
-    message = 'Manager role required.'
-
-    def has_permission(self, request, view):
-        user = getattr(request, 'user', None)
-        if not user or not user.is_authenticated:
-            return False
-        if is_platform_admin(user):
-            return True
-        return bool(user_org_ids(user))
 
 
 def _validate_image_spec(image_file, template_type_slug):
@@ -296,7 +275,7 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if getattr(self, 'action', None) in self._MANAGER_ACTIONS:
-            return [permissions.IsAuthenticated(), IsTenantManager()]
+            return [permissions.IsAuthenticated(), IsAnyOrgManager()]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):

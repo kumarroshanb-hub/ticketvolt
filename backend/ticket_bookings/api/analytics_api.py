@@ -8,7 +8,7 @@ Scope (Phase 3):
     only their org; multi-org users see all their orgs combined).
   • Everyone else sees nothing (the view returns zeros).
 
-BUG 9 FIX: `permission_classes` now includes `IsTenantManager`, so
+BUG 9 FIX: `permission_classes` now includes `IsAnyOrgManager`, so
 non-managers are rejected with 403 at the permission layer instead of
 receiving a zero-shaped 200. The `has_analytics_scope` gate is kept as
 defence-in-depth (and to preserve the zero-shape contract for any
@@ -25,7 +25,7 @@ modification:
   revenueData      [{ month, revenue, bookings }, ...]
   deviceData       [{ name, value }, ...]
   eventData        [{ name, value, count }, ...]
-  topEvents        [{ id, name, bookings, revenue, percentage }, ...]
+  topEvents        [{ id, name, bookings, revenue, percentage }, ... ]
   statusBreakdown  [{ status, count }, ... ]
   categoryBreakdown[{ name, value, count }, ...]
 """
@@ -40,7 +40,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from ..utils.money import format_money
 
-from core.permissions import IsTenantManager
+from core.permissions import IsAnyOrgManager
 
 from ..models import Event, Booking, Ticket, CheckInLog, Venue, Discount
 from ..services.tenancy import (
@@ -84,10 +84,10 @@ def _timeframe_range(name):
 
 
 class AnalyticsView(APIView):
-    # BUG 9 FIX: manager-only endpoint. `IsTenantManager` allows platform
+    # BUG 9 FIX: manager-only endpoint. `IsAnyOrgManager` allows platform
     # admins and managers of ≥ 1 org, and rejects everyone else with 403
     # before any queryset is evaluated.
-    permission_classes = [IsAuthenticated, IsTenantManager]
+    permission_classes = [IsAuthenticated, IsAnyOrgManager]
 
     def get(self, request):
         try:
@@ -107,7 +107,7 @@ class AnalyticsView(APIView):
             # *both* venue and discount counts so a STAFF-only user never
             # sees venues > 0 while discounts == 0.
             #
-            # With `IsTenantManager` in `permission_classes`, the "everyone
+            # With `IsAnyOrgManager` in `permission_classes`, the "everyone
             # else" branch is normally unreachable via HTTP — it remains so
             # any test/caller that constructs the view directly still gets
             # the documented zero-shape contract.
@@ -301,7 +301,7 @@ class AnalyticsView(APIView):
             # visibility. Previously venues used `visible_venues` (which
             # includes STAFF orgs) while discounts used `visible_discounts`
             # (managers only), producing mismatched zeros for STAFF users.
-            # Since `IsTenantManager` already gates this endpoint, the
+            # Since `IsAnyOrgManager` already gates this endpoint, the
             # caller is either a platform admin or a manager of ≥1 org —
             # so both helpers return consistent manager-scoped results.
             total_venues = visible_venues(user).filter(is_active=True).count()
@@ -351,7 +351,7 @@ class AnalyticsView(APIView):
     # ------------------------------------------------------------------
     # Zero-shaped response for out-of-scope users.
     #
-    # Retained as defence-in-depth: with `IsTenantManager` in
+    # Retained as defence-in-depth: with `IsAnyOrgManager` in
     # `permission_classes` this branch is normally unreachable via HTTP,
     # but keeping it means direct view construction (tests, scripts) still
     # gets the documented zero-shape contract instead of a 500 or a leak.

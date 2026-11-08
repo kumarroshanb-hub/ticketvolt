@@ -47,9 +47,16 @@ const Bookings = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // "Regular user" = no owner/admin/staff rights in the current org.
+    // "Regular user" = no owner/admin rights in the current org.
     // They see only their own bookings (the backend already scopes this).
-    const canManageAllBookings = hasOrgRole(MEMBERSHIP_ROLES.STAFF);
+    //
+    // NOTE: This must be ADMIN (owner/admin), not STAFF. The backend's
+    // BookingViewSet.get_permissions routes mutating actions through
+    // IsBookingManager (owner/admin only), so STAFF would receive 403s for
+    // "Mark Paid" / "Refund" etc. Using ADMIN keeps the UI in sync with the
+    // backend and makes isRegularUser true for STAFF-only users (correct:
+    // they get the "my bookings" view, not the admin view).
+    const canManageAllBookings = hasOrgRole(MEMBERSHIP_ROLES.ADMIN);
     const isRegularUser = !canManageAllBookings;
 
     // ✅ 1. Initialize Platform Filter Hook

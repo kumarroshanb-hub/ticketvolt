@@ -32,6 +32,13 @@
 # that is how concurrent checkouts double-sell. Every `remaining_*` and
 # `available_*` method below MUST subtract all three (`total - sold - reserved`).
 # ============================================================================
+# CONVENTION: Ownership / roles
+# ----------------------------------------------------------------------------
+# The source of truth for "who may manage this org/event" is
+# `OrganizationMembership.role` (Phase 1). The legacy `Event.organizer`
+# FK and `UserProfile.is_organizer` flag are DEPRECATED and are NOT read
+# by any access-control code. See A.2 notes below.
+# ============================================================================
 
 import secrets
 import string
@@ -89,6 +96,11 @@ class UserProfile(models.Model):
     # DEPRECATED (Phase 6): replaced by OrganizationMembership.role.
     # This flag is retained only so legacy profile queries don't 500 —
     # it is NOT read by any authorization code. Use `memberships[]`.
+    #
+    # ⚠️  SOURCE OF TRUTH: `OrganizationMembership.role == 'owner'`
+    #     (equivalently `role == OrganizationMembership.Role.OWNER`).
+    #     Do NOT add new reads of `is_organizer`; if you find one in a
+    #     hot path, migrate it to `services/tenancy.can_manage_org()`.
     is_organizer = models.BooleanField(default=False)
 
     # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
@@ -176,6 +188,10 @@ class CancellationPolicy(models.Model):
 
     # Legacy FK. Kept during the migration so old imports still work;
     # access control is by `organization` from here on.
+    #
+    # ⚠️  DEPRECATED for authorization purposes. Do NOT read this field
+    #     in new access-control code; use `organization` +
+    #     `OrganizationMembership.role` via `services/tenancy.py`.
     organizer = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -255,7 +271,7 @@ class Event(models.Model):
         related_name='events',
     )
 
-    # Legacy FK. Kept during the migration; not used for access control.
+    # Legacy FK. Kept during the migration; NOT used for access control.
     #
     # ✅ FIX: `on_delete` changed from CASCADE to SET_NULL. Deleting a
     # user must not silently wipe their tenant's events (and, via
@@ -263,6 +279,16 @@ class Event(models.Model):
     # is `PROTECT`, so the org survives; events now survive too, and a
     # Platform Admin who wants to remove the last human owner must
     # transfer ownership first.
+    #
+    # ⚠️  DEPRECATED for authorization purposes (A.2). The source of
+    #     truth for "who can manage this event" is
+    #     `OrganizationMembership.role` on `self.organization`.
+    #     `visible_events()` (services/tenancy.py) explicitly ignores
+    #     this FK. Do NOT reintroduce reads of `event.organizer` into
+    #     access-control paths. It is retained solely for backwards
+    #     compatibility with legacy data and imports, and may be
+    #     dropped in a future migration once all call sites are
+    #     confirmed clean.
     organizer = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -471,12 +497,24 @@ class Event(models.Model):
     # `can_operate_org`, which also lets Staff (scanner-only) through.
     # `can_manage_org` is the Owners/Admins predicate.
     def user_can_manage(self, user):
-        """Owners/Admins of this event's org. Platform admins always pass."""
+        """Owners/Admins of this event's org. Platform admins always pass.
+
+        A.2 note: This delegates to `services.tenancy.can_manage_org`,
+        which resolves the role via `OrganizationMembership.role` on
+        `self.organization`. The legacy `Event.organizer` FK is
+        intentionally NOT considered — see the class-level comment on
+        `organizer` above.
+        """
         from .services.tenancy import can_manage_org
         return can_manage_org(user, self.organization)
 
     def user_can_edit(self, user):
-        """Only Owners/Admins. Staff (scanner-only) do NOT pass."""
+        """Only Owners/Admins. Staff (scanner-only) do NOT pass.
+
+        A.2 note: Like `user_can_manage`, this consults
+        `OrganizationMembership.role` via `can_manage_org` and ignores
+        the legacy `Event.organizer` FK.
+        """
         from .services.tenancy import can_manage_org
         return can_manage_org(user, self.organization)
 
@@ -766,6 +804,10 @@ class Discount(models.Model):
     )
 
     # Legacy FK. Kept during the migration; access control is by organization.
+    #
+    # ⚠️  DEPRECATED for authorization purposes (A.2). Do NOT read this
+    #     field in new access-control code; use `organization` +
+    #     `OrganizationMembership.role` via `services/tenancy.py`.
     organizer = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name='discounts',
         help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",

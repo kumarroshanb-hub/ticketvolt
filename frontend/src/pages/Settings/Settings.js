@@ -7,7 +7,7 @@ import {
     Notifications as NotificationsIcon,
     Palette as PaletteIcon,
     Language as LanguageIcon,
-    Settings as SettingsIcon,          // ← NEW: icon for the Platform tab
+    Settings as SettingsIcon,
     Save as SaveIcon,
 } from '@mui/icons-material';
 import {
@@ -29,13 +29,12 @@ import {
     PageHeaderLeft,
     PrimaryButton,
 } from '../../components/Common';
-import { theme } from '../../theme/tokens';
+import { theme as tokens } from '../../theme/tokens';
 import PlatformSettingsTab from './PlatformSettingsTab';
-import { ROLES } from '../../constants';
 import { useRole } from '../../context/RoleContext';
 
-const C = theme.colors;
-const F = theme.fonts;
+const C = tokens.colors;
+const F = tokens.fonts;
 
 // ============================================
 // STYLED COMPONENTS
@@ -222,7 +221,7 @@ const switchSx = {
 // ============================================
 
 // The 5 user-facing tabs are always present.
-// The Platform tab is appended only for admin / superadmin.
+// The Platform tab is appended only for superadmins.
 const getSettingsTabs = (canManagePlatform) => {
     const tabs = [
         { id: 'profile', label: 'Profile', icon: <PersonIcon /> },
@@ -246,9 +245,9 @@ const Settings = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Platform settings tab is for admin / superadmin only.
+    // Platform settings tab is for superadmin only.
     const { isSuperAdmin } = useRole();
-    const canManagePlatform = isSuperAdmin;
+    const canManagePlatform = Boolean(isSuperAdmin);
 
     const [activeTab, setActiveTab] = useState('profile');
     const [loading, setLoading] = useState(false);
@@ -279,7 +278,7 @@ const Settings = () => {
         }
     }, [activeTab, canManagePlatform]);
 
-    // ✅ Memoized so the effect dep list is stable and React doesn't re-warn.
+    // Memoized so the effect dep list is stable.
     const loadSettings = useCallback(async () => {
         try {
             const response = await api.get('/settings/');
@@ -713,9 +712,6 @@ const Settings = () => {
 
             case 'platform':
                 // Render the platform tab only if the user is allowed to see it.
-                // (Tab is already hidden from the sidebar for non-admins, but
-                // this guards against a stale `activeTab` value after role
-                // changes without a full page reload.)
                 if (!canManagePlatform) {
                     return (
                         <SettingsSection>

@@ -87,7 +87,23 @@ class MembershipTier(models.Model):
         if not self.slug:
             self.slug = slugify(self.name)[:120]
         if not self.currency_code:
-            self.currency_code = self.organization.currency_code
+            # ------------------------------------------------------------------
+            # A.3 note — currency auto-sync.
+            # ------------------------------------------------------------------
+            # The tier's currency is derived from its parent Organization.
+            # Migration 0030 changes the `Organization.currency_code` default
+            # from 'HKD' to 'INR'; this line therefore needs no code change —
+            # new tiers created against a post-0030 org will pick up 'INR'
+            # automatically. Explicit overrides on the tier still win (we
+            # only fill the field when it is blank), so multi-currency orgs
+            # are unaffected.
+            #
+            # If `organization.currency_code` is itself blank (should not
+            # happen post-migration), we fall back to 'INR' to match the new
+            # deployment default.
+            self.currency_code = (
+                getattr(self.organization, 'currency_code', '') or 'INR'
+            )
         durations = {'monthly': 30, 'quarterly': 90, 'yearly': 365}
         if self.billing_period in durations:
             self.duration_days = durations[self.billing_period]
@@ -103,6 +119,18 @@ class Membership(models.Model):
 
     One row per activation / renewal. Query the active row via
     `Membership.active_for(user, organization)` — never filter inline.
+
+    A.3 note — lifecycle vs. OrganizationMembership:
+      This model is a *paid subscription* lifecycle (pending → active →
+      expired/cancelled/refunded). It is entirely orthogonal to
+      `OrganizationMembership`, which models an *org role* (owner /
+      admin / staff / member). A user can simultaneously hold
+      `OrganizationMembership.role = 'member'` (or any role) and a paid
+      `Membership` row here; the two do not collide and neither
+      substitutes for the other. Access control (A.2) reads
+      `OrganizationMembership.role`; membership perks (e.g.
+      `members_only` events, tier-gated access) read
+      `Membership.active_for(...)` via `services/membership_access.py`.
     """
     class Status(models.TextChoices):
         PENDING_OFFLINE = 'pending_offline', 'Pending offline payment'

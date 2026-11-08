@@ -22,7 +22,8 @@ export const useRole = () => {
 /**
  * RoleProvider resolves TWO independent role concepts:
  *
- *   platformRole  — from User.role (super_admin | staff | user).
+ *   platformRole  — from User.role (super_admin | owner | staff | member | user
+ *                   as derived by the backend's effective_role_label).
  *                   One value per user, global. Determines whether the
  *                   user is a platform operator.
  *
@@ -35,6 +36,13 @@ export const useRole = () => {
  * hasOrgRole() and canManageCurrentOrg() are the correct gates for
  * tenant-scoped routes. Never compare user.role against 'owner' or
  * 'member' — the user.role is never those values.
+ *
+ * NOTE: The backend's effective_role_label now returns one of
+ *   super_admin | owner | staff | member | user
+ * with NO legacy membership-as-platform values. A member-only user with
+ * is_staff=True and no org-manager role is intentionally surfaced as
+ * 'staff', which is NOT a recognised PLATFORM_ROLES value and therefore
+ * defaults to 'user' with a warning — that is the intended behaviour.
  */
 export const RoleProvider = ({ children }) => {
     const { user, loading: authLoading } = useAuth();
@@ -54,25 +62,21 @@ export const RoleProvider = ({ children }) => {
         let nextPlatformRole = PLATFORM_ROLES.USER;
         const incoming = user?.role;
 
-        // Legacy safety: old backends may still return 'owner' or
-        // 'member' on User.role. Normalise them down to 'user' — their
-        // actual capabilities come from memberships, not from this field.
-        const LEGACY_MEMBERSHIP_AS_PLATFORM = ['owner', 'member', 'admin'];
-
-        if (incoming && !LEGACY_MEMBERSHIP_AS_PLATFORM.includes(incoming)) {
+        // The backend's derived effective_role_label no longer emits
+        // legacy membership-as-platform values, so no coercion branch
+        // is needed here. Anything not in PLATFORM_ROLES falls through
+        // to the warning below and defaults to 'user'.
+        if (incoming) {
             const allowed = Object.values(PLATFORM_ROLES);
             if (allowed.includes(incoming)) {
                 nextPlatformRole = incoming;
             } else {
                 console.warn(
-                    `⚠️ RoleProvider: unrecognised user.role ${JSON.stringify(incoming)}; defaulting to 'user'.`
-                );
-            }
-        } else if (incoming && LEGACY_MEMBERSHIP_AS_PLATFORM.includes(incoming)) {
-            if (process.env.NODE_ENV !== 'production') {
-                console.warn(
-                    `⚠️ RoleProvider: legacy user.role=${incoming} — coercing to 'user'. ` +
-                    `Migrate the backend to store membership roles on OrganizationMembership only.`
+                    `⚠️ RoleProvider: user.role ${JSON.stringify(incoming)} is not a ` +
+                    `recognised PLATFORM_ROLES value (expected one of ` +
+                    `${JSON.stringify(allowed)}); defaulting to 'user'. ` +
+                    `Tenant capabilities are resolved from the current ` +
+                    `OrganizationMembership via hasOrgRole(), not from user.role.`
                 );
             }
         }
@@ -101,7 +105,6 @@ export const RoleProvider = ({ children }) => {
     // ----- Convenience flags -----
 
     const isSuperAdmin = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
-    const isPlatformStaff = platformRole === PLATFORM_ROLES.STAFF;
     const isPlatformUser = platformRole === PLATFORM_ROLES.USER;
 
     const isGuest = !user;
@@ -143,7 +146,6 @@ export const RoleProvider = ({ children }) => {
         // Legacy API — kept so un-migrated files keep compiling.
         role: platformRole,          // was user.role before; now the platform role
         isSuperAdmin,
-        isPlatformStaff,
         isPlatformUser,
         isOrgMember,
         isOwner,
@@ -159,7 +161,7 @@ export const RoleProvider = ({ children }) => {
         hasPermission: () => false,
         isAtLeast: () => false,
     }), [
-        platformRole, membershipRole, isSuperAdmin, isPlatformStaff,
+        platformRole, membershipRole, isSuperAdmin,
         isPlatformUser, isOrgMember, isOwner, isOrgAdmin, isOrgStaff,
         isMember, isOrganizer, isAdmin, isGuest, user, loading,
     ]);

@@ -43,8 +43,6 @@ def _platform_role_label(user):
         return 'user'
     if is_platform_admin(user):
         return 'super_admin'
-    if is_platform_staff(user):
-        return 'staff'
     return 'user'
 
 

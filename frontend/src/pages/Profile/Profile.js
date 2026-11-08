@@ -1,13 +1,13 @@
 // frontend/src/pages/Profile/Profile.js
 import React, { useState } from 'react';
 import styled from 'styled-components';
-import { useTranslation } from 'react-i18next';                       // ✅ NEW
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useOrg } from '../../context/OrgContext';
 import {
-    PLATFORM_ROLE_LABELS,
-    MEMBERSHIP_ROLE_LABELS,
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
 } from '../../constants';
 import {
     Person as PersonIcon,
@@ -100,22 +100,20 @@ const RolePill = styled.span`
     background: ${p => {
         switch (p.$role) {
             case 'super_admin': return `${C.success}1A`;
-            case 'owner':       return `${C.warning}1A`;   // ✅ ADDED
+            case 'owner':       return `${C.warning}1A`;
             case 'admin':       return `${C.info}1A`;
-            case 'staff':       return `${C.secondary}1A`; // ✅ ADDED
-            case 'member':      return `${C.primary}1A`;   // ✅ ADDED
-            case 'organizer':   return `${C.warning}1A`;   // Legacy fallback
+            case 'staff':       return `${C.secondary}1A`;
+            case 'member':      return `${C.primary}1A`;
             default:            return C.bgInput;
         }
     }};
     color: ${p => {
         switch (p.$role) {
             case 'super_admin': return C.successDark;
-            case 'owner':       return C.warningDark;      // ✅ ADDED
+            case 'owner':       return C.warningDark;
             case 'admin':       return C.infoDark;
-            case 'staff':       return C.secondaryDark;    // ✅ ADDED
-            case 'member':      return C.primaryDark;      // ✅ ADDED
-            case 'organizer':   return C.warningDark;      // Legacy fallback
+            case 'staff':       return C.secondaryDark;
+            case 'member':      return C.primaryDark;
             default:            return C.textSecondary;
         }
     }};
@@ -271,7 +269,7 @@ const Profile = () => {
     const { user, updateProfile } = useAuth();
     const { platformRole, membershipRole } = useRole();
     const { currentOrg } = useOrg();
-    const { t } = useTranslation();                                    // ✅ NEW
+    const { t } = useTranslation();
     const navigate = useNavigate();
 
     const [editing, setEditing] = useState(false);
@@ -279,17 +277,22 @@ const Profile = () => {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState(null);
 
-    const getRoleLabel = () => {
-        switch (role) {
-            case 'super_admin': return t('roles.superAdmin');
-            case 'owner':       return t('roles.owner');       // ✅ UPDATED
-            case 'admin':       return t('roles.admin');
-            case 'staff':       return t('roles.staff');       // ✅ ADDED
-            case 'member':      return t('roles.member');      // ✅ ADDED
-            case 'organizer':   return t('roles.organizer');   // Legacy fallback
-            default:            return t('roles.user');
-        }
-    };
+    // Resolve the primary role pill to display. When the platform role is just
+    // 'user', fall back to the membership role so org-level owners/admins don't
+    // see a misleading "Regular User" label.
+    const displayRole =
+        platformRole === PLATFORM_ROLES.SUPER_ADMIN
+            ? 'super_admin'
+            : membershipRole || platformRole || 'user';
+
+    const displayRoleLabel = (() => {
+        if (platformRole === PLATFORM_ROLES.SUPER_ADMIN) return t('roles.superAdmin');
+        if (membershipRole === MEMBERSHIP_ROLES.OWNER) return t('roles.owner');
+        if (membershipRole === MEMBERSHIP_ROLES.ADMIN) return t('roles.admin');
+        if (membershipRole === MEMBERSHIP_ROLES.STAFF) return t('roles.staff');
+        if (membershipRole === MEMBERSHIP_ROLES.MEMBER) return t('roles.member');
+        return t('roles.user');
+    })();
 
     const getInitial = () => {
         const source = user?.name || user?.username || 'U';
@@ -335,13 +338,13 @@ const Profile = () => {
                     <Avatar>{getInitial()}</Avatar>
                     <HeaderText>
                         <Name>{user?.name || user?.username || t('common.user')}</Name>
-                        <RolePill $role={platformRole}>
-                            {t(`roles.platform_${platformRole}`, { defaultValue: PLATFORM_ROLE_LABELS[platformRole] })}
+                        <RolePill $role={displayRole}>
+                            {displayRoleLabel}
                         </RolePill>
                         {membershipRole && (
                             <RolePill $role={`org_${membershipRole}`}>
                                 {t(`roles.org_${membershipRole}`, {
-                                    defaultValue: `${MEMBERSHIP_ROLE_LABELS[membershipRole]} · ${currentOrg?.name || ''}`,
+                                    defaultValue: `${membershipRole} · ${currentOrg?.name || ''}`,
                                 })}
                             </RolePill>
                         )}
@@ -379,7 +382,11 @@ const Profile = () => {
                     <FieldIcon><BadgeIcon /></FieldIcon>
                     <FieldBody>
                         <FieldLabel>{t('profile.platformRole')}</FieldLabel>
-                        <FieldValue>{t(`roles.platform_${platformRole}`, { defaultValue: PLATFORM_ROLE_LABELS[platformRole] })}</FieldValue>
+                        <FieldValue>
+                            {t(`roles.platform_${platformRole}`, {
+                                defaultValue: platformRole,
+                            })}
+                        </FieldValue>
                     </FieldBody>
                 </Field>
 
@@ -389,7 +396,9 @@ const Profile = () => {
                         <FieldBody>
                             <FieldLabel>{t('profile.orgRole', 'Organization role')}</FieldLabel>
                             <FieldValue>
-                                {t(`roles.org_${membershipRole}`, { defaultValue: MEMBERSHIP_ROLE_LABELS[membershipRole] })}
+                                {t(`roles.org_${membershipRole}`, {
+                                    defaultValue: membershipRole,
+                                })}
                                 {' · '}{currentOrg.name}
                             </FieldValue>
                         </FieldBody>

@@ -80,7 +80,8 @@ def _normalise_event_flow(raw):
     return value
 
 
-def _is_manager(user):
+def _is_any_org_manager(user):
+    """True for platform admins or users with at least one org membership."""
     if not user or not user.is_authenticated:
         return False
     if is_platform_admin(user):
@@ -150,7 +151,7 @@ class EventViewSet(viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         user = self.request.user
-        manager = _is_manager(user)
+        manager = _is_any_org_manager(user)
 
         if self.action == 'public':
             return PublicEventSerializer
@@ -310,7 +311,7 @@ class EventViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     def create(self, request, *args, **kwargs):
         user = request.user
-        if not _is_manager(user):
+        if not _is_any_org_manager(user):
             return Response(
                 {'error': 'You do not have permission to create events.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -529,7 +530,7 @@ class EventViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-        manager = _is_manager(request.user)
+        manager = _is_any_org_manager(request.user)
 
         queryset = (
             queryset
@@ -591,7 +592,7 @@ class EventViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance, context={'request': request})
         data = serializer.data
 
-        if _is_manager(user):
+        if _is_any_org_manager(user):
             active_tickets_count = _active_ticket_count(instance)
             actual_revenue = canonical_revenue(instance.bookings.all())
             active_bookings_count = instance.bookings.exclude(

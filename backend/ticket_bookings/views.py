@@ -20,6 +20,15 @@ The canonical per-org roles are emitted under `user.memberships[]` and
 consumers should use those booleans (`is_owner`, `is_admin`, `is_staff`,
 `is_member`, `is_manager`, `is_operator`) for any per-org decision.
 
+ROLE LABEL SEMANTICS (2026-11-06)
+--------------------------------
+`effective_role_label()` returns the *highest* per-org label the user
+holds, which can now legitimately be `'owner'` (not just `'admin'`).
+There is no separate "Platform Staff" label — platform admins are
+identified by `is_superuser` / `is_platform_admin()`, never by the role
+string. Frontend `RoleContext` must therefore accept `'owner'` as a
+valid label (frontend fix; backend contract is unchanged in shape).
+
 Scanning access (STAFF on an org) is still `can_operate_org` — scanner
 operators do need it — but every MUTATING booking action (refund, mark
 payment, apply discount, issue tickets, cancel) is gated by
@@ -242,9 +251,14 @@ def get_user_role(user):
     """
     Compute the effective role *label* for a user.
 
-    This is a pure delegate to `tenancy.effective_role_label()`. Kept as
-    a thin re-export because several modules import `get_user_role` from
-    here (active_sessions_api, dashboard_api, auth_api, serializers).
+    Pure delegate to `tenancy.effective_role_label()`. Kept as a thin
+    re-export because several modules import `get_user_role` from here
+    (active_sessions_api, dashboard_api, auth_api, serializers).
+
+    Returns one of: 'superuser', 'owner', 'admin', 'manager', 'operator',
+    'user'. Note that 'owner' and 'admin' are TENANT labels — they say
+    nothing about platform privileges. Platform admins are identified by
+    `is_superuser` / `tenancy.is_platform_admin()`, never by this string.
 
     The label is a UI convenience, NOT a source of truth. For per-org
     access decisions, use `tenancy.can_manage_org` / `can_operate_org`
@@ -286,6 +300,17 @@ def _user_profile_summary(user, memberships=None):
 def _build_user_payload(user):
     """
     Canonical user payload returned by LoginView / MeView / auth_api.
+
+    Shape is stable:
+      {
+        id, username, email, first_name, last_name, name,
+        role, effective_role,             # same value; derived label
+        is_superuser, is_staff, is_active,
+        org_ids,        # operator orgs (can scan / operate)
+        managed_org_ids,# orgs where user can MANAGE (owner/admin)
+        memberships: [...],                # per-org booleans
+        phone, whatsapp_number, is_organizer, is_owner,
+      }
     """
     role_label = effective_role_label(user)
     memberships = user_memberships_payload(user)
@@ -596,6 +621,10 @@ class LoginView(APIView):
         operate_org_ids = [str(oid) for oid in user_operator_org_ids(user)]
         manager_org_ids = [str(oid) for oid in user_org_ids(user)]
 
+        # NOTE: `role` may now legitimately be 'owner' for org owners.
+        # There is no distinct "platform staff" role label — platform
+        # admins are flagged via `is_superuser` in the user payload.
+        # Frontend RoleContext must treat 'owner' as a valid label.
         refresh['role'] = role
         refresh['email'] = user.email
         refresh['org_ids'] = operate_org_ids
@@ -941,9 +970,8 @@ def checkin_history(request):
 # Cron endpoints
 # ===========================================================================
 
-# ✅ FIX [#19]: use the top-level `hmac` import; drop the redundant alias.
-# (The top-level `import hmac` is already in scope.)
-
+# NOTE: `hmac` is imported at module top (used by both QR signature
+# verification and cron token comparison). No redundant alias needed.
 
 def _cron_secret_matches(provided: str) -> bool:
     expected = os.environ.get('CRON_SECRET_TOKEN', '').strip()

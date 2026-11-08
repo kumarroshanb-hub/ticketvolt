@@ -23,8 +23,6 @@ import {
 const C = theme.colors;
 const F = theme.fonts;
 
-// ... [all styled components from the original file — unchanged] ...
-
 // Full styled block kept verbatim from the current file for zero-diff:
 const NavbarContainer = styled.nav`
     display: flex;
@@ -174,7 +172,6 @@ const RoleBadge = styled.span`
     background: ${props => {
         switch (props.$kind) {
             case 'platform-super': return `${C.success}1A`;
-            case 'platform-staff': return `${C.secondary}1A`;
             case 'org-owner':      return `${C.warning}1A`;
             case 'org-admin':      return `${C.info}1A`;
             case 'org-staff':      return `${C.secondary}1A`;
@@ -185,7 +182,6 @@ const RoleBadge = styled.span`
     color: ${props => {
         switch (props.$kind) {
             case 'platform-super': return C.successDark;
-            case 'platform-staff': return C.secondaryDark;
             case 'org-owner':      return C.warningDark;
             case 'org-admin':      return C.infoDark;
             case 'org-staff':      return C.secondaryDark;
@@ -360,7 +356,7 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
 
     // Show the org-membership role if we have one (it's what governs the
     // user's day-to-day capabilities in this tenant); otherwise show the
-    // platform role.
+    // platform role — which is now either SUPER_ADMIN or USER.
     const getRoleLabel = () => {
         if (isSuperAdmin) {
             return t('roles.platform_super_admin', { defaultValue: 'Super Admin' });
@@ -396,7 +392,6 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
 
     const badgeKind = (() => {
         if (platformRole === PLATFORM_ROLES.SUPER_ADMIN) return 'platform-super';
-        if (platformRole === PLATFORM_ROLES.STAFF)       return 'platform-staff';
         switch (membershipRole) {
             case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';
             case MEMBERSHIP_ROLES.ADMIN:  return 'org-admin';
@@ -409,7 +404,6 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
     const badgeEmoji = (() => {
         switch (badgeKind) {
             case 'platform-super': return '🔑';
-            case 'platform-staff': return '🛡️';
             case 'org-owner':      return '📋';
             case 'org-admin':      return '🛡️';
             case 'org-staff':      return '🎟️';
@@ -491,4 +485,4 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
     );
 };
 
-export default Navbar;
+export default Navbar;  

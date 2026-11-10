@@ -1,3 +1,4 @@
+// frontend/src/pages/Discounts/Discounts.js
 import React, { useState, useEffect } from 'react';
 import {
     Grid, CardContent, Box, Typography, CircularProgress,
@@ -35,16 +36,15 @@ import styled from 'styled-components';
 import { theme } from '../../theme/tokens';
 import { useSettings } from '../../context/SettingsContext';
 
+// ✅ FIX (Gap 5): shared date validator
+import { validateDateRange } from '../../utils/dateValidation';
+
 // ✅ Platform Filter Imports
 import usePlatformFilter from '../../hooks/usePlatformFilter';
 import { OrgFilterSelect } from '../../components/Common';
 
 const C = theme.colors;
 const F = theme.fonts;
-
-// ---------------------------------------------------------------------------
-// Local styled components
-// ---------------------------------------------------------------------------
 
 const StatCard = styled(Paper)`
     background: ${props => props.theme.colors.bgCard};
@@ -145,11 +145,9 @@ const toDateInput = (value) => {
     try {
         const date = new Date(value);
         if (isNaN(date.getTime())) return '';
-
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
-
         return `${year}-${month}-${day}`;
     } catch {
         return '';
@@ -161,14 +159,11 @@ const fromDateInput = (value, { endOfDay = false } = {}) => {
     try {
         const [year, month, day] = value.split('-').map((n) => parseInt(n, 10));
         if (!year || !month || !day) return null;
-
         const hours = endOfDay ? 23 : 0;
         const minutes = endOfDay ? 59 : 0;
         const seconds = endOfDay ? 59 : 0;
-
         const local = new Date(year, month - 1, day, hours, minutes, seconds, 0);
         if (isNaN(local.getTime())) return null;
-
         return local.toISOString();
     } catch {
         return null;
@@ -181,13 +176,12 @@ const Discounts = () => {
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
     const { formatMoney, settings } = useSettings();
 
-    // ✅ 1. Initialize Platform Filter Hook
-    const { 
-        params: orgParams, 
-        isPlatformAdmin, 
-        orgFilter, 
-        setOrgFilter, 
-        organizations 
+    const {
+        params: orgParams,
+        isPlatformAdmin,
+        orgFilter,
+        setOrgFilter,
+        organizations
     } = usePlatformFilter();
 
     const [loading, setLoading] = useState(true);
@@ -208,11 +202,12 @@ const Discounts = () => {
         code: '',
     });
     const [formData, setFormData] = useState({ ...EMPTY_DISCOUNT });
+    // ✅ FIX (Gap 5): surface validation errors next to the fields.
+    const [formError, setFormError] = useState('');
 
     const loadDiscounts = async () => {
         setLoading(true);
         try {
-            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
             const response = await api.get('/discounts/', { params: orgParams });
             const list = response.data?.results || response.data || [];
             setDiscounts(list);
@@ -228,7 +223,6 @@ const Discounts = () => {
 
     const loadEvents = async () => {
         try {
-            // ✅ 3. Merge orgParams so the "Applicable Events" dropdown is also scoped
             const response = await api.get('/events/', { params: orgParams });
             const list = response.data?.results || response.data || [];
             setEvents(list);
@@ -251,7 +245,6 @@ const Discounts = () => {
         setStats({ total, active, used, expired });
     };
 
-    // ✅ 4. Added orgParams to dependency array so it refetches when filter changes
     useEffect(() => {
         loadDiscounts();
         loadEvents();
@@ -284,6 +277,7 @@ const Discounts = () => {
                 code: generateDiscountCode(),
             });
         }
+        setFormError('');
         setDialogOpen(true);
     };
 
@@ -297,6 +291,24 @@ const Discounts = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // ✅ FIX (Gap 5): validate the valid_from / valid_to range before
+        // posting. We compare at day granularity (the UI uses <input
+        // type="date">) but convert to ISO for the check so the shared
+        // helper can compare real timestamps.
+        setFormError('');
+        const fromIso = fromDateInput(formData.valid_from);
+        const toIso = fromDateInput(formData.valid_to, { endOfDay: true });
+        const dateErr = validateDateRange(fromIso, toIso, {
+            allowEqual: true,
+            startLabel: 'Valid from',
+            endLabel: 'Valid to',
+        });
+        if (dateErr) {
+            setFormError(dateErr);
+            return;
+        }
+
         setSaving(true);
 
         try {
@@ -321,8 +333,8 @@ const Discounts = () => {
                     parseInt(formData.min_ticket_count, 10) || 0,
                 first_time_buyers_only: !!formData.first_time_buyers_only,
                 stackable: !!formData.stackable,
-                valid_from: fromDateInput(formData.valid_from),
-                valid_to: fromDateInput(formData.valid_to, { endOfDay: true }),
+                valid_from: fromIso,
+                valid_to: toIso,
                 is_active: !!formData.is_active,
                 applicable_events: (formData.applicable_events || []).map(
                     (ev) => (typeof ev === 'string' ? ev : ev.id)
@@ -456,7 +468,6 @@ const Discounts = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
-                        {/* ✅ 5. Render the Organization Filter Dropdown */}
                         <OrgFilterSelect
                             isPlatformAdmin={isPlatformAdmin}
                             organizations={organizations}
@@ -856,6 +867,11 @@ const Discounts = () => {
                 </DialogTitle>
                 <DialogContent>
                     <FormPaper component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
+                        {/* ✅ FIX (Gap 5): show the date-range error inline. */}
+                        {formError && (
+                            <Alert severity="error" sx={{ mb: 2 }}>{formError}</Alert>
+                        )}
+
                         <FormRow container spacing={2}>
                             <Grid item xs={12} md={6}>
                                 <TextField

@@ -139,7 +139,7 @@ class Organization(models.Model):
         `.first()` is safe and deterministic.
         """
         m = self.memberships.filter(
-            role=OrganizationMembership.OrgRole.OWNER,
+            is_owner=True,
             removed_at__isnull=True,
             is_active=True,
         ).select_related('user').first()
@@ -189,9 +189,12 @@ class OrganizationMembership(models.Model):
         # `User.is_staff`. Do not add it here.
 
     # Roles that can manage the tenant (see events, bookings, etc.)
-    MANAGER_ROLES = (OrgRole.OWNER, OrgRole.ADMIN)
+    # Ownership is a PROPERTY of an Admin membership (is_owner=True);
+    # it is not a separate role. The legacy 'owner' choice is retained
+    # only so old rows can be migrated safely.
+    MANAGER_ROLES = (OrgRole.ADMIN,)
     # Roles that can perform operational actions (check-in)
-    OPERATOR_ROLES = (OrgRole.OWNER, OrgRole.ADMIN, OrgRole.STAFF)
+    OPERATOR_ROLES = (OrgRole.ADMIN, OrgRole.STAFF)
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     organization = models.ForeignKey(
@@ -202,6 +205,15 @@ class OrganizationMembership(models.Model):
     )
     role = models.CharField(
         max_length=20, choices=OrgRole.choices, default=OrgRole.MEMBER,
+    )
+    # Ownership is a property, not a role. An owner ALWAYS has role=ADMIN.
+    is_owner = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            'True if this Admin-level member is the organization owner. '
+            'At most one live owner per organization.'
+        ),
     )
     # Optional per-org profile data — the org's own view of the person.
     display_name = models.CharField(max_length=200, blank=True)
@@ -244,10 +256,10 @@ class OrganizationMembership(models.Model):
             models.Index(fields=['organization', 'user', 'removed_at']),
         ]
         constraints = [
-            # At most one live OWNER per org.
+            # At most one live OWNER PROPERTY per org.
             models.UniqueConstraint(
                 fields=['organization'],
-                condition=Q(role='owner', removed_at__isnull=True, is_active=True),
+                condition=Q(is_owner=True, removed_at__isnull=True, is_active=True),
                 name='one_live_owner_per_org',
             ),
             # At most one live membership per (org, user).
@@ -273,14 +285,15 @@ class OrganizationMembership(models.Model):
         transfer_ownership are expected to demote the previous OWNER
         first, inside a transaction.
         """
-        if (
-            self.role == self.OrgRole.OWNER
-            and self.removed_at is None
-            and self.is_active
-        ):
+        if self.is_owner and self.removed_at is None and self.is_active:
+            if self.role != self.OrgRole.ADMIN:
+                raise ValidationError(
+                    'An owner must have the ADMIN role. Ownership is a '
+                    'property of an Admin-level membership.'
+                )
             qs = OrganizationMembership.objects.filter(
                 organization=self.organization,
-                role=self.OrgRole.OWNER,
+                is_owner=True,
                 removed_at__isnull=True,
                 is_active=True,
             ).exclude(pk=self.pk)
@@ -292,10 +305,6 @@ class OrganizationMembership(models.Model):
         super().save(*args, **kwargs)
 
     # ---- Role predicates (per-org, not per-user) ----
-
-    @property
-    def is_owner(self):
-        return self.role == self.OrgRole.OWNER
 
     @property
     def is_admin(self):
@@ -558,7 +567,7 @@ class OrganizationMembershipEvent(models.Model):
 # Helper (used by auth_api.py and services.tenancy)
 # ---------------------------------------------------------------------------
 _MEMBERSHIP_SNAPSHOT_FIELDS = (
-    'role', 'is_active', 'valid_from', 'valid_until', 'removed_at',
+    'role', 'is_owner', 'is_active', 'valid_from', 'valid_until', 'removed_at',
 )
 
 

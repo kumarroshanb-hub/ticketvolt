@@ -11,8 +11,11 @@ import {
     Check as CheckIcon,
     Close as CloseIcon,
     Receipt as ReceiptIcon,
+    UploadFile as UploadIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
+import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 import membershipService from '../../services/membershipService';
 import { useOrg } from '../../context/OrgContext';
@@ -29,6 +32,8 @@ const C = appTheme.colors;
 const ReviewOffline = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    const { t } = useTranslation();
+    const navigate = useNavigate();
     const { organizations, currentOrgId } = useOrg();
     const { formatMoney } = useSettings();
 
@@ -196,6 +201,12 @@ const ReviewOffline = () => {
                             ))}
                         </TextField>
                     )}
+                    <OutlineButton
+                        startIcon={<UploadIcon />}
+                        onClick={() => navigate('/app/membership/bulk-upload')}
+                    >
+                        {t('membership.bulkAddMembers')}
+                    </OutlineButton>
                     <OutlineButton startIcon={<RefreshIcon />} onClick={loadPending}>
                         Refresh
                     </OutlineButton>

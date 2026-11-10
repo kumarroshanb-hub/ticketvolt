@@ -33,8 +33,11 @@ from django.utils import timezone
 from django.db import transaction
 
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import (
+    action, api_view, parser_classes, permission_classes,
+)
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -46,6 +49,10 @@ from ..models_membership import (
 )
 from ..models_tenancy import Organization
 from ..services import membership_fulfillment
+from ..services.membership_bulk import (
+    BulkUploadError,
+    bulk_import_offline_members,
+)
 from ..services.membership_fulfillment import (
     MembershipReviewError,
     activate_offline_membership,
@@ -54,6 +61,7 @@ from ..services.membership_fulfillment import (
 from ..services.payments import get_provider
 from ..services.tenancy import (
     can_manage_org,
+    can_operate_org,
     is_platform_admin,
     user_membership_org_ids,
     user_org_ids,
@@ -631,6 +639,83 @@ def list_pending_offline(request):
         'count': qs.count(),
         'results': MembershipSerializer(qs, many=True, context={'request': request},).data,
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def bulk_upload_offline_members(request):
+    """POST /api/memberships/offline-upload/
+
+    Bulk-import members who paid offline. Available to OWNER/ADMIN and
+    STAFF of the target organization (staff can onboard, but activation
+    remains an OWNER/ADMIN action in the review queue).
+
+    Form fields:
+      organization_id — target tenant (must be one the caller operates)
+      tier_id         — membership plan for the batch
+      file            — UTF-8 CSV (email,name,phone,amount,offline_reference)
+    """
+    org_id = request.data.get('organization_id')
+    tier_id = request.data.get('tier_id')
+    upload = request.FILES.get('file')
+
+    if not org_id:
+        return Response(
+            {'error': 'organization_id is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not tier_id:
+        return Response(
+            {'error': 'tier_id is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if upload is None:
+        return Response(
+            {'error': 'A CSV file is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    organization = Organization.objects.filter(pk=org_id).first()
+    if organization is None:
+        return Response(
+            {'error': 'Organization not found.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Tenant admins AND staff may upload (per product requirement). The
+    # import only creates PENDING_OFFLINE rows; it never activates them.
+    if not can_operate_org(request.user, organization):
+        return Response(
+            {'error': 'You do not have permission to add members to this organization.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    tier = MembershipTier.objects.filter(
+        pk=tier_id, organization=organization, is_active=True,
+    ).first()
+    if tier is None:
+        return Response(
+            {'error': 'Membership plan not found for this organization.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        result = bulk_import_offline_members(
+            organization=organization,
+            tier=tier,
+            file_obj=upload,
+            actor=request.user,
+        )
+    except BulkUploadError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    logger.info(
+        'Bulk offline member upload: org=%s tier=%s by=%s created=%d skipped=%d errors=%d',
+        organization.slug, tier.name, request.user.username,
+        result['created_count'], result['skipped_count'], result['error_count'],
+    )
+    return Response(result, status=status.HTTP_201_CREATED)
 
 
 @api_view(['POST'])

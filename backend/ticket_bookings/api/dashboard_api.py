@@ -38,6 +38,7 @@ from ..services.tenancy import (
     user_org_ids,
     effective_role_label,
     user_memberships_payload,
+    filter_organization_param,
 )
 from ..managers import (
     SOLD_BOOKING_STATUSES,
@@ -68,7 +69,10 @@ class DashboardStatsView(APIView):
             #    - Managers see their org's data.
             #    - Regular users see public events + their own bookings.
             # ------------------------------------------------------------
-            events_qs = visible_events(user)
+            events_qs = filter_organization_param(
+                visible_events(user),
+                request.query_params.get('organization_id'),
+            )
             bookings_qs = visible_bookings(user).filter(event__in=events_qs)
             tickets_qs = visible_tickets(user).filter(booking__in=bookings_qs)
             checkins_qs = CheckInLog.objects.filter(

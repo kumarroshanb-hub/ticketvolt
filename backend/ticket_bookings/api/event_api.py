@@ -1,5 +1,6 @@
 # backend/ticket_bookings/api/event_api.py
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,9 @@ from ..services.tenancy import (
     user_org_ids,
     visible_events,
 )
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from ..services.membership_access import can_access_event
+from ..utils.date_validation import validate_event_dates, validate_session_dates
 
 VALID_EVENT_FLOWS = {c[0] for c in Event.EventFlow.choices}
 
@@ -78,6 +80,30 @@ def _normalise_event_flow(raw):
     if value not in VALID_EVENT_FLOWS:
         return False
     return value
+
+
+def _resolve_catalog_venue(venue_id, *, organization):
+    """Resolve a venue the caller may attach to an event.
+
+    VenueMaster is a SHARED cross-tenant catalog by design: a tenant can
+    reuse another tenant's venue instead of recreating it. Therefore:
+
+      • a venue owned by the event's organization is always allowed;
+      • another tenant's venue is allowed only if it is published to the
+        catalog (it has a current VenueMaster).
+
+    Returns ``(venue, error_message)``.
+    """
+    try:
+        venue = Venue.objects.get(id=venue_id)
+    except (Venue.DoesNotExist, ValueError, TypeError):
+        return None, 'Venue not found.'
+
+    if venue.organization_id != getattr(organization, 'id', None):
+        if not venue.masters.filter(is_current=True).exists():
+            return None, 'Venue is not part of the shared venue catalog.'
+
+    return venue, None
 
 
 def _is_any_org_manager(user):
@@ -174,6 +200,18 @@ class EventViewSet(viewsets.ModelViewSet):
              events anonymous visitors can't book.
         """
         qs = visible_events(self.request.user)
+
+        # Honour the active-organization filter sent by the UI. `qs` is
+        # already permission-scoped, so filtering further is safe and
+        # cannot widen access. Without this, a user in multiple orgs
+        # always sees every org's events regardless of the selected org.
+        organization_id = self.request.query_params.get('organization_id')
+        if organization_id:
+            try:
+                uuid.UUID(str(organization_id))
+            except (ValueError, TypeError, AttributeError):
+                return qs.none()
+            qs = qs.filter(organization_id=organization_id)
 
         user = self.request.user
         if not (user and user.is_authenticated):
@@ -393,11 +431,12 @@ class EventViewSet(viewsets.ModelViewSet):
         venue = None
         venue_id = data.get('venue_id')
         if venue_id:
-            try:
-                venue = Venue.objects.get(id=venue_id, organization=organization)
-            except (Venue.DoesNotExist, ValueError):
+            venue, venue_err = _resolve_catalog_venue(
+                venue_id, organization=organization,
+            )
+            if venue_err:
                 return Response(
-                    {'venue_id': 'Venue not found in this organization.'},
+                    {'venue_id': venue_err},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -414,6 +453,34 @@ class EventViewSet(viewsets.ModelViewSet):
         if not start_date or not end_date:
             return Response(
                 {'error': 'start_date and end_date are required and must be valid ISO dates.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        date_err = validate_event_dates(start_date, end_date)
+        if date_err:
+            return Response(
+                {'end_date': date_err},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Single-day events always end when they start (same rule the
+        # serializers apply). Create bypasses the serializer, so enforce
+        # it here too.
+        if str(data.get('event_type') or 'single').lower() == 'single':
+            end_date = start_date
+
+        # A published/active event must have its venue plan validated and
+        # frozen. Creation honours the requested status and performs that
+        # freeze inside this transaction (instead of rejecting the request
+        # and forcing a second call).
+        requested_status = str(data.get('status') or 'draft').strip().lower()
+        valid_statuses = {
+            'draft', 'published', 'active', 'cancelled',
+            'completed', 'sold_out', 'postponed',
+        }
+        if requested_status not in valid_statuses:
+            return Response(
+                {'status': f'Invalid status: {requested_status!r}.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -435,7 +502,7 @@ class EventViewSet(viewsets.ModelViewSet):
                     timezone=data.get('timezone', 'Asia/Kolkata'),
                     venue=venue,
                     metadata=data.get('metadata', {}) or {},
-                    status=data.get('status', 'draft'),
+                    status=requested_status,
                     is_public=data.get('is_public', True),
                     ticket_format=data.get('ticket_format', 'pdf'),
                     combine_tickets=bool(data.get('combine_tickets', False)),
@@ -445,7 +512,58 @@ class EventViewSet(viewsets.ModelViewSet):
                     members_only=bool(data.get('members_only', False)),
                     min_membership_tier_id=data.get('min_membership_tier_id') or None,
                 )
+                venue_plan_payload = None
+                created_plan = None
+                if data.get('venue_plan') and isinstance(data.get('venue_plan'), dict):
+                    venue_plan_payload = data['venue_plan']
+                elif data.get('venue_master_id'):
+                    venue_plan_payload = {
+                        'venue_master_id': data.get('venue_master_id'),
+                        'seat_assignments': data.get('seat_assignments') or {},
+                        'category_overrides': data.get('category_overrides') or [],
+                    }
 
+                if venue_plan_payload:
+                    from .serializers_event_venue import EventVenuePlanCreateSerializer
+                    from ticket_bookings.services.event_venue_plan import (
+                        provision_venue_plan, EventVenuePlanError,
+                    )
+
+                    plan_ser = EventVenuePlanCreateSerializer(data=venue_plan_payload)
+                    plan_ser.is_valid(raise_exception=True)
+                    venue_master = plan_ser.validated_data['venue_master_id']
+
+                    # NOTE: VenueMaster is a shared cross-tenant catalog.
+                    # A master from another organization is allowed here;
+                    # the event pins that exact version and keeps it
+                    # intact through EventVenuePlan's PROTECT FK.
+
+                    # Guard: no tiers on reserved-seating venues.
+                    if (
+                        (venue_master.snapshot or {}).get('has_reserved_seating')
+                        and (data.get('tiers') or [])
+                    ):
+                        raise ValidationError({
+                            'tiers': (
+                                'This venue uses reserved seating. Pricing comes from seat '
+                                'categories, not ticket tiers. Send an empty tiers list.'
+                            )
+                        })
+
+                    # If the event has no explicit venue, adopt the master's venue.
+                    if not event.venue_id:
+                        event.venue_id = venue_master.venue_id
+                        event.save(update_fields=['venue'])
+
+                    try:
+                        created_plan = provision_venue_plan(
+                            event=event,
+                            venue_master=venue_master,
+                            seat_assignments=plan_ser.validated_data['seat_assignments'],
+                            category_overrides=plan_ser.validated_data['category_overrides'],
+                        )
+                    except EventVenuePlanError as exc:
+                        raise ValidationError({'venue_plan': str(exc)})
                 tiers_created = 0
                 if event.event_flow == Event.EventFlow.FREE_REGISTRATION:
                     TicketTier.objects.create(
@@ -466,6 +584,9 @@ class EventViewSet(viewsets.ModelViewSet):
                     s_end = self._parse_dt(session_data.get('end_time'))
                     if not s_start or not s_end:
                         continue
+                    session_err = validate_session_dates(s_start, s_end)
+                    if session_err:
+                        raise ValidationError({'sessions': session_err})
                     Session.objects.create(
                         event=event,
                         start_time=s_start,
@@ -492,6 +613,19 @@ class EventViewSet(viewsets.ModelViewSet):
                                 "Failed to create tier for event %s: %s",
                                 event.id, exc,
                             )
+
+                if (
+                    requested_status in ('published', 'active')
+                    and created_plan is not None
+                    and not created_plan.is_frozen
+                ):
+                    from ticket_bookings.services.event_venue_plan import (
+                        freeze_venue_plan,
+                    )
+                    try:
+                        freeze_venue_plan(plan=created_plan, actor=user)
+                    except EventVenuePlanError as exc:
+                        raise ValidationError({'venue_plan': str(exc)})
 
                 logger.info(
                     "Event %s created (org=%s, organizer=%s, flow=%s, sessions=%d, tiers=%d)",
@@ -614,6 +748,7 @@ class EventViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         data = request.data
         user = request.user
+        original_status = instance.status
 
         if not can_manage_event_data(user, instance):
             return Response(
@@ -704,16 +839,32 @@ class EventViewSet(viewsets.ModelViewSet):
                 )
 
         if data.get('venue_id'):
-            try:
-                instance.venue = Venue.objects.get(
-                    id=data['venue_id'], organization=instance.organization,
-                )
-            except (Venue.DoesNotExist, ValueError):
-                # ✅ FIX: surface the failure instead of silently ignoring.
+            new_venue_id = data['venue_id']
+            plan = getattr(instance, 'venue_plan', None)
+            if (
+                plan is not None
+                and str(plan.venue_master.venue_id) != str(new_venue_id)
+            ):
                 return Response(
-                    {'venue_id': 'Venue not found in this organization.'},
+                    {
+                        'venue_id': (
+                            'This event already has a seat plan built against '
+                            'its current venue. Changing the venue after the '
+                            'plan exists is not supported; create a new event '
+                            'for the other venue.'
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            new_venue, venue_err = _resolve_catalog_venue(
+                new_venue_id, organization=instance.organization,
+            )
+            if venue_err:
+                return Response(
+                    {'venue_id': venue_err},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            instance.venue = new_venue
 
         data = data.copy() if hasattr(data, 'copy') else dict(data)
 
@@ -721,6 +872,38 @@ class EventViewSet(viewsets.ModelViewSet):
             data['start_date'] = self._parse_dt(data['start_date'])
         if data.get('end_date'):
             data['end_date'] = self._parse_dt(data['end_date'])
+
+        # Validate the effective range, not just the fields supplied in
+        # this request. A PATCH that changes only `end_date` must still
+        # be compared with the stored `start_date`.
+        date_err = validate_event_dates(
+            data.get('start_date') or instance.start_date,
+            data.get('end_date') or instance.end_date,
+        )
+        if date_err:
+            return Response(
+                {'end_date': date_err},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Single-day events always end when they start.
+        if str(data.get('event_type') or instance.event_type).lower() == 'single':
+            data['end_date'] = data.get('start_date') or instance.start_date
+
+        # Status changes are allowed here; if the event ends up
+        # published/active its venue plan is frozen before the response.
+        incoming_status = str(data.get('status') or '').strip().lower()
+        if incoming_status:
+            valid_statuses = {
+                'draft', 'published', 'active', 'cancelled',
+                'completed', 'sold_out', 'postponed',
+            }
+            if incoming_status not in valid_statuses:
+                return Response(
+                    {'status': f'Invalid status: {incoming_status!r}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            data['status'] = incoming_status
 
         if 'cancellation_policy_id' in data:
             raw = data.get('cancellation_policy_id')
@@ -773,6 +956,14 @@ class EventViewSet(viewsets.ModelViewSet):
                         sess.start_time = s_start
                     if s_end:
                         sess.end_time = s_end
+                    session_err = validate_session_dates(
+                        sess.start_time, sess.end_time,
+                    )
+                    if session_err:
+                        return Response(
+                            {'sessions': session_err},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                     sess.capacity = s_capacity
                     sess.save(update_fields=['start_time', 'end_time', 'capacity'])
                     seen_ids.add(sess_id)
@@ -789,6 +980,12 @@ class EventViewSet(viewsets.ModelViewSet):
                         )
                     if not s_start or not s_end:
                         continue
+                    session_err = validate_session_dates(s_start, s_end)
+                    if session_err:
+                        return Response(
+                            {'sessions': session_err},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                     created = Session.objects.create(
                         event=instance,
                         start_time=s_start,
@@ -825,6 +1022,21 @@ class EventViewSet(viewsets.ModelViewSet):
 
         if 'tiers' in data and isinstance(data['tiers'], list):
             incoming = data['tiers'] or []
+            plan = getattr(instance, 'venue_plan', None)
+            if (
+                plan is not None
+                and (plan.venue_master.snapshot or {}).get('has_reserved_seating')
+                and incoming
+            ):
+                return Response(
+                    {
+                        'tiers': (
+                            'This venue uses reserved seating. Pricing comes '
+                            'from seat categories, not ticket tiers.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             existing_by_id = {str(t.id): t for t in instance.tiers.all()}
             seen_ids = set()
 
@@ -891,6 +1103,23 @@ class EventViewSet(viewsets.ModelViewSet):
                     )
                 tier.delete()
 
+        if instance.status in ('published', 'active'):
+            plan = getattr(instance, 'venue_plan', None)
+            if plan is not None and not plan.is_frozen:
+                from ..services.event_venue_plan import (
+                    EventVenuePlanError,
+                    freeze_venue_plan,
+                )
+                try:
+                    freeze_venue_plan(plan=plan, actor=user)
+                except EventVenuePlanError as exc:
+                    instance.status = original_status
+                    instance.save(update_fields=['status'])
+                    return Response(
+                        {'venue_plan': str(exc), 'code': 'PLAN_NOT_FREEZABLE'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
         instance.update_ticket_counts()
         instance.refresh_from_db()
 
@@ -944,9 +1173,35 @@ class EventViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        event.status = 'active'
-        event.save(update_fields=['status'])
-        return Response({'message': 'Event published successfully'})
+        # Publishing is the ONLY transition that freezes the venue plan.
+        # Previously this action just flipped the status, so
+        # `published_snapshot` was never written and reserved-seat
+        # pricing (which reads only the frozen snapshot) always failed.
+        from ..services.event_venue_plan import (
+            EventVenuePlanError,
+            freeze_venue_plan,
+        )
+
+        plan = getattr(event, 'venue_plan', None)
+        try:
+            with transaction.atomic():
+                if plan is not None and not plan.is_frozen:
+                    freeze_venue_plan(plan=plan, actor=user)
+                    plan.refresh_from_db()
+
+                event.status = 'published'
+                event.save(update_fields=['status', 'updated_at'])
+        except EventVenuePlanError as exc:
+            return Response(
+                {'error': str(exc), 'code': 'PLAN_NOT_FREEZABLE'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'message': 'Event published successfully',
+            'status': event.status,
+            'venue_plan_frozen': bool(plan and plan.is_frozen),
+        })
 
     # ------------------------------------------------------------------
     # PUBLIC

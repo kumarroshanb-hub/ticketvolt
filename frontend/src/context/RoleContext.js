@@ -11,6 +11,37 @@ import {
 
 const RoleContext = createContext();
 
+/**
+ * Derived tenant labels emitted by the backend's
+ * `tenancy.effective_role_label()` in `user.role` / `user.effective_role`.
+ *
+ * These are NOT platform roles. They are the highest per-org label the
+ * user holds, and they describe TENANT capabilities only. The backend
+ * docs (auth_api.py header) are explicit:
+ *
+ *   "effective_role_label() returns the *highest* per-org label the
+ *    user holds, which can now legitimately be 'owner' (not just
+ *    'admin'). There is no separate 'Platform Staff' label — platform
+ *    admins are identified by is_superuser / is_platform_admin(),
+ *    never by the role string."
+ *
+ * `'owner'` and `'admin'` therefore belong to THIS set, not to
+ * `PLATFORM_ROLES`. Adding them to PLATFORM_ROLES would let UI gate
+ * platform-wide features on tenant privilege — a privilege-escalation
+ * bug. Keep the two enums separate.
+ */
+const TENANT_ROLE_LABELS = Object.freeze([
+    'owner',
+    'admin',
+    'manager',
+    'operator',
+    'staff',
+    'member',
+    'user',
+]);
+
+const TENANT_ROLE_LABEL_SET = new Set(TENANT_ROLE_LABELS);
+
 export const useRole = () => {
     const context = useContext(RoleContext);
     if (!context) {
@@ -22,10 +53,10 @@ export const useRole = () => {
 /**
  * RoleProvider resolves TWO independent role concepts:
  *
- *   platformRole  — from User.role (super_admin | owner | staff | member | user
- *                   as derived by the backend's effective_role_label).
- *                   One value per user, global. Determines whether the
- *                   user is a platform operator.
+ *   platformRole  — PLATFORM_ROLES.SUPER_ADMIN iff `user.is_superuser`,
+ *                   otherwise PLATFORM_ROLES.USER. This is the ONLY
+ *                   authority for platform-wide UI. It is derived from
+ *                   `is_superuser`, never from `user.role`.
  *
  *   membershipRole — from the current OrganizationMembership.role
  *                   (owner | admin | staff | member) for the org the
@@ -33,22 +64,24 @@ export const useRole = () => {
  *                   Changes when the user switches orgs. `null` if the
  *                   user has no active membership in the selected org.
  *
- * hasOrgRole() and canManageCurrentOrg() are the correct gates for
- * tenant-scoped routes. Never compare user.role against 'owner' or
- * 'member' — the user.role is never those values.
+ * `user.role` / `user.effective_role` is a DERIVED TENANT LABEL — one
+ * of TENANT_ROLE_LABELS — and is exposed as `tenantLabel` for display
+ * only. Do NOT gate on it. Use:
  *
- * NOTE: The backend's effective_role_label now returns one of
- *   super_admin | owner | staff | member | user
- * with NO legacy membership-as-platform values. A member-only user with
- * is_staff=True and no org-manager role is intentionally surfaced as
- * 'staff', which is NOT a recognised PLATFORM_ROLES value and therefore
- * defaults to 'user' with a warning — that is the intended behaviour.
+ *   • `isSuperAdmin` for platform admin routes
+ *   • `hasOrgRole(required)` / `canManageCurrentOrg()` for tenant routes
+ *   • `user.memberships[]` (from useAuth) for per-org decisions when
+ *     the org is not the currently-selected one
+ *
+ * Never compare `user.role` against 'owner' or 'member' — that string
+ * is a single collapsed label, not a per-org capability.
  */
 export const RoleProvider = ({ children }) => {
     const { user, loading: authLoading } = useAuth();
     const { currentOrg, loading: orgLoading } = useOrg() || {};
 
     const [platformRole, setPlatformRole] = useState(PLATFORM_ROLES.USER);
+    const [tenantLabel, setTenantLabel] = useState(null);
     const [membershipRole, setMembershipRole] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -58,40 +91,38 @@ export const RoleProvider = ({ children }) => {
         // OrgContext is still fetching `/organizations/mine/`.
         if (authLoading || orgLoading) return;
 
-        // ---- Platform role ----
-        let nextPlatformRole = PLATFORM_ROLES.USER;
-        const incoming = user?.role;
-
-        // The backend's derived effective_role_label no longer emits
-        // legacy membership-as-platform values, so no coercion branch
-        // is needed here. Anything not in PLATFORM_ROLES falls through
-        // to the warning below and defaults to 'user'.
-        if (incoming) {
-            const allowed = Object.values(PLATFORM_ROLES);
-            if (allowed.includes(incoming)) {
-                nextPlatformRole = incoming;
-            } else {
-                console.warn(
-                    `⚠️ RoleProvider: user.role ${JSON.stringify(incoming)} is not a ` +
-                    `recognised PLATFORM_ROLES value (expected one of ` +
-                    `${JSON.stringify(allowed)}); defaulting to 'user'. ` +
-                    `Tenant capabilities are resolved from the current ` +
-                    `OrganizationMembership via hasOrgRole(), not from user.role.`
-                );
-            }
-        }
-
-        // is_superuser from the backend always wins — it's the
-        // authoritative platform-admin signal regardless of `role`.
-        if (user?.is_superuser) {
-            nextPlatformRole = PLATFORM_ROLES.SUPER_ADMIN;
-        }
-
+        // ---- Platform role -------------------------------------------------
+        // The ONLY authority for platform admin is `is_superuser`. The
+        // backend is explicit about this in auth_api.py. `user.role`
+        // never influences platformRole.
+        const nextPlatformRole = user?.is_superuser
+            ? PLATFORM_ROLES.SUPER_ADMIN
+            : PLATFORM_ROLES.USER;
         setPlatformRole(nextPlatformRole);
 
-        // ---- Membership role (from current org) ----
-        // OrgContext already returns each org's `role` field for the
-        // caller in `/organizations/mine/`. Use that if present.
+        // ---- Tenant label (display only) -----------------------------------
+        // `'owner'` is a legitimate label now. Validate against
+        // TENANT_ROLE_LABELS so we don't warn on the expected new value.
+        const incomingLabel = user?.role || user?.effective_role || null;
+        if (incomingLabel == null) {
+            setTenantLabel(null);
+        } else if (TENANT_ROLE_LABEL_SET.has(incomingLabel)) {
+            setTenantLabel(incomingLabel);
+        } else {
+            console.warn(
+                `⚠️ RoleProvider: user.role ${JSON.stringify(incomingLabel)} is not a ` +
+                `recognised tenant label (expected one of ` +
+                `${JSON.stringify(TENANT_ROLE_LABELS)}). ` +
+                `Falling back to 'user' for display only. ` +
+                `Platform capabilities are resolved from is_superuser; ` +
+                `tenant capabilities from hasOrgRole(), never from user.role.`
+            );
+            setTenantLabel('user');
+        }
+
+        // ---- Membership role (from current org) ----------------------------
+        // OrgContext returns each org's `role` field from
+        // `/organizations/mine/`. Use it if valid.
         const orgRole = currentOrg?.role || null;
         if (orgRole && Object.values(MEMBERSHIP_ROLES).includes(orgRole)) {
             setMembershipRole(orgRole);
@@ -102,7 +133,7 @@ export const RoleProvider = ({ children }) => {
         setLoading(false);
     }, [user, authLoading, currentOrg, orgLoading]);
 
-    // ----- Convenience flags -----
+    // ----- Convenience flags ----------------------------------------------
 
     const isSuperAdmin = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
     const isPlatformUser = platformRole === PLATFORM_ROLES.USER;
@@ -114,7 +145,12 @@ export const RoleProvider = ({ children }) => {
     const isOrgMember =
         !!membershipRole && Object.values(MEMBERSHIP_ROLES).includes(membershipRole);
 
-    const isOwner = membershipRole === MEMBERSHIP_ROLES.OWNER;
+    // Ownership is a property of the Org (Admin role + is_owner).
+    const orgIsOwner = Boolean(
+        currentOrg?.is_owner
+        || (currentOrg?.role && String(currentOrg.role).toLowerCase() === 'owner')
+    );
+    const isOwner = orgIsOwner || membershipRole === MEMBERSHIP_ROLES.OWNER;
     const isOrgAdmin = membershipRole === MEMBERSHIP_ROLES.ADMIN;
     const isOrgStaff = membershipRole === MEMBERSHIP_ROLES.STAFF;
     const isMember = membershipRole === MEMBERSHIP_ROLES.MEMBER;
@@ -128,8 +164,18 @@ export const RoleProvider = ({ children }) => {
 
     const hasOrgRole = (required) => {
         if (isSuperAdmin) return true;      // platform admins bypass
+        if (required === MEMBERSHIP_ROLES.OWNER) return isOwner;
         if (!membershipRole) return false;
-        return MembershipRoleUtils.isAtLeast(membershipRole, required);
+        if (!required) return false;
+        // 'operator'/'staff' are accepted as synonyms — scanner access is
+        // granted by STAFF on an org per the backend auth_api header.
+        const normalizedRequired =
+            required === 'operator' ? MEMBERSHIP_ROLES.STAFF : required;
+        try {
+            return MembershipRoleUtils.isAtLeast(membershipRole, normalizedRequired);
+        } catch {
+            return false;
+        }
     };
 
     const canManageCurrentOrg = () => {
@@ -140,11 +186,12 @@ export const RoleProvider = ({ children }) => {
     const value = useMemo(() => ({
         // New API
         platformRole,
+        tenantLabel,           // display-only: 'owner' | 'admin' | 'manager' | 'operator' | 'user'
         membershipRole,
         hasOrgRole,
         canManageCurrentOrg,
         // Legacy API — kept so un-migrated files keep compiling.
-        role: platformRole,          // was user.role before; now the platform role
+        role: platformRole,    // PLATFORM role only, not the tenant label
         isSuperAdmin,
         isPlatformUser,
         isOrgMember,
@@ -161,7 +208,7 @@ export const RoleProvider = ({ children }) => {
         hasPermission: () => false,
         isAtLeast: () => false,
     }), [
-        platformRole, membershipRole, isSuperAdmin,
+        platformRole, tenantLabel, membershipRole, isSuperAdmin,
         isPlatformUser, isOrgMember, isOwner, isOrgAdmin, isOrgStaff,
         isMember, isOrganizer, isAdmin, isGuest, user, loading,
     ]);

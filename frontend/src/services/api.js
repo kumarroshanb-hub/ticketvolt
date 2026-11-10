@@ -105,6 +105,24 @@ const isPublicEndpoint = (url, method) => {
 // ============================================================
 api.interceptors.request.use(
     (config) => {
+        // ✅ FIX [FORM-DATA-CONTENT-TYPE]:
+        // The axios instance defaults to application/json. For FormData
+        // uploads that header must be removed so the browser/XHR adds
+        // `multipart/form-data; boundary=...`. Without this, Django can
+        // receive the body but `request.FILES` stays empty — which looks
+        // like "the file was silently ignored".
+        if (
+            typeof FormData !== 'undefined'
+            && config.data instanceof FormData
+        ) {
+            if (config.headers && typeof config.headers.delete === 'function') {
+                config.headers.delete('Content-Type');
+            } else if (config.headers) {
+                delete config.headers['Content-Type'];
+                delete config.headers['content-type'];
+            }
+        }
+
         // ✅ NEW: send the current language so DRF returns translated
         // validation messages, and Django admin/emails follow suit.
         // Handles both AxiosHeaders instances (axios ≥1.0) and plain

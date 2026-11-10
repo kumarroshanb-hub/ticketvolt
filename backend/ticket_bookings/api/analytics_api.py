@@ -51,6 +51,7 @@ from ..services.tenancy import (
     visible_discounts,
     is_platform_admin,
     user_org_ids,
+    filter_organization_param,
 )
 from ..managers import (
     SOLD_BOOKING_STATUSES,
@@ -124,7 +125,10 @@ class AnalyticsView(APIView):
             # ============================================================
             # 1. Scope — delegated entirely to services.tenancy.
             # ============================================================
-            events_qs = visible_events(user)
+            events_qs = filter_organization_param(
+                visible_events(user),
+                request.query_params.get('organization_id'),
+            )
             bookings_qs = visible_bookings(user).filter(event__in=events_qs)
             tickets_qs = visible_tickets(user).filter(booking__in=bookings_qs)
 
@@ -304,8 +308,14 @@ class AnalyticsView(APIView):
             # Since `IsAnyOrgManager` already gates this endpoint, the
             # caller is either a platform admin or a manager of ≥1 org —
             # so both helpers return consistent manager-scoped results.
-            total_venues = visible_venues(user).filter(is_active=True).count()
-            total_discounts = visible_discounts(user).filter(is_active=True).count()
+            total_venues = filter_organization_param(
+                visible_venues(user),
+                request.query_params.get('organization_id'),
+            ).filter(is_active=True).count()
+            total_discounts = filter_organization_param(
+                visible_discounts(user),
+                request.query_params.get('organization_id'),
+            ).filter(is_active=True).count()
 
             return Response({
                 'timeframe': timeframe,

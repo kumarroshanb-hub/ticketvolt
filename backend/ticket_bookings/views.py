@@ -83,6 +83,10 @@ from .services.tenancy import (
 
 from .models_seating import SeatReservation, Seat
 
+# ✅ NEW: `VenueMaster` lives in `models_venue_master` in this tree.
+# If your project defines it elsewhere, change this import only.
+from .models_venue_master import VenueMaster
+
 import logging
 
 from django.http import JsonResponse
@@ -1049,21 +1053,18 @@ def cron_health(request):
 # ===========================================================================
 
 class EventSeatMapViewSet(viewsets.ViewSet):
-    """
-    API Endpoint to fetch the interactive seat map for an event.
-    URL: /api/events/{event_id}/seat-map/
-
-    Access model
-    ------------
-      • accept anonymous callers only for events visible to anonymous
-        users (public, active, not members-only)
-      • accept authenticated callers for any event in `visible_events(user)`
-      • reject everything else with a uniform 404
-    """
     permission_classes = [AllowAny]
     throttle_scope = 'public_read'
 
     def list(self, request, event_pk=None):
+        import uuid as _uuid
+        from django.db.models import Q
+        from django.utils import timezone
+        from rest_framework import status
+        from rest_framework.response import Response
+        from .models_seating import SeatReservation
+        from .services.membership_access import can_access_event
+
         try:
             event_uuid = _uuid.UUID(str(event_pk))
         except (ValueError, TypeError, AttributeError):
@@ -1072,9 +1073,9 @@ class EventSeatMapViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        from .services.tenancy import events_visible_to_buyer
         event = (
-            visible_events(request.user)
-            .select_related('venue', 'organization')
+            events_visible_to_buyer(request.user)
             .filter(id=event_uuid)
             .first()
         )
@@ -1084,63 +1085,237 @@ class EventSeatMapViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        from .services.membership_access import can_access_event
         if not can_access_event(request.user, event):
             return Response(
                 {'detail': 'Event not found.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not event.venue_id or not hasattr(event.venue, 'layout'):
+        plan = getattr(event, 'venue_plan', None)
+        if plan is None or not plan.published_snapshot:
             return Response(
-                {'detail': 'No seating layout configured for this venue.'},
+                {'detail': 'No seating layout configured for this event.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        layout = event.venue.layout
-        session_id = request.query_params.get('session')
+        # ---- Read ONLY from the frozen snapshot ----
+        snap = plan.published_snapshot
+        layout = snap.get('layout') or {}
+        seats_raw = layout.get('seats', [])
+        categories_by_id = {
+            c['id']: c for c in (snap.get('categories') or [])
+        }
+        assignments = snap.get('seat_assignments') or {}
 
-        seats_qs = (
-            layout.seats
-            .filter(is_active=True)
-            .select_related('category')
-        )
+        session_id = request.query_params.get('session')
 
         reservations_qs = SeatReservation.objects.filter(event=event)
         if session_id:
             reservations_qs = reservations_qs.filter(session_id=session_id)
-
         now = timezone.now()
-        reservations_qs = (
-            reservations_qs
-            .filter(
-                Q(booking__status__in=_LIVE_SEAT_RESERVATION_STATUSES)
-                | Q(status='held', held_until__gt=now)
-            )
+        reservations_qs = reservations_qs.filter(
+            Q(booking__status__in=_LIVE_SEAT_RESERVATION_STATUSES)
+            | Q(status='held', held_until__gt=now)
         )
-
-        reservation_map = {
-            str(res.seat_id): res.status for res in reservations_qs
-        }
+        reservation_map = {str(r.seat_id): r.status for r in reservations_qs}
 
         seats_data = []
-        for seat in seats_qs:
+        for seat in seats_raw:
+            cat = categories_by_id.get(assignments.get(seat['id']))
             seats_data.append({
-                'id': str(seat.id),
-                'x_coord': seat.x_coord,
-                'y_coord': seat.y_coord,
-                'row_label': seat.row_label,
-                'seat_number': seat.seat_number,
-                'category_id': str(seat.category.id) if seat.category else None,
-                'category_name': seat.category.name if seat.category else 'General',
-                'category_color': seat.category.hex_color if seat.category else '#4CAF50',
-                'price': float(seat.category.price) if seat.category else 0.00,
-                'status': reservation_map.get(str(seat.id), 'available'),
+                'id': seat['id'],
+                'x_coord': seat['x_coord'],
+                'y_coord': seat['y_coord'],
+                'row_label': seat['row_label'],
+                'seat_number': seat['seat_number'],
+                'category_id': cat['id'] if cat else None,
+                'category_name': cat['name'] if cat else 'Uncategorized',
+                'category_color': cat['hex_color'] if cat else '#94a3b8',
+                'price': float(cat['price']) if cat else 0.0,
+                'status': reservation_map.get(seat['id'], 'available'),
             })
 
         return Response({
-            'canvas_width': layout.canvas_width,
-            'canvas_height': layout.canvas_height,
-            'background_image': layout.background_image,
+            'canvas_width': layout.get('canvas_width'),
+            'canvas_height': layout.get('canvas_height'),
+            'background_image': layout.get('background_image'),
             'seats': seats_data,
+            'categories': list(categories_by_id.values()),
+        })
+
+
+# ===========================================================================
+# ✅ NEW: Venue Master API (frontend: venueMasterService.js → /venue-masters/)
+#
+# The Create Event wizard's seat-plan step needs a read-only way to fetch
+# `VenueMaster` snapshots (master layout + category palette) for both
+# "own venue" and "venue master" modes. Without this viewset, every
+# `GET /venue-masters/...` returns 404 and the canvas can never render.
+#
+# List payload (VenueMasterListSerializer):
+#   id, version, venue_id, name, city, country, venue_type,
+#   has_reserved_seating, has_layout, is_current, created_at,
+#   seat_count, category_count
+#
+# Detail payload (VenueMasterDetailSerializer) additionally includes
+# `snapshot`, which carries:
+#   snapshot.layout           → { canvas_width, canvas_height, seats[] }
+#   snapshot.category_palette → [ { id, name, hex_color, default_price } ]
+# ===========================================================================
+
+# ===========================================================================
+# Venue Master API (frontend: venueMasterService.js → /venue-masters/)
+#
+# The Create Event wizard's seat-plan step needs a read-only way to fetch
+# `VenueMaster` snapshots (master layout + category palette) for both
+# "own venue" and "venue master" modes. Without this viewset, every
+# `GET /venue-masters/...` returns 404 and the canvas can never render.
+#
+# List payload (VenueMasterListSerializer):
+#   id, version, venue_id, name, city, country, venue_type,
+#   has_reserved_seating, has_layout, is_current, created_at,
+#   seat_count, category_count
+#
+# Detail payload (VenueMasterDetailSerializer) additionally includes
+# `snapshot`, which carries:
+#   snapshot.layout           → { canvas_width, canvas_height, seats[] }
+#   snapshot.category_palette → [ { id, name, hex_color, default_price } ]
+# ===========================================================================
+
+class VenueMasterViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only API for venue master snapshots.
+
+    The catalog is CROSS-TENANT by design: any authenticated tenant may
+    browse venue versions owned by another organization so it can reuse
+    a venue instead of recreating it. An event pins one exact version
+    (`EventVenuePlan.venue_master`), so the owning tenant's later edits
+    create a new version and leave existing events untouched.
+
+    Endpoints (registered under `/api/venue-masters/`):
+
+      GET  /venue-masters/                    → list (current/latest only)
+      GET  /venue-masters/?include_history=1  → list every version
+      GET  /venue-masters/?venue_id=<uuid>    → list filtered by venue
+      GET  /venue-masters/?is_current=1       → list current snapshots
+      GET  /venue-masters/?has_layout=1       → list masters with a layout
+      GET  /venue-masters/<id>/               → detail (includes snapshot)
+
+    IMPLEMENTATION NOTES
+    --------------------
+    * `VenueMaster` is imported at MODULE TOP (see the
+      `from .models_venue_master import VenueMaster` line near the top
+      of this file). It is NOT re-imported inside `get_queryset()`.
+      The previous lazy re-import pulled from `models_seating`, where
+      `VenueMaster` does not exist, which caused an `ImportError` on
+      every request and a 500 on `/api/venue-masters/`. Importing at
+      module top also means a future rename/move fails fast at boot
+      instead of on a live request.
+
+    * The list endpoint always emits `{count, results}`. The frontend
+      `venueMasterService` tolerates both bare arrays and envelopes,
+      but the envelope is consistent with every other list endpoint
+      in this project and lets us paginate if the catalog grows.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # `VenueMaster` is imported at module top — see the note above.
+        from django.db.models import Q as _Q
+
+        qs = VenueMaster.objects.select_related('venue').all()
+
+        # --- Explicit filters (also covered by filterset_fields once
+        #     DjangoFilterBackend is wired) ---
+        venue_id = self.request.query_params.get('venue_id')
+        if venue_id:
+            qs = qs.filter(venue_id=venue_id)
+
+        is_current = self.request.query_params.get('is_current')
+        if is_current is not None and is_current != '':
+            truthy = is_current.lower() in ('1', 'true', 'yes', 'on')
+            qs = qs.filter(is_current=truthy)
+
+        # Creating a new Event must only offer the LATEST version of each
+        # venue. The list endpoint therefore defaults to current rows.
+        # Older versions remain retrievable by id (existing events pin
+        # them) and can be listed explicitly with ?include_history=1.
+        include_history = self.request.query_params.get(
+            'include_history', '',
+        ).lower() in ('1', 'true', 'yes', 'on')
+        if (
+            self.action == 'list'
+            and is_current in (None, '')
+            and not include_history
+        ):
+            qs = qs.filter(is_current=True)
+
+        has_reserved = self.request.query_params.get('has_reserved_seating')
+        if has_reserved is not None and has_reserved != '':
+            truthy = has_reserved.lower() in ('1', 'true', 'yes', 'on')
+            qs = qs.filter(has_reserved_seating=truthy)
+
+        has_layout = self.request.query_params.get('has_layout')
+        if has_layout is not None and has_layout != '':
+            truthy = has_layout.lower() in ('1', 'true', 'yes', 'on')
+            qs = qs.filter(has_layout=truthy)
+
+        search = self.request.query_params.get('search')
+        if search:
+            qs = qs.filter(
+                _Q(name__icontains=search)
+                | _Q(city__icontains=search)
+                | _Q(country__icontains=search)
+            )
+
+        # --- Cross-tenant catalog ---
+        # VenueMaster is SHARED by design: any authenticated tenant may
+        # browse masters from any organization so it can reuse a venue
+        # instead of recreating it. The event pins a specific version
+        # (EventVenuePlan PROTECT FK), so later edits by the owning
+        # tenant create a NEW master and never mutate existing events.
+        #
+        # `organization_id` remains an optional narrowing filter for
+        # admin/debug screens; it does not grant access by itself.
+        organization_id = self.request.query_params.get('organization_id')
+        if organization_id:
+            try:
+                _uuid.UUID(str(organization_id))
+            except (ValueError, TypeError, AttributeError):
+                return qs.none()
+            qs = qs.filter(venue__organization_id=organization_id)
+
+        return qs.order_by('-created_at')
+
+    def get_serializer_class(self):
+        # Serializers still live in `api/serializers.py`, which imports
+        # models from this app. Keep the lazy import here — it is NOT
+        # what caused the bug, and there is a real circular-import
+        # boundary between views.py and api/serializers.py.
+        from .api.serializers import (
+            VenueMasterDetailSerializer,
+            VenueMasterListSerializer,
+        )
+        if self.action == 'retrieve':
+            return VenueMasterDetailSerializer
+        return VenueMasterListSerializer
+
+    def list(self, request, *args, **kwargs):
+        """
+        Same as ReadOnlyModelViewSet.list but always returns the
+        `{count, results}` envelope.
+        """
+        from rest_framework.response import Response
+
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': len(serializer.data),
+            'results': serializer.data,
         })

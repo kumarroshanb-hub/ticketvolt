@@ -34,6 +34,9 @@ from .views import (
     run_scheduled_tasks,
     cron_health,
     EventSeatMapViewSet,
+    # ✅ NEW: read-only venue master snapshots used by the Create Event
+    # wizard's seat-plan step.
+    VenueMasterViewSet,
 )
 
 from .api.payments_api import (
@@ -56,10 +59,18 @@ from .api.membership_api import (
     MembershipTierViewSet,
     MembershipViewSet,
     list_pending_offline,
+    bulk_upload_offline_members,
     review_offline_membership,
     bulk_review_offline_memberships,
 )
 
+from .api.event_venue_plan_api import (
+    EventSeatAssignBulkView,
+    EventSeatCategoryCreateView,
+    EventSeatCategoryUpdateView,
+    EventSeatUnassignView,
+    EventVenuePlanView,
+)
 
 # ============================================================
 # ROUTER
@@ -84,6 +95,16 @@ router.register(
 )
 router.register(r'membership-tiers', MembershipTierViewSet, basename='membership-tier')
 router.register(r'memberships', MembershipViewSet, basename='membership')
+
+# ✅ FIX: this was missing. Without this line, `/api/venue-masters/` and
+# `/api/venue-masters/<id>/` do not exist, so the Create Event wizard's
+# seat-plan step can never fetch a master snapshot and the canvas
+# never renders.
+router.register(
+    r'venue-masters',
+    VenueMasterViewSet,
+    basename='venue-master',
+)
 
 
 # ============================================================
@@ -130,6 +151,11 @@ urlpatterns = [
         'memberships/pending-offline/',
         list_pending_offline,
         name='membership-pending-offline',
+    ),
+    path(
+        'memberships/offline-upload/',
+        bulk_upload_offline_members,
+        name='membership-offline-upload',
     ),
     path(
         'memberships/<uuid:membership_id>/review/',
@@ -251,5 +277,32 @@ urlpatterns = [
     path('venues/<uuid:venue_id>/categories/', venue_categories, name='venue-categories'),
     path('venues/<uuid:venue_id>/categories/assign/', assign_seats_to_category, name='assign-seats-to-category'),
     path('venues/<uuid:venue_id>/categories/clear/', clear_seat_category, name='clear-seat-category'),
+
+
+    path(
+        'events/<uuid:event_id>/venue-plan/',
+        EventVenuePlanView.as_view(),
+        name='event-venue-plan',
+    ),
+    path(
+        'events/<uuid:event_id>/venue-plan/categories/',
+        EventSeatCategoryCreateView.as_view(),
+        name='event-venue-plan-category-create',
+    ),
+    path(
+        'events/<uuid:event_id>/venue-plan/categories/<uuid:category_id>/',
+        EventSeatCategoryUpdateView.as_view(),
+        name='event-venue-plan-category',
+    ),
+    path(
+        'events/<uuid:event_id>/venue-plan/assign/',
+        EventSeatAssignBulkView.as_view(),
+        name='event-venue-plan-assign',
+    ),
+    path(
+        'events/<uuid:event_id>/venue-plan/unassign/',
+        EventSeatUnassignView.as_view(),
+        name='event-venue-plan-unassign',
+    ),
 
 ]

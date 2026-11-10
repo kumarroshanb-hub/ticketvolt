@@ -156,7 +156,8 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 organization=org,
                 user=owner_user,
                 defaults={
-                    'role': OrganizationMembership.OrgRole.OWNER,
+                    'role': OrganizationMembership.OrgRole.ADMIN,
+                    'is_owner': True,
                     'is_active': True,
                     'removed_at': None,
                 },
@@ -249,6 +250,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                     'full_name': full_name,
                     'username': m.user.username,
                     'role': m.role,
+                    'is_owner': bool(m.is_owner),
                     'is_active': getattr(m, 'is_active', True),
                     'joined_at': m.joined_at.isoformat() if m.joined_at else None,
                 }
@@ -331,9 +333,12 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             # Reactivate the soft-removed row in place.
             before = snapshot_membership(existing)
             existing.role = role
+            existing.is_owner = False
             existing.is_active = True
             existing.removed_at = None
-            existing.save(update_fields=['role', 'is_active', 'removed_at'])
+            existing.save(
+                update_fields=['role', 'is_owner', 'is_active', 'removed_at'],
+            )
             membership = existing
             created = False
 
@@ -406,46 +411,24 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Demotion from OWNER: refuse to orphan the org.
-        # ✅ FIX: count only LIVE owner rows — soft-removed OWNER rows
-        # must not be counted, or the org can end up with zero live
-        # owners.
-        if (
-            membership.role == OrganizationMembership.OrgRole.OWNER
-            and new_role != OrganizationMembership.OrgRole.OWNER
-        ):
-            live_owner_count = OrganizationMembership.objects.filter(
-                organization=org,
-                role=OrganizationMembership.OrgRole.OWNER,
-                removed_at__isnull=True,
-                is_active=True,
-            ).count()
-            if live_owner_count <= 1:
-                return Response(
-                    {
-                        'error': (
-                            'Cannot demote the last live OWNER. '
-                            'Use the transfer-ownership endpoint instead.'
-                        )
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
-
-        # Promotion to OWNER: physically impossible here by design.
-        # The pre-check below returns 403 BEFORE any DB write, so the
-        # single-live-OWNER DB constraint is a second line of defence
-        # rather than the primary guard. A test should assert that
-        # this path returns 403 and that the DB constraint would also
-        # reject the write if the pre-check were bypassed.
-        if (
-            new_role == OrganizationMembership.OrgRole.OWNER
-            and membership.role != OrganizationMembership.OrgRole.OWNER
-        ):
+        # Ownership is a property of an Admin membership. It can only
+        # move through assign-owner / transfer-ownership.
+        if membership.is_owner:
             return Response(
                 {
                     'error': (
-                        'Cannot promote a member to OWNER directly. '
-                        'Use the transfer-ownership endpoint instead.'
+                        'This member is the organization owner. Use '
+                        'transfer-ownership to change ownership first.'
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        if new_role == 'owner':
+            return Response(
+                {
+                    'error': (
+                        'Ownership is a property of an Admin member. '
+                        'Use transfer-ownership instead.'
                     )
                 },
                 status=status.HTTP_403_FORBIDDEN,
@@ -520,7 +503,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         # data migration.
         if OrganizationMembership.objects.filter(
             organization=org,
-            role=OrganizationMembership.OrgRole.OWNER,
+            is_owner=True,
             removed_at__isnull=True,
             is_active=True,
         ).exists():
@@ -575,7 +558,8 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             organization=org,
             user=target_user,
             defaults={
-                'role': OrganizationMembership.OrgRole.OWNER,
+                'role': OrganizationMembership.OrgRole.ADMIN,
+                'is_owner': True,
                 'is_active': True,
                 'removed_at': None,
             },
@@ -661,7 +645,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             .select_for_update()
             .filter(
                 organization=org,
-                role=OrganizationMembership.OrgRole.OWNER,
+                is_owner=True,
                 removed_at__isnull=True,
                 is_active=True,
             )
@@ -746,8 +730,13 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             and current_owner_membership.user_id != new_owner_user_id
         ):
             before_old = snapshot_membership(current_owner_membership)
-            current_owner_membership.role = OrganizationMembership.OrgRole.ADMIN
-            current_owner_membership.save(update_fields=['role'])
+            # Per product rule, the previous owner returns to a regular
+            # member by default when ownership is transferred.
+            current_owner_membership.role = OrganizationMembership.OrgRole.MEMBER
+            current_owner_membership.is_owner = False
+            current_owner_membership.save(
+                update_fields=['role', 'is_owner'],
+            )
             log_membership_event(
                 organization=org,
                 membership=current_owner_membership,
@@ -759,8 +748,10 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             )
 
         before_new = snapshot_membership(target_membership)
-        target_membership.role = OrganizationMembership.OrgRole.OWNER
-        target_membership.save(update_fields=['role'])
+        # Ownership is a property; the owner must be an Admin member.
+        target_membership.role = OrganizationMembership.OrgRole.ADMIN
+        target_membership.is_owner = True
+        target_membership.save(update_fields=['role', 'is_owner'])
         log_membership_event(
             organization=org,
             membership=target_membership,
@@ -816,7 +807,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if membership.role == OrganizationMembership.OrgRole.OWNER:
+        if membership.is_owner:
             return Response(
                 {'error': 'Cannot remove an OWNER. Transfer ownership first.'},
                 status=status.HTTP_403_FORBIDDEN,

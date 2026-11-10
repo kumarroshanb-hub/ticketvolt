@@ -11,6 +11,7 @@ from ..services.tenancy import (
     user_org_ids,
     visible_cancellation_policies,
     can_manage_org,
+    filter_organization_param,
 )
 from .serializers import CancellationPolicySerializer
 from ..services.cancellation_policy import validate_cancellation_rules
@@ -32,7 +33,10 @@ class CancellationPolicyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return visible_cancellation_policies(self.request.user)
+        return filter_organization_param(
+            visible_cancellation_policies(self.request.user),
+            self.request.query_params.get('organization_id'),
+        )
 
     def _resolve_organization(self, user, raw_org_id):
         if raw_org_id in (None, '', 'null'):

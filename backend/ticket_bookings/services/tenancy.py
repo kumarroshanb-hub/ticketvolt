@@ -9,10 +9,10 @@ Role model:
   Tenant Member   = OrganizationMembership.role == MEMBER         (tenant, attendee)
   Regular User    = any other authenticated user, or anonymous    (self only)
 
-`is_staff=True` is a *platform* read-only support tier — it grants no
-tenant mutation rights and no ownership. It only broadens read scope
-across tenants (see the `visible_*` helpers). Tenant authority comes
-exclusively from an active OrganizationMembership.
+`is_staff=True` is Django-admin access ONLY. It does NOT broaden tenant
+read scope and does NOT grant cross-tenant visibility. Only `is_superuser`
+(platform admin) may read every tenant. Tenant authority comes exclusively
+from an active OrganizationMembership.
 
 MEMBERSHIP-AS-PROPERTY MODEL (2026-11-06):
   • Every authenticated user is a "Regular User". There is no global
@@ -36,6 +36,8 @@ manually deactivated (is_active=False) or soft-removed (removed_at is
 set), the user instantly loses all access to the organization's
 resources.
 """
+import uuid
+
 from django.db.models import Q
 from django.utils import timezone
 
@@ -178,6 +180,44 @@ def can_operate_org(user, organization):
     return has_org_role(user, organization, OrganizationMembership.OPERATOR_ROLES)
 
 
+def paid_membership_org_ids(user):
+    """Org IDs where the user holds an ACTIVE paid membership."""
+    if not user or not user.is_authenticated:
+        return []
+    from ..models_membership import Membership  # local import: cycle-safe
+
+    now = timezone.now()
+    return list(
+        Membership.objects
+        .filter(user=user, status=Membership.Status.ACTIVE)
+        .filter(Q(valid_until__isnull=True) | Q(valid_until__gte=now))
+        .values_list('organization_id', flat=True)
+        .distinct()
+    )
+
+
+def is_org_member(user, organization):
+    """True for any valid role (OWNER/ADMIN/STAFF/MEMBER) in the org,
+    OR an active paid membership in that org.
+
+    Used for private-event access: a private event is visible/bookable to
+    signed-in members of its organization, regardless of their role.
+    """
+    if not user or not user.is_authenticated or organization is None:
+        return False
+    if is_platform_admin(user):
+        return True
+    if has_org_role(
+        user,
+        organization,
+        tuple(OrganizationMembership.OrgRole.values),
+    ):
+        return True
+    from ..models_membership import Membership
+
+    return Membership.active_for(user, organization) is not None
+
+
 def is_tenant_admin(user):
     if is_platform_admin(user):
         return True
@@ -208,7 +248,11 @@ def owns_org(user, organization):
     """
     if is_platform_admin(user):
         return True
-    return has_org_role(user, organization, (OrganizationMembership.OrgRole.OWNER,))
+    if not user or not user.is_authenticated or organization is None:
+        return False
+    return _active_membership_filter(user).filter(
+        organization=organization, is_owner=True,
+    ).exists()
 
 
 def organization_owner(org):
@@ -225,7 +269,7 @@ def organization_owner(org):
         OrganizationMembership.objects
         .filter(
             organization=org,
-            role=OrganizationMembership.OrgRole.OWNER,
+            is_owner=True,
             removed_at__isnull=True,
             is_active=True,
         )
@@ -311,14 +355,12 @@ def effective_role_label(user):
 
     memberships = _active_membership_filter(user)
 
-    # Manager check runs first: OWNER/ADMIN memberships are the strongest
-    # tenant role. is_staff must not re-label them.
-    is_org_manager = memberships.filter(
-        role__in=OrganizationMembership.MANAGER_ROLES,
-    ).exists()
-
-    if is_org_manager:
+    # Ownership is a property of an Admin membership.
+    if memberships.filter(is_owner=True).exists():
         return 'owner'
+
+    if memberships.filter(role=OrganizationMembership.OrgRole.ADMIN).exists():
+        return 'admin'
 
     # Scanner-only membership gets its own label.
     if memberships.filter(role=OrganizationMembership.OrgRole.STAFF).exists():
@@ -369,10 +411,10 @@ def visible_organizations(user):
     """
     Organizations visible to the user.
 
-    Platform admin and platform staff (read-only support tier) see all
-    orgs; everyone else sees only orgs where they hold a live membership.
+    Only a platform admin (superuser) sees every organisation. Tenant
+    users see only organisations where they hold a live membership.
     """
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return Organization.objects.all()
 
     if not user or not user.is_authenticated:
@@ -394,14 +436,18 @@ def operated_organizations(user):
 
 def visible_events(user, *, organization=None, public_only=False):
     """
-    Events the user is allowed to see.
+    Events the user may access as a TENANT / management user.
 
     Scope:
-      • platform admin / platform staff → everything (read-only for staff)
-      • authenticated with membership  → public baseline + managed org
-                                          (all events) + other member orgs
-                                          (active/published)
-      • anonymous                      → public baseline only
+      • platform admin (superuser) → everything
+      • authenticated with membership → managed orgs (all events) and
+        member orgs (active/published)
+      • anonymous → public baseline only
+
+    This deliberately does NOT include other tenants' public events for an
+    authenticated tenant user. Public browsing/booking uses
+    ``publicly_visible_events()`` instead, so management lists, dashboards,
+    analytics, and serializers never mix tenants.
     """
     qs = Event.objects.all()
     if organization is not None:
@@ -410,17 +456,18 @@ def visible_events(user, *, organization=None, public_only=False):
     if public_only:
         return qs.filter(status__in=['active', 'published'], is_public=True)
 
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
 
     if not user or not user.is_authenticated:
         return qs.filter(status__in=['active', 'published'], is_public=True)
 
     manager_org_ids = user_org_ids(user)
-    membership_org_ids = user_membership_org_ids(user)
+    membership_org_ids = list(
+        set(user_membership_org_ids(user)) | set(paid_membership_org_ids(user))
+    )
 
-    # Public baseline for everyone authenticated.
-    conditions = Q(status__in=['active', 'published'], is_public=True)
+    conditions = Q(pk__in=[])
 
     # Managers see every event in their managed orgs, including drafts/private.
     if manager_org_ids:
@@ -436,9 +483,55 @@ def visible_events(user, *, organization=None, public_only=False):
     return qs.filter(conditions).distinct()
 
 
+def publicly_visible_events(user=None, *, organization=None):
+    """Public marketplace events, independent of the caller's tenancy.
+
+    Used by the public event pages, buyer seat map, and booking creation —
+    NOT by management lists/dashboards.
+    """
+    qs = Event.objects.filter(
+        status__in=['active', 'published'],
+        is_public=True,
+    )
+    if organization is not None:
+        qs = qs.filter(organization=organization)
+    return qs
+
+
+def events_visible_to_buyer(user, *, organization=None):
+    """Events a buyer may view/book.
+
+    • anonymous / no memberships → public events only
+    • org member (any role)       → public + private active/published
+                                    events of THEIR organization
+    • org operator                → every status in their org
+    """
+    if is_platform_admin(user):
+        return Event.objects.filter(status__in=['active', 'published'])
+
+    if user and user.is_authenticated:
+        manager_ids = user_org_ids(user)
+        member_ids = list(
+            set(user_membership_org_ids(user)) | set(paid_membership_org_ids(user))
+        )
+
+        conditions = Q(status__in=['active', 'published'], is_public=True)
+        if manager_ids:
+            conditions |= Q(organization_id__in=manager_ids)
+        if member_ids:
+            conditions |= (
+                Q(organization_id__in=member_ids)
+                & Q(status__in=['active', 'published'])
+            )
+
+        return Event.objects.filter(conditions).distinct()
+
+    return publicly_visible_events(user, organization=organization)
+
+
 def visible_events_for_scan(user):
     """Every active/published event in any org the user can operate on."""
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return Event.objects.filter(status__in=['active', 'published'])
 
     if not user or not user.is_authenticated:
@@ -458,7 +551,7 @@ def visible_venues(user, *, organization=None):
     qs = Venue.objects.all()
     if organization is not None:
         return qs.filter(organization=organization)
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
     if not user or not user.is_authenticated:
         return qs.none()
@@ -470,7 +563,7 @@ def visible_bookings(user, *, organization=None):
     if organization is not None:
         qs = qs.filter(event__organization=organization)
 
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
 
     if not user or not user.is_authenticated:
@@ -494,7 +587,7 @@ def visible_discounts(user, *, organization=None):
     qs = Discount.objects.all()
     if organization is not None:
         return qs.filter(organization=organization)
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
     if not user or not user.is_authenticated:
         return qs.none()
@@ -505,7 +598,7 @@ def visible_cancellation_policies(user, *, organization=None):
     qs = CancellationPolicy.objects.all()
     if organization is not None:
         return qs.filter(organization=organization)
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
     if not user or not user.is_authenticated:
         return qs.none()
@@ -516,7 +609,7 @@ def visible_templates(user, *, organization=None):
     qs = EventTemplate.objects.all()
     if organization is not None:
         return qs.filter(event__organization=organization)
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
     if not user or not user.is_authenticated:
         return qs.none()
@@ -528,8 +621,24 @@ def visible_contacts(user, *, organization=None):
     qs = OrganizationContact.objects.all()
     if organization is not None:
         return qs.filter(organization=organization)
-    if is_platform_admin(user) or is_platform_staff(user):
+    if is_platform_admin(user):
         return qs
     if not user or not user.is_authenticated:
         return qs.none()
     return qs.filter(organization_id__in=user_org_ids(user))
+
+def filter_organization_param(qs, raw_org_id, *, field='organization'):
+    """Narrow an already-permission-scoped queryset to one organisation.
+
+    This is a convenience for list endpoints that receive
+    ``?organization_id=`` from the UI. It NEVER grants access by itself:
+    callers must pass a queryset already produced by a ``visible_*``
+    helper (or otherwise permission-checked).
+    """
+    if not raw_org_id:
+        return qs
+    try:
+        uuid.UUID(str(raw_org_id))
+    except (ValueError, TypeError, AttributeError):
+        return qs.none()
+    return qs.filter(**{field: raw_org_id})

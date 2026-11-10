@@ -2,6 +2,7 @@ import xml.etree.ElementTree as ET
 import re
 from collections import defaultdict
 from ..models_seating import Seat, SeatLayout
+from .venue_versioning import suppress_bumps
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,8 +14,12 @@ def ingest_svg_layout(layout_id, svg_file):
     """
     layout = SeatLayout.objects.get(id=layout_id)
     
-    # Clear existing seats if re-uploading
-    Seat.objects.filter(layout=layout).delete()
+    # Clear existing seats if re-uploading.
+    # Suppress per-seat post_delete bumps — otherwise a 5,000-seat
+    # re-upload writes ~5,000 VenueMaster rows before the new seats are
+    # even created. The caller bumps once after the new seats commit.
+    with suppress_bumps():
+        Seat.objects.filter(layout=layout).delete()
     
     # 1. Safely read the file content into memory
     try:

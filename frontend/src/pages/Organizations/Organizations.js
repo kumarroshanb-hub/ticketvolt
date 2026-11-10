@@ -144,9 +144,9 @@ const Organizations = () => {
 
     // Permission helpers
     const canManageOrg = (org) =>
-        Boolean(org) && (isPlatformAdmin || ['owner', 'admin'].includes(org.role));
+        Boolean(org) && (isPlatformAdmin || org.is_owner || ['owner', 'admin'].includes(org.role));
     const canTransferOrg = (org) =>
-        Boolean(org) && (isPlatformAdmin || org.role === 'owner');
+        Boolean(org) && (isPlatformAdmin || org.is_owner || org.role === 'owner');
     const canDeleteOrg = () => Boolean(isPlatformAdmin);
 
     // Resolve the *live* owner label for an org. This is defensive: if the
@@ -341,7 +341,7 @@ const Organizations = () => {
     // a username was always false. The `role !== 'owner'` check already
     // excludes the current owner, so that extra clause is removed.
     const transferCandidates = useMemo(() => {
-        return members.filter((m) => m.role !== 'owner' && m.is_active !== false);
+        return members.filter((m) => !m.is_owner && m.role !== 'owner' && m.is_active !== false);
     }, [members]);
 
     const handleTransferOwnership = async () => {
@@ -674,9 +674,9 @@ const Organizations = () => {
                                     <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
                                         <Chip
                                             size="small"
-                                            label={org.role || 'member'}
+                                            label={org.is_owner ? 'Owner' : (org.role || 'member')}
                                             color={
-                                                org.role === 'owner'
+                                                org.is_owner || org.role === 'owner'
                                                     ? 'success'
                                                     : org.role === 'admin'
                                                         ? 'primary'

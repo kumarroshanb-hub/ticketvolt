@@ -26,8 +26,9 @@ export const usePlatformFilter = () => {
     const { user } = useAuth();
     const { organizations = [], currentOrgId } = useOrg() || {};
 
-    // ✅ Platform Admin = superuser OR is_staff (matches backend is_platform_admin)
-    const isPlatformAdmin = Boolean(user?.is_superuser || user?.is_staff);
+    // Only a SYSTEM-LEVEL user (superuser) may see cross-tenant data.
+    // `is_staff` is Django-admin access only and must not widen tenant scope.
+    const isPlatformAdmin = Boolean(user?.is_superuser);
 
     // Platform admins can optionally narrow to one org; '' = all orgs
     const [orgFilter, setOrgFilter] = useState('');

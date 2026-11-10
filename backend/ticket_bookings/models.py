@@ -161,6 +161,16 @@ class Venue(models.Model):
     def __str__(self):
         return f"{self.name} ({self.city})"
 
+    @property
+    def current_master(self):
+        # Use the prefetched relation if available; otherwise query.
+        cache = getattr(self, '_prefetched_objects_cache', {})
+        if 'masters' in cache:
+            for m in cache['masters']:
+                if m.is_current:
+                    return m
+            return None
+        return self.masters.filter(is_current=True).first()
 
 # ============================================
 # CANCELLATION POLICY
@@ -678,7 +688,30 @@ class Ticket(models.Model):
     # ✅ FIX 1: Make tier optional for reserved seating
     tier = models.ForeignKey(TicketTier, on_delete=models.SET_NULL, null=True, blank=True)
     # ✅ FIX 2: Add a direct link to the reserved seat
-    seat = models.ForeignKey('ticket_bookings.Seat', on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets')
+    seat = models.ForeignKey(
+        'ticket_bookings.Seat', 
+        on_delete=models.SET_NULL, null=True, blank=True, 
+        related_name='tickets'
+    )
+
+    # ✅ NEW — stamped at issue time for audit. SET_NULL because the
+    # plan is defensively deletable for hard-cleanup scenarios (an
+    # event with zero tickets being purged), and a ticket should survive
+    # that without a ProtectedError cascade blocking a bulk cleanup.
+    # Historical integrity is preserved by the plan's published_snapshot
+    # being immutable, not by PROTECT on this FK.
+    venue_plan = models.ForeignKey(
+        'ticket_bookings.EventVenuePlan',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tickets',
+        help_text=(
+            'The venue plan under which this ticket was sold. '
+            'Stamped at issue time for audit; pricing lookups still read '
+            'from EventVenuePlan.published_snapshot, never from here.'
+        ),
+    )
+
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='tickets')
     session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, blank=True)
     unique_code = models.CharField(max_length=50, unique=True)
@@ -1064,3 +1097,10 @@ class SystemSettings(models.Model):
 
 
 from .models_seating import SeatCategory, SeatLayout, Seat, SeatReservation
+# ✅ NEW — importing the plan module registers EventVenuePlan,
+# EventSeatCategory, and (transitively) VenueMaster with Django's app
+# registry. Without this, every FK string that references
+# 'ticket_bookings.EventVenuePlan' fails to resolve and Django admin
+# blows up with "AttributeError: 'str' object has no attribute '_meta'".
+from .models_event_venue import EventVenuePlan, EventSeatCategory  # noqa: F401
+from .models_venue_master import VenueMaster                        # noqa: F401

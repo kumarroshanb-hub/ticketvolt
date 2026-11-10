@@ -19,6 +19,7 @@ import {
   Logout as LogoutIcon,
   Business as BusinessIcon,
   WorkspacePremium as MembershipIcon,
+  Devices as SessionsIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
@@ -244,6 +245,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     membershipRole,
     hasOrgRole,
     isSuperAdmin,
+    isOwner,
   } = useRole();
   const { logout, isAuthenticated } = useAuth();
   const { t } = useTranslation();
@@ -288,8 +290,8 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       icon: <EventIcon />,
       label: t('nav.events'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
-      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
-      section: 'management',
+      minOrgRole: MEMBERSHIP_ROLES.MEMBER,
+      section: 'main',
     },
     {
       path: '/app/venues',
@@ -312,14 +314,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       label: t('nav.membership', 'Membership'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
-    },
-    {
-      path: '/app/membership/review-offline',
-      icon: <MembershipIcon />,
-      label: t('nav.reviewOfflineMemberships', 'Offline Requests'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
-      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
-      section: 'management',
     },
     {
       path: '/app/checkin',
@@ -350,9 +344,14 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       icon: <PeopleIcon />,
       label: t('nav.users'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
-      // also visible to org owners/admins via the minOrgRole gate below
-      alsoVisibleToOrgRole: MEMBERSHIP_ROLES.ADMIN,
-      section: 'management',
+      section: 'admin',
+    },
+    {
+      path: '/app/active-sessions',
+      icon: <SessionsIcon />,
+      label: t('nav.activeSessions', 'Active Sessions'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
     },
     {
       path: '/app/organizations',
@@ -410,6 +409,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
   const orgBadgeKind = (() => {
     // ✅ Superusers are platform-wide. Never show them an org role.
     if (isSuperAdmin) return null;
+    if (isOwner) return 'org-owner';
     switch (membershipRole) {
       case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';
       case MEMBERSHIP_ROLES.ADMIN:  return 'org-admin';

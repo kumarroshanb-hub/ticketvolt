@@ -10,6 +10,7 @@ from ..services.tenancy import (
     user_org_ids,
     visible_discounts,
     can_manage_org,
+    filter_organization_param,
 )
 from .serializers import DiscountSerializer
 
@@ -30,7 +31,10 @@ class DiscountViewSet(viewsets.ModelViewSet):
     serializer_class = DiscountSerializer
 
     def get_queryset(self):
-        return visible_discounts(self.request.user)
+        return filter_organization_param(
+            visible_discounts(self.request.user),
+            self.request.query_params.get('organization_id'),
+        )
 
     def _resolve_organization(self, user, raw_org_id):
         """Return (organization, error_response_or_None)."""

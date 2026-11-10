@@ -315,6 +315,9 @@ const CreateBooking = () => {
         return visibleSteps[idx - 1] || visibleSteps[0];
     };
 
+    // Fetch once on mount; loadEvents reads auth state but the user
+    // identity is stable for this page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { loadEvents(); }, []);
 
     useEffect(() => {
@@ -366,29 +369,46 @@ const CreateBooking = () => {
         setLoading(true);
         setEventLoadError(null);
         try {
-            let data = [];
-            if (canManageEvents) {
-                try {
-                    const response = await api.get('/events/');
-                    if (Array.isArray(response.data)) data = response.data;
-                    else if (response.data && response.data.results) data = response.data.results;
-                    else if (response.data && typeof response.data === 'object') data = Object.values(response.data).filter((item) => item.id && item.title);
-                } catch (adminError) { console.log('📅 Admin endpoint failed:', adminError.message); }
-            } else {
-                try {
-                    const response = await api.get('/events/public/');
-                    if (response.data && response.data.results) data = response.data.results;
-                    else if (Array.isArray(response.data)) data = response.data;
-                } catch (publicError) { console.log('📅 Public endpoint failed:', publicError.message); }
-            }
-            if (isRegularUser && data.length > 0) {
+            const extract = (payload) => {
+                if (Array.isArray(payload)) return payload;
+                if (payload && Array.isArray(payload.results)) return payload.results;
+                if (payload && typeof payload === 'object') {
+                    return Object.values(payload).filter((item) => item?.id && item?.title);
+                }
+                return [];
+            };
+
+            // Public marketplace events, plus the caller's own-org events
+            // (which include PRIVATE events for signed-in members).
+            const requests = [api.get('/events/public/')];
+            if (isAuthenticated) requests.push(api.get('/events/'));
+
+            const responses = await Promise.allSettled(requests);
+            const merged = responses
+                .filter((r) => r.status === 'fulfilled')
+                .flatMap((r) => extract(r.value?.data));
+
+            // De-duplicate by id; the authenticated /events/ record wins
+            // so private/member data is not replaced by the public shape.
+            const byId = new Map();
+            merged.forEach((event) => byId.set(event.id, event));
+            let data = Array.from(byId.values());
+
+            if (!canManageEvents) {
                 data = data.filter((e) => {
                     const status = e.status || 'draft';
                     return status === 'active' || status === 'published';
                 });
             }
+
             setEvents(data);
-            if (data.length === 0) setEventLoadError(canManageEvents ? 'No events found. Please create an event first!' : 'No active events available for booking. Check back later!');
+            if (data.length === 0) {
+                setEventLoadError(
+                    canManageEvents
+                        ? 'No events found. Please create an event first!'
+                        : 'No active events available for booking. Check back later!'
+                );
+            }
         } catch (error) {
             let errorMsg = 'Failed to load events';
             if (error.response?.status === 404) errorMsg = 'Events endpoint not found. Please check the backend.';

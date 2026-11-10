@@ -43,9 +43,11 @@ from ..services.tenancy import (
     user_org_ids,
     user_operator_org_ids,
     visible_bookings,
-    visible_events,
+    events_visible_to_buyer,
+    filter_organization_param,
     can_manage_org,
     can_operate_org,
+    is_org_member,
 )
 
 from .ticket_generator import TicketGenerator
@@ -60,6 +62,13 @@ from ..services.session_capacity import (
 )
 from ..services.booking_status import reconcile_completed_booking
 from ..constants import BookingStatus, TicketStatus
+from ..services.event_pricing import (
+    resolve_seat_price,
+    PricingError,
+    compute_booking_subtotal,
+    seat_price,
+    tier_price,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +78,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 def _get_visible_event_or_404(user, event_id):
     """
-    Resolve an Event that the caller is allowed to *see*.
-
-    Raises DRF ``NotFound`` (404) if the event does not exist OR is not
-    in ``visible_events(user)``. Never reveals which case applied.
+    Resolve an Event that the caller is allowed to *book*: public events
+    plus every event in an org the caller operates.
     """
-    qs = visible_events(user)
+    qs = events_visible_to_buyer(user)
     try:
         return qs.get(id=event_id)
     except Event.DoesNotExist:
@@ -493,6 +500,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 attendee_name=name,
                 attendee_email=email,
                 attendee_phone=phone,
+                # ✅ Audit stamp
+                venue_plan=getattr(event, 'venue_plan', None),
             )
             ticket.save()
 
@@ -555,14 +564,19 @@ class BookingViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            caller_can_operate = (
+            caller_is_member = (
                 request.user.is_authenticated
-                and can_operate_org(request.user, event_obj.organization)
+                and is_org_member(request.user, event_obj.organization)
             )
-            if not event_obj.is_public and not caller_can_operate:
+            if not event_obj.is_public and not caller_is_member:
                 return Response(
-                    {'error': 'This event is not available for public booking'},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {
+                        'error': (
+                            'This is a private event. Sign in as a member '
+                            'of this organization to book.'
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
             from ..services.membership_access import can_access_event
@@ -575,47 +589,30 @@ class BookingViewSet(viewsets.ModelViewSet):
         if event_obj and event_obj.event_flow == 'free_registration':
             return self._create_free_registration(request, event_obj, data)
 
-        # FIX: scope tier/seat price lookup to the event to prevent a
-        # caller from using a foreign-event tier_id to distort total.
-        # The serializer later rejects foreign tiers fail-closed, but we
-        # no longer query across tenants at all.
-        if 'total_amount' not in data or data['total_amount'] is None:
-            tickets = data.get('tickets', [])
-            total = 0.0
-            tier_ids = [t.get('tier_id') for t in tickets if t.get('tier_id')]
-
-            tiers_by_id = {}
-            if event_obj is not None and tier_ids:
-                tiers_by_id = {
-                    str(t.id): t
-                    for t in TicketTier.objects.filter(
-                        event=event_obj, id__in=tier_ids,
-                    )
-                }
-
-            for ticket in tickets:
-                tier_id = ticket.get('tier_id')
-                if tier_id:
-                    tier = tiers_by_id.get(str(tier_id))
-                    if tier is not None:
-                        total += float(tier.price)
-                    continue  # don't fall through to seat pricing
-                # ✅ RESERVED SEATING: price from seat category when no tier_id
-                seat_id = ticket.get('seat_id')
-                if seat_id and event_obj is not None:
-                    try:
-                        from ..models_seating import Seat
-                        seat = (
-                            Seat.objects
-                            .filter(id=seat_id, layout__event=event_obj)
-                            .select_related('category')
-                            .first()
-                        )
-                        if seat and seat.category:
-                            total += float(seat.category.price)
-                    except Exception:
-                        pass
-            data['total_amount'] = str(total)
+        # ============================================================
+        # B3: BookingViewSet.create — use compute_booking_subtotal
+        #
+        # Replaces the inline TicketTier.objects.get(...).price / seat
+        # price lookups with a single authoritative call. The prior
+        # inline block was the smuggling vector: a caller could supply
+        # a `total_amount` that skipped verification entirely.
+        # ============================================================
+        if event_obj is not None:
+            items_for_pricing = (
+                data.get('tickets')
+                or (data.get('metadata') or {}).get('tickets')
+                or (data.get('metadata') or {}).get('ticket_types')
+                or []
+            )
+            try:
+                data['total_amount'] = str(
+                    compute_booking_subtotal(event_obj, items_for_pricing)
+                )
+            except PricingError as exc:
+                return Response(
+                    {'error': str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         session_id = (
             data.get('session')
@@ -926,7 +923,11 @@ class BookingViewSet(viewsets.ModelViewSet):
         return BookingSerializer
 
     def get_queryset(self):
-        return visible_bookings(self.request.user)
+        return filter_organization_param(
+            visible_bookings(self.request.user),
+            self.request.query_params.get('organization_id'),
+            field='event__organization',
+        )
 
     # FIX: get_object uses _can_view_booking (read visibility), not
     # _can_manage_booking. Individual mutation actions re-check the
@@ -1486,6 +1487,9 @@ class BookingViewSet(viewsets.ModelViewSet):
                 'debug_info': {'booking_id': str(booking.id), 'reference': booking.booking_reference, 'expected_tickets': expected_count, 'event_tiers_count': 0},
             }
 
+        # B6: stamp venue_plan on every ticket
+        plan = getattr(booking.event, 'venue_plan', None) if booking.event else None
+
         for idx, ticket_data in enumerate(tickets_data):
             is_dict = isinstance(ticket_data, dict)
             attendee_name = (ticket_data.get('attendee_name') or booking.customer_name) if is_dict else booking.customer_name
@@ -1516,7 +1520,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                         event=booking.event,
                         name=seat.category.name,
                         defaults={
-                            'price': seat.category.price,
+                            'price': resolve_seat_price(booking.event, seat.id),
                             'quantity_total': max(seat_count, 1),
                             'ticket_type': 'ga',
                         },
@@ -1554,6 +1558,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     attendee_name=attendee_name,
                     attendee_email=attendee_email,
                     attendee_phone=attendee_phone,
+                    # ✅ B6: Audit stamp — the plan this ticket was sold under.
+                    venue_plan=plan,
                 )
                 if seat is not None and hasattr(Ticket, 'seat'):
                     ticket_kwargs['seat'] = seat
@@ -1769,6 +1775,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     booking=booking, tier=tier, event=booking.event, session=session_to_use,
                     status='active', attendee_name=booking.customer_name,
                     attendee_email=booking.customer_email, attendee_phone=booking.customer_phone,
+                    # ✅ B6: Audit stamp
+                    venue_plan=getattr(booking.event, 'venue_plan', None),
                 )
                 self._generate_qr_code(ticket)
                 tier.quantity_sold += 1

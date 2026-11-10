@@ -15,6 +15,7 @@ from ..models import EventTemplate, EventTemplateType, Event
 from ..constants import TemplateTypes, TEMPLATE_TYPE_MAP
 from ..services.tenancy import (
     can_manage_event_data,
+    filter_organization_param,
     visible_templates,
     is_platform_admin,
     user_org_ids,
@@ -279,7 +280,11 @@ class EventTemplateViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        base = visible_templates(self.request.user)
+        base = filter_organization_param(
+            visible_templates(self.request.user),
+            self.request.query_params.get('organization_id'),
+            field='event__organization',
+        )
 
         event_id = self.request.query_params.get('event_id')
         template_type = self.request.query_params.get('type')

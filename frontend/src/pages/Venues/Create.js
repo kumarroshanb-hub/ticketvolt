@@ -1,12 +1,24 @@
 // frontend/src/pages/Venues/Create.js
+//
+// Venue details and the (optional) seat layout are captured on ONE page
+// and submitted in ONE request. The backend wraps the venue write, layout
+// parse, and seat/category writes in a single transaction and bumps the
+// VenueMaster only once, so a create/edit produces exactly one version
+// instead of "save venue" + "save layout" = two versions.
+//
+// The advanced `/app/venues/<id>/layout` editor remains available for
+// seat-category assignment / fine-tuning, but it is no longer part of the
+// create flow.
+//
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Paper, Typography, TextField, Button, Grid, Alert,
     CircularProgress, MenuItem, Divider, FormControlLabel, Switch,
     useMediaQuery, useTheme,
 } from '@mui/material';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import { UploadFile as UploadFileIcon } from '@mui/icons-material';
 import api from '../../services/api';
 import {
     PageContainer,
@@ -20,7 +32,7 @@ import styled from 'styled-components';
 
 import { theme } from '../../theme/tokens';
 import { useSettings } from '../../context/SettingsContext';
-import { useOrg } from '../../context/OrgContext';               // ✅ NEW
+import { useOrg } from '../../context/OrgContext';
 import {
     getCountryOptionsWithDefault,
     normaliseCountryName,
@@ -55,11 +67,9 @@ const StyledTextField = styled(TextField)`
         fieldset {
             border-color: ${props => props.theme?.colors?.borderLight || C.borderLight};
         }
-
         &:hover fieldset {
             border-color: ${props => props.theme?.colors?.borderHover || C.borderHover};
         }
-
         &.Mui-focused fieldset {
             border-color: ${props => props.theme?.colors?.primary || C.primary};
         }
@@ -68,11 +78,9 @@ const StyledTextField = styled(TextField)`
     & .MuiInputLabel-root {
         color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
     }
-
     & .MuiInputLabel-root.Mui-focused {
         color: ${props => props.theme?.colors?.primary || C.primary};
     }
-
     & .MuiSvgIcon-root {
         color: ${props => props.theme?.colors?.textMuted || C.textMuted};
     }
@@ -81,11 +89,14 @@ const StyledTextField = styled(TextField)`
 const CreateVenue = () => {
     const navigate = useNavigate();
     const { id } = useParams();
+    const [searchParams] = useSearchParams();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const { settings } = useSettings();
 
-    // ✅ NEW: tenant context
+    const isNew = !id || id === 'new';
+    const returnTo = searchParams.get('return');
+
     const {
         organizations,
         currentOrgId,
@@ -95,7 +106,6 @@ const CreateVenue = () => {
         needsOrganization,
     } = useOrg();
 
-    // ✅ Platform-level default country — dropdowns follow it.
     const platformCountry = useMemo(() => {
         const normalised = normaliseCountryName(settings?.country);
         return normalised || 'Hong Kong';
@@ -109,6 +119,14 @@ const CreateVenue = () => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [existingLayout, setExistingLayout] = useState(null);
+
+    // Seat layout is captured on THIS page and saved in the same request
+    // as the venue, so the venue produces exactly one VenueMaster version.
+    const [svgFile, setSvgFile] = useState(null);
+    const [canvasWidth, setCanvasWidth] = useState(1000);
+    const [canvasHeight, setCanvasHeight] = useState(800);
+
     const [formData, setFormData] = useState(() => ({
         name: '',
         description: '',
@@ -124,12 +142,9 @@ const CreateVenue = () => {
         contact_email: '',
         has_reserved_seating: false,
         is_active: true,
-        // ✅ NEW: which tenant this venue belongs to
         organization_id: '',
     }));
 
-    // ✅ Seed organization_id from context. Single-org users never see
-    // the picker, so we must auto-populate it.
     useEffect(() => {
         setFormData((prev) => {
             if (prev.organization_id) return prev;
@@ -141,7 +156,6 @@ const CreateVenue = () => {
         });
     }, [currentOrgId, organizations]);
 
-    // ✅ Keep country in sync when platform default loads after first render.
     useEffect(() => {
         setFormData((prev) => {
             if (prev.country && prev.country !== '') return prev;
@@ -149,23 +163,21 @@ const CreateVenue = () => {
         });
     }, [platformCountry]);
 
-    // ✅ If the venue already has a country that's not in the catalog
-    // (legacy value), surface it as an extra option so the select can
-    // still represent it.
     const countryMenuOptions = useMemo(() => {
         const current = (formData.country || '').trim();
         if (current && !countryOptions.some((o) => o.value === current)) {
-            return [{ value: current, label: current, code: '', currencyCode: '', currencySymbol: '' }, ...countryOptions];
+            return [
+                { value: current, label: current, code: '', currencyCode: '', currencySymbol: '' },
+                ...countryOptions,
+            ];
         }
         return countryOptions;
     }, [formData.country, countryOptions]);
 
     useEffect(() => {
-        if (id) {
-            loadVenue();
-        }
+        if (!isNew) loadVenue();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id]);
+    }, [isNew, id]);
 
     const loadVenue = async () => {
         setLoading(true);
@@ -187,24 +199,93 @@ const CreateVenue = () => {
                 contact_email: data.contact_email || '',
                 has_reserved_seating: data.has_reserved_seating || false,
                 is_active: data.is_active !== undefined ? data.is_active : true,
-                // ✅ Preserve the venue's current org so edits don't
-                // accidentally reassign it.
                 organization_id: data.organization || currentOrgId || '',
             });
-        } catch (error) {
-            console.error('Failed to load venue:', error);
+
+            try {
+                const layout = await api.get(`/venues/${id}/layout/`);
+                setExistingLayout(layout.data);
+                setCanvasWidth(layout.data?.canvas_width || 1000);
+                setCanvasHeight(layout.data?.canvas_height || 800);
+            } catch {
+                setExistingLayout(null);
+            }
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to load venue:', err);
             toast.error('Failed to load venue details');
             navigate('/app/venues');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
-        setFormData({
-            ...formData,
-            [name]: type === 'checkbox' ? checked : value
+        setFormData({ ...formData, [name]: type === 'checkbox' ? checked : value });
+    };
+
+    const buildLayoutEditorUrl = (venueId) => {
+        const base = `/app/venues/${venueId}/layout`;
+        if (!returnTo) return base;
+        return `${base}?return=${encodeURIComponent(returnTo)}`;
+    };
+
+    const buildVenueFormData = (venueData) => {
+        const fd = new FormData();
+        Object.entries(venueData).forEach(([key, value]) => {
+            if (value === undefined || value === null) return;
+            if (typeof value === 'boolean') {
+                fd.append(key, value ? 'true' : 'false');
+            } else {
+                fd.append(key, value);
+            }
         });
+        if (svgFile) {
+            fd.append('svg_file', svgFile);
+            fd.append('canvas_width', String(canvasWidth));
+            fd.append('canvas_height', String(canvasHeight));
+        }
+        return fd;
+    };
+
+    /**
+     * Safety net: if the combined venue+layout request saved the venue
+     * but the SVG did not land (e.g. an older backend or a proxy that
+     * dropped the multipart part), upload it through the dedicated
+     * endpoint instead of leaving the venue without seats.
+     */
+    const ensureLayoutUploaded = async (venueId, responseData) => {
+        if (!svgFile || !venueId) return true;
+        if (responseData?.has_layout) return true;
+
+        try {
+            const existing = await api.get(`/venues/${venueId}/layout/`);
+            if ((existing.data?.seats?.length || 0) > 0) return true;
+        } catch {
+            // 404 = no layout yet; continue to upload.
+        }
+
+        const fd = new FormData();
+        fd.append('svg_file', svgFile);
+        fd.append('canvas_width', String(canvasWidth));
+        fd.append('canvas_height', String(canvasHeight));
+        try {
+            await api.post(`/venues/${venueId}/layout/upload/`, fd);
+            toast.info('Seat layout uploaded in a follow-up request.');
+        } catch (err) {
+            // The venue is saved; don't lose it. Surface a clear warning
+            // so the operator can retry from the venue's layout editor.
+            const msg =
+                err.response?.data?.error
+                || err.response?.data?.detail
+                || err.message
+                || 'Unknown error';
+            toast.warn(
+                `Venue saved, but the seat layout could not be uploaded: ${msg}`
+            );
+        }
+        return true;
     };
 
     const handleSubmit = async (e) => {
@@ -215,18 +296,27 @@ const CreateVenue = () => {
         try {
             if (!formData.name) {
                 setError('Venue name is required');
-                setSubmitting(false);
                 return;
             }
-
-            // ✅ Multi-tenancy: refuse to submit without an org.
             if (!formData.organization_id) {
                 setError(
                     organizations.length > 1
                         ? 'Please select the organization this venue belongs to.'
-                        : 'You need to create an organization before adding venues.'
+                        : 'You need to create an organization before adding venues.',
                 );
-                setSubmitting(false);
+                return;
+            }
+
+            const hasExistingSeats = (existingLayout?.seats?.length || 0) > 0;
+            if (
+                formData.has_reserved_seating
+                && !svgFile
+                && !hasExistingSeats
+            ) {
+                setError(
+                    'Upload an SVG seat layout for a reserved-seating venue. '
+                    + 'It will be saved together with the venue in one step.',
+                );
                 return;
             }
 
@@ -234,37 +324,65 @@ const CreateVenue = () => {
                 ...formData,
                 capacity: formData.capacity ? parseInt(formData.capacity, 10) : null,
             };
+            // Reserved venues use multipart so the SVG can travel in the
+            // SAME request as the venue fields. This is what lets one
+            // save produce one VenueMaster version.
+            const payload = (
+                svgFile || formData.has_reserved_seating
+            ) ? buildVenueFormData(venueData) : venueData;
 
-            if (id) {
-                await api.put(`/venues/${id}/`, venueData);
+            // ---- EDIT MODE ----
+            if (!isNew) {
+                const response = await api.put(`/venues/${id}/`, payload);
+                await ensureLayoutUploaded(id, response.data);
                 toast.success('Venue updated successfully!');
-            } else {
-                await api.post('/venues/', venueData);
-                toast.success('Venue created successfully!');
+                if (returnTo) {
+                    const sep = returnTo.includes('?') ? '&' : '?';
+                    navigate(`${returnTo}${sep}venue_id=${id}`);
+                } else {
+                    navigate('/app/venues');
+                }
+                return;
             }
-            navigate('/app/venues');
-        } catch (error) {
-            console.error('Submit error:', error);
 
-            const data = error.response?.data;
+            // ---- CREATE MODE ----
+            const response = await api.post('/venues/', payload);
+            const created = response.data;
+            await ensureLayoutUploaded(created?.id, created);
+            toast.success('Venue created successfully!');
+
+            if (returnTo && created?.id) {
+                const sep = returnTo.includes('?') ? '&' : '?';
+                navigate(`${returnTo}${sep}venue_id=${created.id}`);
+            } else if (created?.id) {
+                navigate(`/app/venues/${created.id}`);
+            } else {
+                navigate('/app/venues');
+            }
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Submit error:', err);
+
+            const data = err.response?.data;
             let msg = 'Failed to save venue';
             if (typeof data === 'string') {
                 msg = data;
             } else if (data && typeof data === 'object') {
                 const firstKey =
-                    Object.keys(data).find(k => k !== 'non_field_errors') ||
-                    'non_field_errors';
+                    Object.keys(data).find((k) => k !== 'non_field_errors')
+                    || 'non_field_errors';
                 const firstVal = data[firstKey];
                 msg = Array.isArray(firstVal)
                     ? `${firstKey}: ${firstVal[0]}`
                     : `${firstKey}: ${String(firstVal)}`;
-            } else if (error.message) {
-                msg = error.message;
+            } else if (err.message) {
+                msg = err.message;
             }
             setError(msg);
             toast.error(msg);
+        } finally {
+            setSubmitting(false);
         }
-        setSubmitting(false);
     };
 
     if (loading || orgLoading) {
@@ -277,7 +395,6 @@ const CreateVenue = () => {
         );
     }
 
-    // ✅ Block the form when the user has no org — prompt to create one.
     if (needsOrganization) {
         return (
             <PageContainer>
@@ -311,8 +428,13 @@ const CreateVenue = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>{id ? 'Edit Venue' : 'Add New Venue'}</PageTitle>
+                    <PageTitle>{isNew ? 'Add New Venue' : 'Edit Venue'}</PageTitle>
                 </PageHeaderLeft>
+                {returnTo && isNew && (
+                    <Typography variant="caption" sx={{ color: C.textSecondary }}>
+                        Your event draft is preserved — you'll return to it after saving.
+                    </Typography>
+                )}
             </PageHeader>
 
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -320,9 +442,6 @@ const CreateVenue = () => {
             <StyledPaper>
                 <form onSubmit={handleSubmit}>
                     <Grid container spacing={isMobile ? 2 : 3}>
-                        {/* ✅ NEW: Organization picker for multi-org users
-                            and platform admins. Single-org users see the
-                            auto-selected org in the helper text only. */}
                         {showOrgPicker && (
                             <>
                                 <Grid item xs={12}>
@@ -331,16 +450,14 @@ const CreateVenue = () => {
                                 </Grid>
                                 <Grid item xs={12} sm={6}>
                                     <StyledTextField
-                                        fullWidth select
+                                        fullWidth
+                                        select
                                         label="Organization"
                                         name="organization_id"
                                         value={formData.organization_id || ''}
                                         onChange={(e) => {
                                             const val = e.target.value;
-                                            setFormData((prev) => ({
-                                                ...prev,
-                                                organization_id: val,
-                                            }));
+                                            setFormData((prev) => ({ ...prev, organization_id: val }));
                                             setCurrentOrgId(val);
                                         }}
                                         required
@@ -363,24 +480,36 @@ const CreateVenue = () => {
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth label="Venue Name" name="name"
-                                value={formData.name} onChange={handleChange}
-                                required autoComplete="organization"
+                                fullWidth
+                                label="Venue Name"
+                                name="name"
+                                value={formData.name}
+                                onChange={handleChange}
+                                required
+                                autoComplete="organization"
                             />
                         </Grid>
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth label="Description" name="description"
-                                value={formData.description} onChange={handleChange}
-                                multiline rows={3}
+                                fullWidth
+                                label="Description"
+                                name="description"
+                                value={formData.description}
+                                onChange={handleChange}
+                                multiline
+                                rows={3}
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth select label="Venue Type" name="venue_type"
-                                value={formData.venue_type} onChange={handleChange}
+                                fullWidth
+                                select
+                                label="Venue Type"
+                                name="venue_type"
+                                value={formData.venue_type}
+                                onChange={handleChange}
                             >
                                 <MenuItem value="indoor">Indoor</MenuItem>
                                 <MenuItem value="outdoor">Outdoor</MenuItem>
@@ -390,9 +519,13 @@ const CreateVenue = () => {
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth label="Capacity" name="capacity" type="number"
+                                fullWidth
+                                label="Capacity"
+                                name="capacity"
+                                type="number"
                                 inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
-                                value={formData.capacity} onChange={handleChange}
+                                value={formData.capacity}
+                                onChange={handleChange}
                             />
                         </Grid>
 
@@ -403,53 +536,70 @@ const CreateVenue = () => {
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth label="Address Line 1" name="address_line1"
-                                value={formData.address_line1} onChange={handleChange}
+                                fullWidth
+                                label="Address Line 1"
+                                name="address_line1"
+                                value={formData.address_line1}
+                                onChange={handleChange}
                                 autoComplete="address-line1"
                             />
                         </Grid>
 
                         <Grid item xs={12}>
                             <StyledTextField
-                                fullWidth label="Address Line 2" name="address_line2"
-                                value={formData.address_line2} onChange={handleChange}
+                                fullWidth
+                                label="Address Line 2"
+                                name="address_line2"
+                                value={formData.address_line2}
+                                onChange={handleChange}
                                 autoComplete="address-line2"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth label="City" name="city"
-                                value={formData.city} onChange={handleChange}
+                                fullWidth
+                                label="City"
+                                name="city"
+                                value={formData.city}
+                                onChange={handleChange}
                                 autoComplete="address-level2"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth label="State" name="state"
-                                value={formData.state} onChange={handleChange}
+                                fullWidth
+                                label="State"
+                                name="state"
+                                value={formData.state}
+                                onChange={handleChange}
                                 autoComplete="address-level1"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth label="Postal Code" name="postal_code"
+                                fullWidth
+                                label="Postal Code"
+                                name="postal_code"
                                 inputProps={{ inputMode: 'numeric' }}
-                                value={formData.postal_code} onChange={handleChange}
+                                value={formData.postal_code}
+                                onChange={handleChange}
                                 autoComplete="postal-code"
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth select label="Country" name="country"
-                                value={formData.country} onChange={handleChange}
+                                fullWidth
+                                select
+                                label="Country"
+                                name="country"
+                                value={formData.country}
+                                onChange={handleChange}
                                 SelectProps={{
-                                    MenuProps: {
-                                        PaperProps: { sx: { maxHeight: 400 } },
-                                    },
+                                    MenuProps: { PaperProps: { sx: { maxHeight: 400 } } },
                                 }}
                             >
                                 {countryMenuOptions.map((country) => (
@@ -467,17 +617,25 @@ const CreateVenue = () => {
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth label="Contact Phone" name="contact_phone" type="tel"
+                                fullWidth
+                                label="Contact Phone"
+                                name="contact_phone"
+                                type="tel"
                                 inputProps={{ inputMode: 'tel', autoComplete: 'tel' }}
-                                value={formData.contact_phone} onChange={handleChange}
+                                value={formData.contact_phone}
+                                onChange={handleChange}
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
-                                fullWidth label="Contact Email" name="contact_email" type="email"
+                                fullWidth
+                                label="Contact Email"
+                                name="contact_email"
+                                type="email"
                                 inputProps={{ inputMode: 'email', autoComplete: 'email' }}
-                                value={formData.contact_email} onChange={handleChange}
+                                value={formData.contact_email}
+                                onChange={handleChange}
                             />
                         </Grid>
 
@@ -522,6 +680,110 @@ const CreateVenue = () => {
                             />
                         </Grid>
 
+                        {/* Reserved seating: the layout is captured and
+                            saved in the SAME request as the venue so only
+                            one VenueMaster version is created. */}
+                        {formData.has_reserved_seating && (
+                            <>
+                                <Grid item xs={12}>
+                                    <SectionTitle variant="h6">Seat Layout</SectionTitle>
+                                    <Divider sx={{ borderColor: 'divider' }} />
+                                    <Alert
+                                        severity="info"
+                                        sx={{ mt: 2, alignItems: 'flex-start' }}
+                                    >
+                                        <Typography variant="body2">
+                                            Upload an SVG with one shape per seat.
+                                            The venue details and the seat layout are
+                                            saved together in one step — this creates
+                                            a single venue version. Seat categories and
+                                            pricing are assigned on the event wizard's{' '}
+                                            <em>Seat Categories</em> step.
+                                        </Typography>
+                                        {existingLayout?.seats?.length > 0 && (
+                                            <Typography
+                                                variant="caption"
+                                                sx={{ display: 'block', mt: 1, color: 'success.main', fontWeight: 600 }}
+                                            >
+                                                ✅ {existingLayout.seats.length} seat(s) already
+                                                parsed — upload a new SVG to replace them.
+                                            </Typography>
+                                        )}
+                                    </Alert>
+                                </Grid>
+
+                                <Grid item xs={12} sm={6}>
+                                    <Button
+                                        component="label"
+                                        variant="outlined"
+                                        startIcon={<UploadFileIcon />}
+                                        sx={{ textTransform: 'none' }}
+                                    >
+                                        {svgFile ? 'Replace SVG' : 'Choose SVG file'}
+                                        <input
+                                            type="file"
+                                            hidden
+                                            accept=".svg,image/svg+xml"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0] || null;
+                                                if (file && !/\.svg$/i.test(file.name)) {
+                                                    toast.error('Please choose an .svg file.');
+                                                    e.target.value = '';
+                                                    return;
+                                                }
+                                                setSvgFile(file);
+                                            }}
+                                        />
+                                    </Button>
+                                    <Typography
+                                        variant="caption"
+                                        sx={{ display: 'block', mt: 1, color: C.textSecondary }}
+                                    >
+                                        {svgFile
+                                            ? svgFile.name
+                                            : existingLayout?.seats?.length > 0
+                                                ? 'Keep the existing layout or choose a new file.'
+                                                : 'No SVG selected yet.'}
+                                    </Typography>
+                                </Grid>
+
+                                <Grid item xs={12} sm={6}>
+                                    <Grid container spacing={2}>
+                                        <Grid item xs={6}>
+                                            <StyledTextField
+                                                fullWidth
+                                                label="Canvas width"
+                                                type="number"
+                                                value={canvasWidth}
+                                                onChange={(e) => setCanvasWidth(e.target.value)}
+                                                inputProps={{ min: 1 }}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={6}>
+                                            <StyledTextField
+                                                fullWidth
+                                                label="Canvas height"
+                                                type="number"
+                                                value={canvasHeight}
+                                                onChange={(e) => setCanvasHeight(e.target.value)}
+                                                inputProps={{ min: 1 }}
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                    {!isNew && existingLayout?.seats?.length > 0 && (
+                                        <Button
+                                            variant="text"
+                                            size="small"
+                                            onClick={() => navigate(buildLayoutEditorUrl(id))}
+                                            sx={{ textTransform: 'none', mt: 1 }}
+                                        >
+                                            Open advanced layout editor
+                                        </Button>
+                                    )}
+                                </Grid>
+                            </>
+                        )}
+
                         <Grid item xs={12}>
                             <Box
                                 sx={{
@@ -532,15 +794,37 @@ const CreateVenue = () => {
                                 }}
                             >
                                 <PrimaryButton
-                                    variant="contained" type="submit"
-                                    disabled={submitting} size="large"
+                                    variant="contained"
+                                    type="submit"
+                                    disabled={submitting}
+                                    size="large"
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
-                                    {submitting ? <CircularProgress size={24} sx={{ color: C.textInverse }} /> : (id ? 'Update Venue' : 'Create Venue')}
+                                    {submitting ? (
+                                        <CircularProgress size={24} sx={{ color: C.textInverse }} />
+                                    ) : isNew ? (
+                                        'Create Venue'
+                                    ) : (
+                                        'Update Venue'
+                                    )}
                                 </PrimaryButton>
                                 <OutlineButton
                                     variant="outlined"
-                                    onClick={() => navigate('/app/venues')}
+                                    onClick={() => {
+                                        if (returnTo) {
+                                            if (
+                                                window.confirm(
+                                                    'Leave without saving? Your venue will '
+                                                    + 'not be created, and you will return '
+                                                    + 'to the event draft.',
+                                                )
+                                            ) {
+                                                navigate(returnTo);
+                                            }
+                                        } else {
+                                            navigate('/app/venues');
+                                        }
+                                    }}
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
                                     Cancel

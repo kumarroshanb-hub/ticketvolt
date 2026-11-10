@@ -143,25 +143,15 @@ class IsPlatformAdmin(BasePermission):
 
 class IsPlatformStaff(BasePermission):
     """
-    ✅ B.2: Read-only cross-tenant support tier.
+    DEPRECATED: platform staff no longer has cross-tenant read access.
 
-    Platform admins (superusers) retain full access; platform staff
-    (``is_staff=True``, not superuser) are restricted to SAFE_METHODS.
-    Anonymous users are denied.
-
-    This lets support tooling read tenant data for diagnostics without
-    allowing platform staff to mutate tenant state.
+    Only a system-level user (``is_superuser``) may read every tenant.
+    ``is_staff`` is Django-admin access only. Kept as an alias so any
+    legacy import still fails closed.
     """
 
     def has_permission(self, request, view):
-        user = request.user
-        if not (user and user.is_authenticated):
-            return False
-        if tenancy.is_platform_admin(user):
-            return True
-        if tenancy.is_platform_staff(user):
-            return request.method in SAFE_METHODS
-        return False
+        return tenancy.is_platform_admin(request.user)
 
 
 # --- Object-level org permissions (the canonical pair) ---------------------

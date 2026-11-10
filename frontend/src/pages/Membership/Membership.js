@@ -8,6 +8,7 @@ import {
     Tooltip, useMediaQuery, useTheme,
 } from '@mui/material';
 import ReceiptIcon from '@mui/icons-material/Receipt';
+import UploadIcon from '@mui/icons-material/UploadFile';
 import {
     Add as AddIcon,
     Refresh as RefreshIcon,
@@ -21,6 +22,7 @@ import {
 
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import membershipService from '../../services/membershipService';
 import { useAuth } from '../../context/AuthContext';
 import { useOrg } from '../../context/OrgContext';
@@ -72,6 +74,7 @@ const loadRazorpayScript = () =>
     });
 
 const Membership = () => {
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -353,9 +356,15 @@ const Membership = () => {
         [myMemberships],
     );
 
-    const canManageOrg = ['owner', 'admin', 'super_admin'].includes(
-        organizations.find((o) => String(o.id) === String(currentOrgId))?.role
-    );
+    const currentRole = organizations.find(
+        (o) => String(o.id) === String(currentOrgId)
+    )?.role;
+    const isSuperuser = Boolean(user?.is_superuser);
+    const canManageOrg =
+        isSuperuser || ['owner', 'admin', 'super_admin'].includes(currentRole);
+    const canOperateOrg =
+        isSuperuser
+        || ['owner', 'admin', 'staff', 'super_admin'].includes(currentRole);
 
     // --- Render ---
 
@@ -371,10 +380,10 @@ const Membership = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Memberships</PageTitle>
+                    <PageTitle>{t('membership.title')}</PageTitle>
                     {!isMobile && (
                         <PageSubtitle>
-                            Manage your paid memberships and family members
+                            {t('membership.subtitle')}
                         </PageSubtitle>
                     )}
                 </PageHeaderLeft>
@@ -392,7 +401,7 @@ const Membership = () => {
                             startIcon={<AddIcon />}
                             onClick={() => navigate('/app/membership/manage')}
                         >
-                            Manage Plans
+                            {t('membership.managePlans')}
                         </PrimaryButton>
                     )}
                     {canManageOrg && (
@@ -400,7 +409,15 @@ const Membership = () => {
                             startIcon={<ReceiptIcon />}
                             onClick={() => navigate('/app/membership/review-offline')}
                         >
-                            Offline Requests
+                            {t('membership.offlineRequests')}
+                        </OutlineButton>
+                    )}
+                    {canOperateOrg && (
+                        <OutlineButton
+                            startIcon={<UploadIcon />}
+                            onClick={() => navigate('/app/membership/bulk-upload')}
+                        >
+                            {t('membership.bulkAddMembers')}
                         </OutlineButton>
                     )}
                 </PageHeaderRight>

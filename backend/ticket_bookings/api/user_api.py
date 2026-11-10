@@ -193,7 +193,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if role in ('organizer', 'owner'):
             # Owner/Organizer = valid OWNER membership (NOT is_staff).
             queryset = queryset.filter(
-                id__in=list(_valid_role_user_ids(OrganizationMembership.OrgRole.OWNER)),
+                id__in=list(_valid_role_user_ids(OrganizationMembership.OrgRole.ADMIN)),
             )
 
         elif role == 'admin':
@@ -688,13 +688,14 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         target_org = None
-        if role in ('admin', 'staff', 'member', 'platform_staff'):
+        if role in ('admin', 'staff', 'member', 'platform_staff', 'user'):
             raw_org_id = request.data.get('organization_id')
-            # ✅ FIX: platform_staff does NOT require an org.
+            # `platform_staff` is a platform-wide flag; every other role
+            # change is scoped to ONE organization.
             if role != 'platform_staff':
                 if not raw_org_id:
                     return Response(
-                        {'error': f'organization_id is required to promote a user to {role}.'},
+                        {'error': f'organization_id is required to set role {role}.'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
             if raw_org_id:
@@ -705,6 +706,27 @@ class UserViewSet(viewsets.ModelViewSet):
                         {'error': 'Organization not found.'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+
+        # Ownership is never mutated here. Demoting the live OWNER through
+        # a generic role endpoint would leave the org ownerless.
+        if target_org is not None:
+            is_live_owner = OrganizationMembership.objects.filter(
+                organization=target_org,
+                user=target,
+                is_owner=True,
+                removed_at__isnull=True,
+                is_active=True,
+            ).exists()
+            if is_live_owner:
+                return Response(
+                    {
+                        'error': (
+                            'This user is the live OWNER of that organization. '
+                            'Use transfer-ownership instead of update_role.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Never allow the last active superuser to be demoted out of super_admin.
         if target.is_superuser and role != 'super_admin':
@@ -744,30 +766,48 @@ class UserViewSet(viewsets.ModelViewSet):
                     )
 
             elif role == 'admin':
-                target.is_staff = True
-                target.save(update_fields=['is_staff'])
+                # Tenant ADMIN is a membership role ONLY. Never set the
+                # platform `is_staff` bit here — historically that
+                # silently granted cross-tenant read access.
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,
                     user=target,
-                    defaults={'role': OrganizationMembership.OrgRole.ADMIN},
+                    defaults={
+                        'role': OrganizationMembership.OrgRole.ADMIN,
+                        'removed_at': None,
+                        'is_active': True,
+                    },
                 )
 
             elif role == 'staff':
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,
                     user=target,
-                    defaults={'role': OrganizationMembership.OrgRole.STAFF},
+                    defaults={
+                        'role': OrganizationMembership.OrgRole.STAFF,
+                        'removed_at': None,
+                        'is_active': True,
+                    },
                 )
 
             elif role == 'member':
                 OrganizationMembership.objects.update_or_create(
                     organization=target_org,
                     user=target,
-                    defaults={'role': OrganizationMembership.OrgRole.MEMBER},
+                    defaults={
+                        'role': OrganizationMembership.OrgRole.MEMBER,
+                        'removed_at': None,
+                        'is_active': True,
+                    },
                 )
 
             elif role == 'user':
-                OrganizationMembership.objects.filter(user=target).delete()
+                # Revoke this user's membership in the supplied org only.
+                # Never delete their memberships in other tenants.
+                OrganizationMembership.objects.filter(
+                    organization=target_org,
+                    user=target,
+                ).delete()
 
         return Response({
             'success': True,

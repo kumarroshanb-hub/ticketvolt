@@ -6,11 +6,19 @@ export const buildEventPayload = (formData, sessions, tiers) => {
     const flow = formData.event_flow || 'ticketed';
     const isFree = flow === 'free_registration';
 
+    // Reserved-seating events are priced by seat category, never by tier.
+    // Presence of `venue_master_id` (or explicit seat_assignments) means
+    // the backend will provision an EventVenuePlan, so tiers must be [].
+    const isReservedSeating =
+        Boolean(formData.venue_master_id) ||
+        (formData.seat_assignments !== undefined
+            && formData.seat_assignments !== null);
+
     // Free registrations cannot have priced tiers. But if the event
     // already has sold tiers (converting from ticketed), we must NOT
     // send an empty array — that would trigger the 409 guard.
     const hasSoldTiers = (tiers || []).some((t) => (t.quantity_sold || 0) > 0);
-    const shouldDropTiers = isFree && !hasSoldTiers;
+    const shouldDropTiers = (isFree && !hasSoldTiers) || isReservedSeating;
 
     const payload = {
         title: formData.title,
@@ -47,19 +55,30 @@ export const buildEventPayload = (formData, sessions, tiers) => {
             })),
     };
 
-    // ✅ NEW: multi-tenancy — the event must belong to exactly one
-    // organization. Sent explicitly when the picker was used. If
-    // omitted, the backend infers it for single-org users and rejects
-    // with a clear message when the caller manages >1 org.
+    // Multi-tenancy — the event must belong to exactly one organization.
+    // Sent explicitly when the picker was used. If omitted, the backend
+    // infers it for single-org users and rejects with a clear message
+    // when the caller manages >1 org.
     if (formData.organization_id) {
         payload.organization_id = formData.organization_id;
     }
 
-    // Existing: admin-only organizer tagging. Organizers never send
-    // this; if they did, the backend would reject any value other
-    // than their own ID.
+    // Admin-only organizer tagging. Organizers never send this; if they
+    // did, the backend would reject any value other than their own ID.
     if (formData.organizer_id) {
         payload.organizer_id = formData.organizer_id;
+    }
+
+    // Passthrough: seat-map / venue-master fields must be carried through
+    // verbatim — no transformation, no defaults.
+    if (formData.venue_master_id) {
+        payload.venue_master_id = formData.venue_master_id;
+    }
+    if (formData.seat_assignments) {
+        payload.seat_assignments = formData.seat_assignments;
+    }
+    if (formData.category_overrides) {
+        payload.category_overrides = formData.category_overrides;
     }
 
     return payload;

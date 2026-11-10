@@ -77,7 +77,7 @@ class CheckInLogInline(admin.TabularInline):
 class OrganizationAdmin(admin.ModelAdmin):
     list_display = ('name', 'slug', 'owner', 'is_active', 'created_at')
     list_filter = ('is_active', 'country')
-    search_fields = ('name', 'slug', 'owner__username', 'owner__email')
+    search_fields = ('name', 'slug', 'memberships__user__username')
     readonly_fields = ('slug', 'created_at', 'updated_at')
 
     fieldsets = (
@@ -100,7 +100,7 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 @admin.register(OrganizationMembership)
 class OrganizationMembershipAdmin(admin.ModelAdmin):
-    list_display = ('user', 'organization', 'role', 'is_active', 'joined_at')
+    list_display = ('user', 'organization', 'role', 'is_owner', 'is_active', 'joined_at')
     list_filter = ('role', 'is_active', 'organization')
     search_fields = ('user__username', 'user__email', 'organization__name')
     autocomplete_fields = ('user', 'organization')
@@ -109,7 +109,7 @@ class OrganizationMembershipAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Identity', {
-            'fields': ('user', 'organization', 'role', 'is_active'),
+            'fields': ('user', 'organization', 'role', 'is_owner', 'is_active'),
         }),
         ('Validity', {
             'fields': ('valid_from', 'valid_until', 'joined_at'),
@@ -122,14 +122,21 @@ class OrganizationMembershipAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         """Prevent creating a second live OWNER for the same organization."""
+        if obj.is_owner and obj.role != OrganizationMembership.OrgRole.ADMIN:
+            messages.error(
+                request,
+                'An owner must have the Admin role. Ownership is a property '
+                'of an Admin-level membership.',
+            )
+            return
         if (
-            obj.role == OrganizationMembership.OrgRole.OWNER
+            obj.is_owner
             and obj.removed_at is None
             and obj.is_active
         ):
             qs = OrganizationMembership.objects.filter(
                 organization=obj.organization,
-                role=OrganizationMembership.OrgRole.OWNER,
+                is_owner=True,
                 removed_at__isnull=True,
                 is_active=True,
             ).exclude(pk=obj.pk)
@@ -640,7 +647,7 @@ class TicketAdmin(admin.ModelAdmin):
         'unique_code', 'attendee_name', 'booking_link', 'event_link',
         'status_display', 'qr_preview', 'check_in_time_display', 'created_at_display',
     )
-    list_filter = ('status', 'event', 'event__organization')
+    list_filter = ('status', 'event', 'event__organization', 'venue_plan')
     search_fields = (
         'unique_code', 'attendee_name',
         'booking__booking_reference', 'booking__customer_name',
@@ -652,6 +659,8 @@ class TicketAdmin(admin.ModelAdmin):
         ('Ticket Information', {'fields': ('unique_code', 'status', 'qr_code')}),
         ('Attendee Details', {'fields': ('attendee_name', 'attendee_email', 'attendee_phone')}),
         ('Event Details', {'fields': ('event', 'session', 'booking', 'tier')}),
+        # ✅ NEW — audit trail
+        ('Venue Plan (audit)', {'fields': ('venue_plan',), 'classes': ('collapse',)}),
         ('Check-in', {'fields': ('check_in_time',)}),
         ('Metadata', {'fields': ('created_at',)}),
     )

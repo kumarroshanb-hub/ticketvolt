@@ -63,10 +63,14 @@ export const OrgProvider = ({ children }) => {
             setCurrentOrgIdState((prev) => {
                 const stillValid = prev && orgs.some((o) => String(o.id) === String(prev));
                 if (stillValid) return prev;
-                if (orgs.length === 1) {
+                if (orgs.length > 0) {
+                    // Tenant users always get ONE active org. The top-frame
+                    // tenant filter is no longer shown; this keeps API
+                    // requests scoped without a selector.
                     localStorage.setItem(STORAGE_KEY, orgs[0].id);
                     return orgs[0].id;
                 }
+                localStorage.removeItem(STORAGE_KEY);
                 return null;
             });
         } catch (e) {
@@ -96,7 +100,15 @@ export const OrgProvider = ({ children }) => {
         rawRole && String(rawRole).toLowerCase() !== PLATFORM_ADMIN_SENTINEL
     ) ? rawRole : null;
 
-    const isPlatformAdmin = Boolean(user?.is_staff || user?.is_superuser);
+    // Only the system-level user sees all tenants. `is_staff` is not a
+    // tenant-wide data privilege.
+    const isPlatformAdmin = Boolean(user?.is_superuser);
+    // Ownership is a property of an Admin-level membership; legacy rows
+    // may still carry role='owner' until migrated.
+    const isOwner = Boolean(
+        currentOrg?.is_owner
+        || (currentOrg?.role && String(currentOrg.role).toLowerCase() === 'owner')
+    );
 
     // Superuser with no tenant membership in the current org.
     // Useful for consumers that need to distinguish "platform admin
@@ -108,6 +120,7 @@ export const OrgProvider = ({ children }) => {
         currentOrg,
         currentOrgId,
         currentOrgRole,
+        isOwner,
         setCurrentOrgId,
         loading,
         refresh: load,
@@ -124,7 +137,7 @@ export const OrgProvider = ({ children }) => {
             organizations.length === 0,
     }), [
         organizations, currentOrg, currentOrgId, currentOrgRole,
-        setCurrentOrgId, loading, load, isPlatformAdmin,
+        isOwner, setCurrentOrgId, loading, load, isPlatformAdmin,
         isPlatformAdminOfCurrentOrg, isAuthenticated,
     ]);
 

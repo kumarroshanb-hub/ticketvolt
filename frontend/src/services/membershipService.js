@@ -124,6 +124,16 @@ const membershipService = {
         });
         return res.data;
     },
+
+    // ---- Bulk add members (offline / paid externally) ----
+    bulkUploadOffline: async ({ organizationId, tierId, file }) => {
+        const fd = new FormData();
+        fd.append('organization_id', organizationId);
+        fd.append('tier_id', tierId);
+        fd.append('file', file);
+        const res = await api.post('/memberships/offline-upload/', fd);
+        return res.data;
+    },
 };
 
 export default membershipService;

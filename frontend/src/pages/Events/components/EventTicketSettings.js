@@ -5,17 +5,47 @@ import {
     FormControlLabel, Switch, FormHelperText, Divider, Typography,
     useMediaQuery, useTheme,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { StyledTextField, SectionTitle } from './styled';
 import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
 
 export const EventTicketSettings = ({ formData, onChange }) => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     return (
         <>
+            <Grid item xs={12}>
+                <SectionTitle variant="h6">{t('events.visibility')}</SectionTitle>
+                <Divider sx={{ borderColor: C.borderLight }} />
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+                <FormControlLabel
+                    control={
+                        <Switch
+                            checked={formData.is_public !== false}
+                            onChange={onChange}
+                            name="is_public"
+                            sx={{
+                                '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
+                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                                    backgroundColor: C.primary,
+                                },
+                            }}
+                        />
+                    }
+                    label={t('events.publicEvent')}
+                    sx={{ color: C.textSecondary }}
+                />
+                <FormHelperText>
+                    {t('events.publicEventHelper')}
+                </FormHelperText>
+            </Grid>
+
             <Grid item xs={12}>
                 <SectionTitle variant="h6">Ticket Settings</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />

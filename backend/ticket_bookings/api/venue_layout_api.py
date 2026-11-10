@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from ..models import Venue
 from ..models_seating import SeatLayout, Seat, SeatCategory
 from ..services.seat_layout_parser import ingest_svg_layout
+from ..services.venue_versioning import bump_venue_master, suppress_bumps
 from ..services.tenancy import (
     can_manage_org,
     can_operate_org,
@@ -101,26 +102,29 @@ def upload_venue_layout(request, venue_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Create or update the layout metadata
-    layout, _created = SeatLayout.objects.update_or_create(
-        venue=venue,
-        defaults={
-            'canvas_width': canvas_width,
-            'canvas_height': canvas_height,
-        },
-    )
-
-    # Run the automation engine to parse the SVG and bulk-create seats
+    # The layout write, seat parsing, and master bump are one unit of
+    # work. If parsing fails we roll back to the previous layout instead
+    # of leaving the venue with its old seats deleted.
+    layout = None
     try:
-        seat_count = ingest_svg_layout(layout.id, svg_file)
-        return Response(
-            {
-                'message': f'Successfully parsed and generated {seat_count} seats.',
-                'layout_id': str(layout.id),
-                'seat_count': seat_count,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        with transaction.atomic():
+            # Suppress the SeatLayout signal too: it fires before the
+            # parser has created seats, which would otherwise write an
+            # empty intermediate master version.
+            with suppress_bumps():
+                layout, _created = SeatLayout.objects.update_or_create(
+                    venue=venue,
+                    defaults={
+                        'canvas_width': canvas_width,
+                        'canvas_height': canvas_height,
+                    },
+                )
+                seat_count = ingest_svg_layout(layout.id, svg_file)
+            bump_venue_master(
+                venue,
+                actor=request.user,
+                reason='layout_uploaded',
+            )
     except ValueError as exc:
         # Custom validation errors from the parser → 400 with a clean message.
         return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -129,12 +133,21 @@ def upload_venue_layout(request, venue_id):
         # generic message so we don't leak internals.
         logger.exception(
             'Unexpected error parsing SVG for venue %s (layout=%s)',
-            venue_id, layout.id,
+            venue_id, getattr(layout, 'id', None),
         )
         return Response(
             {'error': 'Unexpected server error parsing SVG. Please check the file and try again.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    return Response(
+        {
+            'message': f'Successfully parsed and generated {seat_count} seats.',
+            'layout_id': str(layout.id),
+            'seat_count': seat_count,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 # ===========================================================================
@@ -343,8 +356,14 @@ def get_venue_layout(request, venue_id):
         # least one event the caller can see. This keeps the public seat
         # picker working for guests on public events without leaking the
         # layouts of venues that have no public events.
-        from ..services.tenancy import visible_events
-        if not visible_events(request.user).filter(venue=venue).exists():
+        from ..services.tenancy import (
+            publicly_visible_events,
+            visible_events,
+        )
+        if not (
+            visible_events(request.user).filter(venue=venue).exists()
+            or publicly_visible_events().filter(venue=venue).exists()
+        ):
             return Response(
                 {'error': 'Permission denied'},
                 status=status.HTTP_403_FORBIDDEN,

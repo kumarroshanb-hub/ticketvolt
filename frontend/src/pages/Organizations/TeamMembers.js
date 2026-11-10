@@ -212,7 +212,8 @@ const TeamMembers = () => {
                                     || member.email
                                     || '?';
                                 const canRemoveRow =
-                                    member.role !== 'owner'
+                                    !member.is_owner
+                                    && member.role !== 'owner'
                                     && canRemoveMembers
                                     && Boolean(member.user_id);
                                 return (

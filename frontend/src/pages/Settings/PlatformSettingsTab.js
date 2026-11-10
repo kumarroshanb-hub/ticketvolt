@@ -13,8 +13,7 @@ import {
 import { toast } from 'react-toastify';
 import api from '../../services/api';
 import { useSettings } from '../../context/SettingsContext';
-import { useAuth } from '../../context/AuthContext';
-import { ROLES } from '../../constants';
+import { useRole } from '../../context/RoleContext';
 
 const INITIAL_FORM = {
     currency_code: 'HKD',
@@ -32,8 +31,7 @@ const INITIAL_FORM = {
 
 const PlatformSettingsTab = () => {
     const { formatMoney, refresh } = useSettings();
-    const { user } = useAuth();
-    const isSuperAdmin = user?.role === ROLES.SUPER_ADMIN;
+    const { isSuperAdmin } = useRole();
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);

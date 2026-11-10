@@ -362,6 +362,17 @@ def verify_magic_link(request):
             )
             before = snapshot_membership(existing)
 
+            if existing is not None and getattr(existing, 'is_owner', False):
+                return Response(
+                    {
+                        'error': (
+                            'This user is the organization owner. '
+                            'Ownership changes only through transfer-ownership.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             if existing is None:
                 membership = OrganizationMembership.objects.create(
                     organization=invite.organization,
@@ -666,7 +677,7 @@ def send_organization_invite(request, org_id):
         is_owner = (
             request.user.is_superuser
             or OrganizationMembership.objects.filter(
-                organization=org, user=request.user, role=OrgRole.OWNER,
+                organization=org, user=request.user, is_owner=True,
                 removed_at__isnull=True,
             ).exists()
         )

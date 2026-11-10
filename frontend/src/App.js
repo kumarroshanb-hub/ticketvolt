@@ -27,6 +27,7 @@ import ResetPassword from './pages/ResetPassword/ResetPassword';
 import Dashboard from './pages/Dashboard/Dashboard';
 import Events from './pages/Events/index';
 import Venues from './pages/Venues/index';
+import CreateVenue from './pages/Venues/Create';   // ✅ NEW import
 import Bookings from './pages/Bookings/Bookings';
 import BookingTickets from './pages/Bookings/BookingTickets';
 import CreateBooking from './pages/Bookings/CreateBooking';
@@ -47,7 +48,7 @@ import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
 import TeamMembers from './pages/Organizations/TeamMembers';
 import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor';
 import Membership from './pages/Membership/Membership';
-import { ManagePlans, ReviewOffline } from './pages/Membership';
+import { BulkUpload, ManagePlans, ReviewOffline } from './pages/Membership';
 
 import {
     PLATFORM_ROLES,
@@ -237,12 +238,40 @@ const AppRoutes = () => {
                 {/* Org-admin pages: owner/admin membership in current org. */}
                 <Route
                     path="events/*"
-                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Events /></OrgRoleRoute>}
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.MEMBER}><Events /></OrgRoleRoute>}
                 />
+
+                {/* ============================================
+                    VENUES
+                    ⚠️ ORDER MATTERS. The literal `/new` route MUST come
+                    before the `:venueId` route, otherwise `"new"` is
+                    captured as a venue id and `Create.js` fires
+                    `GET /api/venues/new/` → 404 (confirmed in your logs).
+                   ============================================ */}
+                <Route
+                    path="venues"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Venues /></OrgRoleRoute>}
+                />
+                <Route
+                    path="venues/new"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><CreateVenue /></OrgRoleRoute>}
+                />
+                <Route
+                    path="venues/:venueId/layout"
+                    element={
+                        <OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}>
+                            <VenueLayoutEditor />
+                        </OrgRoleRoute>
+                    }
+                />
+                {/* Catch-all for nested venue pages handled by the Venues
+                    index. Kept after /venues/new and /venues/:venueId/layout
+                    so both specific routes win first. */}
                 <Route
                     path="venues/*"
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Venues /></OrgRoleRoute>}
                 />
+
                 <Route
                     path="discounts"
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Discounts /></OrgRoleRoute>}
@@ -255,9 +284,16 @@ const AppRoutes = () => {
                     path="cancellation-policies"
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><CancellationPolicies /></OrgRoleRoute>}
                 />
+                {/* Platform-wide user administration is SYSTEM-level only.
+                    Tenant admins manage their own team through
+                    Organization → Team. */}
                 <Route
                     path="users"
-                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Users /></OrgRoleRoute>}
+                    element={
+                        <RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}>
+                            <Users />
+                        </RoleBasedRoute>
+                    }
                 />
                 <Route
                     path="membership/manage"
@@ -266,6 +302,10 @@ const AppRoutes = () => {
                 <Route
                     path="membership/review-offline"
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><ReviewOffline /></OrgRoleRoute>}
+                />
+                <Route
+                    path="membership/bulk-upload"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.STAFF}><BulkUpload /></OrgRoleRoute>}
                 />
 
                 {/* Scanner requires staff or higher in current org. */}
@@ -295,16 +335,6 @@ const AppRoutes = () => {
                 <Route
                     path="tickets/:ticketId/booking/:bookingId"
                     element={<ProtectedRoute><TicketView /></ProtectedRoute>}
-                />
-
-                {/* Venue Layout Editor — inside the shell so Layout (nav/auth) applies. */}
-                <Route
-                    path="venues/:venueId/layout"
-                    element={
-                        <OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}>
-                            <VenueLayoutEditor />
-                        </OrgRoleRoute>
-                    }
                 />
             </Route>
 

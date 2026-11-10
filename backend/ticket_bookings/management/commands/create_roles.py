@@ -233,15 +233,16 @@ class Command(BaseCommand):
         membership, mem_created = OrganizationMembership.objects.get_or_create(
             user=user,
             organization=org,
-            defaults={'role': OrgRole.OWNER},
+            defaults={'role': OrgRole.ADMIN, 'is_owner': True},
         )
         if mem_created:
             self.stdout.write(self.style.SUCCESS(
                 f'✅ {email} assigned as OWNER of {resolved_org_name}'
             ))
-        elif membership.role != OrgRole.OWNER:
-            membership.role = OrgRole.OWNER
-            membership.save(update_fields=['role'])
+        elif not membership.is_owner or membership.role != OrgRole.ADMIN:
+            membership.role = OrgRole.ADMIN
+            membership.is_owner = True
+            membership.save(update_fields=['role', 'is_owner'])
             self.stdout.write(self.style.SUCCESS(
                 f'🔄 {email} role updated to OWNER'
             ))

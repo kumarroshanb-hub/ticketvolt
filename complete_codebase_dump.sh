@@ -48,6 +48,8 @@ NC='\033[0m'
 # ---------- Config ----------
 PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-20}"
 MAX_FILE_BYTES="${MAX_FILE_BYTES:-5242880}"
+PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-20}"
+MAX_FILE_BYTES="${MAX_FILE_BYTES:-5242880}"
 MIN_TIMEOUT=8
 MAX_TIMEOUT=60
 PROGRESS_EVERY="${PROGRESS_EVERY:-5}"   # redraw progress every N files
@@ -189,6 +191,7 @@ touch "$POISON_FILE" 2>/dev/null || true
 EXCLUDE_DIR_RE='(^|/)(node_modules|__pycache__|\.git|\.git-projects-old|\.expo|\.expo-shared|build|dist|out|coverage|sessions|logs|media|staticfiles|\.metro|\.gradle|\.kotlin|\.cache|\.vscode|\.idea|\.npm|\.yarn|venv|env|\.venv|\.tox|\.mypy_cache|\.pytest_cache|Pods|\.next|\.nuxt|\.turbo|\.parcel-cache|\.serverless|\.terraform|\.husky|_build|target|vendor|\.cxx|cmake|intermediates|derived|\.android|\.gradle-cache|\.rustup|\.cargo)(/|$)'
 
 EXCLUDE_FILE_RE='\.(pyc|pyo|so|dylib|dll|exe|o|obj|a|lib|class|jar|apk|aab|ipa|log|lock|map|min\.js|min\.css|png|jpg|jpeg|gif|ico|bmp|webp|tiff|pdf|zip|tar|gz|bz2|xz|7z|rar|db|sqlite|sqlite3|woff|woff2|ttf|otf|eot|mp3|mp4|mov|avi|webm|DS_Store|bak|swp|swo|ninja|ninja_log|ninja_deps|check_cache|verify_globs)$'
+EXCLUDE_FILE_RE='\.(pyc|pyo|so|dylib|dll|exe|o|obj|a|lib|class|jar|apk|aab|ipa|log|lock|map|min\.js|min\.css|png|jpg|jpeg|gif|ico|bmp|webp|tiff|pdf|zip|tar|gz|bz2|xz|7z|rar|db|sqlite|sqlite3|woff|woff2|ttf|otf|eot|mp3|mp4|mov|avi|webm|DS_Store|bak|swp|swo|ninja|ninja_log|ninja_deps|check_cache|verify_globs)$'
 
 EXCLUDE_NAME_RE='(\.DS_Store|Thumbs\.db|celerybeat-schedule|\.dump_poison_files|\.dump_leak_report.*|complete_codebase_dump_.*\.txt|CMakeCache\.txt|CMakeFiles|\.cmake|build\.ninja|rules\.ninja|compile_commands\.json|\.ninja_deps|\.ninja_log|cmake\.check_cache|cmake\.verify_globs)$'
 
@@ -210,6 +213,11 @@ PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -
 if [ "$INCLUDE_BUILD" = "1" ]; then
     PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name target -o -name vendor ) -prune'
 fi
+PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name build -o -name dist -o -name out -o -name coverage -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .gradle -o -name .kotlin -o -name .cache -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name _build -o -name target -o -name vendor -o -name .cxx -o -name cmake -o -name intermediates -o -name derived -o -name .android ) -prune'
+
+if [ "$INCLUDE_BUILD" = "1" ]; then
+    PRUNE_EXPR='-type d ( -name node_modules -o -name __pycache__ -o -name .git -o -name .git-projects-old -o -name .expo -o -name .expo-shared -o -name sessions -o -name logs -o -name media -o -name staticfiles -o -name .metro -o -name .vscode -o -name .idea -o -name .npm -o -name .yarn -o -name venv -o -name env -o -name .venv -o -name .tox -o -name .mypy_cache -o -name .pytest_cache -o -name Pods -o -name .next -o -name .nuxt -o -name .turbo -o -name .parcel-cache -o -name .serverless -o -name .terraform -o -name .husky -o -name target -o -name vendor ) -prune'
+fi
 
 # ---------- Banner ----------
 if [ "$ONLY_LEAK_REPORT" = "0" ]; then
@@ -223,6 +231,16 @@ if [ "$ONLY_LEAK_REPORT" = "0" ]; then
 fi
 
 # ---------- Locate project root ----------
+PROJECT_ROOT=""
+for arg in "$@"; do
+    if [ -d "$arg" ]; then
+        PROJECT_ROOT="$arg"
+        break
+    fi
+done
+
+if [ -n "$PROJECT_ROOT" ]; then
+    cd "$PROJECT_ROOT" </dev/null || { echo -e "${RED}❌ Cannot cd into $PROJECT_ROOT${NC}"; exit 1; }
 PROJECT_ROOT=""
 for arg in "$@"; do
     if [ -d "$arg" ]; then
@@ -686,6 +704,7 @@ PROGRESS_TOTAL="$TOTAL_FILES"
 
 # ============================================================
 # BEGIN DUMP (atomic)
+# BEGIN DUMP (atomic)
 # ============================================================
 {
     # ---------- 0. HEADER ----------
@@ -849,6 +868,8 @@ SECTION
         FROM information_schema.table_constraints AS tc
         JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
         JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+        JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
         WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema='public'
         ORDER BY tc.table_name;" </dev/null 2>/dev/null
         echo ""
@@ -876,6 +897,7 @@ SECTION
 Each file begins with:
     @@@FILE@@@ <relative/path>
 
+Redaction v4: line-anchored. Only literal string assignments at the
 Redaction v4: line-anchored. Only literal string assignments at the
 beginning of a line are redacted. JSON like {"PASSWORD": "x"} is NOT
 matched (avoids source corruption).
@@ -1209,6 +1231,7 @@ fi
 echo "" >&2
 
 # ============================================================
+# STATISTICS
 # STATISTICS
 # ============================================================
 sed "s|^${PROJECT_ROOT}/||" "$TMP_LIST" | LC_ALL=C sort -u > "$EXPECTED_TMP"

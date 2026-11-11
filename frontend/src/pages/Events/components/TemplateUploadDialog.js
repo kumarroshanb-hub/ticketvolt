@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/TemplateUploadDialog.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
     Box, FormControl, InputLabel, Select, MenuItem,
@@ -14,6 +15,7 @@ const C = appTheme.colors;
 export const TemplateUploadDialog = ({
     open, eventId, templateTypes, form, setForm, uploading, onClose, onUpload,
 }) => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -33,34 +35,34 @@ export const TemplateUploadDialog = ({
             }}
         >
             <DialogTitle sx={{ color: C.textPrimary, fontWeight: 700 }}>
-                Upload Template
+                {t('events.templateUploadTitle')}
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ mt: 2 }}>
                     <FormControl fullWidth sx={{ mb: 2 }}>
-                        <InputLabel>Template Type</InputLabel>
+                        <InputLabel>{t('events.templateTypeLabel')}</InputLabel>
                         <Select
                             value={form.template_type_id}
                             onChange={(e) => setForm({ ...form, template_type_id: e.target.value })}
-                            label="Template Type"
+                            label={t('events.templateTypeLabel')}
                         >
                             {templateTypes.map((type) => (
                                 <MenuItem key={type.value} value={type.value}>
-                                    {type.label}
+                                    {t(`templateType.${type.value}`, { defaultValue: type.label })}
                                 </MenuItem>
                             ))}
                         </Select>
                     </FormControl>
 
                     <TextField
-                        fullWidth label="Template Name"
+                        fullWidth label={t('events.templateNameLabel')}
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
                         sx={{ mb: 2 }}
                     />
 
                     <TextField
-                        fullWidth label="Description"
+                        fullWidth label={t('events.templateDescLabel')}
                         value={form.description}
                         onChange={(e) => setForm({ ...form, description: e.target.value })}
                         multiline rows={2}
@@ -93,7 +95,7 @@ export const TemplateUploadDialog = ({
                             <Box>
                                 <img
                                     src={URL.createObjectURL(form.image)}
-                                    alt="Preview"
+                                    alt={t('eventWizard.previewAlt')}
                                     style={{ maxWidth: '100%', maxHeight: 150, objectFit: 'contain' }}
                                 />
                                 <Typography variant="caption" sx={{ color: C.textLight, display: 'block', mt: 1 }}>
@@ -104,10 +106,10 @@ export const TemplateUploadDialog = ({
                             <>
                                 <UploadIcon sx={{ fontSize: 40, color: C.textLight }} />
                                 <Typography variant="body1" sx={{ color: C.textSecondary }}>
-                                    Click to select template image
+                                    {t('events.templateClickSelect')}
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: C.textLight }}>
-                                    PNG or JPG • Max 5MB
+                                    {t('events.templateFormatHint')}
                                 </Typography>
                             </>
                         )}
@@ -120,13 +122,13 @@ export const TemplateUploadDialog = ({
                                 onChange={(e) => setForm({ ...form, is_default: e.target.checked })}
                             />
                         }
-                        label="Set as default template"
+                        label={t('events.templateSetDefault')}
                         sx={{ mt: 2 }}
                     />
                 </Box>
             </DialogContent>
             <DialogActions sx={{ p: 2 }}>
-                <Button onClick={onClose}>Cancel</Button>
+                <Button onClick={onClose}>{t('common.cancel')}</Button>
                 <Button
                     variant="contained"
                     onClick={onUpload}
@@ -139,7 +141,7 @@ export const TemplateUploadDialog = ({
                         '&:disabled': { opacity: 0.5 },
                     }}
                 >
-                    {uploading ? 'Uploading...' : 'Upload'}
+                    {uploading ? t('events.templateUploading') : t('events.templateUpload')}
                 </Button>
             </DialogActions>
         </Dialog>

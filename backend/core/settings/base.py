@@ -7,12 +7,29 @@ Hardening principles:
   • SECRET_KEY, JWT_SIGNING_KEY, and TICKET_SIGNING_SECRET are all
     independent and enforced to differ from each other.
   • Defaults are secure; public endpoints must opt in explicitly.
+
+Internationalization notes
+--------------------------
+  • LANGUAGE_CODE and LANGUAGES are declared EXACTLY ONCE in this file.
+    A previous version re-declared LANGUAGE_CODE = 'en-us' further down,
+    which silently shadowed the first declaration and made Django
+    default to en-US while the frontend expected 'en'.
+  • USE_L10N is deliberately NOT set. It was deprecated in Django 4.0
+    and removed in 5.0; setting it in 4.2 is a no-op and misleads
+    readers into thinking it does something.
+  • LocaleMiddleware sits AFTER SessionMiddleware and BEFORE
+    CommonMiddleware. Placing it elsewhere silently disables
+    per-request language switching.
+  • LANGUAGE_COOKIE_* are declared explicitly so the custom
+    set_language_view (core/i18n_views.py) can rely on them.
 """
 import os
 from pathlib import Path
 from datetime import timedelta
 
 from django.core.exceptions import ImproperlyConfigured
+
+from django.utils.translation import gettext_lazy as _
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -109,6 +126,16 @@ ALLOWED_HOSTS = []
 # APPLICATIONS
 # ============================================
 INSTALLED_APPS = [
+    # ✅ NEW: `core` is listed FIRST among local apps so that
+    # `core.apps.CoreConfig.ready()` runs at startup and swaps the
+    # default Django AdminSite for `SuperuserOnlyAdminSite`.
+    #
+    # Without this line, `admin.site` keeps Django's stock
+    # `AdminSite.has_permission()` (which allows any `is_staff` user),
+    # and a tenant Admin would be able to open the Django admin and
+    # see every tenant's models.
+    'core',
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -125,6 +152,9 @@ INSTALLED_APPS = [
     'django_filters',
     'axes',                                       # Brute-force lockout
 
+    # ... other apps
+    'channels',
+
     # Local
     'ticket_bookings',
     'ticket_whatsapp',
@@ -132,19 +162,86 @@ INSTALLED_APPS = [
 
 
 # ============================================
+# ASGI / WebSockets Configuration
+# ============================================
+ASGI_APPLICATION = 'core.asgi.application'
+# Add this section
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [(os.environ.get('REDIS_HOST', 'localhost'), int(os.environ.get('REDIS_PORT', 6379)))],
+        },
+    },
+}
+
+# For local development without Redis, you can use in-memory (NOT for production):
+# CHANNEL_LAYERS = {
+#     'default': {
+#         'BACKEND': 'channels.layers.InMemoryChannelLayer',
+#     },
+# }
+
+# ============================================
+# 🌏 INTERNATIONALIZATION — MULTILINGUAL
+# ============================================
+# Supported languages. English is the default; Traditional Chinese
+# (zh-hant) covers the Hong Kong market.
+#
+# IMPORTANT: use lowercase 'zh-hant' (matching the frontend i18n.js).
+# Django canonicalises this to the 'zh_Hant' locale directory on disk.
+# LANGUAGES and LANGUAGE_CODE must be declared EXACTLY ONCE in this file.
+LANGUAGES = [
+    ('en',      _('English')),
+    ('zh-hant', _('Traditional Chinese')),
+]
+
+# Default language when no Accept-Language header is supplied.
+LANGUAGE_CODE = 'en'
+
+USE_I18N = True
+USE_TZ = True
+
+# NOTE: USE_L10N was deprecated in Django 4.0 and removed in 5.0.
+# Do NOT set it here.
+
+# Where Django looks for locale folders.
+LOCALE_PATHS = [
+    BASE_DIR / 'locale',
+]
+
+TIME_ZONE = 'Asia/Hong_Kong'
+
+# Language cookie — used by core.i18n_views.set_language_view and by
+# LocaleMiddleware. Declared explicitly so behaviour does not vary
+# across Django versions.
+LANGUAGE_COOKIE_NAME = 'django_language'
+LANGUAGE_COOKIE_AGE = 60 * 60 * 24 * 365          # 1 year
+LANGUAGE_COOKIE_PATH = '/'
+LANGUAGE_COOKIE_DOMAIN = None
+LANGUAGE_COOKIE_SECURE = IS_PRODUCTION
+LANGUAGE_COOKIE_HTTPONLY = False
+LANGUAGE_COOKIE_SAMESITE = 'Lax'
+
+
+# ============================================
 # MIDDLEWARE
 # ============================================
+# LocaleMiddleware MUST sit after SessionMiddleware and before
+# CommonMiddleware. Placing it elsewhere silently disables per-request
+# language switching.
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'axes.middleware.AxesMiddleware',             # Must be last
-    # ✅ NEW: Track JWT user activity for Active Sessions dashboard
+    # ✅ Track JWT user activity for Active Sessions dashboard
     'core.middleware.ActivityTrackingMiddleware',
 ]
 
@@ -187,15 +284,6 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
-
-
-# ============================================
-# INTERNATIONALIZATION
-# ============================================
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'Asia/Hong_Kong'
-USE_I18N = True
-USE_TZ = True
 
 
 # ============================================
@@ -242,7 +330,7 @@ REST_FRAMEWORK = {
         'booking_create': '30/hour',
         'public_read': '120/min',
         'booking_resend': '5/hour',
-        'cron': '20/hour',   # ✅ new — for the GitHub Actions trigger endpoint
+        'cron': '20/hour',           # for the GitHub Actions trigger endpoint
     },
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
@@ -384,8 +472,8 @@ if IS_PRODUCTION and _ADMIN_URL_RAW == 'admin':
 # ============================================
 # AXES — BRUTE-FORCE PROTECTION
 # ============================================
-# ✅ Raise the threshold so a single bad actor cannot lock out a known user
-#    by hammering their username, and lock out per IP + username.
+# Raise the threshold so a single bad actor cannot lock out a known user
+# by hammering their username, and lock out per IP + username.
 AXES_FAILURE_LIMIT = 10
 AXES_COOLOFF_TIME = 1
 AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address'], ['ip_address']]
@@ -396,6 +484,22 @@ AXES_VERBOSE = False
 AXES_ENABLE_ADMIN = False
 AXES_RESET_ON_SUCCESS = True
 
+
+# ============================ PAYMENTS ============================
+PAYMENTS = {
+    'HOLD_TTL_MINUTES': int(os.environ.get('PAYMENT_HOLD_TTL_MINUTES', '15')),
+    'DEFAULT_GATEWAY': os.environ.get('DEFAULT_PAYMENT_GATEWAY', 'razorpay'),
+}
+
+# Razorpay
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
+RAZORPAY_WEBHOOK_SECRET = os.environ.get('RAZORPAY_WEBHOOK_SECRET', '')
+
+# Stripe
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
 
 # ============================================
 # SECURITY HEADERS (defense-in-depth)

@@ -156,3 +156,29 @@ def flush_expired_tokens():
     except Exception as exc:
         logger.exception('flushexpiredtokens failed: %s', exc)
         return {'status': 'error', 'detail': str(exc)}
+
+@shared_task
+def release_expired_payment_holds():
+    from .services import inventory_hold
+    released = inventory_hold.release_expired_holds()
+    if released:
+        logger.info('Released %d expired payment holds', released)
+
+
+@shared_task
+def reconcile_payment(payment_id):
+    """Sync a stuck payment against the gateway's authoritative status."""
+    from .models_payments import Payment, PaymentStatus
+    from .services.payments import get_provider
+    from .services.payment_fulfillment import fulfill_payment, fail_payment
+
+    payment = Payment.objects.get(pk=payment_id)
+    if payment.status in (PaymentStatus.PAID, PaymentStatus.REFUNDED):
+        return
+    provider = get_provider(payment.gateway)
+    gw_status = provider.fetch_status(payment)
+
+    if gw_status in ('captured', 'succeeded'):
+        fulfill_payment(payment.id)
+    elif gw_status in ('failed', 'canceled'):
+        fail_payment(payment.id)

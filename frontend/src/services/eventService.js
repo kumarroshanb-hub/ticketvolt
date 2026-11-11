@@ -36,7 +36,40 @@ const eventService = {
             skipAuthRedirect: true,
             ...config,
         });
-        return response.data;
+        const payload = response.data;
+        const publicRows = Array.isArray(payload)
+            ? payload
+            : (payload?.results || []);
+
+        // A signed-in member should also see their organization's PRIVATE
+        // events (and any other events they are entitled to). Guests never
+        // reach this branch.
+        const token = (
+            localStorage.getItem('token') || sessionStorage.getItem('token')
+        );
+        if (!token) return payload;
+
+        try {
+            const memberRes = await api.get('/events/', {
+                skipAuthRedirect: true,
+            });
+            const raw = memberRes.data;
+            const memberRows = Array.isArray(raw)
+                ? raw
+                : (raw?.results || []);
+            const entitled = memberRows.filter(
+                (e) => e && (e.status === 'active' || e.status === 'published')
+            );
+
+            const byId = new Map();
+            [...publicRows, ...entitled].forEach((event) => {
+                if (event?.id) byId.set(event.id, event);
+            });
+            const results = Array.from(byId.values());
+            return { count: results.length, results };
+        } catch {
+            return payload;
+        }
     },
 
     /**
@@ -44,11 +77,29 @@ const eventService = {
      * Backend: GET /events/public/:id/
      */
     getPublicEventDetails: async (id, config = {}) => {
-        const response = await api.get(`/events/public/${id}/`, {
-            skipAuthRedirect: true,
-            ...config,
-        });
-        return response.data;
+        try {
+            const response = await api.get(`/events/public/${id}/`, {
+                skipAuthRedirect: true,
+                ...config,
+            });
+            return response.data;
+        } catch (err) {
+            // Private event: public detail intentionally 404s. A signed-in
+            // member can read it through the authenticated endpoint.
+            const token = (
+                localStorage.getItem('token') || sessionStorage.getItem('token')
+            );
+            if (
+                token
+                && [403, 404].includes(err?.response?.status)
+            ) {
+                const response = await api.get(`/events/${id}/`, {
+                    skipAuthRedirect: true,
+                });
+                return response.data;
+            }
+            throw err;
+        }
     },
 
     // ============================================================

@@ -4,6 +4,7 @@ import { Box, Paper, Typography } from '@mui/material';
 import { MobileBookingCard } from './MobileBookingCard';
 import { BookingActionButtons } from './BookingActionButtons';
 import { getAvailableActions } from '../../../features/bookings/bookingActions';
+import { useTranslation } from 'react-i18next';
 import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
@@ -18,11 +19,12 @@ export const BookingsMobileList = ({
     handlers,
     actionLoading,
 }) => {
+    const { t } = useTranslation();
     if (bookings.length === 0) {
         return (
             <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
                 <Typography sx={{ color: C.textLight }}>
-                    {isRegularUser ? 'No bookings found. Book your first event!' : 'No bookings found'}
+                    {isRegularUser ? t('booking.noBookingsUserHint') : t('booking.noBookings')}
                 </Typography>
             </Paper>
         );

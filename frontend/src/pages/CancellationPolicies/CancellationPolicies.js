@@ -1,4 +1,3 @@
-// frontend/src/pages/CancellationPolicies/CancellationPolicies.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Paper, Button,
@@ -18,6 +17,7 @@ import {
     StarBorder as StarBorderIcon,
 } from '@mui/icons-material';
 import api from '../../services/api';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import {
     PageContainer, PageHeader, PageTitle, PageSubtitle,
@@ -25,6 +25,13 @@ import {
     OutlineButton, LoadingWrapper,
 } from '../../components/Common';
 import { useSettings } from '../../context/SettingsContext';
+
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 // ---------------------------------------------------------------------------
 // Default new-policy draft. Kept at module scope so "reset" is trivial.
@@ -37,9 +44,9 @@ const EMPTY_POLICY = {
     rules: {
         version: 1,
         refund_tiers: [
-            { min_hours_before: 168, refund_percent: 100, label: '7+ days before' },
-            { min_hours_before: 24,  refund_percent: 50,  label: '24h – 7 days before' },
-            { min_hours_before: 0,   refund_percent: 0,   label: 'Within 24 hours' },
+            { min_hours_before: 168, refund_percent: 100, labelKey: 'cancellationPolicies.tierLabel7Days' },
+            { min_hours_before: 24,  refund_percent: 50,  labelKey: 'cancellationPolicies.tierLabel24h7d' },
+            { min_hours_before: 0,   refund_percent: 0,   labelKey: 'cancellationPolicies.tierLabelWithin24h' },
         ],
         cancellation_fee: 0,
         allow_partial_cancellation: true,
@@ -54,53 +61,53 @@ const EMPTY_POLICY = {
 // ---------------------------------------------------------------------------
 const PRESETS = {
     flexible: {
-        label: 'Flexible (2-day cutoff)',
+        labelKey: 'cancellationPolicies.presetFlexible',
         rules: {
             version: 1,
             refund_tiers: [
-                { min_hours_before: 48, refund_percent: 100, label: '2+ days before' },
-                { min_hours_before: 24, refund_percent: 50,  label: '24-48 hours' },
-                { min_hours_before: 0,  refund_percent: 0,   label: 'Within 24 hours' },
+                { min_hours_before: 48, refund_percent: 100, labelKey: 'cancellationPolicies.tierLabel2Days' },
+                { min_hours_before: 24, refund_percent: 50,  labelKey: 'cancellationPolicies.tierLabel24to48h' },
+                { min_hours_before: 0,  refund_percent: 0,   labelKey: 'cancellationPolicies.tierLabelWithin24h' },
             ],
             cancellation_fee: 0,
             allow_partial_cancellation: true,
             allow_after_checkin: false,
             reschedule_allowed: false,
-            notes: 'Free cancellation up to 2 days before the event.',
+            notesKey: 'cancellationPolicies.presetFlexibleNotes',
         },
     },
     standard: {
-        label: 'Standard (7-day cutoff)',
+        labelKey: 'cancellationPolicies.presetStandard',
         rules: EMPTY_POLICY.rules,
     },
     strict: {
-        label: 'Strict (14-day cutoff, fee)',
+        labelKey: 'cancellationPolicies.presetStrict',
         rules: {
             version: 1,
             refund_tiers: [
-                { min_hours_before: 336, refund_percent: 100, label: '14+ days before' },
-                { min_hours_before: 168, refund_percent: 50,  label: '7-14 days before' },
-                { min_hours_before: 0,   refund_percent: 0,   label: 'Within 7 days' },
+                { min_hours_before: 336, refund_percent: 100, labelKey: 'cancellationPolicies.tierLabel14Days' },
+                { min_hours_before: 168, refund_percent: 50,  labelKey: 'cancellationPolicies.tierLabel7to14Days' },
+                { min_hours_before: 0,   refund_percent: 0,   labelKey: 'cancellationPolicies.tierLabelWithin7Days' },
             ],
             cancellation_fee: 50,
             allow_partial_cancellation: false,
             allow_after_checkin: false,
             reschedule_allowed: false,
-            notes: 'Full refund up to 14 days before. ₹50 fee applies to any refund.',
+            notesKey: 'cancellationPolicies.presetStrictNotes',
         },
     },
     nonrefundable: {
-        label: 'Non-refundable',
+        labelKey: 'cancellationPolicies.presetNonRefundable',
         rules: {
             version: 1,
             refund_tiers: [
-                { min_hours_before: 0, refund_percent: 0, label: 'No refunds' },
+                { min_hours_before: 0, refund_percent: 0, labelKey: 'cancellationPolicies.tierLabelNoRefunds' },
             ],
             cancellation_fee: 0,
             allow_partial_cancellation: true,
             allow_after_checkin: false,
             reschedule_allowed: false,
-            notes: 'All sales are final.',
+            notesKey: 'cancellationPolicies.presetNonRefundableNotes',
         },
     },
 };
@@ -109,12 +116,12 @@ const PRESETS = {
 // Client-side validation mirroring the backend's validate_cancellation_rules.
 // Runs on every tier edit so the UI shows problems immediately.
 // ---------------------------------------------------------------------------
-function validateRulesClient(rules) {
+function validateRulesClient(rules, t) {
     const errors = [];
 
     const tiers = rules.refund_tiers || [];
     if (!tiers.length) {
-        errors.push('At least one refund tier is required.');
+        errors.push(t('cancellationPolicies.errorsTiersRequired'));
         return errors;
     }
 
@@ -124,31 +131,54 @@ function validateRulesClient(rules) {
         const p = Number(tier.refund_percent);
 
         if (Number.isNaN(h) || h < 0) {
-            errors.push(`Tier ${i + 1}: hours must be a non-negative number.`);
+            errors.push(t('cancellationPolicies.errorsTierHours', { index: i + 1 }));
         } else if (h >= prevHours) {
             errors.push(
-                `Tier ${i + 1}: hours must be strictly less than the previous tier (${h} ≥ ${prevHours}). Tiers are ordered most-generous-first.`
+                t('cancellationPolicies.errorsTierHoursOrder', { index: i + 1, hours: h, prev: prevHours })
             );
         }
         prevHours = h;
 
         if (Number.isNaN(p) || p < 0 || p > 100) {
-            errors.push(`Tier ${i + 1}: refund percent must be between 0 and 100.`);
+            errors.push(t('cancellationPolicies.errorsTierPercent', { index: i + 1 }));
         }
     });
 
     const fee = Number(rules.cancellation_fee);
     if (Number.isNaN(fee) || fee < 0) {
-        errors.push('Cancellation fee must be a non-negative number.');
+        errors.push(t('cancellationPolicies.errorsFeeNonNegative'));
     }
 
     return errors;
 }
 
+const localizeRules = (rules, t) => {
+    const copy = JSON.parse(JSON.stringify(rules || {}));
+    copy.refund_tiers = (copy.refund_tiers || []).map((tier) => {
+        const { labelKey, ...rest } = tier;
+        return { ...rest, label: labelKey ? t(labelKey) : (tier.label || '') };
+    });
+    if (copy.notesKey) {
+        copy.notes = t(copy.notesKey);
+        delete copy.notesKey;
+    }
+    return copy;
+};
+
 const CancellationPolicies = () => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const { formatMoney, settings } = useSettings();
+
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -156,7 +186,7 @@ const CancellationPolicies = () => {
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editing, setEditing] = useState(null);
-    const [formData, setFormData] = useState({ ...EMPTY_POLICY });
+    const [formData, setFormData] = useState({ ...EMPTY_POLICY, rules: localizeRules(EMPTY_POLICY.rules, t) });
     const [formErrors, setFormErrors] = useState([]);
 
     const [deleteDialog, setDeleteDialog] = useState({ open: false, id: null, name: '' });
@@ -167,16 +197,17 @@ const CancellationPolicies = () => {
     const loadPolicies = useCallback(async () => {
         setLoading(true);
         try {
-            const response = await api.get('/cancellation-policies/');
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/cancellation-policies/', { params: orgParams });
             setPolicies(response.data?.results || response.data || []);
         } catch (err) {
             console.error('Failed to load policies:', err);
-            toast.error(err.response?.data?.detail || 'Failed to load policies');
+            toast.error(err.response?.data?.detail || t('cancellationPolicies.loadFailed'));
             setPolicies([]);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [orgParams, t]); // ✅ Added orgParams to dependency array
 
     useEffect(() => { loadPolicies(); }, [loadPolicies]);
 
@@ -191,13 +222,13 @@ const CancellationPolicies = () => {
                 description: policy.description || '',
                 is_active: policy.is_active !== false,
                 is_default: policy.is_default === true,
-                rules: JSON.parse(JSON.stringify(policy.rules || EMPTY_POLICY.rules)),
+                rules: localizeRules(policy.rules || EMPTY_POLICY.rules, t),
             });
         } else {
             setEditing(null);
             setFormData({
                 ...EMPTY_POLICY,
-                rules: JSON.parse(JSON.stringify(EMPTY_POLICY.rules)),
+                rules: localizeRules(EMPTY_POLICY.rules, t),
             });
         }
         setFormErrors([]);
@@ -240,14 +271,13 @@ const CancellationPolicies = () => {
     const handleAddTier = () => {
         setFormData((prev) => {
             const tiers = [...prev.rules.refund_tiers];
-            // New tier goes at the *bottom* with the smallest hours value
             const smallestHours = tiers.length
                 ? Math.max(0, Number(tiers[tiers.length - 1].min_hours_before) - 1)
                 : 0;
             tiers.push({
                 min_hours_before: smallestHours,
                 refund_percent: 0,
-                label: 'Custom tier',
+                label: t('cancellationPolicies.customTier'),
             });
             return { ...prev, rules: { ...prev.rules, refund_tiers: tiers } };
         });
@@ -265,9 +295,9 @@ const CancellationPolicies = () => {
         if (!preset) return;
         setFormData((prev) => ({
             ...prev,
-            rules: JSON.parse(JSON.stringify(preset.rules)),
+            rules: localizeRules(preset.rules, t),
         }));
-        toast.info(`Applied preset: ${preset.label}`);
+        toast.info(t('cancellationPolicies.presetApplied', { label: t(preset.labelKey) }));
     };
 
     // ----------------------------------------------------------
@@ -277,11 +307,11 @@ const CancellationPolicies = () => {
         e.preventDefault();
 
         if (!formData.name.trim()) {
-            setFormErrors(['Policy name is required.']);
+            setFormErrors([t('cancellationPolicies.errorsNameRequired')]);
             return;
         }
 
-        const errors = validateRulesClient(formData.rules);
+        const errors = validateRulesClient(formData.rules, t);
         if (errors.length) {
             setFormErrors(errors);
             return;
@@ -313,10 +343,10 @@ const CancellationPolicies = () => {
 
             if (editing) {
                 await api.put(`/cancellation-policies/${editing.id}/`, payload);
-                toast.success('Policy updated successfully');
+                toast.success(t('cancellationPolicies.updatedSuccess'));
             } else {
                 await api.post('/cancellation-policies/', payload);
-                toast.success('Policy created successfully');
+                toast.success(t('cancellationPolicies.createdSuccess'));
             }
 
             setDialogOpen(false);
@@ -325,7 +355,7 @@ const CancellationPolicies = () => {
         } catch (err) {
             console.error('Save policy error:', err);
             const data = err.response?.data;
-            let msgs = ['Failed to save policy'];
+            let msgs = [t('cancellationPolicies.errorsSaveFailed')];
 
             if (typeof data === 'string') msgs = [data];
             else if (data?.detail) msgs = [data.detail];
@@ -347,26 +377,24 @@ const CancellationPolicies = () => {
     // ----------------------------------------------------------
     const handleSetDefault = async (policy) => {
         try {
-            // Unset other defaults is handled by the backend constraint,
-            // but we also do it explicitly here to be safe.
             await api.patch(`/cancellation-policies/${policy.id}/`, { is_default: true });
-            toast.success(`"${policy.name}" is now the default policy`);
+            toast.success(t('cancellationPolicies.defaultSet', { name: policy.name }));
             loadPolicies();
         } catch (err) {
             console.error('Set default error:', err);
-            toast.error(err.response?.data?.detail || 'Failed to set default');
+            toast.error(err.response?.data?.detail || t('cancellationPolicies.defaultFailed'));
         }
     };
 
     const handleDelete = async () => {
         try {
             await api.delete(`/cancellation-policies/${deleteDialog.id}/`);
-            toast.success('Policy deleted');
+            toast.success(t('cancellationPolicies.deletedSuccess'));
             setDeleteDialog({ open: false, id: null, name: '' });
             loadPolicies();
         } catch (err) {
             console.error('Delete error:', err);
-            toast.error(err.response?.data?.detail || 'Failed to delete policy');
+            toast.error(err.response?.data?.detail || t('cancellationPolicies.deleteFailed'));
         }
     };
 
@@ -377,12 +405,12 @@ const CancellationPolicies = () => {
         const h = Number(tier.min_hours_before);
         const p = Number(tier.refund_percent);
         const when =
-            h === 0 ? 'Any time before'
-            : h < 24 ? `≥ ${h} hours before`
-            : h % 24 === 0 ? `≥ ${h / 24} day${h / 24 === 1 ? '' : 's'} before`
-            : `≥ ${h} hours before`;
-        const what = p === 0 ? 'no refund' : p === 100 ? 'full refund' : `${p}% refund`;
-        return `${when}: ${what}`;
+            h === 0 ? t('cancellationPolicies.describeTierAnyTime')
+            : h < 24 ? t('cancellationPolicies.describeTierAtLeast', { hours: h })
+            : h % 24 === 0 ? t('cancellationPolicies.describeTierDays', { days: h / 24 })
+            : t('cancellationPolicies.describeTierAtLeast', { hours: h });
+        const what = p === 0 ? t('cancellationPolicies.describeTierNoRefund') : p === 100 ? t('cancellationPolicies.describeTierFullRefund') : t('cancellationPolicies.describeTierPercent', { percent: p });
+        return t('cancellationPolicies.describeTierPrefix', { when, what });
     };
 
     if (loading && policies.length === 0) {
@@ -397,42 +425,49 @@ const CancellationPolicies = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Cancellation Policies</PageTitle>
+                    <PageTitle>{t('cancellationPolicies.title')}</PageTitle>
                     {!isMobile && (
                         <PageSubtitle>
-                            Reusable refund rules you can attach to any event
+                            {t('cancellationPolicies.subtitle')}
                         </PageSubtitle>
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
+                    {/* ✅ 3. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton startIcon={<RefreshIcon />} onClick={loadPolicies}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     <PrimaryButton
                         variant="contained"
                         startIcon={<AddIcon />}
                         onClick={() => handleOpenDialog()}
                     >
-                        New Policy
+                        {t('cancellationPolicies.newPolicy')}
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
 
             {policies.length === 0 ? (
                 <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
-                    <PolicyIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 2 }} />
+                    <PolicyIcon sx={{ fontSize: 48, color: C.borderHover, mb: 2 }} />
                     <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                        No policies yet
+                        {t('cancellationPolicies.noPolicies')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1, mb: 3 }}>
-                        Create your first cancellation policy. You can attach it to any event.
+                        {t('cancellationPolicies.noPoliciesHint')}
                     </Typography>
                     <PrimaryButton
                         variant="contained"
                         startIcon={<AddIcon />}
                         onClick={() => handleOpenDialog()}
                     >
-                        Create Policy
+                        {t('cancellationPolicies.createPolicy')}
                     </PrimaryButton>
                 </Paper>
             ) : (
@@ -443,8 +478,8 @@ const CancellationPolicies = () => {
                                 sx={{
                                     borderRadius: 2,
                                     border: policy.is_default
-                                        ? '2px solid #22c55e'
-                                        : '1px solid #e2e8f0',
+                                        ? `2px solid ${C.success}`
+                                        : `1px solid ${C.borderLight}`,
                                     height: '100%',
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -457,7 +492,7 @@ const CancellationPolicies = () => {
                                         </Typography>
                                         {policy.is_default && (
                                             <Chip
-                                                label="DEFAULT"
+                                                label={t('cancellationPolicies.statusDefault')}
                                                 size="small"
                                                 color="success"
                                                 sx={{ fontWeight: 600 }}
@@ -474,7 +509,7 @@ const CancellationPolicies = () => {
                                     <Divider sx={{ my: 1.5 }} />
 
                                     <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
-                                        Refund tiers
+                                        {t('cancellationPolicies.refundTiersLabel')}
                                     </Typography>
                                     <Box sx={{ mt: 1 }}>
                                         {(policy.rules?.refund_tiers || []).map((tier, i) => (
@@ -484,12 +519,12 @@ const CancellationPolicies = () => {
                                         ))}
                                         {policy.rules?.cancellation_fee > 0 && (
                                             <Typography variant="body2" sx={{ color: 'error.main', mt: 1 }}>
-                                                Fee: {formatMoney(policy.rules.cancellation_fee)}
+                                                {t('cancellationPolicies.feeLabel')}: {formatMoney(policy.rules.cancellation_fee)}
                                             </Typography>
                                         )}
                                         {!policy.rules?.allow_partial_cancellation && (
                                             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
-                                                All-or-nothing cancellation
+                                                {t('cancellationPolicies.allOrNothing')}
                                             </Typography>
                                         )}
                                     </Box>
@@ -497,20 +532,20 @@ const CancellationPolicies = () => {
                                     <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
                                         <Chip
                                             size="small"
-                                            label={policy.is_active ? 'ACTIVE' : 'INACTIVE'}
+                                            label={policy.is_active ? t('cancellationPolicies.statusActive') : t('cancellationPolicies.statusInactive')}
                                             color={policy.is_active ? 'success' : 'default'}
                                         />
                                         <Chip
                                             size="small"
                                             variant="outlined"
-                                            label={`${policy.event_count || 0} event(s)`}
+                                            label={t('cancellationPolicies.eventCount', { count: policy.event_count || 0 })}
                                         />
                                     </Box>
                                 </CardContent>
 
                                 <Box sx={{ p: 2, pt: 0, borderTop: '1px solid rgba(241, 245, 249, 1)', display: 'flex', gap: 0.5 }}>
                                     {!policy.is_default && (
-                                        <Tooltip title="Set as default">
+                                        <Tooltip title={t('cancellationPolicies.setAsDefault')}>
                                             <IconButton
                                                 size="small"
                                                 sx={{ color: 'success.main' }}
@@ -521,13 +556,13 @@ const CancellationPolicies = () => {
                                         </Tooltip>
                                     )}
                                     {policy.is_default && (
-                                        <Tooltip title="This is the default">
+                                        <Tooltip title={t('cancellationPolicies.isDefault')}>
                                             <IconButton size="small" sx={{ color: 'success.main' }} disabled>
                                                 <StarIcon fontSize="small" />
                                             </IconButton>
                                         </Tooltip>
                                     )}
-                                    <Tooltip title="Edit">
+                                    <Tooltip title={t('common.edit')}>
                                         <IconButton
                                             size="small"
                                             sx={{ color: 'primary.main' }}
@@ -536,7 +571,7 @@ const CancellationPolicies = () => {
                                             <EditIcon fontSize="small" />
                                         </IconButton>
                                     </Tooltip>
-                                    <Tooltip title="Delete">
+                                    <Tooltip title={t('common.delete')}>
                                         <IconButton
                                             size="small"
                                             sx={{ color: 'error.main' }}
@@ -562,7 +597,7 @@ const CancellationPolicies = () => {
                 fullWidth
                 PaperProps={{
                     sx: {
-                        background: '#ffffff',
+                        background: C.white,
                         borderRadius: '16px',
                         border: '1px solid rgba(226, 232, 240, 1)',
                         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.12)',
@@ -570,13 +605,13 @@ const CancellationPolicies = () => {
                 }}
             >
                 <DialogTitle sx={{ fontWeight: 700, color: 'text.primary' }}>
-                    {editing ? 'Edit Policy' : 'New Cancellation Policy'}
+                    {editing ? t('cancellationPolicies.editPolicy') : t('cancellationPolicies.newPolicyTitle')}
                 </DialogTitle>
 
                 <DialogContent>
                     {!editing && (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            Pick a preset to start, then fine-tune the tiers below.
+                            {t('cancellationPolicies.presetHint')}
                             <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
                                 {Object.entries(PRESETS).map(([key, preset]) => (
                                     <Button
@@ -586,7 +621,7 @@ const CancellationPolicies = () => {
                                         onClick={() => handleApplyPreset(key)}
                                         sx={{ textTransform: 'none' }}
                                     >
-                                        {preset.label}
+                                        {t(preset.labelKey)}
                                     </Button>
                                 ))}
                             </Stack>
@@ -607,35 +642,34 @@ const CancellationPolicies = () => {
                         <Grid item xs={12}>
                             <TextField
                                 fullWidth
-                                label="Policy Name *"
+                                label={t('cancellationPolicies.policyNameLabel')}
                                 name="name"
                                 value={formData.name}
                                 onChange={handleTopField}
-                                placeholder="e.g. Standard Cancellation"
+                                placeholder={t('cancellationPolicies.policyNamePlaceholder')}
                             />
                         </Grid>
 
                         <Grid item xs={12}>
                             <TextField
                                 fullWidth
-                                label="Description"
+                                label={t('cancellationPolicies.descriptionLabel')}
                                 name="description"
                                 value={formData.description}
                                 onChange={handleTopField}
                                 multiline
                                 rows={2}
-                                placeholder="Shown to organizers. Not visible to customers."
+                                placeholder={t('cancellationPolicies.descriptionHelper')}
                             />
                         </Grid>
 
                         <Grid item xs={12}>
                             <Divider sx={{ my: 1 }} />
                             <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', mb: 1 }}>
-                                Refund Tiers
+                                {t('cancellationPolicies.refundTiersLabel')}
                             </Typography>
                             <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 2 }}>
-                                Tiers are checked top-down. The first one whose hours threshold is met wins.
-                                Enter the hours remaining before the event starts.
+                                {t('cancellationPolicies.refundTiersHelper')}
                             </Typography>
                         </Grid>
 
@@ -648,7 +682,7 @@ const CancellationPolicies = () => {
                                                 fullWidth
                                                 size="small"
                                                 type="number"
-                                                label="Hours before"
+                                                label={t('cancellationPolicies.hoursBeforeLabel')}
                                                 value={tier.min_hours_before}
                                                 onChange={(e) =>
                                                     handleTierField(index, 'min_hours_before', e.target.value)
@@ -661,7 +695,7 @@ const CancellationPolicies = () => {
                                                 fullWidth
                                                 size="small"
                                                 type="number"
-                                                label="Refund %"
+                                                label={t('cancellationPolicies.refundPercentLabel')}
                                                 value={tier.refund_percent}
                                                 onChange={(e) =>
                                                     handleTierField(index, 'refund_percent', e.target.value)
@@ -673,12 +707,12 @@ const CancellationPolicies = () => {
                                             <TextField
                                                 fullWidth
                                                 size="small"
-                                                label="Label (shown to customer)"
+                                                label={t('cancellationPolicies.tierLabelLabel')}
                                                 value={tier.label || ''}
                                                 onChange={(e) =>
                                                     handleTierField(index, 'label', e.target.value)
                                                 }
-                                                placeholder="e.g. 7+ days before"
+                                                placeholder={t('cancellationPolicies.tierLabelPlaceholder')}
                                             />
                                         </Grid>
                                         <Grid item xs={12} sm={1} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -706,7 +740,7 @@ const CancellationPolicies = () => {
                                 onClick={handleAddTier}
                                 sx={{ textTransform: 'none' }}
                             >
-                                Add tier
+                                {t('cancellationPolicies.addTier')}
                             </Button>
                         </Grid>
 
@@ -714,21 +748,21 @@ const CancellationPolicies = () => {
                             <TextField
                                 fullWidth
                                 type="number"
-                                label={`Flat Cancellation Fee (${settings.currency_code})`}
+                                label={t('cancellationPolicies.cancellationFeeLabel', { currency: settings.currency_code })}
                                 value={formData.rules.cancellation_fee}
                                 onChange={(e) => handleRuleField('cancellation_fee', e.target.value)}
                                 inputProps={{ min: 0, step: '0.01' }}
-                                helperText="Deducted from every refund. 0 for none."
+                                helperText={t('cancellationPolicies.cancellationFeeHelper')}
                             />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <TextField
                                 fullWidth
-                                label="Customer-facing notes"
+                                label={t('cancellationPolicies.customerNotesLabel')}
                                 value={formData.rules.notes || ''}
                                 onChange={(e) => handleRuleField('notes', e.target.value)}
-                                helperText="Shown on the booking page. Does not affect calculations."
+                                helperText={t('cancellationPolicies.customerNotesHelper')}
                             />
                         </Grid>
 
@@ -746,7 +780,7 @@ const CancellationPolicies = () => {
                                         }
                                     />
                                 }
-                                label="Allow partial cancellation (per-ticket)"
+                                label={t('cancellationPolicies.allowPartialLabel')}
                             />
                         </Grid>
 
@@ -760,7 +794,7 @@ const CancellationPolicies = () => {
                                         }
                                     />
                                 }
-                                label="Allow refund after check-in"
+                                label={t('cancellationPolicies.allowAfterCheckinLabel')}
                             />
                         </Grid>
 
@@ -777,7 +811,7 @@ const CancellationPolicies = () => {
                                         name="is_active"
                                     />
                                 }
-                                label="Active"
+                                label={t('cancellationPolicies.activeLabel')}
                             />
                         </Grid>
 
@@ -790,7 +824,7 @@ const CancellationPolicies = () => {
                                         name="is_default"
                                     />
                                 }
-                                label="Use as default policy"
+                                label={t('cancellationPolicies.defaultLabel')}
                             />
                         </Grid>
                     </Grid>
@@ -798,7 +832,7 @@ const CancellationPolicies = () => {
 
                 <DialogActions sx={{ p: 2, gap: 1 }}>
                     <OutlineButton onClick={handleCloseDialog} disabled={saving}>
-                        Cancel
+                        {t('cancellationPolicies.cancel')}
                     </OutlineButton>
                     <PrimaryButton
                         variant="contained"
@@ -806,7 +840,7 @@ const CancellationPolicies = () => {
                         disabled={saving}
                         startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <CheckCircleIcon />}
                     >
-                        {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Policy'}
+                        {saving ? t('cancellationPolicies.saving') : editing ? t('cancellationPolicies.savePolicy') : t('cancellationPolicies.createPolicy')}
                     </PrimaryButton>
                 </DialogActions>
             </Dialog>
@@ -816,21 +850,20 @@ const CancellationPolicies = () => {
                 open={deleteDialog.open}
                 onClose={() => setDeleteDialog({ open: false, id: null, name: '' })}
             >
-                <DialogTitle sx={{ fontWeight: 700 }}>Delete Policy</DialogTitle>
+                <DialogTitle sx={{ fontWeight: 700 }}>{t('cancellationPolicies.deletePolicy')}</DialogTitle>
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2 }}>
-                        Events using this policy will keep their existing booking snapshots,
-                        but new bookings will have no policy until you attach another one.
+                        {t('cancellationPolicies.deleteWarning')}
                     </Alert>
                     <Typography>
-                        Are you sure you want to delete <strong>{deleteDialog.name}</strong>?
+                        {t('cancellationPolicies.deleteConfirm', { name: deleteDialog.name })}
                     </Typography>
                 </DialogContent>
                 <DialogActions sx={{ p: 2 }}>
                     <OutlineButton
                         onClick={() => setDeleteDialog({ open: false, id: null, name: '' })}
                     >
-                        Cancel
+                        {t('cancellationPolicies.cancel')}
                     </OutlineButton>
                     <Button
                         variant="contained"
@@ -839,7 +872,7 @@ const CancellationPolicies = () => {
                         startIcon={<CancelIcon />}
                         sx={{ textTransform: 'none' }}
                     >
-                        Delete
+                        {t('cancellationPolicies.delete')}
                     </Button>
                 </DialogActions>
             </Dialog>

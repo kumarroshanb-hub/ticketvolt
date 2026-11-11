@@ -113,6 +113,8 @@ export const theme = {
         ...STATUS,
 
         // --- Surfaces (light mode) ---
+        white:       NEUTRAL.white,
+        black:       NEUTRAL.black,
         bgPrimary:   NEUTRAL.gray50,
         bgSecondary: NEUTRAL.white,
         bgCard:      NEUTRAL.white,
@@ -167,6 +169,15 @@ export const theme = {
         pink: BRAND.pink,
         cyan: BRAND.cyan,
         lime: BRAND.lime,
+
+        // Scanner / dark operational surfaces
+        scannerAccent:  '#00f5ff',
+        scannerBg:      '#1a1a2e',
+        scannerPanel:   '#16213e',
+        scannerPanelAlt:'#0f3460',
+
+        // Default seat category colour (matches backend default)
+        categoryDefault: '#4CAF50',
     },
 
     fonts: FONT,

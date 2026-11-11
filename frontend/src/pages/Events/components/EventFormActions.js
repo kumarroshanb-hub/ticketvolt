@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/EventFormActions.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Grid, Box, CircularProgress, useMediaQuery, useTheme } from '@mui/material';
 import { PrimaryButton, OutlineButton } from '../../../components/Common';
 import { theme as appTheme } from '../../../theme/tokens';
@@ -7,6 +8,7 @@ import { theme as appTheme } from '../../../theme/tokens';
 const C = appTheme.colors;
 
 export const EventFormActions = ({ isEdit, submitting, onCancel }) => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -23,9 +25,9 @@ export const EventFormActions = ({ isEdit, submitting, onCancel }) => {
                     {submitting ? (
                         <CircularProgress size={24} sx={{ color: C.textInverse }} />
                     ) : isEdit ? (
-                        'Update Event'
+                        t('events.formActionsUpdate')
                     ) : (
-                        'Create Event'
+                        t('events.formActionsCreate')
                     )}
                 </PrimaryButton>
                 <OutlineButton
@@ -33,7 +35,7 @@ export const EventFormActions = ({ isEdit, submitting, onCancel }) => {
                     onClick={onCancel}
                     sx={isMobile ? { width: '100%' } : undefined}
                 >
-                    Cancel
+                    {t('events.formActionsCancel')}
                 </OutlineButton>
             </Box>
         </Grid>

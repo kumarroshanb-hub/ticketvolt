@@ -6,13 +6,51 @@ import { EVENT_TYPE, EVENT_CATEGORY, EVENT_STATUS } from '../../constants';
 import { formatDateForInput } from '../../utils/datetime';
 import { resolveTimezoneDefault } from '../../utils/localeDefaults';
 
-// ✅ No hardcoded timezone. Resolution order:
-//    1. explicit `defaultTimezone` argument (platform setting from
-//       useSettings().settings.default_timezone)
-//    2. device locale
-//    3. env override
-//    4. product fallback
-const makeDefaultForm = (defaultTimezone) => ({
+// ---------------------------------------------------------------------------
+// Draft persistence
+// ---------------------------------------------------------------------------
+const DRAFT_KEY_PREFIX = 'event_draft:';
+const draftKey = (id) => `${DRAFT_KEY_PREFIX}${id || 'new'}`;
+
+const readDraft = (id) => {
+    try {
+        const raw = sessionStorage.getItem(draftKey(id));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+};
+
+const writeDraft = (id, payload) => {
+    try {
+        sessionStorage.setItem(draftKey(id), JSON.stringify(payload));
+    } catch {
+        // Quota / private-mode failures are non-fatal.
+    }
+};
+
+const clearDraftFor = (id) => {
+    try {
+        sessionStorage.removeItem(draftKey(id));
+    } catch {
+        // ignore
+    }
+};
+
+// Derive single-day from a pair of ISO / 'YYYY-MM-DDTHH:mm' strings.
+const deriveSingleDay = (start, end) => {
+    if (!start || !end) return false;
+    return String(start).slice(0, 10) === String(end).slice(0, 10);
+};
+
+// ✅ `is_single_day` added to the default form so:
+//    - Create mode starts with an explicit boolean.
+//    - Draft restore merges cleanly without the field being `undefined`.
+//    - Edit mode loader (below) overwrites it from the API.
+const makeDefaultForm = (defaultTimezone, defaultOrganizationId) => ({
     title: '',
     description: '',
     short_description: '',
@@ -22,23 +60,53 @@ const makeDefaultForm = (defaultTimezone) => ({
     venue_id: '',
     start_date: '',
     end_date: '',
+    is_single_day: false,
     timezone: defaultTimezone || resolveTimezoneDefault(),
     status: EVENT_STATUS.DRAFT,
     is_public: true,
+    donations_enabled: false,
     ticket_format: 'pdf',
     combine_tickets: false,
     tickets_per_page: 4,
     cancellation_policy_id: '',
     cancellation_policy_text: '',
-    // ✅ NEW: organizer assignment (admin-only; organizers leave blank)
     organizer_id: '',
+    organization_id: defaultOrganizationId || '',
 });
 
-export const useEventForm = (id, { defaultTimezone } = {}) => {
+export const useEventForm = (
+    id,
+    { defaultTimezone, defaultOrganizationId, resumeDraft = true } = {},
+) => {
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState(() => makeDefaultForm(defaultTimezone));
-    const [sessions, setSessions] = useState([]);
-    const [tiers, setTiers] = useState([]);
+
+    // Read the draft ONCE at mount — only in create mode AND only when the
+    // caller opts in. This lets the "Create a new venue → return here"
+    // round-trip resume the draft, while a normal visit to
+    // /app/events/create starts blank.
+    const [initialDraft] = useState(() => {
+        if (id) return null;
+        if (!resumeDraft) return null;
+        return readDraft(null);
+    });
+
+    const [formData, setFormData] = useState(() => {
+        const base = makeDefaultForm(defaultTimezone, defaultOrganizationId);
+        if (id) return base;
+        return initialDraft?.formData
+            ? { ...base, ...initialDraft.formData }
+            : base;
+    });
+
+    const [sessions, setSessions] = useState(() => {
+        if (id) return [];
+        return Array.isArray(initialDraft?.sessions) ? initialDraft.sessions : [];
+    });
+
+    const [tiers, setTiers] = useState(() => {
+        if (id) return [];
+        return Array.isArray(initialDraft?.tiers) ? initialDraft.tiers : [];
+    });
 
     const handleChange = useCallback((e) => {
         const { name, value, type, checked } = e.target;
@@ -49,7 +117,10 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
     }, []);
 
     const addSession = useCallback(
-        () => setSessions((prev) => [...prev, { start_time: '', end_time: '', capacity: 100 }]),
+        () => setSessions((prev) => [
+            ...prev,
+            { start_time: '', end_time: '', capacity: 100 },
+        ]),
         []
     );
 
@@ -88,12 +159,43 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
         });
     }, []);
 
+    // Persist draft only in create mode.
+    useEffect(() => {
+        if (id) return;
+        writeDraft(null, { formData, sessions, tiers });
+    }, [id, formData, sessions, tiers]);
+
+    const clearDraft = useCallback(() => {
+        clearDraftFor(id || null);
+    }, [id]);
+
+    // Reset the form to defaults. Useful after a successful create, or when
+    // the user explicitly starts fresh. Also wipes the persisted draft.
+    const resetForm = useCallback(() => {
+        setFormData(makeDefaultForm(defaultTimezone, defaultOrganizationId));
+        setSessions([]);
+        setTiers([]);
+        clearDraftFor(id || null);
+    }, [defaultTimezone, defaultOrganizationId, id]);
+
+    // Edit-mode loader.
     useEffect(() => {
         if (!id) return;
         (async () => {
             setLoading(true);
             try {
                 const { data } = await api.get(`/events/${id}/`);
+
+                const startForInput = formatDateForInput(data.start_date);
+                const endForInput = formatDateForInput(data.end_date);
+
+                // Prefer explicit API field; fall back to date derivation
+                // so legacy rows without `is_single_day` still behave.
+                const singleDayFromApi =
+                    typeof data.is_single_day === 'boolean'
+                        ? data.is_single_day
+                        : deriveSingleDay(startForInput, endForInput);
+
                 setFormData({
                     title: data.title || '',
                     description: data.description || '',
@@ -102,29 +204,28 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
                     category: data.category || EVENT_CATEGORY.OTHER,
                     event_flow: data.event_flow || 'ticketed',
                     venue_id: data.venue?.id || '',
-                    start_date: formatDateForInput(data.start_date),
-                    end_date: formatDateForInput(data.end_date),
-                    // ✅ If the API returns a timezone, honor it. If not,
-                    // resolve the platform default (settings → device → env
-                    // → fallback) instead of forcing a hardcoded one.
+                    start_date: startForInput,
+                    end_date: endForInput,
+                    is_single_day: singleDayFromApi,
                     timezone:
                         data.timezone ||
                         defaultTimezone ||
                         resolveTimezoneDefault(),
                     status: data.status || EVENT_STATUS.DRAFT,
                     is_public: data.is_public !== undefined ? data.is_public : true,
+                    donations_enabled: data.donations_enabled !== undefined ? data.donations_enabled : false,
                     ticket_format: data.ticket_format || 'pdf',
                     combine_tickets: data.combine_tickets || false,
                     tickets_per_page: data.tickets_per_page || 4,
                     cancellation_policy_id: data.cancellation_policy?.id || '',
                     cancellation_policy_text: data.cancellation_policy_text || '',
-                    // ✅ NEW: seed the current owner so the admin picker
-                    // shows who currently owns the event.
                     organizer_id: data.organizer || '',
+                    organization_id:
+                        data.organization ||
+                        defaultOrganizationId ||
+                        '',
                 });
 
-                // ✅ FIX: Explicitly preserve the session ID to prevent the backend
-                // from assuming it was deleted and attempting a deletion.
                 setSessions(
                     (data.sessions || []).map((s) => ({
                         id: s.id,
@@ -143,7 +244,7 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
                 setLoading(false);
             }
         })();
-    }, [id, defaultTimezone]);
+    }, [id, defaultTimezone, defaultOrganizationId]);
 
     return {
         loading,
@@ -158,5 +259,7 @@ export const useEventForm = (id, { defaultTimezone } = {}) => {
         addTier,
         removeTier,
         updateTier,
+        clearDraft,
+        resetForm,
     };
 };

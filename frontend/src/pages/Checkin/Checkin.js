@@ -53,6 +53,7 @@ import {
     Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 
@@ -66,7 +67,6 @@ import {
     LoadingWrapper,
 } from '../../components/Common';
 
-// frontend/src/pages/Checkin/Checkin.js — ADD THIS IMPORT
 import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
@@ -74,37 +74,31 @@ const F = theme.fonts;
 
 // ============================================
 // CHECK-IN LOG STATUS → UI PRESENTATION
-// ------------------------------------------------------------
-// The backend CheckInLog.status field can be one of:
-//   'success'   — a real, valid check-in
-//   'failed'    — a scan that did not result in a check-in
-//   'cancelled' — a check-in that was later undone by a superuser
-//
-// The old code assumed status === 'success' → Success, ELSE Failed.
-// That mislabeled 'cancelled' rows as "Failed" and hid real failures.
-// This map makes the mapping explicit and exhaustive.
 // ============================================
 const LOG_STATUS_UI = {
     success: {
-        label: 'Success',
+        labelKey: 'checkin.statusSuccess',
         color: 'success',
         icon: <CheckCircleIcon fontSize="small" />,
     },
     failed: {
-        label: 'Failed',
+        labelKey: 'checkin.statusFailed',
         color: 'error',
         icon: <CancelIcon fontSize="small" />,
     },
     cancelled: {
-        label: 'Undone',
+        labelKey: 'checkin.statusCancelled',
         color: 'warning',
         icon: <UndoIcon fontSize="small" />,
     },
 };
 
-const getLogStatusUI = (status) =>
-    LOG_STATUS_UI[status] || {
-        label: status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown',
+const getLogStatusUI = (status, t) =>
+    LOG_STATUS_UI[status] ? {
+        ...LOG_STATUS_UI[status],
+        label: t(LOG_STATUS_UI[status].labelKey),
+    } : {
+        label: status ? status.charAt(0).toUpperCase() + status.slice(1) : t('checkin.statusUnknown'),
         color: 'default',
         icon: <InfoIcon fontSize="small" />,
     };
@@ -150,15 +144,16 @@ const StatCard = ({ title, value, icon, color, subtitle }) => (
 // VERIFICATION RESULT COMPONENT
 // ============================================
 const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
+    const { t } = useTranslation();
     if (!result) return null;
 
     const getResultColor = () => {
         switch (result.type) {
-            case 'success': return '#10b981';
-            case 'error': return '#ef4444';
-            case 'warning': return '#f59e0b';
-            case 'info': return '#3b82f6';
-            default: return '#64748b';
+            case 'success': return C.success;
+            case 'error': return C.error;
+            case 'warning': return C.warning;
+            case 'info': return C.info;
+            default: return C.textSecondary;
         }
     };
 
@@ -204,10 +199,10 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                                 </Avatar>
                                 <Box>
                                     <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                                        Attendee
+                                        {t('checkin.colAttendee')}
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                        {result.ticket.attendee_name || 'Guest'}
+                                        {result.ticket.attendee_name || t('checkin.guest')}
                                     </Typography>
                                 </Box>
                             </Box>
@@ -217,7 +212,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                                 <VerifiedIcon sx={{ color: 'primary.main' }} />
                                 <Box>
                                     <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                                        Ticket Code
+                                        {t('booking.ticketCode')}
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-all' }}>
                                         {result.ticket.code}
@@ -230,10 +225,10 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                                 <EventIcon sx={{ color: 'primary.main' }} />
                                 <Box>
                                     <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                                        Event
+                                        {t('checkin.colEvent')}
                                     </Typography>
                                     <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                                        {result.ticket.event || 'N/A'}
+                                        {result.ticket.event || t('common.nA')}
                                     </Typography>
                                 </Box>
                             </Box>
@@ -244,7 +239,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                                     <AccessTimeIcon sx={{ color: 'success.main' }} />
                                     <Box>
                                         <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                                            Checked In
+                                            {t('booking.checkedIn')}
                                         </Typography>
                                         <Typography variant="body1" sx={{ fontWeight: 500 }}>
                                             {new Date(result.checkin_time).toLocaleTimeString()}
@@ -267,7 +262,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                         disabled={checkingIn}
                         sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' } }}
                     >
-                        {checkingIn ? 'Checking In...' : 'Confirm Check-In'}
+                        {checkingIn ? t('checkin.checkingIn') : t('checkin.confirmCheckIn')}
                     </Button>
                 )}
                 <Button
@@ -276,7 +271,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
                     onClick={onReset}
                     sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' } }}
                 >
-                    Reset
+                    {t('checkin.reset')}
                 </Button>
             </Box>
         </Box>
@@ -287,6 +282,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
 // MAIN COMPONENT
 // ============================================
 const Checkin = () => {
+    const { t } = useTranslation();
     const { user } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -301,18 +297,6 @@ const Checkin = () => {
     const [search, setSearch] = useState('');
     const [openScanner, setOpenScanner] = useState(false);
 
-    // ============================================================
-    // LOAD DATA
-    // ------------------------------------------------------------
-    // We fetch up to 100 history rows and derive the stat cards
-    // from that dataset. This makes the "Failed" card actually
-    // reflect reality (the /dashboard/stats/ endpoint does not
-    // know about failed/cancelled CheckInLog rows).
-    //
-    // If you need true all-time totals, expose a dedicated
-    // /checkin/stats/ endpoint that returns log-status counts
-    // and swap this out.
-    // ============================================================
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
@@ -330,23 +314,17 @@ const Checkin = () => {
             setHistory(historyData);
         } catch (error) {
             console.error('Error loading check-in data:', error);
-            toast.error('Failed to load check-in data');
+            toast.error(t('checkin.loadFailed'));
             setHistory([]);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [t]);
 
     useEffect(() => {
         loadData();
     }, [loadData]);
 
-    // ============================================================
-    // DERIVED STATS
-    // ------------------------------------------------------------
-    // Recompute on every history change so the numbers on the
-    // stat cards always agree with what's shown in the table.
-    // ============================================================
     const stats = useMemo(() => {
         const total = history.length;
         const success = history.filter((h) => h.status === 'success').length;
@@ -369,155 +347,193 @@ const Checkin = () => {
         };
     }, [history]);
 
-// ============================================================
-// VERIFY (read-only)
-// ------------------------------------------------------------
-// The admin UI does NOT hold TICKET_SIGNING_SECRET, so it cannot
-// construct a signed payload. It calls /checkin/manual-verify/
-// which accepts a bare ticket code. The server enforces
-// IsAuthenticated + role checks (admin/staff/organizer with
-// ownership of the event).
-// ============================================================
-const verifyTicket = async (code) => {
-    setVerifying(true);
-    setResult(null);
+    // ============================================================
+    // VERIFY (read-only)
+    // ------------------------------------------------------------
+    // ✅ FIX [404-VS-403-COLLAPSE]:
+    // The backend now returns a uniform 404 with
+    //   { code: 'TICKET_NOT_FOUND' }        for unknown codes, AND
+    //   { code: 'PERMISSION_DENIED' }       for cross-org access.
+    // Both are `detail` payloads on a 404. The previous catch only
+    // branched on OUTSIDE_SLOT_WINDOW / is_checked_in / TICKET_USED
+    // and then fell through to `errorData.detail` — which meant a
+    // 404 with TICKET_NOT_FOUND surfaced as a red "Invalid Ticket"
+    // (fine) BUT a 404 with PERMISSION_DENIED also surfaced as the
+    // same message (confusing for an operator who actually *does*
+    // have access elsewhere). We now branch on `code` explicitly:
+    //   TICKET_NOT_FOUND → "Invalid Ticket"
+    //   PERMISSION_DENIED → neutral "not permitted" warning
+    // No UI path depends on the old 403 shape.
+    // ============================================================
+    const verifyTicket = async (code) => {
+        setVerifying(true);
+        setResult(null);
 
-    try {
-        const response = await api.post('/checkin/manual-verify/', {
-            code: code.trim(),
-        });
+        try {
+            const response = await api.post('/checkin/manual-verify/', {
+                code: code.trim(),
+            });
 
-        if (response.data?.valid) {
-            const slotWindow = response.data?.slot_window;
+            if (response.data?.valid) {
+                const slotWindow = response.data?.slot_window;
 
-            if (slotWindow && slotWindow.open === false) {
+                if (slotWindow && slotWindow.open === false) {
+                    setResult({
+                        type: 'warning',
+                        title: t('checkin.outsideSlotWindow'),
+                        message:
+                            slotWindow.message ||
+                            t('checkin.outsideSlotMessage'),
+                        ticket: response.data.ticket,
+                    });
+                } else {
+                    setResult({
+                        type: 'success',
+                        title: t('checkin.ticketValid'),
+                        message: t('checkin.ticketValidMessage'),
+                        ticket: response.data.ticket,
+                    });
+                }
+            } else {
+                setResult({
+                    type: 'error',
+                    title: t('checkin.ticketInvalid'),
+                    message: response.data?.detail || t('checkin.ticketInvalidMessage'),
+                    ticket: response.data?.ticket,
+                });
+            }
+        } catch (error) {
+            const errorData = error.response?.data;
+            const errCode = errorData?.code;
+
+            // ✅ FIX [404-VS-403-COLLAPSE]: explicit code branches first.
+            if (errCode === 'TICKET_NOT_FOUND') {
+                setResult({
+                    type: 'error',
+                    title: t('checkin.ticketInvalid'),
+                    message: errorData?.detail || t('checkin.noTicketMatches'),
+                    ticket: errorData?.ticket,
+                });
+            } else if (errCode === 'PERMISSION_DENIED') {
                 setResult({
                     type: 'warning',
-                    title: 'Outside Slot Window',
+                    title: t('checkin.notPermitted'),
                     message:
-                        slotWindow.message ||
-                        'This ticket is valid, but its slot is not currently open for check-in.',
-                    ticket: response.data.ticket,
+                        errorData?.detail ||
+                        t('checkin.notPermittedMessage'),
+                    ticket: errorData?.ticket,
+                });
+            } else if (errCode === 'OUTSIDE_SLOT_WINDOW') {
+                setResult({
+                    type: 'warning',
+                    title: t('checkin.outsideSlotWindow'),
+                    message: errorData.detail,
+                    ticket: errorData?.ticket,
+                });
+            } else if (errorData?.ticket?.is_checked_in) {
+                setResult({
+                    type: 'warning',
+                    title: t('checkin.alreadyCheckedIn'),
+                    message: t('checkin.alreadyCheckedInMessage'),
+                    ticket: errorData.ticket,
+                });
+            } else if (
+                errCode === 'TICKET_USED' ||
+                errorData?.detail?.includes('already been used')
+            ) {
+                setResult({
+                    type: 'warning',
+                    title: t('checkin.alreadyUsed'),
+                    message: t('checkin.alreadyUsedMessage'),
+                    ticket: errorData?.ticket,
+                });
+            } else if (errorData?.detail) {
+                setResult({
+                    type: 'error',
+                    title: t('checkin.ticketInvalid'),
+                    message: errorData.detail,
+                    ticket: errorData?.ticket,
                 });
             } else {
                 setResult({
-                    type: 'success',
-                    title: 'Ticket Valid',
-                    message: 'This ticket is valid and ready for check-in',
-                    ticket: response.data.ticket,
+                    type: 'error',
+                    title: t('checkin.verificationFailed'),
+                    message: t('checkin.verificationFailedMessage'),
+                    ticket: null,
                 });
             }
-        } else {
-            setResult({
-                type: 'error',
-                title: 'Invalid Ticket',
-                message: response.data?.detail || 'This ticket is not valid',
-                ticket: response.data?.ticket,
-            });
+        } finally {
+            setVerifying(false);
         }
-    } catch (error) {
-        const errorData = error.response?.data;
+    };
 
-        if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
+    // ============================================================
+    // CHECK-IN (state-changing)
+    // ------------------------------------------------------------
+    // ✅ FIX [404-VS-403-COLLAPSE]: same explicit code branching.
+    // ============================================================
+    const checkInTicket = async (code) => {
+        setCheckingIn(true);
+
+        try {
+            const response = await api.post('/checkin/manual/', {
+                code: code.trim(),
+                device_id: 'admin-panel',
+            });
+
+            if (response.data?.success) {
+                setResult({
+                    type: 'success',
+                    title: t('checkin.checkInSuccess'),
+                    message: response.data.message,
+                    ticket: response.data.ticket,
+                    checkin_time: response.data.checkin_time,
+                });
+                toast.success(t('checkin.checkInSuccessToast'));
+                loadData();
+            } else {
+                setResult({
+                    type: 'error',
+                    title: t('checkin.checkInFailed'),
+                    message: response.data?.detail || t('checkin.checkInRejected'),
+                    ticket: response.data?.ticket,
+                });
+                toast.error(response.data?.detail || t('checkin.checkInFailed'));
+            }
+        } catch (error) {
+            const errorData = error.response?.data;
+            const errCode = errorData?.code;
+            let title = t('checkin.checkInFailed');
+            let message = errorData?.detail || t('checkin.checkInUnexpected');
+            let resultType = 'error';
+
+            // ✅ FIX [404-VS-403-COLLAPSE]
+            if (errCode === 'TICKET_NOT_FOUND') {
+                title = t('checkin.ticketInvalid');
+                message = errorData?.detail || t('checkin.noTicketMatches');
+                resultType = 'error';
+            } else if (errCode === 'PERMISSION_DENIED') {
+                title = t('checkin.notPermitted');
+                message =
+                    errorData?.detail ||
+                    t('checkin.notPermittedMessage');
+                resultType = 'warning';
+            } else if (errCode === 'OUTSIDE_SLOT_WINDOW') {
+                title = t('checkin.checkInInvalidTime');
+                resultType = 'warning';
+            }
+
             setResult({
-                type: 'warning',
-                title: 'Outside Slot Window',
-                message: errorData.detail,
+                type: resultType,
+                title: title,
+                message: message,
                 ticket: errorData?.ticket,
             });
-        } else if (errorData?.ticket?.is_checked_in) {
-            setResult({
-                type: 'warning',
-                title: 'Already Checked In',
-                message: 'This ticket has already been checked in',
-                ticket: errorData.ticket,
-            });
-        } else if (
-            errorData?.code === 'TICKET_USED' ||
-            errorData?.detail?.includes('already been used')
-        ) {
-            setResult({
-                type: 'warning',
-                title: 'Already Used',
-                message: 'This ticket has already been used',
-                ticket: errorData?.ticket,
-            });
-        } else if (errorData?.detail) {
-            setResult({
-                type: 'error',
-                title: 'Invalid Ticket',
-                message: errorData.detail,
-                ticket: errorData?.ticket,
-            });
-        } else {
-            setResult({
-                type: 'error',
-                title: 'Verification Failed',
-                message: 'Failed to verify ticket. Please try again.',
-                ticket: null,
-            });
+            toast.error(message);
+        } finally {
+            setCheckingIn(false);
         }
-    } finally {
-        setVerifying(false);
-    }
-};
-
-// ============================================================
-// CHECK-IN (state-changing)
-// ------------------------------------------------------------
-// Same rationale as verifyTicket — the admin UI calls the
-// bare-code manual endpoint, not the signed-payload one.
-// ============================================================
-const checkInTicket = async (code) => {
-    setCheckingIn(true);
-
-    try {
-        const response = await api.post('/checkin/manual/', {
-            code: code.trim(),
-            device_id: 'admin-panel',
-        });
-
-        if (response.data?.success) {
-            setResult({
-                type: 'success',
-                title: 'Check-in Successful!',
-                message: response.data.message,
-                ticket: response.data.ticket,
-                checkin_time: response.data.checkin_time,
-            });
-            toast.success('Check-in successful!');
-            loadData();
-        } else {
-            setResult({
-                type: 'error',
-                title: 'Check-in Failed',
-                message: response.data?.detail || 'The server rejected this check-in.',
-                ticket: response.data?.ticket,
-            });
-            toast.error(response.data?.detail || 'Check-in failed');
-        }
-    } catch (error) {
-        const errorData = error.response?.data;
-        let title = 'Check-in Failed';
-        let message = errorData?.detail || 'An unexpected error occurred.';
-        let resultType = 'error';
-
-        if (errorData?.code === 'OUTSIDE_SLOT_WINDOW') {
-            title = 'Invalid Check-in Time';
-            resultType = 'warning';
-        }
-
-        setResult({
-            type: resultType,
-            title: title,
-            message: message,
-            ticket: errorData?.ticket,
-        });
-        toast.error(message);
-    } finally {
-        setCheckingIn(false);
-    }
-};
+    };
 
     const handleManualEntry = async (e) => {
         e.preventDefault();
@@ -536,13 +552,6 @@ const checkInTicket = async (code) => {
         setManualCode('');
     };
 
-    // ============================================================
-    // FILTERED HISTORY
-    // ------------------------------------------------------------
-    // The `failed` filter now means *exactly* status === 'failed',
-    // not "anything that isn't success". A cancelled row is no
-    // longer counted as failed.
-    // ============================================================
     const filteredHistory = useMemo(() => {
         const q = search.trim().toLowerCase();
 
@@ -562,12 +571,12 @@ const checkInTicket = async (code) => {
     }, [history, search, filter]);
 
     const formatDateTime = (dateString) => {
-        if (!dateString) return { date: 'N/A', time: 'N/A' };
+        if (!dateString) return { date: t('common.nA'), time: t('common.nA') };
         const date = new Date(dateString);
-        if (isNaN(date.getTime())) return { date: 'N/A', time: 'N/A' };
+        if (isNaN(date.getTime())) return { date: t('common.nA'), time: t('common.nA') };
         return {
-            date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            date: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+            time: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
         };
     };
 
@@ -583,16 +592,16 @@ const checkInTicket = async (code) => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle variant="h4">QR Scanner &amp; Check-in</PageTitle>
+                    <PageTitle variant="h4">{t('checkin.title')}</PageTitle>
                     {!isMobile && (
                         <Typography variant="body2" sx={{ color: 'text.secondary', ml: 2 }}>
-                            Scan and verify tickets at event entrance
+                            {t('checkin.subtitle')}
                         </Typography>
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadData}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -601,38 +610,38 @@ const checkInTicket = async (code) => {
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Total Scans"
+                        title={t('checkin.statTotal')}
                         value={stats.total_scans}
                         icon={<ScannerIcon sx={{ color: C.primary }} />}
                         color={C.primary}
-                        subtitle={isMobile ? undefined : 'All time check-ins'}
+                        subtitle={isMobile ? undefined : t('checkin.statAllSubtitle')}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Today"
+                        title={t('checkin.statToday')}
                         value={stats.today_scans}
                         icon={<TodayIcon sx={{ color: C.success }} />}
                         color={C.success}
-                        subtitle={isMobile ? undefined : "Today's check-ins"}
+                        subtitle={isMobile ? undefined : t('checkin.statTodaySubtitle')}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Success"
+                        title={t('checkin.statSuccess')}
                         value={stats.success_scans}
                         icon={<CheckCircleIcon sx={{ color: C.info }} />}
                         color={C.info}
-                        subtitle={isMobile ? undefined : 'Valid tickets'}
+                        subtitle={isMobile ? undefined : t('checkin.statSuccessSubtitle')}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Failed"
+                        title={t('checkin.statFailed')}
                         value={stats.failed_scans}
                         icon={<ErrorIcon sx={{ color: C.error }} />}
                         color={C.error}
-                        subtitle={isMobile ? undefined : 'Invalid tickets'}
+                        subtitle={isMobile ? undefined : t('checkin.statFailedSubtitle')}
                     />
                 </Grid>
             </Grid>
@@ -646,9 +655,9 @@ const checkInTicket = async (code) => {
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                                 <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                     <ScannerIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                                    Ticket Scanner
+                                    {t('checkin.ticketScanner')}
                                 </Typography>
-                                <Tooltip title="Open Camera Scanner">
+                                <Tooltip title={t('checkin.openCamera')}>
                                     <IconButton
                                         color="primary"
                                         onClick={() => setOpenScanner(true)}
@@ -659,10 +668,9 @@ const checkInTicket = async (code) => {
                                 </Tooltip>
                             </Box>
 
-                            {/* Scanner Area (Visual) */}
                             <Box
                                 sx={{
-                                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+                                    background: `linear-gradient(135deg, ${C.scannerBg} 0%, ${C.scannerPanel} 50%, ${C.scannerPanelAlt} 100%)`,
                                     borderRadius: 2,
                                     height: isMobile ? 180 : 250,
                                     display: 'flex',
@@ -674,17 +682,16 @@ const checkInTicket = async (code) => {
                                 }}
                             >
                                 <Box sx={{ textAlign: 'center', color: 'white', px: 2 }}>
-                                    <ScannerIcon sx={{ fontSize: isMobile ? 48 : 64, color: '#00f5ff', mb: 2 }} />
+                                    <ScannerIcon sx={{ fontSize: isMobile ? 48 : 64, color: C.scannerAccent, mb: 2 }} />
                                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                                        Ready to Scan
+                                        {t('checkin.readyToScan')}
                                     </Typography>
                                     <Typography variant="body2" sx={{ opacity: 0.7 }}>
-                                        Click camera icon or enter code manually
+                                        {t('checkin.readyHint')}
                                     </Typography>
                                 </Box>
                             </Box>
 
-                            {/* Slot window info strip */}
                             <Alert
                                 severity="info"
                                 icon={<ScheduleIcon fontSize="small" />}
@@ -694,20 +701,18 @@ const checkInTicket = async (code) => {
                                     '& .MuiAlert-message': { fontSize: '0.75rem' },
                                 }}
                             >
-                                Check-in opens <strong>30 min before</strong> slot start and closes{' '}
-                                <strong>15 min after</strong> slot end.
+                                {t('checkin.slotWindowHint')}
                             </Alert>
 
-                            {/* Manual Entry */}
                             <Box component="form" onSubmit={handleManualEntry} sx={{ mb: 2 }}>
                                 <Typography variant="subtitle2" sx={{ color: 'text.secondary', mb: 1 }}>
                                     <KeyboardIcon sx={{ mr: 0.5, verticalAlign: 'middle' }} />
-                                    Manual Code Entry
+                                    {t('checkin.manualCodeTitle')}
                                 </Typography>
                                 <TextField
                                     fullWidth
                                     size="small"
-                                    placeholder="Enter ticket code (e.g., TIX1234...)"
+                                    placeholder={t('checkin.manualCodePlaceholder')}
                                     value={manualCode}
                                     onChange={(e) => setManualCode(e.target.value)}
                                     InputProps={{
@@ -726,11 +731,10 @@ const checkInTicket = async (code) => {
                                     startIcon={verifying ? <CircularProgress size={20} color="inherit" /> : <CheckIcon />}
                                     sx={{ mt: 1 }}
                                 >
-                                    {verifying ? 'Verifying...' : 'Verify Ticket'}
+                                    {verifying ? t('checkin.verifying') : t('checkin.verifyTicket')}
                                 </Button>
                             </Box>
 
-                            {/* Verification Result */}
                             <VerificationResult
                                 result={result}
                                 onCheckIn={handleCheckIn}
@@ -757,12 +761,12 @@ const checkInTicket = async (code) => {
                             >
                                 <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
                                     <HistoryIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                                    Recent Check-ins
+                                    {t('checkin.recentCheckins')}
                                 </Typography>
                                 <Box sx={{ display: 'flex', gap: 1, width: isMobile ? '100%' : 'auto' }}>
                                     <TextField
                                         size="small"
-                                        placeholder="Search..."
+                                        placeholder={t('checkin.searchPlaceholder')}
                                         value={search}
                                         onChange={(e) => setSearch(e.target.value)}
                                         InputProps={{
@@ -782,21 +786,20 @@ const checkInTicket = async (code) => {
                                         sx={{ flex: isMobile ? 1 : 'unset', width: isMobile ? 'auto' : 140 }}
                                         SelectProps={{ native: true }}
                                     >
-                                        <option value="all">All</option>
-                                        <option value="success">Success</option>
-                                        <option value="failed">Failed</option>
-                                        <option value="cancelled">Undone</option>
+                                        <option value="all">{t('checkin.filterAll')}</option>
+                                        <option value="success">{t('checkin.filterSuccess')}</option>
+                                        <option value="failed">{t('checkin.filterFailed')}</option>
+                                        <option value="cancelled">{t('checkin.filterCancelled')}</option>
                                     </TextField>
                                 </Box>
                             </Box>
 
                             {isMobile ? (
-                                /* ---------- MOBILE: CARD LIST ---------- */
                                 filteredHistory.length > 0 ? (
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                                         {filteredHistory.map((item) => {
                                             const { date, time } = formatDateTime(item.checked_in_at);
-                                            const statusUI = getLogStatusUI(item.status);
+                                            const statusUI = getLogStatusUI(item.status, t);
                                             const rowKey = item.id || `${item.code}-${item.checked_in_at}`;
 
                                             return (
@@ -837,23 +840,23 @@ const checkInTicket = async (code) => {
 
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                                                             <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
-                                                                Attendee
+                                                                {t('checkin.colAttendee')}
                                                             </Typography>
                                                             <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
-                                                                {item.attendee_name || 'Guest'}
+                                                                {item.attendee_name || t('checkin.guest')}
                                                             </Typography>
                                                         </Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                                                             <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
-                                                                Event
+                                                                {t('checkin.colEvent')}
                                                             </Typography>
                                                             <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
-                                                                {item.event || 'N/A'}
+                                                                {item.event || t('common.nA')}
                                                             </Typography>
                                                         </Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                                             <Typography variant="caption" sx={{ color: 'text.disabled', textTransform: 'uppercase', fontWeight: 600 }}>
-                                                                Time
+                                                                {t('checkin.colTime')}
                                                             </Typography>
                                                             <Box sx={{ textAlign: 'right' }}>
                                                                 <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: 'text.primary' }}>
@@ -871,33 +874,32 @@ const checkInTicket = async (code) => {
                                     </Box>
                                 ) : (
                                     <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
-                                        <HistoryIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 1 }} />
+                                        <HistoryIcon sx={{ fontSize: 48, color: C.borderHover, mb: 1 }} />
                                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                            No Check-in History
+                                            {t('checkin.noHistory')}
                                         </Typography>
                                         <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-                                            {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
+                                            {history.length === 0 ? t('checkin.noHistoryHint') : t('checkin.noRowsMatch')}
                                         </Typography>
                                     </Paper>
                                 )
                             ) : (
-                                /* ---------- DESKTOP: TABLE ---------- */
                                 <TableContainer component={Paper} sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)' }}>
                                     <Table size="small">
                                         <TableHead>
                                             <TableRow>
-                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Ticket</TableCell>
-                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Attendee</TableCell>
-                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Event</TableCell>
-                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>Status</TableCell>
-                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>Time</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>{t('checkin.colTicket')}</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>{t('checkin.colAttendee')}</TableCell>
+                                                <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>{t('checkin.colEvent')}</TableCell>
+                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>{t('checkin.colStatus')}</TableCell>
+                                                <TableCell align="center" sx={{ fontWeight: 600, color: 'text.secondary' }}>{t('checkin.colTime')}</TableCell>
                                             </TableRow>
                                         </TableHead>
                                         <TableBody>
                                             {filteredHistory.length > 0 ? (
                                                 filteredHistory.map((item) => {
                                                     const { date, time } = formatDateTime(item.checked_in_at);
-                                                    const statusUI = getLogStatusUI(item.status);
+                                                    const statusUI = getLogStatusUI(item.status, t);
                                                     const rowKey = item.id || `${item.code}-${item.checked_in_at}`;
 
                                                     return (
@@ -906,14 +908,14 @@ const checkInTicket = async (code) => {
                                                             hover
                                                             sx={{
                                                                 cursor: 'pointer',
-                                                                '&:hover': { backgroundColor: '#f8fafc' },
+                                                                '&:hover': { backgroundColor: C.bgPrimary },
                                                             }}
                                                         >
                                                             <TableCell sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 600 }}>
                                                                 {item.code || 'N/A'}
                                                             </TableCell>
                                                             <TableCell sx={{ color: 'text.primary' }}>
-                                                                {item.attendee_name || 'Guest'}
+                                                                {item.attendee_name || t('checkin.guest')}
                                                             </TableCell>
                                                             <TableCell sx={{ color: 'text.primary' }}>
                                                                 {item.event || 'N/A'}
@@ -944,12 +946,12 @@ const checkInTicket = async (code) => {
                                                 <TableRow>
                                                     <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.disabled' }}>
                                                         <Box sx={{ textAlign: 'center' }}>
-                                                            <HistoryIcon sx={{ fontSize: 48, color: '#cbd5e1', mb: 1 }} />
+                                                            <HistoryIcon sx={{ fontSize: 48, color: C.borderHover, mb: 1 }} />
                                                             <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                                                No Check-in History
+                                                                {t('checkin.noHistory')}
                                                             </Typography>
                                                             <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-                                                                {history.length === 0 ? 'Scan tickets to see them here' : 'No rows match your filter'}
+                                                                {history.length === 0 ? t('checkin.noHistoryHint') : t('checkin.noRowsMatch')}
                                                             </Typography>
                                                         </Box>
                                                     </TableCell>
@@ -964,7 +966,6 @@ const checkInTicket = async (code) => {
                 </Grid>
             </Grid>
 
-            {/* Camera Scanner Dialog */}
             <Dialog
                 open={openScanner}
                 onClose={() => setOpenScanner(false)}
@@ -975,7 +976,7 @@ const checkInTicket = async (code) => {
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Typography variant="h6" sx={{ fontWeight: 600 }}>
                             <CameraIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                            Camera Scanner
+                            {t('checkin.cameraTitle')}
                         </Typography>
                         <IconButton onClick={() => setOpenScanner(false)}>
                             <CloseIcon />
@@ -985,7 +986,7 @@ const checkInTicket = async (code) => {
                 <DialogContent>
                     <Box
                         sx={{
-                            background: '#000',
+                            background: C.black,
                             borderRadius: 2,
                             height: isMobile ? 300 : 400,
                             display: 'flex',
@@ -997,13 +998,13 @@ const checkInTicket = async (code) => {
                         <Box sx={{ textAlign: 'center', color: 'white', px: 2 }}>
                             <CameraIcon sx={{ fontSize: 80, mb: 2, opacity: 0.5 }} />
                             <Typography variant="h6">
-                                Camera Scanner
+                                {t('checkin.cameraTitle')}
                             </Typography>
                             <Typography variant="body2" sx={{ opacity: 0.7 }}>
-                                Place QR code within the frame
+                                {t('checkin.cameraHint')}
                             </Typography>
                             <Typography variant="caption" sx={{ display: 'block', mt: 2, opacity: 0.5 }}>
-                                Note: Camera integration requires mobile app
+                                {t('checkin.cameraMobileNote')}
                             </Typography>
                         </Box>
 
@@ -1015,7 +1016,7 @@ const checkInTicket = async (code) => {
                                 transform: 'translate(-50%, -50%)',
                                 width: isMobile ? 200 : 250,
                                 height: isMobile ? 200 : 250,
-                                border: '2px solid #00f5ff',
+                                border: `2px solid ${C.scannerAccent}`,
                                 borderRadius: 2,
                                 boxShadow: '0 0 20px rgba(0,245,255,0.5)',
                             }}
@@ -1024,10 +1025,10 @@ const checkInTicket = async (code) => {
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setOpenScanner(false)} color="inherit">
-                        Close
+                        {t('common.close')}
                     </Button>
                     <Button variant="contained" color="primary">
-                        Capture
+                        {t('checkin.capture')}
                     </Button>
                 </DialogActions>
             </Dialog>

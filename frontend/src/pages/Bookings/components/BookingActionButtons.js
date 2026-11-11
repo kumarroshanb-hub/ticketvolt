@@ -11,6 +11,7 @@ import {
     Visibility as ViewIcon,
 } from '@mui/icons-material';
 import { theme as appTheme } from '../../../theme/tokens';
+import { useTranslation } from 'react-i18next';
 
 const C = appTheme.colors;
 
@@ -34,6 +35,7 @@ export const BookingActionButtons = ({
     loading,
     variant = 'mobile',
 }) => {
+    const { t } = useTranslation();
     const stop = (handler) => (e) => {
         e.stopPropagation();
         handler(booking);
@@ -61,7 +63,7 @@ export const BookingActionButtons = ({
                     disabled={loading}
                     sx={buttonSx(C.success, C.successLight)}
                 >
-                    E-Ticket
+                    {t('booking.actionETicket')}
                 </Button>
             )}
             {actions.canSendEmail && (
@@ -73,7 +75,7 @@ export const BookingActionButtons = ({
                     disabled={loading}
                     sx={buttonSx(C.info, C.infoLight)}
                 >
-                    Email
+                    {t('booking.actionEmail')}
                 </Button>
             )}
             {canManageAllBookings && !actions.isReadonly && (
@@ -84,7 +86,7 @@ export const BookingActionButtons = ({
                             onClick={stop(onMarkPaid)} disabled={loading}
                             sx={buttonSx(C.warning, C.warningLight)}
                         >
-                            Mark Paid
+                            {t('booking.actionMarkPaymentShort')}
                         </Button>
                     )}
                     {actions.canConfirmPayment && (
@@ -93,7 +95,7 @@ export const BookingActionButtons = ({
                             onClick={stop(onConfirmAndIssue)} disabled={loading}
                             sx={buttonSx(C.success, C.successLight)}
                         >
-                            Confirm & Issue
+                            {t('booking.actionConfirmPaymentShort')}
                         </Button>
                     )}
                     {actions.canIssueTickets && (
@@ -102,7 +104,7 @@ export const BookingActionButtons = ({
                             onClick={stop(onIssue)} disabled={loading}
                             sx={buttonSx(C.primary, C.primaryLight)}
                         >
-                            Issue
+                            {t('booking.actionIssueTicketsShort')}
                         </Button>
                     )}
                     {actions.canRegenerateQR && (
@@ -111,7 +113,7 @@ export const BookingActionButtons = ({
                             onClick={stop(onRegenQR)} disabled={loading}
                             sx={buttonSx(C.secondary, C.secondaryLight)}
                         >
-                            Regen QR
+                            {t('booking.actionRegenerateQrShort')}
                         </Button>
                     )}
                     {actions.canCancel && (
@@ -120,7 +122,7 @@ export const BookingActionButtons = ({
                             onClick={stop(onCancel)} disabled={loading}
                             sx={buttonSx(C.error, C.errorLight)}
                         >
-                            Cancel
+                            {t('booking.actionCancelBooking')}
                         </Button>
                     )}
                     {actions.canRefund && (
@@ -129,7 +131,7 @@ export const BookingActionButtons = ({
                             onClick={stop(onRefund)} disabled={loading}
                             sx={buttonSx(C.secondary, C.secondaryLight)}
                         >
-                            Refund
+                            {t('booking.actionRefund')}
                         </Button>
                     )}
                 </>
@@ -149,7 +151,7 @@ export const BookingActionButtons = ({
                     },
                 }}
             >
-                View Details
+                {t('booking.actionViewDetails')}
             </Button>
         </Box>
     );

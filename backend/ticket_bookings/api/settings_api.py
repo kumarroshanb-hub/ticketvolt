@@ -50,6 +50,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             'country', 'country_code', 'default_timezone',
             'org_name', 'org_email', 'org_logo_url', 'email_from_name',
             'updated_at',
+            'payments_enabled',  # ✅ ADDED
         ]
         read_only_fields = ['currency_name', 'effective_country', 'updated_at']
 

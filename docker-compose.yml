@@ -42,7 +42,8 @@ services:
     env_file:
       - ./backend/.env.local
     environment:
-      ENVIRONMENT: local
+      ENVIRONMENT: local          # ← Selects local.py settings
+      RUN_MIGRATIONS: '0'       # ✅ Backend should NOT run migrations (handled by entrypoint.sh)
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +63,8 @@ services:
       - ./backend/.env.local
     environment:
       ENVIRONMENT: local
+      RUN_MIGRATIONS: '0'        # Workers should NOT run migrations
+      RUN_COLLECTSTATIC: '0'     # ✅ Workers don't need static files
     depends_on:
       - postgres
       - redis
@@ -79,6 +82,8 @@ services:
       - ./backend/.env.local
     environment:
       ENVIRONMENT: local
+      RUN_MIGRATIONS: '0'        # Beat should NOT run migrations
+      RUN_COLLECTSTATIC: '0'     # ✅ Beat doesn't need static files
     depends_on:
       - postgres
       - redis

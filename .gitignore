@@ -43,3 +43,8 @@ baileys-gateway/sessions/*.json
 complete_codebase*.txt
 
 frontend/build/
+
+# keep .po sources, ignore compiled binaries
+*.mo
+!backend/locale/en/LC_MESSAGES/django.mo
+!backend/locale/zh_Hant/LC_MESSAGES/django.mo

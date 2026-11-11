@@ -37,8 +37,12 @@ const {
     showDemoCreds,
     demoAdminEmail,
     demoAdminPassword,
-    demoOrganizerEmail,
-    demoOrganizerPassword,
+    demoOrganizerEmail,      // KEPT: legacy env var name
+    demoOrganizerPassword,   // KEPT: legacy env var name
+    demoOwnerEmail,          // ADDED FOR 6-TIER HIERARCHY
+    demoOwnerPassword,       // ADDED FOR 6-TIER HIERARCHY
+    demoStaffEmail,          // ADDED FOR 6-TIER HIERARCHY
+    demoStaffPassword,       // ADDED FOR 6-TIER HIERARCHY
     demoUserEmail,
     demoUserPassword,
 } = Constants.expoConfig?.extra ?? {};
@@ -51,11 +55,20 @@ const DEMO_CREDS = showDemoCreds
               email: demoAdminEmail,
               password: demoAdminPassword,
           },
+          // UPDATED FOR 6-TIER HIERARCHY: organizer → owner
+          // Falls back to legacy demoOrganizerEmail if new env var is unset
           {
-              key: 'organizer',
-              label: '📋 Organizer',
-              email: demoOrganizerEmail,
-              password: demoOrganizerPassword,
+              key: 'owner',
+              label: '👑 Owner',
+              email: demoOwnerEmail || demoOrganizerEmail,
+              password: demoOwnerPassword || demoOrganizerPassword,
+          },
+          // ADDED FOR 6-TIER HIERARCHY: staff can scan tickets
+          {
+              key: 'staff',
+              label: '🎫 Staff',
+              email: demoStaffEmail,
+              password: demoStaffPassword,
           },
           {
               key: 'user',

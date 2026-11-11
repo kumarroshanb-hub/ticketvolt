@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/EventCancellationPolicy.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Grid, FormControl, InputLabel, Select, MenuItem, FormHelperText, Divider, Link,
 } from '@mui/material';
@@ -9,35 +10,38 @@ import { theme } from '../../../theme/tokens';
 
 const C = theme.colors;
 
-export const EventCancellationPolicy = ({ formData, onChange, policies }) => (
+export const EventCancellationPolicy = ({ formData, onChange, policies }) => {
+    const { t } = useTranslation();
+
+    return (
     <>
         <Grid item xs={12}>
-            <SectionTitle variant="h6">Cancellation Policy</SectionTitle>
+            <SectionTitle variant="h6">{t('events.cancellationPolicyTitle')}</SectionTitle>
             <Divider sx={{ borderColor: C.borderLight }} />
         </Grid>
 
         <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-                <InputLabel id="cancellation-policy-label">Refund Policy</InputLabel>
+                <InputLabel id="cancellation-policy-label">{t('events.refundPolicyLabel')}</InputLabel>
                 <Select
                     labelId="cancellation-policy-label"
                     name="cancellation_policy_id"
                     value={formData.cancellation_policy_id || ''}
                     onChange={onChange}
-                    label="Refund Policy"
+                    label={t('events.refundPolicyLabel')}
                 >
                     <MenuItem value="">
-                        <em>No policy (no refunds offered)</em>
+                        <em>{t('events.noPolicyOption')}</em>
                     </MenuItem>
                     {policies.map((p) => (
                         <MenuItem key={p.id} value={p.id}>
                             {p.name}
-                            {p.is_default ? ' (default)' : ''}
+                            {p.is_default ? t('eventWizard.defaultSuffix') : ''}
                         </MenuItem>
                     ))}
                 </Select>
                 <FormHelperText>
-                    Customers will be able to cancel under these rules.{' '}
+                    {t('events.cancellationPolicyHelper')}{' '}
                     <Link
                         component={RouterLink}
                         to="/app/cancellation-policies"
@@ -45,7 +49,7 @@ export const EventCancellationPolicy = ({ formData, onChange, policies }) => (
                         rel="noopener noreferrer"
                         sx={{ color: C.primary, fontWeight: 600 }}
                     >
-                        Manage policies →
+                        {t('events.managePoliciesLink')}
                     </Link>
                 </FormHelperText>
             </FormControl>
@@ -53,13 +57,14 @@ export const EventCancellationPolicy = ({ formData, onChange, policies }) => (
 
         <Grid item xs={12} sm={6}>
             <StyledTextField
-                fullWidth label="Additional Cancellation Notes"
+                fullWidth label={t('events.cancellationNotesLabel')}
                 name="cancellation_policy_text"
                 value={formData.cancellation_policy_text}
                 onChange={onChange}
                 multiline rows={2}
-                helperText="Free-text terms. Does not affect refund calculations."
+                helperText={t('events.cancellationNotesHelper')}
             />
         </Grid>
     </>
-);
+    );
+};

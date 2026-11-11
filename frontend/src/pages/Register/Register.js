@@ -1,404 +1,361 @@
-// frontend/src/pages/Register/Register.js
-import React, { useState } from 'react';
-import {
-    Box, Paper, Typography, TextField, Button, Link,
-    Alert, CircularProgress, useMediaQuery, useTheme,
-} from '@mui/material';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
+import {
+    Box,
+    Paper,
+    Typography,
+    TextField,
+    Button,
+    Alert,
+    CircularProgress,
+    Link,
+    InputLabel,
+    FormControl,
+    FormControlLabel,
+    RadioGroup,
+    Radio,
+    useMediaQuery,
+    useTheme,
+} from '@mui/material';
+import { 
+    ArrowBack as ArrowBackIcon, 
+    ArrowForward as ArrowForwardIcon,
+    CheckCircleOutline as SuccessIcon
+} from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
 import Logo from '../../components/Logo';
+import LanguageSwitcher from '../../components/LanguageSwitcher';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
 
-// Where to send the user after a successful registration
-// when no explicit `from` intent was recorded.
-const DEFAULT_POST_REGISTER_PATH = '/app/dashboard';
-
-// ---------------------------------------------------------------------------
-// ✅ FIX: phone helpers — mirror the backend's
-// UserRegistrationSerializer.validate_phone so the client rejects obvious
-// garbage before the round-trip. The server remains authoritative.
-//
-//   • Optional leading "+"
-//   • 7–15 digits after stripping spaces, dashes, parens, dots
-//
-// The same regex is used by Users.js for admin-created accounts, so the
-// "what counts as a phone number" definition lives in one place
-// conceptually even if this file duplicates the constant.
-// ---------------------------------------------------------------------------
-const PHONE_RE = /^\+?[0-9]{7,15}$/;
-
-const normalisePhone = (raw) =>
-    String(raw || '').replace(/[\s\-\(\)\.]/g, '');
-
-const isValidPhone = (raw) => PHONE_RE.test(normalisePhone(raw));
+const DEFAULT_POST_LOGIN_PATH = '/app/dashboard';
 
 const Register = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { isAuthenticated, loading, login } = useAuth(); 
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-    const [loading, setLoading] = useState(false);
+    // Auth Flow State
+    const [authMethod, setAuthMethod] = useState('magic_link'); // 'magic_link' | 'otp'
+    const [identifier, setIdentifier] = useState('');
+    const [step, setStep] = useState('input'); // 'input' | 'otp' | 'success_magic'
+    const [otpCode, setOtpCode] = useState('');
+    
+    // UI State
     const [error, setError] = useState('');
-    const [formData, setFormData] = useState({
-        username: '',
-        email: '',
-        password: '',
-        password_confirm: '',
-        first_name: '',
-        last_name: '',
-        // ✅ FIX: phone is REQUIRED by UserRegistrationSerializer on the
-        // backend; without it every registration 400s with
-        // {"phone": ["This field is required."]}.
-        phone: '',
-    });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [cooldown, setCooldown] = useState(0);
 
-    // ------------------------------------------------------------
-    // Preserve the redirect intent that came from Login.js.
-    //
-    //   Login.js sends us here with `state: { from: <booking-url> }`
-    //   if the user clicked "Register" while trying to book. We keep
-    //   it and hand it back on every path out of this page:
-    //     • after successful registration → /login (with from)
-    //     • if user clicks "Login" in the footer → /login (with from)
-    // ------------------------------------------------------------
     const rawFrom = location.state?.from;
-    const redirectTo =
-        rawFrom && typeof rawFrom === 'string' && !rawFrom.startsWith('/login')
-            ? rawFrom
-            : DEFAULT_POST_REGISTER_PATH;
+    const redirectTo = rawFrom && typeof rawFrom === 'string' && !rawFrom.startsWith('/register')
+        ? rawFrom
+        : DEFAULT_POST_LOGIN_PATH;
 
-    const handleChange = (e) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
+    // Redirect if already logged in
+    useEffect(() => {
+        if (isAuthenticated && !loading) {
+            navigate(redirectTo, { replace: true });
+        }
+    }, [isAuthenticated, loading, navigate, redirectTo]);
+
+    // Cooldown timer for Resend OTP
+    useEffect(() => {
+        if (cooldown > 0) {
+            const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [cooldown]);
+
+    const handleRequest = async (e) => {
+        e.preventDefault();
+        setError('');
+        setIsSubmitting(true);
+
+        try {
+            if (authMethod === 'magic_link') {
+                if (!identifier.includes('@')) {
+                    throw new Error(t('auth.invalidEmailMagicLink'));
+                }
+                await api.post('/auth/request-magic-link/', { email: identifier });
+                setStep('success_magic');
+            } else {
+                // OTP Flow
+                const channel = identifier.includes('@') ? 'email' : 'whatsapp';
+                await api.post('/auth/request-otp/', { identifier, channel });
+                setStep('otp');
+                setCooldown(30); // 30 second cooldown
+            }
+        } catch (err) {
+            const errorMsg = err.response?.data?.error || err.message || t('auth.sendCodeFailed');
+            setError(errorMsg);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleVerifyOtp = async () => {
+        if (otpCode.length !== 6) {
+            setError(t('auth.enterCompleteCode'));
+            return;
+        }
+        setError('');
+        setIsSubmitting(true);
+
+        try {
+            const channel = identifier.includes('@') ? 'email' : 'whatsapp';
+            const res = await api.post('/auth/verify-otp/', {
+                identifier,
+                channel,
+                code: otpCode
+            });
+            
+            // ✅ Log the user in and redirect
+            if (res.data.access && res.data.refresh && res.data.user) {
+                login(res.data.access, res.data.refresh, res.data.user);
+                navigate(redirectTo, { replace: true });
+            }
+        } catch (err) {
+            const errorMsg = err.response?.data?.error || t('auth.invalidExpiredCode');
+            setError(errorMsg);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleResendOtp = async () => {
+        setError('');
+        try {
+            const channel = identifier.includes('@') ? 'email' : 'whatsapp';
+            await api.post('/auth/request-otp/', { identifier, channel });
+            setCooldown(30);
+            toast.success(t('auth.newCodeSent'));
+        } catch (err) {
+            toast.error(err.response?.data?.error || t('auth.resendCodeFailed'));
+        }
+    };
+
+    const resetFlow = () => {
+        setStep('input');
+        setIdentifier('');
+        setOtpCode('');
         setError('');
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setError('');
+    if (loading) {
+        return (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: C.bgDark }}>
+                <CircularProgress sx={{ color: C.secondary }} />
+            </Box>
+        );
+    }
 
-        // ✅ FIX: lightweight client-side phone check for fast feedback.
-        // The backend validator runs the exact same rule; we just avoid
-        // a pointless network round-trip for the obvious case.
-        if (!formData.phone?.trim()) {
-            setError('Mobile number is required.');
-            return;
-        }
-        if (!isValidPhone(formData.phone)) {
-            setError('Enter a valid mobile number (7–15 digits, optionally starting with "+").');
-            return;
-        }
+    // Shared Styles
+    const labelSx = {
+        color: 'rgba(255, 255, 255, 0.85)', fontSize: '12px', fontWeight: 600,
+        letterSpacing: '0.4px', textTransform: 'uppercase', marginBottom: '6px',
+        position: 'static', transform: 'none', fontFamily: F.family,
+        '&.Mui-focused': { color: C.secondary },
+    };
 
-        setLoading(true);
+    const fieldSx = {
+        '& .MuiOutlinedInput-root': {
+            backgroundColor: 'rgba(255, 255, 255, 0.04)', color: C.textInverse,
+            fontSize: 15, fontFamily: F.family,
+            '& fieldset': { borderColor: C.bgDarkBorder },
+            '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
+            '&.Mui-focused fieldset': { borderColor: C.secondary },
+        },
+        '& .MuiOutlinedInput-input': { padding: '14px 14px', fontFamily: F.family },
+    };
 
-        try {
-            // ✅ FIX: send a normalised phone (digits only, plus an
-            // optional leading "+") so the stored value matches what
-            // the backend validator accepts. WhatsApp defaults to the
-            // same number on the backend when blank; we don't send it
-            // here because the register endpoint handles that.
-            const payload = {
-                ...formData,
-                phone: normalisePhone(formData.phone),
-            };
-            await api.post('/users/register/', payload);
-            toast.success('Registration successful! Please log in.');
-            // Pass the redirect intent forward to Login.
-            navigate('/login', { state: { from: redirectTo } });
-        } catch (err) {
-            console.error('Registration error:', err);
-            const errorData = err.response?.data;
-
-            let msg = 'Registration failed. Please try again.';
-
-            if (typeof errorData === 'string') {
-                msg = errorData;
-            } else if (errorData && typeof errorData === 'object') {
-                // Collect field-level errors (up to 3) so the user
-                // sees everything they need to fix in one pass.
-                const entries = Object.entries(errorData);
-                if (entries.length > 0) {
-                    const messages = entries.slice(0, 3).map(([field, val]) => {
-                        const text = Array.isArray(val) ? val[0] : String(val);
-                        return field === 'non_field_errors' || field === 'detail'
-                            ? text
-                            : `${field}: ${text}`;
-                    });
-                    msg = messages.join(' · ');
-                }
-            } else if (err.message) {
-                msg = err.message;
-            }
-
-            setError(msg);
-            toast.error(msg);
-        } finally {
-            setLoading(false);
-        }
+    const primaryBtnSx = {
+        py: 1.5, minHeight: 48, background: C.secondary, color: C.textInverse,
+        borderRadius: 2, textTransform: 'none', fontSize: '15px', fontWeight: 700,
+        letterSpacing: '0.3px', fontFamily: F.family, transition: 'all 0.2s ease',
+        '&:hover': { background: C.secondaryDark, transform: 'translateY(-1px)', boxShadow: `0 8px 24px rgba(255, 42, 42, 0.30)` },
+        '&:disabled': { background: 'rgba(255, 42, 42, 0.40)', color: 'rgba(255, 255, 255, 0.60)' },
     };
 
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                minHeight: '100vh',
-                minHeight: '100dvh',
-                bgcolor: 'background.default',
-                p: isMobile ? 1.5 : 2,
-                pt: isMobile ? 'max(12px, env(safe-area-inset-top))' : 2,
-                pb: isMobile ? 'max(12px, env(safe-area-inset-bottom))' : 2,
-                pl: isMobile ? 'max(12px, env(safe-area-inset-left))' : 2,
-                pr: isMobile ? 'max(12px, env(safe-area-inset-right))' : 2,
-                fontFamily: F.family,
-            }}
-        >
-            <Paper
-                sx={{
-                    p: isMobile ? 2.5 : 4,
-                    maxWidth: 480,
-                    width: '100%',
-                    borderRadius: 3,
-                    my: isMobile ? 1 : 0,
-                    bgcolor: 'background.paper',
-                    border: `1px solid ${C.borderLight}`,
-                    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.04)',
-                }}
-            >
-                {/* ==================================================
-                    HEADER — logo + title
-                   ================================================== */}
-                <Box
-                    sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        mb: 3,
-                    }}
-                >
-                    <Logo variant="full" height={60} />
-                    <Typography
-                        variant="h5"
-                        sx={{
-                            fontWeight: 700,
-                            color: 'text.primary',
-                            mt: 2,
-                            mb: 0.5,
-                            fontSize: { xs: '1.35rem', sm: '1.5rem' },
-                            fontFamily: F.family,
-                        }}
-                    >
-                        Create your account
-                    </Typography>
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '13px',
-                            fontFamily: F.family,
-                        }}
-                    >
-                        Sign up to book tickets in seconds
+        <Box sx={{
+            display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh',
+            bgcolor: C.bgDark, p: isMobile ? 1.5 : 2, fontFamily: F.family, position: 'relative',
+        }}>
+            {/* Back to Home */}
+            <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10 }}>
+                <Button component={RouterLink} to="/" startIcon={<ArrowBackIcon />} sx={{
+                    color: 'rgba(255, 255, 255, 0.6)', textTransform: 'none', fontWeight: 600, fontFamily: F.family,
+                    '&:hover': { color: 'rgba(255, 255, 255, 0.95)', bgcolor: 'rgba(255, 255, 255, 0.08)' },
+                }}>
+                    {!isMobile && t('auth.backToHome')}
+                </Button>
+            </Box>
+
+            <Box sx={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+                <LanguageSwitcher variant="dark" compact={isMobile} />
+            </Box>
+
+            <Paper sx={{
+                p: isMobile ? 3 : 4, maxWidth: 440, width: '100%', borderRadius: 3,
+                bgcolor: C.bgDarkCard, border: `1px solid ${C.bgDarkBorder}`, boxShadow: 'none',
+            }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
+                    <Logo variant="full" height={80} inverse />
+                    <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.65)', mt: 3, fontSize: '15px', fontFamily: F.family }}>
+                        {step === 'input' ? t('register.title') :
+                         step === 'otp' ? t('auth.verifyIdentity') : t('auth.checkInbox')}
                     </Typography>
                 </Box>
 
                 {error && (
-                    <Alert severity="error" sx={{ mb: 3, fontFamily: F.family }}>
+                    <Alert severity="error" sx={{
+                        mb: 3, bgcolor: 'rgba(239, 68, 68, 0.10)', color: C.errorLight,
+                        border: `1px solid rgba(239, 68, 68, 0.25)`, fontFamily: F.family,
+                    }}>
                         {error}
                     </Alert>
                 )}
 
-                {/* ==================================================
-                    FORM
-                   ================================================== */}
-                <form onSubmit={handleSubmit} noValidate>
-                    <TextField
-                        fullWidth
-                        label="Username"
-                        name="username"
-                        value={formData.username}
-                        onChange={handleChange}
-                        required
-                        autoComplete="username"
-                        sx={{ mb: 2, '& .MuiInputBase-input': { fontSize: 16 } }}
-                    />
+                {/* ==========================================
+                    STEP 1: IDENTIFIER INPUT
+                   ========================================== */}
+                {step === 'input' && (
+                    <form onSubmit={handleRequest} noValidate>
+                        <FormControl fullWidth sx={{ mb: 2.5 }}>
+                            <InputLabel shrink sx={labelSx}>
+                                {authMethod === 'magic_link' ? t('auth.emailAddress') : t('auth.emailOrMobile')}
+                            </InputLabel>
+                            <TextField
+                                fullWidth
+                                type={authMethod === 'magic_link' ? 'email' : 'text'}
+                                value={identifier}
+                                onChange={(e) => setIdentifier(e.target.value)}
+                                required
+                                placeholder={authMethod === 'magic_link' ? t('auth.emailPlaceholder') : t('auth.emailOrPhonePlaceholder')}
+                                sx={fieldSx}
+                                disabled={isSubmitting}
+                            />
+                        </FormControl>
 
-                    <TextField
-                        fullWidth
-                        label="Email"
-                        name="email"
-                        type="email"
-                        value={formData.email}
-                        onChange={handleChange}
-                        required
-                        autoComplete="email"
-                        inputProps={{ inputMode: 'email' }}
-                        sx={{ mb: 2, '& .MuiInputBase-input': { fontSize: 16 } }}
-                    />
+                        <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
+                            <RadioGroup row value={authMethod} onChange={(e) => setAuthMethod(e.target.value)}>
+                                <FormControlLabel 
+                                    value="magic_link" 
+                                    control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.magicLink')}</Typography>} 
+                                />
+                                <FormControlLabel 
+                                    value="otp" 
+                                    control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.otpCode')}</Typography>} 
+                                />
+                            </RadioGroup>
+                        </FormControl>
 
-                    {/*
-                      ✅ FIX: Mobile number. Required by the backend
-                      (UserRegistrationSerializer.phone is
-                      `required=True, allow_blank=False`), and used by
-                      the WhatsApp ticket-delivery path, so it must be
-                      collected here — leaving it out made every
-                      registration 400.
+                        <Button type="submit" fullWidth variant="contained" disabled={isSubmitting || !identifier}
+                            endIcon={!isSubmitting && <ArrowForwardIcon />} sx={primaryBtnSx}>
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.getStarted')}
+                        </Button>
 
-                      Placed directly under Email because it's part of
-                      the "how do we reach you" group; name and
-                      password follow below.
-                    */}
-                    <TextField
-                        fullWidth
-                        label="Mobile Number"
-                        name="phone"
-                        type="tel"
-                        value={formData.phone}
-                        onChange={handleChange}
-                        required
-                        autoComplete="tel"
-                        placeholder="+91 9876543210"
-                        inputProps={{ inputMode: 'tel' }}
-                        helperText="7–15 digits. Used for WhatsApp ticket delivery."
-                        sx={{
-                            mb: 2,
-                            '& .MuiInputBase-input': { fontSize: 16 },
-                            '& .MuiFormHelperText-root': {
-                                fontSize: '11px',
-                                marginLeft: 0,
-                            },
-                        }}
-                    />
+                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2.5 }}>
+                            <Link component={RouterLink} to="/login" sx={{
+                                color: 'rgba(255, 255, 255, 0.65)', fontSize: '13px', fontFamily: F.family, textDecoration: 'none',
+                                '&:hover': { color: C.secondary, textDecoration: 'underline' },
+                            }}>
+                                {t('auth.haveAccountLogin')}
+                            </Link>
+                        </Box>
+                    </form>
+                )}
 
-                    <Box
-                        sx={{
-                            display: 'flex',
-                            flexDirection: isMobile ? 'column' : 'row',
-                            gap: 2,
-                            mb: 2,
-                        }}
-                    >
+                {/* ==========================================
+                    STEP 2: OTP ENTRY
+                   ========================================== */}
+                {step === 'otp' && (
+                    <Box sx={{ textAlign: 'center' }}>
+                        <Typography sx={{ color: 'rgba(255,255,255,0.8)', mb: 1, fontSize: 15 }}>
+                            {t('auth.sentCodeTo')}
+                        </Typography>
+                        <Typography sx={{ color: C.textInverse, fontWeight: 700, fontSize: 18, mb: 3 }}>
+                            {identifier}
+                        </Typography>
+
                         <TextField
                             fullWidth
-                            label="First Name"
-                            name="first_name"
-                            value={formData.first_name}
-                            onChange={handleChange}
-                            autoComplete="given-name"
-                            sx={{ '& .MuiInputBase-input': { fontSize: 16 } }}
-                        />
-                        <TextField
-                            fullWidth
-                            label="Last Name"
-                            name="last_name"
-                            value={formData.last_name}
-                            onChange={handleChange}
-                            autoComplete="family-name"
-                            sx={{ '& .MuiInputBase-input': { fontSize: 16 } }}
-                        />
-                    </Box>
-
-                    <TextField
-                        fullWidth
-                        label="Password"
-                        name="password"
-                        type="password"
-                        value={formData.password}
-                        onChange={handleChange}
-                        required
-                        autoComplete="new-password"
-                        helperText="Minimum 10 characters."
-                        sx={{
-                            mb: 2,
-                            '& .MuiInputBase-input': { fontSize: 16 },
-                            '& .MuiFormHelperText-root': {
-                                fontSize: '11px',
-                                marginLeft: 0,
-                            },
-                        }}
-                    />
-
-                    <TextField
-                        fullWidth
-                        label="Confirm Password"
-                        name="password_confirm"
-                        type="password"
-                        value={formData.password_confirm}
-                        onChange={handleChange}
-                        required
-                        autoComplete="new-password"
-                        sx={{ mb: 3, '& .MuiInputBase-input': { fontSize: 16 } }}
-                    />
-
-                    <Button
-                        type="submit"
-                        fullWidth
-                        variant="contained"
-                        disabled={loading}
-                        sx={{
-                            py: 1.5,
-                            minHeight: 48,
-                            textTransform: 'none',
-                            fontSize: 15,
-                            fontWeight: 700,
-                            letterSpacing: '0.3px',
-                            background: C.primaryGradient,
-                            color: C.textInverse,
-                            borderRadius: 2,
-                            '&:hover': {
-                                background: `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`,
-                                transform: 'translateY(-1px)',
-                                boxShadow: '0 8px 24px rgba(51, 51, 51, 0.30)',
-                            },
-                        }}
-                    >
-                        {loading ? (
-                            <CircularProgress size={22} sx={{ color: C.textInverse }} />
-                        ) : (
-                            'Create Account'
-                        )}
-                    </Button>
-                </form>
-
-                {/* ==================================================
-                    FOOTER — login link.
-                    Preserves the redirect intent so a user who
-                    realizes they already have an account still ends
-                    up at their originally-intended destination.
-                   ================================================== */}
-                <Box textAlign="center" mt={3}>
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '13px',
-                            fontFamily: F.family,
-                        }}
-                    >
-                        Already have an account?{' '}
-                        <Link
-                            component={RouterLink}
-                            to="/login"
-                            state={{ from: redirectTo }}
-                            sx={{
-                                color: C.primary,
-                                fontWeight: 700,
-                                textDecoration: 'none',
-                                '&:hover': {
-                                    color: C.primaryDark,
-                                    textDecoration: 'underline',
+                            value={otpCode}
+                            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                            placeholder="• • • • • •"
+                            inputProps={{
+                                maxLength: 6,
+                                style: { 
+                                    textAlign: 'center', 
+                                    letterSpacing: '0.5em', 
+                                    fontSize: '24px',
+                                    fontFamily: F.familyMono,
+                                    color: C.textInverse
                                 },
+                                inputMode: 'numeric',
+                                pattern: '[0-9]*'
                             }}
-                        >
-                            Log in
-                        </Link>
-                    </Typography>
-                </Box>
+                            sx={{
+                                ...fieldSx,
+                                mb: 3,
+                                '& .MuiOutlinedInput-root': {
+                                    ...fieldSx['& .MuiOutlinedInput-root'],
+                                    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                                }
+                            }}
+                            disabled={isSubmitting}
+                            autoFocus
+                        />
+
+                        <Button fullWidth variant="contained" onClick={handleVerifyOtp} 
+                            disabled={isSubmitting || otpCode.length !== 6} sx={primaryBtnSx}>
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.createAccountLogin')}
+                        </Button>
+
+                        <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Button onClick={resetFlow} sx={{ color: 'rgba(255,255,255,0.6)', textTransform: 'none' }}>
+                                {t('auth.changeEmailPhone')}
+                            </Button>
+                            <Button onClick={handleResendOtp} disabled={cooldown > 0} 
+                                sx={{ color: cooldown > 0 ? 'rgba(255,255,255,0.3)' : C.secondary, textTransform: 'none' }}>
+                                {cooldown > 0 ? t('auth.resendIn', { seconds: cooldown }) : t('auth.resendCode')}
+                            </Button>
+                        </Box>
+                    </Box>
+                )}
+
+                {/* ==========================================
+                    STEP 3: MAGIC LINK SUCCESS
+                   ========================================== */}
+                {step === 'success_magic' && (
+                    <Box sx={{ textAlign: 'center' }}>
+                        <SuccessIcon sx={{ fontSize: 60, color: C.success, mb: 2 }} />
+                        <Typography variant="h6" sx={{ color: C.textInverse, mb: 1, fontWeight: 700 }}>
+                            {t('auth.checkYourEmail')}
+                        </Typography>
+                        <Typography sx={{ color: 'rgba(255,255,255,0.6)', mb: 3, fontSize: 14 }}>
+                            {t('auth.secureLinkSentRegister', { email: identifier })}
+                            <br />
+                            {t('auth.clickLinkRegister')}
+                        </Typography>
+                        <Button variant="outlined" onClick={resetFlow} sx={{
+                            color: C.textInverse, borderColor: C.bgDarkBorder, textTransform: 'none',
+                            '&:hover': { borderColor: C.secondary, color: C.secondary },
+                        }}>
+                            {t('login.tryAnotherEmail')}
+                        </Button>
+                    </Box>
+                )}
             </Paper>
         </Box>
     );

@@ -18,6 +18,7 @@ import { StatusChip, StyledTableContainer } from '../../../components/Common';
 import { BookingStatusUtils, BOOKING_STATUS } from '../../../constants';
 import { AmountDisplay } from './AmountDisplay';
 import { getAvailableActions } from '../../../features/bookings/bookingActions';
+import { useTranslation } from 'react-i18next';
 import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
@@ -36,6 +37,7 @@ export const BookingsTable = ({
     onPromptAction,
     actionLoading,
 }) => {
+    const { t } = useTranslation();
     const headerSx = { color: C.textSecondary, fontWeight: 600, borderBottom: `1px solid ${C.borderLight}` };
 
     return (
@@ -54,14 +56,14 @@ export const BookingsTable = ({
                                     />
                                 </TableCell>
                             )}
-                            <TableCell sx={headerSx}>Reference</TableCell>
-                            <TableCell sx={headerSx}>Customer</TableCell>
-                            <TableCell sx={headerSx}>Event</TableCell>
-                            <TableCell align="right" sx={headerSx}>Amount</TableCell>
-                            <TableCell align="center" sx={headerSx}>Tickets</TableCell>
-                            <TableCell align="center" sx={headerSx}>Status</TableCell>
-                            <TableCell align="center" sx={headerSx}>Date</TableCell>
-                            <TableCell align="center" sx={headerSx}>Actions</TableCell>
+                            <TableCell sx={headerSx}>{t('booking.reference')}</TableCell>
+                            <TableCell sx={headerSx}>{t('booking.customer')}</TableCell>
+                            <TableCell sx={headerSx}>{t('booking.event')}</TableCell>
+                            <TableCell align="right" sx={headerSx}>{t('booking.amount')}</TableCell>
+                            <TableCell align="center" sx={headerSx}>{t('booking.tickets')}</TableCell>
+                            <TableCell align="center" sx={headerSx}>{t('booking.status')}</TableCell>
+                            <TableCell align="center" sx={headerSx}>{t('booking.date')}</TableCell>
+                            <TableCell align="center" sx={headerSx}>{t('common.actions')}</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -69,7 +71,7 @@ export const BookingsTable = ({
                             <TableRow>
                                 <TableCell colSpan={canManageAllBookings ? 9 : 8} align="center" sx={{ py: 4 }}>
                                     <Typography sx={{ color: C.textLight }}>
-                                        {isRegularUser ? 'No bookings found. Book your first event!' : 'No bookings found'}
+                                        {isRegularUser ? t('booking.noBookingsUserHint') : t('booking.noBookings')}
                                     </Typography>
                                 </TableCell>
                             </TableRow>
@@ -106,20 +108,20 @@ export const BookingsTable = ({
                                             </Typography>
                                             {isCompleted && (
                                                 <Typography variant="caption" sx={{ color: C.success, display: 'block' }}>
-                                                    ✅ All tickets used
+                                                    ✅ {t('booking.allTicketsUsed')}
                                                 </Typography>
                                             )}
                                         </TableCell>
                                         <TableCell sx={{ color: C.textPrimary }}>{booking.customer_name}</TableCell>
                                         <TableCell sx={{ color: C.textPrimary }}>
-                                            {booking.event_title || booking.event?.title || 'N/A'}
+                                            {booking.event_title || booking.event?.title || t('common.nA')}
                                         </TableCell>
                                         <TableCell align="right">
                                             <AmountDisplay booking={booking} align="right" size="body2" />
                                         </TableCell>
                                         <TableCell align="center">
                                             <Chip
-                                                label={`${booking.ticket_count || 0} tickets`}
+                                                label={t('booking.ticketCount', { count: booking.ticket_count || 0 })}
                                                 size="small"
                                                 color={isCompleted ? 'success' : 'primary'}
                                                 variant={isCompleted ? 'filled' : 'outlined'}
@@ -146,7 +148,7 @@ export const BookingsTable = ({
                                         <TableCell align="center">
                                             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', justifyContent: 'center' }}>
                                                 {actions.canViewETicket && (
-                                                    <Tooltip title="View E-Ticket">
+                                                    <Tooltip title={t('booking.actionViewETicket')}>
                                                         <IconButton
                                                             size="small"
                                                             sx={{ color: C.success }}
@@ -158,7 +160,7 @@ export const BookingsTable = ({
                                                     </Tooltip>
                                                 )}
                                                 {actions.canSendEmail && (
-                                                    <Tooltip title="Send E-Ticket Email">
+                                                    <Tooltip title={t('booking.actionSendEmail')}>
                                                         <IconButton
                                                             size="small"
                                                             sx={{ color: C.info }}
@@ -172,7 +174,7 @@ export const BookingsTable = ({
                                                 {canManageAllBookings && (
                                                     <>
                                                         {actions.canMarkPayment && (
-                                                            <Tooltip title="Mark Payment Received (No Tickets)">
+                                                            <Tooltip title={t('booking.actionMarkPayment')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     sx={{ color: C.warning }}
@@ -184,7 +186,7 @@ export const BookingsTable = ({
                                                             </Tooltip>
                                                         )}
                                                         {actions.canConfirmPayment && (
-                                                            <Tooltip title="Confirm Payment & Issue Tickets">
+                                                            <Tooltip title={t('booking.actionConfirmPayment')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     sx={{ color: C.success }}
@@ -196,7 +198,7 @@ export const BookingsTable = ({
                                                             </Tooltip>
                                                         )}
                                                         {actions.canIssueTickets && (
-                                                            <Tooltip title="Issue Tickets">
+                                                            <Tooltip title={t('booking.actionIssueTickets')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     sx={{ color: C.primary }}
@@ -208,7 +210,7 @@ export const BookingsTable = ({
                                                             </Tooltip>
                                                         )}
                                                         {actions.canRegenerateQR && (
-                                                            <Tooltip title="Regenerate QR Codes">
+                                                            <Tooltip title={t('booking.actionRegenerateQr')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     sx={{ color: C.secondary }}
@@ -220,7 +222,7 @@ export const BookingsTable = ({
                                                             </Tooltip>
                                                         )}
                                                         {actions.canCancel && (
-                                                            <Tooltip title="Cancel Booking">
+                                                            <Tooltip title={t('booking.actionCancelBooking')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     sx={{ color: C.error }}
@@ -232,7 +234,7 @@ export const BookingsTable = ({
                                                             </Tooltip>
                                                         )}
                                                         {actions.canRefund && (
-                                                            <Tooltip title="Refund Booking">
+                                                            <Tooltip title={t('booking.actionRefundBooking')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     sx={{ color: C.secondary }}
@@ -245,7 +247,7 @@ export const BookingsTable = ({
                                                         )}
                                                     </>
                                                 )}
-                                                <Tooltip title="View Details">
+                                                <Tooltip title={t('booking.actionViewDetails')}>
                                                     <IconButton
                                                         size="small"
                                                         sx={{ color: C.textSecondary }}

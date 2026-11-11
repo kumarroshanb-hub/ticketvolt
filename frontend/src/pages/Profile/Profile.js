@@ -1,8 +1,14 @@
 // frontend/src/pages/Profile/Profile.js
 import React, { useState } from 'react';
 import styled from 'styled-components';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
+import { useOrg } from '../../context/OrgContext';
+import {
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
+} from '../../constants';
 import {
     Person as PersonIcon,
     Email as EmailIcon,
@@ -94,16 +100,20 @@ const RolePill = styled.span`
     background: ${p => {
         switch (p.$role) {
             case 'super_admin': return `${C.success}1A`;
+            case 'owner':       return `${C.warning}1A`;
             case 'admin':       return `${C.info}1A`;
-            case 'organizer':   return `${C.warning}1A`;
+            case 'staff':       return `${C.secondary}1A`;
+            case 'member':      return `${C.primary}1A`;
             default:            return C.bgInput;
         }
     }};
     color: ${p => {
         switch (p.$role) {
             case 'super_admin': return C.successDark;
+            case 'owner':       return C.warningDark;
             case 'admin':       return C.infoDark;
-            case 'organizer':   return C.warningDark;
+            case 'staff':       return C.secondaryDark;
+            case 'member':      return C.primaryDark;
             default:            return C.textSecondary;
         }
     }};
@@ -257,7 +267,9 @@ const Message = styled.div`
 
 const Profile = () => {
     const { user, updateProfile } = useAuth();
-    const { role, isSuperAdmin, isAdmin, isOrganizer } = useRole();
+    const { platformRole, membershipRole } = useRole();
+    const { currentOrg } = useOrg();
+    const { t } = useTranslation();
     const navigate = useNavigate();
 
     const [editing, setEditing] = useState(false);
@@ -265,12 +277,22 @@ const Profile = () => {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState(null);
 
-    const getRoleLabel = () => {
-        if (isSuperAdmin) return 'Super Admin';
-        if (isAdmin) return 'Admin';
-        if (isOrganizer) return 'Organizer';
-        return 'User';
-    };
+    // Resolve the primary role pill to display. When the platform role is just
+    // 'user', fall back to the membership role so org-level owners/admins don't
+    // see a misleading "Regular User" label.
+    const displayRole =
+        platformRole === PLATFORM_ROLES.SUPER_ADMIN
+            ? 'super_admin'
+            : membershipRole || platformRole || 'user';
+
+    const displayRoleLabel = (() => {
+        if (platformRole === PLATFORM_ROLES.SUPER_ADMIN) return t('roles.superAdmin');
+        if (membershipRole === MEMBERSHIP_ROLES.OWNER) return t('roles.owner');
+        if (membershipRole === MEMBERSHIP_ROLES.ADMIN) return t('roles.admin');
+        if (membershipRole === MEMBERSHIP_ROLES.STAFF) return t('roles.staff');
+        if (membershipRole === MEMBERSHIP_ROLES.MEMBER) return t('roles.member');
+        return t('roles.user');
+    })();
 
     const getInitial = () => {
         const source = user?.name || user?.username || 'U';
@@ -279,11 +301,11 @@ const Profile = () => {
 
     const handleSave = async () => {
         if (!updateProfile) {
-            setMessage({ text: 'Profile editing is not supported.', error: true });
+            setMessage({ text: t('profile.editingUnsupported'), error: true });
             return;
         }
         if (!name.trim()) {
-            setMessage({ text: 'Name cannot be empty.', error: true });
+            setMessage({ text: t('profile.nameEmpty'), error: true });
             return;
         }
 
@@ -291,11 +313,11 @@ const Profile = () => {
             setSaving(true);
             setMessage(null);
             await updateProfile({ name: name.trim() });
-            setMessage({ text: 'Profile updated successfully.', error: false });
+            setMessage({ text: t('profile.saveSuccess'), error: false });
             setEditing(false);
         } catch (err) {
             setMessage({
-                text: err?.message || 'Failed to update profile.',
+                text: err?.message || t('profile.saveFailed'),
                 error: true,
             });
         } finally {
@@ -315,22 +337,31 @@ const Profile = () => {
                 <Header>
                     <Avatar>{getInitial()}</Avatar>
                     <HeaderText>
-                        <Name>{user?.name || user?.username || 'User'}</Name>
-                        <RolePill $role={role}>{getRoleLabel()}</RolePill>
+                        <Name>{user?.name || user?.username || t('common.user')}</Name>
+                        <RolePill $role={displayRole}>
+                            {displayRoleLabel}
+                        </RolePill>
+                        {membershipRole && (
+                            <RolePill $role={`org_${membershipRole}`}>
+                                {t(`roles.org_${membershipRole}`, {
+                                    defaultValue: `${membershipRole} · ${currentOrg?.name || ''}`,
+                                })}
+                            </RolePill>
+                        )}
                     </HeaderText>
                 </Header>
 
-                <SectionTitle>Account Information</SectionTitle>
+                <SectionTitle>{t('profile.accountInformation')}</SectionTitle>
 
                 <Field>
                     <FieldIcon><PersonIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Full name</FieldLabel>
+                        <FieldLabel>{t('profile.fullName')}</FieldLabel>
                         {editing ? (
                             <Input
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
-                                placeholder="Enter your name"
+                                placeholder={t('profile.enterName')}
                                 autoFocus
                             />
                         ) : (
@@ -342,7 +373,7 @@ const Profile = () => {
                 <Field>
                     <FieldIcon><EmailIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Email</FieldLabel>
+                        <FieldLabel>{t('profile.email')}</FieldLabel>
                         <FieldValue>{user?.email || '—'}</FieldValue>
                     </FieldBody>
                 </Field>
@@ -350,18 +381,29 @@ const Profile = () => {
                 <Field>
                     <FieldIcon><BadgeIcon /></FieldIcon>
                     <FieldBody>
-                        <FieldLabel>Username</FieldLabel>
-                        <FieldValue>{user?.username || '—'}</FieldValue>
+                        <FieldLabel>{t('profile.platformRole')}</FieldLabel>
+                        <FieldValue>
+                            {t(`roles.platform_${platformRole}`, {
+                                defaultValue: platformRole,
+                            })}
+                        </FieldValue>
                     </FieldBody>
                 </Field>
 
-                <Field>
-                    <FieldIcon><BadgeIcon /></FieldIcon>
-                    <FieldBody>
-                        <FieldLabel>Role</FieldLabel>
-                        <FieldValue>{getRoleLabel()}</FieldValue>
-                    </FieldBody>
-                </Field>
+                {membershipRole && currentOrg && (
+                    <Field>
+                        <FieldIcon><BadgeIcon /></FieldIcon>
+                        <FieldBody>
+                            <FieldLabel>{t('profile.orgRole', 'Organization role')}</FieldLabel>
+                            <FieldValue>
+                                {t(`roles.org_${membershipRole}`, {
+                                    defaultValue: membershipRole,
+                                })}
+                                {' · '}{currentOrg.name}
+                            </FieldValue>
+                        </FieldBody>
+                    </Field>
+                )}
 
                 {message && (
                     <Message $error={message.error}>{message.text}</Message>
@@ -375,13 +417,13 @@ const Profile = () => {
                                 disabled={saving}
                             >
                                 <SaveIcon />
-                                {saving ? 'Saving…' : 'Save changes'}
+                                {saving ? t('profile.saving') : t('profile.saveChanges')}
                             </PrimaryButton>
                             <GhostButton
                                 onClick={handleCancel}
                                 disabled={saving}
                             >
-                                Cancel
+                                {t('common.cancel')}
                             </GhostButton>
                         </>
                     ) : (
@@ -394,15 +436,15 @@ const Profile = () => {
                                 disabled={!updateProfile}
                                 title={
                                     !updateProfile
-                                        ? 'Editing not supported by AuthContext'
+                                        ? t('profile.editingUnsupported')
                                         : undefined
                                 }
                             >
-                                Edit profile
+                                {t('profile.editProfile')}
                             </PrimaryButton>
                             <GhostButton onClick={() => navigate(-1)}>
                                 <ArrowBackIcon />
-                                Back
+                                {t('common.back')}
                             </GhostButton>
                         </>
                     )}

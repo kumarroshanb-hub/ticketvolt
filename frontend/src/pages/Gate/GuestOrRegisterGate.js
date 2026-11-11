@@ -31,6 +31,7 @@ import {
 } from '@mui/icons-material';
 
 import { useAuth } from '../../context/AuthContext';
+import { useTranslation } from 'react-i18next';
 import Logo from '../../components/Logo';
 import { theme as appTheme } from '../../theme/tokens';
 
@@ -86,6 +87,7 @@ const secondaryBtnSx = {
 };
 
 const GuestOrRegisterGate = () => {
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
     // ✅ FIX [GATE-LOADING-GUARD]: read `loading` too. While auth is
@@ -150,20 +152,20 @@ const GuestOrRegisterGate = () => {
 
     const flowCopy = {
         free_registration: {
-            headline: 'Register for this free event',
-            subhead: 'No payment required. You can register as a guest or create an account.',
+            headline: t('gate.headlineFree'),
+            subhead: t('gate.subheadFree'),
         },
         paid_registration: {
-            headline: 'Register for this event',
-            subhead: 'Create an account or continue as a guest to complete your registration.',
+            headline: t('gate.headlinePaid'),
+            subhead: t('gate.subheadPaid'),
         },
         ticketed: {
-            headline: 'Book tickets for this event',
-            subhead: 'Create an account or continue as a guest to complete your booking.',
+            headline: t('gate.headlineTicketed'),
+            subhead: t('gate.subheadTicketed'),
         },
     }[flow] || {
-        headline: 'Continue to booking',
-        subhead: 'Create an account or continue as a guest.',
+        headline: t('gate.headlineDefault'),
+        subhead: t('gate.subheadDefault'),
     };
 
     // -------------------------------------------------------------------
@@ -193,7 +195,7 @@ const GuestOrRegisterGate = () => {
                         '&:hover': { color: C.primary },
                     }}
                 >
-                    Back
+                    {t('common.back')}
                 </Button>
 
                 {/* Header */}
@@ -273,16 +275,14 @@ const GuestOrRegisterGate = () => {
                             variant="h6"
                             sx={{ fontWeight: 700, color: C.textPrimary, mb: 1 }}
                         >
-                            Create an account
+                            {t('gate.createAccountTitle')}
                         </Typography>
 
                         <Typography
                             variant="body2"
                             sx={{ color: C.textSecondary, mb: 2, flex: 1 }}
                         >
-                            Save time on future bookings, track your tickets
-                            from any device, and get instant access to
-                            e-tickets and check-in history.
+                            {t('gate.createAccountDesc')}
                         </Typography>
 
                         <Divider sx={{ my: 2 }} />
@@ -299,9 +299,9 @@ const GuestOrRegisterGate = () => {
                                 },
                             }}
                         >
-                            <li>View all your bookings in one place</li>
-                            <li>Resend tickets to yourself anytime</li>
-                            <li>Faster checkout on your next event</li>
+                            <li>{t('gate.bulletViewAll')}</li>
+                            <li>{t('gate.bulletResend')}</li>
+                            <li>{t('gate.bulletFaster')}</li>
                         </Typography>
 
                         <Stack spacing={1.2}>
@@ -314,7 +314,7 @@ const GuestOrRegisterGate = () => {
                                 state={{ from: loginTarget }}
                                 sx={primaryBtnSx}
                             >
-                                Register Now
+                                {t('gate.registerNow')}
                             </Button>
                             <Button
                                 fullWidth
@@ -325,7 +325,7 @@ const GuestOrRegisterGate = () => {
                                 state={{ from: loginTarget }}
                                 sx={secondaryBtnSx}
                             >
-                                Already have an account? Log in
+                                {t('gate.alreadyHaveAccount')}
                             </Button>
                         </Stack>
                     </Paper>
@@ -352,17 +352,14 @@ const GuestOrRegisterGate = () => {
                             variant="h6"
                             sx={{ fontWeight: 700, color: C.textPrimary, mb: 1 }}
                         >
-                            Continue as guest
+                            {t('gate.continueGuestTitle')}
                         </Typography>
 
                         <Typography
                             variant="body2"
                             sx={{ color: C.textSecondary, mb: 2, flex: 1 }}
                         >
-                            Skip the account and go straight to the booking.
-                            You'll receive your ticket by email, and you can
-                            look up your booking later with the reference
-                            number we send you.
+                            {t('gate.continueGuestDesc')}
                         </Typography>
 
                         <Divider sx={{ my: 2 }} />
@@ -379,9 +376,9 @@ const GuestOrRegisterGate = () => {
                                 },
                             }}
                         >
-                            <li>No account required</li>
-                            <li>Tickets delivered to your email</li>
-                            <li>Use your booking reference to look up later</li>
+                            <li>{t('gate.bulletNoAccount')}</li>
+                            <li>{t('gate.bulletEmail')}</li>
+                            <li>{t('gate.bulletReference')}</li>
                         </Typography>
 
                         <Button
@@ -400,7 +397,7 @@ const GuestOrRegisterGate = () => {
                                 },
                             }}
                         >
-                            Continue as Guest
+                            {t('gate.continueAsGuest')}
                         </Button>
 
                         {!hasIntent && (
@@ -408,8 +405,7 @@ const GuestOrRegisterGate = () => {
                                 variant="caption"
                                 sx={{ color: C.error, mt: 1, textAlign: 'center' }}
                             >
-                                No event selected. Please go back and choose
-                                an event first.
+                                {t('gate.noEventSelected')}
                             </Typography>
                         )}
                     </Paper>
@@ -425,9 +421,7 @@ const GuestOrRegisterGate = () => {
                         mt: 4,
                     }}
                 >
-                    You can always create an account later — your guest
-                    bookings will be linked to it automatically once you
-                    sign up with the same email address.
+                    {t('gate.footerNote')}
                 </Typography>
             </Container>
         </Box>

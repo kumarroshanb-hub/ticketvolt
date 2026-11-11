@@ -21,6 +21,7 @@ import {
     ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import api from '../../services/api';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import {
     PageContainer,
@@ -171,6 +172,7 @@ const fromDateInput = (value, { endOfDay = false } = {}) => {
 };
 
 const Discounts = () => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
@@ -214,7 +216,7 @@ const Discounts = () => {
             calculateStats(list);
         } catch (error) {
             console.error('Failed to load discounts:', error);
-            toast.error('Failed to load discounts');
+            toast.error(t('discounts.loadFailed'));
             setDiscounts([]);
         } finally {
             setLoading(false);
@@ -301,8 +303,8 @@ const Discounts = () => {
         const toIso = fromDateInput(formData.valid_to, { endOfDay: true });
         const dateErr = validateDateRange(fromIso, toIso, {
             allowEqual: true,
-            startLabel: 'Valid from',
-            endLabel: 'Valid to',
+            startLabel: t('discounts.validFromLabel'),
+            endLabel: t('discounts.validToLabel'),
         });
         if (dateErr) {
             setFormError(dateErr);
@@ -343,10 +345,10 @@ const Discounts = () => {
 
             if (editingDiscount) {
                 await api.put(`/discounts/${editingDiscount.id}/`, payload);
-                toast.success('Discount updated successfully!');
+                toast.success(t('discounts.updatedSuccess'));
             } else {
                 await api.post('/discounts/', payload);
-                toast.success('Discount created successfully!');
+                toast.success(t('discounts.createdSuccess'));
             }
 
             setDialogOpen(false);
@@ -356,7 +358,7 @@ const Discounts = () => {
         } catch (error) {
             console.error('Save error:', error);
             const data = error.response?.data;
-            let msg = 'Failed to save discount';
+            let msg = t('discounts.saveFailed');
             if (typeof data === 'string') msg = data;
             else if (data?.detail) msg = data.detail;
             else if (data && typeof data === 'object') {
@@ -373,13 +375,13 @@ const Discounts = () => {
     const handleDelete = async () => {
         try {
             await api.delete(`/discounts/${deleteDialog.id}/`);
-            toast.success('Discount deleted successfully');
+            toast.success(t('discounts.deletedSuccess'));
             setDeleteDialog({ open: false, id: null, code: '' });
             loadDiscounts();
         } catch (error) {
             console.error('Delete error:', error);
             toast.error(
-                error.response?.data?.detail || 'Failed to delete discount'
+                error.response?.data?.detail || t('discounts.deleteFailed')
             );
         }
     };
@@ -387,52 +389,52 @@ const Discounts = () => {
     const handleCopyCode = (code) => {
         if (!code) return;
         navigator.clipboard.writeText(code);
-        toast.success('Discount code copied to clipboard!');
+        toast.success(t('discounts.copySuccess'));
     };
 
     const getStatusChip = (discount) => {
         const now = new Date();
         if (!discount.is_active) {
-            return <StatusBadge label="INACTIVE" size="small" color="default" />;
+            return <StatusBadge label={t('discounts.statusInactive')} size="small" color="default" />;
         }
         if (discount.valid_to && new Date(discount.valid_to) < now) {
-            return <StatusBadge label="EXPIRED" size="small" color="error" />;
+            return <StatusBadge label={t('discounts.statusExpired')} size="small" color="error" />;
         }
         if (
             discount.max_uses &&
             (discount.used_count || 0) >= discount.max_uses
         ) {
             return (
-                <StatusBadge label="EXHAUSTED" size="small" color="warning" />
+                <StatusBadge label={t('discounts.statusExhausted')} size="small" color="warning" />
             );
         }
-        return <StatusBadge label="ACTIVE" size="small" color="success" />;
+        return <StatusBadge label={t('discounts.statusActive')} size="small" color="success" />;
     };
 
     const statCards = [
         {
-            title: 'Total Discounts',
+            title: t('discounts.statTotal'),
             value: stats.total,
             icon: <DiscountIcon />,
             color: C.primary,
             bg: `${C.primary}14`,
         },
         {
-            title: 'Active',
+            title: t('discounts.statActive'),
             value: stats.active,
             icon: <CheckCircleIcon />,
             color: C.success,
             bg: `${C.success}14`,
         },
         {
-            title: 'Used',
+            title: t('discounts.statUsed'),
             value: stats.used,
             icon: <PeopleIcon />,
             color: C.secondary,
             bg: `${C.secondary}14`,
         },
         {
-            title: 'Expired',
+            title: t('discounts.statExpired'),
             value: stats.expired,
             icon: <CancelIcon />,
             color: C.error,
@@ -452,9 +454,9 @@ const Discounts = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Discounts</PageTitle>
+                    <PageTitle>{t('discounts.title')}</PageTitle>
                     {!isMobile && (
-                        <PageSubtitle>Manage promotional codes and discounts</PageSubtitle>
+                        <PageSubtitle>{t('discounts.subtitle')}</PageSubtitle>
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
@@ -485,7 +487,7 @@ const Discounts = () => {
                                 color: 'text.secondary',
                             }}
                         >
-                            Refresh
+                            {t('common.refresh')}
                         </Button>
                         <Button
                             variant="contained"
@@ -498,7 +500,7 @@ const Discounts = () => {
                                 color: C.textInverse,
                             }}
                         >
-                            {isMobile ? 'Create' : 'Create Discount'}
+                            {isMobile ? t('discounts.createShort') : t('discounts.createDiscount')}
                         </Button>
                     </Stack>
                 </PageHeaderRight>
@@ -556,7 +558,7 @@ const Discounts = () => {
                 discounts.length === 0 ? (
                     <TableCard sx={{ p: 4 }}>
                         <EmptyState py={2}>
-                            No discounts found. Create your first discount!
+                            {t('discounts.noDiscounts')}
                         </EmptyState>
                     </TableCard>
                 ) : (
@@ -616,13 +618,13 @@ const Discounts = () => {
                                     >
                                         {[
                                             {
-                                                label: 'Type',
+                                                label: t('discounts.tableType'),
                                                 value: (discount.type || 'percentage').toUpperCase(),
                                                 color: C.primary,
                                                 weight: 600,
                                             },
                                             {
-                                                label: 'Value',
+                                                label: t('discounts.tableValue'),
                                                 value:
                                                     discount.type === 'percentage'
                                                         ? `${discount.value}%`
@@ -631,7 +633,7 @@ const Discounts = () => {
                                                 weight: 700,
                                             },
                                             {
-                                                label: 'Used',
+                                                label: t('discounts.statUsed'),
                                                 value: `${discount.used_count || 0}${
                                                     discount.max_uses ? ` / ${discount.max_uses}` : ''
                                                 }`,
@@ -639,10 +641,10 @@ const Discounts = () => {
                                                 weight: 500,
                                             },
                                             {
-                                                label: 'Valid Until',
+                                                label: t('discounts.tableValidUntil'),
                                                 value: discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
-                                                    : 'Never',
+                                                    : t('discounts.statusNever'),
                                                 color: C.textPrimary,
                                                 weight: 500,
                                             },
@@ -684,7 +686,7 @@ const Discounts = () => {
                                                 textTransform: 'none',
                                             }}
                                         >
-                                            Edit
+                                            {t('common.edit')}
                                         </Button>
                                         <Button
                                             fullWidth
@@ -704,7 +706,7 @@ const Discounts = () => {
                                                 textTransform: 'none',
                                             }}
                                         >
-                                            Delete
+                                            {t('common.delete')}
                                         </Button>
                                     </Box>
                                 </CardContent>
@@ -719,17 +721,17 @@ const Discounts = () => {
                             <TableHead>
                                 <TableRow>
                                     {[
-                                        { label: 'Code', align: 'left' },
-                                        { label: 'Name', align: 'left' },
-                                        { label: 'Type', align: 'center' },
-                                        { label: 'Value', align: 'center' },
-                                        { label: 'Used / Limit', align: 'center' },
-                                        { label: 'Status', align: 'center' },
-                                        { label: 'Valid Until', align: 'center' },
-                                        { label: 'Actions', align: 'center' },
-                                    ].map((h) => (
+                                        { label: t('discounts.tableCode'), align: 'left' },
+                                        { label: t('discounts.tableName'), align: 'left' },
+                                        { label: t('discounts.tableType'), align: 'center' },
+                                        { label: t('discounts.tableValue'), align: 'center' },
+                                        { label: t('discounts.tableUsedLimit'), align: 'center' },
+                                        { label: t('discounts.tableStatus'), align: 'center' },
+                                        { label: t('discounts.tableValidUntil'), align: 'center' },
+                                        { label: t('common.actions'), align: 'center' },
+                                    ].map((h, headerIndex) => (
                                         <TableCell
-                                            key={h.label}
+                                            key={headerIndex}
                                             align={h.align}
                                             sx={{
                                                 color: 'text.secondary',
@@ -748,7 +750,7 @@ const Discounts = () => {
                                     <TableRow>
                                         <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
                                             <EmptyState py={2}>
-                                                No discounts found. Create your first discount!
+                                                {t('discounts.noDiscounts')}
                                             </EmptyState>
                                         </TableCell>
                                     </TableRow>
@@ -771,7 +773,7 @@ const Discounts = () => {
                                                     >
                                                         {discount.code}
                                                     </Typography>
-                                                    <Tooltip title="Copy code">
+                                                    <Tooltip title={t('discounts.copyCode')}>
                                                         <IconButton
                                                             size="small"
                                                             sx={{ color: 'text.disabled' }}
@@ -811,10 +813,10 @@ const Discounts = () => {
                                             <TableCell align="center" sx={{ color: 'text.secondary' }}>
                                                 {discount.valid_to
                                                     ? new Date(discount.valid_to).toLocaleDateString()
-                                                    : 'Never'}
+                                                    : t('discounts.statusNever')}
                                             </TableCell>
                                             <TableCell align="center">
-                                                <Tooltip title="Edit">
+                                                <Tooltip title={t('common.edit')}>
                                                     <IconButton
                                                         size="small"
                                                         sx={{ color: C.primary }}
@@ -823,7 +825,7 @@ const Discounts = () => {
                                                         <EditIcon fontSize="small" />
                                                     </IconButton>
                                                 </Tooltip>
-                                                <Tooltip title="Delete">
+                                                <Tooltip title={t('common.delete')}>
                                                     <IconButton
                                                         size="small"
                                                         sx={{ color: C.error }}
@@ -863,7 +865,7 @@ const Discounts = () => {
                 }}
             >
                 <DialogTitle sx={{ color: 'text.primary', fontWeight: 700 }}>
-                    {editingDiscount ? 'Edit Discount' : 'Create New Discount'}
+                    {editingDiscount ? t('discounts.editTitle') : t('discounts.createNewTitle')}
                 </DialogTitle>
                 <DialogContent>
                     <FormPaper component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
@@ -876,7 +878,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={6}>
                                 <TextField
                                     fullWidth
-                                    label="Discount Code"
+                                    label={t('discounts.codeLabel')}
                                     name="code"
                                     value={formData.code}
                                     onChange={handleFormChange}
@@ -887,13 +889,13 @@ const Discounts = () => {
                                 <TextField
                                     fullWidth
                                     select
-                                    label="Discount Type"
+                                    label={t('discounts.typeLabel')}
                                     name="type"
                                     value={formData.type}
                                     onChange={handleFormChange}
                                 >
-                                    <MenuItem value="percentage">Percentage (%)</MenuItem>
-                                    <MenuItem value="fixed">Fixed Amount ({settings.currency_code})</MenuItem>
+                                    <MenuItem value="percentage">{t('discounts.typePercentage')}</MenuItem>
+                                    <MenuItem value="fixed">{t('discounts.typeFixed', { currency: settings.currency_code })}</MenuItem>
                                 </TextField>
                             </Grid>
                         </FormRow>
@@ -902,11 +904,11 @@ const Discounts = () => {
                             <Grid item xs={12}>
                                 <TextField
                                     fullWidth
-                                    label="Name (internal)"
+                                    label={t('discounts.nameLabel')}
                                     name="name"
                                     value={formData.name}
                                     onChange={handleFormChange}
-                                    helperText="Not shown to customers"
+                                    helperText={t('discounts.nameHelper')}
                                 />
                             </Grid>
                         </FormRow>
@@ -915,7 +917,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label={formData.type === 'percentage' ? 'Percentage (%)' : `Amount (${settings.currency_code})`}
+                                    label={formData.type === 'percentage' ? t('discounts.valueLabelPercentage') : t('discounts.valueLabelFixed', { currency: settings.currency_code })}
                                     name="value"
                                     type="number"
                                     value={formData.value}
@@ -927,7 +929,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label={`Min Order Amount (${settings.currency_code})`}
+                                    label={t('discounts.minOrderLabel', { currency: settings.currency_code })}
                                     name="min_order_amount"
                                     type="number"
                                     value={formData.min_order_amount}
@@ -938,12 +940,12 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label={`Max Discount Amount (${settings.currency_code})`}
+                                    label={t('discounts.maxDiscountLabel', { currency: settings.currency_code })}
                                     name="max_discount"
                                     type="number"
                                     value={formData.max_discount}
                                     onChange={handleFormChange}
-                                    helperText="Cap on percentage discounts"
+                                    helperText={t('discounts.maxDiscountHelper')}
                                     inputProps={{ min: 0, step: '0.01' }}
                                 />
                             </Grid>
@@ -953,36 +955,36 @@ const Discounts = () => {
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label="Global Usage Limit"
+                                    label={t('discounts.maxUsesLabel')}
                                     name="max_uses"
                                     type="number"
                                     value={formData.max_uses}
                                     onChange={handleFormChange}
-                                    helperText="Empty = unlimited"
+                                    helperText={t('discounts.maxUsesHelper')}
                                     inputProps={{ min: 1 }}
                                 />
                             </Grid>
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label="Max Uses Per User"
+                                    label={t('discounts.maxUsesPerUserLabel')}
                                     name="max_uses_per_user"
                                     type="number"
                                     value={formData.max_uses_per_user}
                                     onChange={handleFormChange}
-                                    helperText="Empty = unlimited"
+                                    helperText={t('discounts.maxUsesPerUserHelper')}
                                     inputProps={{ min: 1 }}
                                 />
                             </Grid>
                             <Grid item xs={12} md={4}>
                                 <TextField
                                     fullWidth
-                                    label="Min Ticket Count"
+                                    label={t('discounts.minTicketCountLabel')}
                                     name="min_ticket_count"
                                     type="number"
                                     value={formData.min_ticket_count}
                                     onChange={handleFormChange}
-                                    helperText="0 = no minimum"
+                                    helperText={t('discounts.minTicketCountHelper')}
                                     inputProps={{ min: 0 }}
                                 />
                             </Grid>
@@ -992,7 +994,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={6}>
                                 <TextField
                                     fullWidth
-                                    label="Valid From"
+                                    label={t('discounts.validFromLabel')}
                                     name="valid_from"
                                     type="date"
                                     value={formData.valid_from}
@@ -1003,7 +1005,7 @@ const Discounts = () => {
                             <Grid item xs={12} md={6}>
                                 <TextField
                                     fullWidth
-                                    label="Valid To"
+                                    label={t('discounts.validToLabel')}
                                     name="valid_to"
                                     type="date"
                                     value={formData.valid_to}
@@ -1040,8 +1042,8 @@ const Discounts = () => {
                                     renderInput={(params) => (
                                         <TextField
                                             {...params}
-                                            label="Applicable Events"
-                                            helperText="Leave empty to apply to all your events"
+                                            label={t('discounts.applicableEventsLabel')}
+                                            helperText={t('discounts.applicableEventsHelper')}
                                         />
                                     )}
                                 />
@@ -1058,7 +1060,7 @@ const Discounts = () => {
                                             name="first_time_buyers_only"
                                         />
                                     }
-                                    label="First-time buyers only"
+                                    label={t('discounts.firstTimeBuyersLabel')}
                                 />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -1070,7 +1072,7 @@ const Discounts = () => {
                                             name="stackable"
                                         />
                                     }
-                                    label="Allow stacking with other discounts"
+                                    label={t('discounts.stackableLabel')}
                                 />
                             </Grid>
                         </FormRow>
@@ -1085,7 +1087,7 @@ const Discounts = () => {
                                             name="is_active"
                                         />
                                     }
-                                    label="Active"
+                                    label={t('discounts.activeLabel')}
                                 />
                             </Grid>
                         </FormRow>
@@ -1113,7 +1115,7 @@ const Discounts = () => {
                                     color: 'text.secondary',
                                 }}
                             >
-                                Cancel
+                                {t('common.cancel')}
                             </Button>
                             <Button
                                 type="submit"
@@ -1130,9 +1132,9 @@ const Discounts = () => {
                                 {saving ? (
                                     <CircularProgress size={20} sx={{ color: C.textInverse }} />
                                 ) : editingDiscount ? (
-                                    'Update'
+                                    t('discounts.updateButton')
                                 ) : (
-                                    'Create'
+                                    t('discounts.createButton')
                                 )}
                             </Button>
                         </Box>
@@ -1153,14 +1155,14 @@ const Discounts = () => {
                 }}
             >
                 <DialogTitle sx={{ color: 'text.primary', fontWeight: 700 }}>
-                    Delete Discount
+                    {t('discounts.deleteTitle')}
                 </DialogTitle>
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2 }}>
-                        This action cannot be undone.
+                        {t('discounts.deleteWarning')}
                     </Alert>
                     <Typography sx={{ color: 'text.secondary' }}>
-                        Are you sure you want to delete the discount code "{deleteDialog.code}"?
+                        {t('discounts.deleteConfirm', { code: deleteDialog.code })}
                     </Typography>
                 </DialogContent>
                 <DialogActions sx={{ p: 2 }}>
@@ -1174,7 +1176,7 @@ const Discounts = () => {
                             color: 'text.secondary',
                         }}
                     >
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         variant="contained"
@@ -1183,7 +1185,7 @@ const Discounts = () => {
                         onClick={handleDelete}
                         sx={{ textTransform: 'none' }}
                     >
-                        Delete
+                        {t('common.delete')}
                     </Button>
                 </DialogActions>
             </Dialog>

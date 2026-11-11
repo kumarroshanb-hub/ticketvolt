@@ -8,6 +8,7 @@ from .api.booking_api import BookingViewSet
 from .api.discount_api import DiscountViewSet
 from .api.dashboard_api import DashboardStatsView
 from .api.analytics_api import AnalyticsView
+from .api.billing_api import BillingSendEmailView, BillingSummaryView, BillingTransactionsView
 from .api.qr_api import QRCodeDownloadView, QRCodeImageView
 from .api.template_api import TemplateTypeViewSet, EventTemplateViewSet
 from .api.user_api import UserViewSet
@@ -177,6 +178,9 @@ urlpatterns = [
     # again here was a duplicate URL registration.
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
     path('analytics/', AnalyticsView.as_view(), name='analytics'),
+    path('billing/summary/', BillingSummaryView.as_view(), name='billing_summary'),
+    path('billing/transactions/', BillingTransactionsView.as_view(), name='billing_transactions'),
+    path('billing/send-email/', BillingSendEmailView.as_view(), name='billing_send_email'),
     path('settings/', SystemSettingsView.as_view(), name='system-settings'),
 
     # ============ QR ============

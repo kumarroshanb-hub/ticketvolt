@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/EventBasicInfo.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Grid, FormControl, InputLabel, Select, MenuItem, Divider,
 } from '@mui/material';
@@ -20,7 +21,10 @@ export const EventBasicInfo = ({
     venues,
     hideVenueField = false,
     hideIdentityFields = false,   // ← skip Title/Descriptions/Type/Category
-}) => (
+}) => {
+    const { t } = useTranslation();
+
+    return (
     <>
         {/* NOTE: Registration type (event_flow) is now edited in the Basics
             step of Create.js. It is intentionally no longer rendered here. */}
@@ -28,14 +32,14 @@ export const EventBasicInfo = ({
         {!hideIdentityFields && (
             <>
                 <Grid item xs={12}>
-                    <SectionTitle variant="h6">Basic Information</SectionTitle>
+                    <SectionTitle variant="h6">{t('events.basicInfoTitle')}</SectionTitle>
                     <Divider sx={{ borderColor: C.borderLight }} />
                 </Grid>
 
                 <Grid item xs={12}>
                     <StyledTextField
                         fullWidth
-                        label="Event Title"
+                        label={t('events.titleLabel')}
                         name="title"
                         value={formData.title}
                         onChange={onChange}
@@ -46,7 +50,7 @@ export const EventBasicInfo = ({
                 <Grid item xs={12}>
                     <StyledTextField
                         fullWidth
-                        label="Short Description"
+                        label={t('events.shortDescLabel')}
                         name="short_description"
                         value={formData.short_description}
                         onChange={onChange}
@@ -58,7 +62,7 @@ export const EventBasicInfo = ({
                 <Grid item xs={12}>
                     <StyledTextField
                         fullWidth
-                        label="Description"
+                        label={t('events.descLabel')}
                         name="description"
                         value={formData.description}
                         onChange={onChange}
@@ -69,17 +73,17 @@ export const EventBasicInfo = ({
 
                 <Grid item xs={12} sm={6}>
                     <FormControl fullWidth>
-                        <InputLabel id="event-type-label">Event Type</InputLabel>
+                        <InputLabel id="event-type-label">{t('events.eventTypeLabel')}</InputLabel>
                         <Select
                             labelId="event-type-label"
                             name="event_type"
                             value={formData.event_type}
                             onChange={onChange}
-                            label="Event Type"
+                            label={t('events.eventTypeLabel')}
                         >
                             {Object.values(EVENT_TYPE).map((type) => (
                                 <MenuItem key={type} value={type}>
-                                    {EVENT_TYPE_LABELS[type] || type}
+                                    {t(`eventType.${type}`, { defaultValue: EVENT_TYPE_LABELS[type] || type })}
                                 </MenuItem>
                             ))}
                         </Select>
@@ -88,17 +92,17 @@ export const EventBasicInfo = ({
 
                 <Grid item xs={12} sm={6}>
                     <FormControl fullWidth>
-                        <InputLabel id="category-label">Category</InputLabel>
+                        <InputLabel id="category-label">{t('events.categoryLabel')}</InputLabel>
                         <Select
                             labelId="category-label"
                             name="category"
                             value={formData.category}
                             onChange={onChange}
-                            label="Category"
+                            label={t('events.categoryLabel')}
                         >
                             {Object.values(EVENT_CATEGORY).map((cat) => (
                                 <MenuItem key={cat} value={cat}>
-                                    {EVENT_CATEGORY_LABELS[cat] || cat}
+                                    {t(`category.${cat}`, { defaultValue: EVENT_CATEGORY_LABELS[cat] || cat })}
                                 </MenuItem>
                             ))}
                         </Select>
@@ -110,15 +114,15 @@ export const EventBasicInfo = ({
         {!hideVenueField && (
             <Grid item xs={12}>
                 <FormControl fullWidth>
-                    <InputLabel id="venue-label">Venue</InputLabel>
+                    <InputLabel id="venue-label">{t('events.venueLabel')}</InputLabel>
                     <Select
                         labelId="venue-label"
                         name="venue_id"
                         value={formData.venue_id}
                         onChange={onChange}
-                        label="Venue"
+                        label={t('events.venueLabel')}
                     >
-                        <MenuItem value="">Select Venue</MenuItem>
+                        <MenuItem value="">{t('events.selectVenue')}</MenuItem>
                         {venues.map((venue) => (
                             <MenuItem key={venue.id} value={venue.id}>
                                 {venue.name}
@@ -130,4 +134,5 @@ export const EventBasicInfo = ({
             </Grid>
         )}
     </>
-);
+    );
+};

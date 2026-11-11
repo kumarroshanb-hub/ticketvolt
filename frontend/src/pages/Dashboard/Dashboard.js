@@ -458,7 +458,7 @@ const Dashboard = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
-                        {t('dashboard.welcome', { name: user?.name || 'Admin' })}
+                        {t('dashboard.welcome', { name: user?.name || t('roles.admin') })}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>

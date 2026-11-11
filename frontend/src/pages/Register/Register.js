@@ -82,7 +82,7 @@ const Register = () => {
         try {
             if (authMethod === 'magic_link') {
                 if (!identifier.includes('@')) {
-                    throw new Error('Please enter a valid email address for Magic Link.');
+                    throw new Error(t('auth.invalidEmailMagicLink'));
                 }
                 await api.post('/auth/request-magic-link/', { email: identifier });
                 setStep('success_magic');
@@ -94,7 +94,7 @@ const Register = () => {
                 setCooldown(30); // 30 second cooldown
             }
         } catch (err) {
-            const errorMsg = err.response?.data?.error || err.message || 'Failed to send code. Please try again.';
+            const errorMsg = err.response?.data?.error || err.message || t('auth.sendCodeFailed');
             setError(errorMsg);
         } finally {
             setIsSubmitting(false);
@@ -103,7 +103,7 @@ const Register = () => {
 
     const handleVerifyOtp = async () => {
         if (otpCode.length !== 6) {
-            setError('Please enter the complete 6-digit code.');
+            setError(t('auth.enterCompleteCode'));
             return;
         }
         setError('');
@@ -123,7 +123,7 @@ const Register = () => {
                 navigate(redirectTo, { replace: true });
             }
         } catch (err) {
-            const errorMsg = err.response?.data?.error || 'Invalid or expired code.';
+            const errorMsg = err.response?.data?.error || t('auth.invalidExpiredCode');
             setError(errorMsg);
         } finally {
             setIsSubmitting(false);
@@ -136,9 +136,9 @@ const Register = () => {
             const channel = identifier.includes('@') ? 'email' : 'whatsapp';
             await api.post('/auth/request-otp/', { identifier, channel });
             setCooldown(30);
-            toast.success('New code sent!');
+            toast.success(t('auth.newCodeSent'));
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to resend code.');
+            toast.error(err.response?.data?.error || t('auth.resendCodeFailed'));
         }
     };
 
@@ -195,7 +195,7 @@ const Register = () => {
                     color: 'rgba(255, 255, 255, 0.6)', textTransform: 'none', fontWeight: 600, fontFamily: F.family,
                     '&:hover': { color: 'rgba(255, 255, 255, 0.95)', bgcolor: 'rgba(255, 255, 255, 0.08)' },
                 }}>
-                    {!isMobile && 'Back to Home'}
+                    {!isMobile && t('auth.backToHome')}
                 </Button>
             </Box>
 
@@ -210,8 +210,8 @@ const Register = () => {
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
                     <Logo variant="full" height={80} inverse />
                     <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.65)', mt: 3, fontSize: '15px', fontFamily: F.family }}>
-                        {step === 'input' ? 'Create your account' : 
-                         step === 'otp' ? 'Verify your identity' : 'Check your inbox'}
+                        {step === 'input' ? t('register.title') :
+                         step === 'otp' ? t('auth.verifyIdentity') : t('auth.checkInbox')}
                     </Typography>
                 </Box>
 
@@ -231,7 +231,7 @@ const Register = () => {
                     <form onSubmit={handleRequest} noValidate>
                         <FormControl fullWidth sx={{ mb: 2.5 }}>
                             <InputLabel shrink sx={labelSx}>
-                                {authMethod === 'magic_link' ? 'Email Address' : 'Email or Mobile Number'}
+                                {authMethod === 'magic_link' ? t('auth.emailAddress') : t('auth.emailOrMobile')}
                             </InputLabel>
                             <TextField
                                 fullWidth
@@ -239,7 +239,7 @@ const Register = () => {
                                 value={identifier}
                                 onChange={(e) => setIdentifier(e.target.value)}
                                 required
-                                placeholder={authMethod === 'magic_link' ? 'you@example.com' : 'email or +1234567890'}
+                                placeholder={authMethod === 'magic_link' ? t('auth.emailPlaceholder') : t('auth.emailOrPhonePlaceholder')}
                                 sx={fieldSx}
                                 disabled={isSubmitting}
                             />
@@ -250,19 +250,19 @@ const Register = () => {
                                 <FormControlLabel 
                                     value="magic_link" 
                                     control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
-                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>Magic Link</Typography>} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.magicLink')}</Typography>} 
                                 />
                                 <FormControlLabel 
                                     value="otp" 
                                     control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
-                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>OTP Code</Typography>} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.otpCode')}</Typography>} 
                                 />
                             </RadioGroup>
                         </FormControl>
 
                         <Button type="submit" fullWidth variant="contained" disabled={isSubmitting || !identifier}
                             endIcon={!isSubmitting && <ArrowForwardIcon />} sx={primaryBtnSx}>
-                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : 'Get Started'}
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.getStarted')}
                         </Button>
 
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2.5 }}>
@@ -270,7 +270,7 @@ const Register = () => {
                                 color: 'rgba(255, 255, 255, 0.65)', fontSize: '13px', fontFamily: F.family, textDecoration: 'none',
                                 '&:hover': { color: C.secondary, textDecoration: 'underline' },
                             }}>
-                                Already have an account? Log in
+                                {t('auth.haveAccountLogin')}
                             </Link>
                         </Box>
                     </form>
@@ -282,7 +282,7 @@ const Register = () => {
                 {step === 'otp' && (
                     <Box sx={{ textAlign: 'center' }}>
                         <Typography sx={{ color: 'rgba(255,255,255,0.8)', mb: 1, fontSize: 15 }}>
-                            We sent a 6-digit code to
+                            {t('auth.sentCodeTo')}
                         </Typography>
                         <Typography sx={{ color: C.textInverse, fontWeight: 700, fontSize: 18, mb: 3 }}>
                             {identifier}
@@ -319,16 +319,16 @@ const Register = () => {
 
                         <Button fullWidth variant="contained" onClick={handleVerifyOtp} 
                             disabled={isSubmitting || otpCode.length !== 6} sx={primaryBtnSx}>
-                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : 'Create Account & Login'}
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.createAccountLogin')}
                         </Button>
 
                         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Button onClick={resetFlow} sx={{ color: 'rgba(255,255,255,0.6)', textTransform: 'none' }}>
-                                Change Email/Phone
+                                {t('auth.changeEmailPhone')}
                             </Button>
                             <Button onClick={handleResendOtp} disabled={cooldown > 0} 
                                 sx={{ color: cooldown > 0 ? 'rgba(255,255,255,0.3)' : C.secondary, textTransform: 'none' }}>
-                                {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend Code'}
+                                {cooldown > 0 ? t('auth.resendIn', { seconds: cooldown }) : t('auth.resendCode')}
                             </Button>
                         </Box>
                     </Box>
@@ -341,17 +341,18 @@ const Register = () => {
                     <Box sx={{ textAlign: 'center' }}>
                         <SuccessIcon sx={{ fontSize: 60, color: C.success, mb: 2 }} />
                         <Typography variant="h6" sx={{ color: C.textInverse, mb: 1, fontWeight: 700 }}>
-                            Check your email
+                            {t('auth.checkYourEmail')}
                         </Typography>
                         <Typography sx={{ color: 'rgba(255,255,255,0.6)', mb: 3, fontSize: 14 }}>
-                            We sent a secure login link to <strong style={{color: C.textInverse}}>{identifier}</strong>.<br/>
-                            Click the link in the email to instantly create your account and log in.
+                            {t('auth.secureLinkSentRegister', { email: identifier })}
+                            <br />
+                            {t('auth.clickLinkRegister')}
                         </Typography>
                         <Button variant="outlined" onClick={resetFlow} sx={{
                             color: C.textInverse, borderColor: C.bgDarkBorder, textTransform: 'none',
                             '&:hover': { borderColor: C.secondary, color: C.secondary },
                         }}>
-                            Try another email
+                            {t('login.tryAnotherEmail')}
                         </Button>
                     </Box>
                 )}

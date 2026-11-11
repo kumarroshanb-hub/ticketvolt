@@ -5,6 +5,7 @@ import {
 } from '@mui/material';
 import { StatusChip } from '../../../components/Common';
 import { BOOKING_STATUS } from '../../../constants';
+import { useTranslation } from 'react-i18next';
 import { theme as appTheme } from '../../../theme/tokens';
 import { AmountDisplay } from './AmountDisplay';
 
@@ -19,6 +20,7 @@ export const MobileBookingCard = ({
     showCheckbox,
     onToggleSelect,
 }) => {
+    const { t } = useTranslation();
     const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
 
     return (
@@ -80,10 +82,10 @@ export const MobileBookingCard = ({
                                 letterSpacing: 0.5,
                             }}
                         >
-                            Customer
+                            {t('booking.customer')}
                         </Typography>
                         <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 500 }}>
-                            {booking.customer_name || 'N/A'}
+                            {booking.customer_name || t('common.nA')}
                         </Typography>
                     </Box>
 
@@ -98,7 +100,7 @@ export const MobileBookingCard = ({
                                 letterSpacing: 0.5,
                             }}
                         >
-                            Event
+                            {t('booking.event')}
                         </Typography>
                         <Typography
                             variant="body2"
@@ -110,7 +112,7 @@ export const MobileBookingCard = ({
                                 whiteSpace: 'nowrap',
                             }}
                         >
-                            {booking.event_title || booking.event?.title || 'N/A'}
+                            {booking.event_title || booking.event?.title || t('common.nA')}
                         </Typography>
                     </Box>
 
@@ -125,8 +127,7 @@ export const MobileBookingCard = ({
                     >
                         <AmountDisplay booking={booking} align="left" size="h6" />
                         <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
-                            {booking.ticket_count || 0} ticket
-                            {(booking.ticket_count || 0) !== 1 ? 's' : ''}
+                            {t('booking.ticketCount', { count: booking.ticket_count || 0 })}
                         </Typography>
                     </Box>
 
@@ -135,7 +136,7 @@ export const MobileBookingCard = ({
                             variant="caption"
                             sx={{ color: C.success, display: 'block', mt: 1, fontWeight: 600 }}
                         >
-                            ✅ All tickets used
+                            ✅ {t('booking.allTicketsUsed')}
                         </Typography>
                     )}
                 </Box>

@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/EventVenuePlanEditor.js
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Box, Alert, CircularProgress, Typography, Divider, TextField,
     Button, Chip, Stack, Tooltip,
@@ -16,7 +17,7 @@ import eventVenuePlanService from '../../../services/eventVenuePlanService';
 import { theme } from '../../../theme/tokens';
 
 const C = theme.colors;
-const EMPTY_NEW = { name: '', hex_color: '#4CAF50', price: 0 };
+const EMPTY_NEW = { name: '', hex_color: C.categoryDefault, price: 0 };
 
 // ---------------------------------------------------------------------------
 // Layout extraction helpers (unchanged — shared with Create.js)
@@ -167,6 +168,7 @@ export const EventVenuePlanEditor = ({
     onPlanChange,
     onAssignmentsChange,
 }) => {
+    const { t } = useTranslation();
     const [loading, setLoading] = useState(true);
     const [masterSnapshot, setMasterSnapshot] = useState(null);
     const [plan, setPlan] = useState(existingPlan || null);
@@ -232,7 +234,7 @@ export const EventVenuePlanEditor = ({
                         const palette = snapshot.category_palette || [];
                         setDraftCategories(palette.map((p) => ({
                             name: p.name,
-                            hex_color: p.hex_color || '#4CAF50',
+                            hex_color: p.hex_color || C.categoryDefault,
                             price: p.default_price || 0,
                             source_palette_category_id: p.id,
                         })));
@@ -240,7 +242,7 @@ export const EventVenuePlanEditor = ({
                     } else if (fetchedPlan?.categories?.length) {
                         setDraftCategories(fetchedPlan.categories.map((c) => ({
                             name: c.name,
-                            hex_color: c.hex_color || '#4CAF50',
+                            hex_color: c.hex_color || C.categoryDefault,
                             price: Number(c.price) || 0,
                             source_palette_category_id: c.source_palette_category_id || '',
                         })));
@@ -249,7 +251,7 @@ export const EventVenuePlanEditor = ({
                 }
             } catch (err) {
                 if (!cancelled) {
-                    setError(err?.response?.data?.detail || err?.message || 'Failed to load venue plan.');
+                    setError(err?.response?.data?.detail || err?.message || t('eventWizard.planLoadFailed'));
                 }
             } finally {
                 if (!cancelled) setLoading(false);
@@ -353,9 +355,9 @@ export const EventVenuePlanEditor = ({
     // ---- Category create ----
     const handleAddCategory = async () => {
         const name = newCat.name.trim();
-        if (!name) { setError('Category name is required.'); return; }
+        if (!name) { setError(t('eventWizard.categoryNameRequired')); return; }
         if (categories.some((c) => c.name === name)) {
-            setError('A category with this name already exists.');
+            setError(t('eventWizard.categoryExists'));
             return;
         }
         setError('');
@@ -388,7 +390,7 @@ export const EventVenuePlanEditor = ({
             }
             setNewCat(EMPTY_NEW);
         } catch (err) {
-            setError(err?.response?.data?.error || 'Failed to create category.');
+            setError(err?.response?.data?.error || t('eventWizard.categoryCreateFailed'));
         } finally {
             setSaving(false);
         }
@@ -436,7 +438,7 @@ export const EventVenuePlanEditor = ({
             setSelectedCategoryId(null);
             setSelectedSeatIds([]);
         } catch (err) {
-            setError(err?.response?.data?.error || 'Failed to delete category.');
+            setError(err?.response?.data?.error || t('eventWizard.categoryDeleteFailed'));
         } finally {
             setSaving(false);
         }
@@ -444,8 +446,8 @@ export const EventVenuePlanEditor = ({
 
     // ---- Assign ----
     const handleAssignSelected = async () => {
-        if (!selectedCategory) { setError('Select a category first.'); return; }
-        if (selectedSeatIds.length === 0) { setError('Select one or more seats on the canvas first.'); return; }
+        if (!selectedCategory) { setError(t('eventWizard.selectCategoryFirst')); return; }
+        if (selectedSeatIds.length === 0) { setError(t('eventWizard.selectSeatsFirst')); return; }
 
         const seatsToAssign = [...selectedSeatIds];
         const categoryToAssign = selectedCategory;
@@ -513,7 +515,7 @@ export const EventVenuePlanEditor = ({
                 setSelectedSeatIds([]);
             }
         } catch (err) {
-            setError(err?.response?.data?.error || 'Failed to assign seats.');
+            setError(err?.response?.data?.error || t('eventWizard.assignFailed'));
         } finally {
             setSaving(false);
         }
@@ -521,7 +523,7 @@ export const EventVenuePlanEditor = ({
 
     // ---- Clear selected seats ----
     const handleUnassignSelected = async () => {
-        if (selectedSeatIds.length === 0) { setError('Select seats to clear first.'); return; }
+        if (selectedSeatIds.length === 0) { setError(t('eventWizard.selectSeatsToClear')); return; }
 
         const seatsToClear = [...selectedSeatIds];
         setSaving(true);
@@ -560,7 +562,7 @@ export const EventVenuePlanEditor = ({
                 setSelectedSeatIds([]);
             }
         } catch (err) {
-            setError(err?.response?.data?.error || 'Failed to unassign seats.');
+            setError(err?.response?.data?.error || t('eventWizard.unassignFailed'));
         } finally {
             setSaving(false);
         }
@@ -596,7 +598,7 @@ export const EventVenuePlanEditor = ({
                 setSelectedSeatIds([]);
             }
         } catch (err) {
-            setError(err?.response?.data?.error || 'Failed to clear assignments.');
+            setError(err?.response?.data?.error || t('eventWizard.clearFailed'));
         } finally {
             setSaving(false);
         }
@@ -615,8 +617,7 @@ export const EventVenuePlanEditor = ({
     if (isFrozenPlan(eventId, plan)) {
         return (
             <Alert severity="info">
-                This event has been published. Its venue plan is frozen and can no
-                longer be edited here.
+                {t('eventWizard.planFrozen')}
             </Alert>
         );
     }
@@ -625,18 +626,17 @@ export const EventVenuePlanEditor = ({
         return (
             <Alert severity="warning">
                 <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                    This venue master has no seat layout.
+                    {t('eventWizard.planNoLayoutTitle')}
                 </Typography>
                 <Typography variant="body2">
-                    The venue is marked as reserved seating, but the master
-                    snapshot contains no seats. Open the venue in{' '}
-                    <strong>Venues → Layout</strong>, upload an SVG layout, and
-                    re-open this event.
+                    {t('eventWizard.planNoLayoutBody')}
                 </Typography>
                 {layoutDebug.source && (
                     <Typography variant="caption" sx={{ display: 'block', mt: 1, color: C.textMuted }}>
-                        Diagnostic: resolved source = <code>{layoutDebug.source}</code>,
-                        seats = {layoutDebug.seatCount}.
+                        {t('eventWizard.planDiagnostic', {
+                            source: layoutDebug.source,
+                            count: layoutDebug.seatCount,
+                        })}
                     </Typography>
                 )}
             </Alert>
@@ -651,7 +651,7 @@ export const EventVenuePlanEditor = ({
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
             <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                Categories
+                {t('venues.categories')}
             </Typography>
             <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 2 }}>
                 {categories.map((c) => (
@@ -663,7 +663,7 @@ export const EventVenuePlanEditor = ({
                         deleteIcon={<DeleteIcon fontSize="small" />}
                         sx={{
                             bgcolor: toKey(selectedCategoryId) === toKey(c.id) ? c.hex_color : `${c.hex_color}22`,
-                            color: toKey(selectedCategoryId) === toKey(c.id) ? '#fff' : C.textPrimary,
+                            color: toKey(selectedCategoryId) === toKey(c.id) ? C.textInverse : C.textPrimary,
                             fontWeight: 600,
                             border: `1px solid ${c.hex_color}`,
                         }}
@@ -673,18 +673,18 @@ export const EventVenuePlanEditor = ({
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 3 }}>
                 <TextField
-                    size="small" label="New category name"
+                    size="small" label={t('eventWizard.newCategoryName')}
                     value={newCat.name}
                     onChange={(e) => setNewCat({ ...newCat, name: e.target.value })}
                 />
                 <TextField
-                    size="small" type="color" label="Colour"
+                    size="small" type="color" label={t('eventWizard.colour')}
                     value={newCat.hex_color}
                     onChange={(e) => setNewCat({ ...newCat, hex_color: e.target.value })}
                     sx={{ width: 100 }}
                 />
                 <TextField
-                    size="small" type="number" label="Price"
+                    size="small" type="number" label={t('eventWizard.price')}
                     value={newCat.price}
                     onChange={(e) => setNewCat({ ...newCat, price: e.target.value })}
                     inputProps={{ min: 0, step: '0.01' }}
@@ -695,7 +695,7 @@ export const EventVenuePlanEditor = ({
                     onClick={handleAddCategory}
                     disabled={saving || !newCat.name.trim()}
                 >
-                    Add
+                    {t('eventWizard.add')}
                 </Button>
             </Stack>
 
@@ -703,21 +703,21 @@ export const EventVenuePlanEditor = ({
 
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 1.5 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                    Seat Assignment
+                    {t('eventWizard.seatAssignment')}
                     {selectedCategory ? (
                         <Typography component="span" sx={{ ml: 1, color: C.textSecondary, fontWeight: 500 }}>
-                            — assigning to <strong>{selectedCategory.name}</strong>
+                            {t('eventWizard.assigningTo', { name: selectedCategory.name })}
                         </Typography>
                     ) : (
                         <Typography component="span" sx={{ ml: 1, color: C.textMuted, fontWeight: 500 }}>
-                            — select a category above, then click seats
+                            {t('eventWizard.assignHint')}
                         </Typography>
                     )}
                 </Typography>
                 {selectedSeatIds.length > 0 && (
                     <Chip
                         size="small"
-                        label={`${selectedSeatIds.length} selected`}
+                        label={t('eventWizard.selectedCount', { count: selectedSeatIds.length })}
                         color="primary"
                         variant="outlined"
                     />
@@ -736,9 +736,9 @@ export const EventVenuePlanEditor = ({
                         '&:hover': { bgcolor: selectedCategory?.hex_color || C.primary },
                     }}
                 >
-                    {saving ? 'Saving…' : `Assign to ${selectedCategory?.name || '…'}`}
+                    {saving ? t('eventWizard.saving') : t('eventWizard.assignTo', { name: selectedCategory?.name || '…' })}
                 </Button>
-                <Tooltip title="Remove the category assignment from the selected seats">
+                <Tooltip title={t('eventWizard.unassignTooltip')}>
                     <span>
                         <Button
                             variant="outlined"
@@ -747,11 +747,11 @@ export const EventVenuePlanEditor = ({
                             onClick={handleUnassignSelected}
                             disabled={saving || selectedSeatIds.length === 0}
                         >
-                            Clear selected
+                            {t('eventWizard.clearSelected')}
                         </Button>
                     </span>
                 </Tooltip>
-                <Tooltip title="Remove ALL category assignments from every seat">
+                <Tooltip title={t('eventWizard.clearAllTooltip')}>
                     <span>
                         <Button
                             variant="outlined"
@@ -760,7 +760,7 @@ export const EventVenuePlanEditor = ({
                             onClick={handleClearAllAssignments}
                             disabled={saving || assignedCount === 0}
                         >
-                            Clear all assignments
+                            {t('eventWizard.clearAll')}
                         </Button>
                     </span>
                 </Tooltip>
@@ -779,7 +779,7 @@ export const EventVenuePlanEditor = ({
 
             <Stack direction="row" spacing={1} sx={{ mt: 2 }} alignItems="center">
                 <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                    {assignedCount} of {totalSeats} seats assigned
+                    {t('eventWizard.seatsAssigned', { assigned: assignedCount, total: totalSeats })}
                 </Typography>
             </Stack>
         </Box>

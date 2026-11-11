@@ -33,6 +33,7 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         timezone: formData.timezone || 'Asia/Kolkata',
         status: formData.status || EVENT_STATUS.DRAFT,
         is_public: formData.is_public !== undefined ? formData.is_public : true,
+        donations_enabled: Boolean(formData.donations_enabled),
         ticket_format: formData.ticket_format || 'pdf',
         combine_tickets: formData.combine_tickets || false,
         tickets_per_page: formData.tickets_per_page || 4,

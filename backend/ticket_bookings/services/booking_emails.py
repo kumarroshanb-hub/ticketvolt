@@ -561,3 +561,96 @@ def send_refund(booking) -> dict:
         label='refund',
         fallback_html=fallback_html,
     )
+
+def send_billing_receipt(booking, *, attach_tax_receipt=True) -> dict:
+    """Email a billing receipt, including the tax-receipt number when eligible.
+
+    Also attaches the generated donation tax-receipt PDF for eligible
+    donations (above HKD 2,000). Safe to call repeatedly: the receipt
+    number is generated once and reused.
+    """
+    if not booking.customer_email:
+        return {
+            'success': False,
+            'message': 'No customer email on booking.',
+            'error': 'No customer email.',
+        }
+
+    tax_receipt_number = ''
+    receipt_pdf = None
+
+    try:
+        if booking.donation_tax_eligible:
+            from ..services.donation_receipt import (
+                build_tax_receipt_pdf,
+                ensure_tax_receipt_number,
+            )
+
+            booking = ensure_tax_receipt_number(booking)
+            tax_receipt_number = booking.donation_tax_receipt_number or ''
+            if attach_tax_receipt:
+                receipt_pdf = build_tax_receipt_pdf(booking)
+    except Exception as exc:
+        logger.exception(
+            'Unable to issue tax receipt for %s: %s',
+            booking.booking_reference, exc,
+        )
+
+    event = booking.event
+    org = event.organization
+    donation = booking.donation_amount or 0
+
+    context = {
+        'booking': booking,
+        'event': event,
+        'organization_name': org.name,
+        'organization_email': org.org_email or settings.DEFAULT_FROM_EMAIL,
+        'customer_name': booking.customer_name,
+        'total_display': format_money(booking.total_amount),
+        'donation_display': format_money(donation) if donation and donation > 0 else '',
+        'tax_receipt_number': tax_receipt_number,
+        'tax_receipt_issued_at': booking.donation_tax_receipt_issued_at,
+    }
+
+    try:
+        html_content = render_to_string('emails/billing_receipt.html', context)
+        text_content = strip_tags(html_content)
+
+        email = EmailMultiAlternatives(
+            subject=(
+                f'Billing receipt {booking.booking_reference} — {event.title}'
+            ),
+            body=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[booking.customer_email],
+        )
+        email.attach_alternative(html_content, 'text/html')
+
+        if receipt_pdf is not None:
+            email.attach(
+                f'donation-receipt-{booking.booking_reference}.pdf',
+                receipt_pdf.getvalue(),
+                'application/pdf',
+            )
+
+        sent_ok = safe_send_email(email, context_label='billing_receipt')
+        return {
+            'success': sent_ok,
+            'message': (
+                f'Billing receipt sent to {booking.customer_email}.'
+                if sent_ok else 'Email failed (see logs).'
+            ),
+            'error': None if sent_ok else 'Delivery failed (see logs).',
+            'tax_receipt_number': tax_receipt_number,
+        }
+    except Exception as exc:
+        logger.exception(
+            '❌ Billing receipt email failed for %s: %s',
+            booking.booking_reference, exc,
+        )
+        return {
+            'success': False,
+            'message': f'Email error: {exc}',
+            'error': str(exc),
+            'tax_receipt_number': tax_receipt_number,
+        }

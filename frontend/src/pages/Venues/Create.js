@@ -17,6 +17,7 @@ import {
     useMediaQuery, useTheme,
 } from '@mui/material';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import { UploadFile as UploadFileIcon } from '@mui/icons-material';
 import api from '../../services/api';
@@ -88,6 +89,7 @@ const StyledTextField = styled(TextField)`
 
 const CreateVenue = () => {
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const { id } = useParams();
     const [searchParams] = useSearchParams();
     const theme = useTheme();
@@ -213,7 +215,7 @@ const CreateVenue = () => {
         } catch (err) {
             // eslint-disable-next-line no-console
             console.error('Failed to load venue:', err);
-            toast.error('Failed to load venue details');
+            toast.error(t('venues.loadDetailsFailed'));
             navigate('/app/venues');
         } finally {
             setLoading(false);
@@ -272,7 +274,7 @@ const CreateVenue = () => {
         fd.append('canvas_height', String(canvasHeight));
         try {
             await api.post(`/venues/${venueId}/layout/upload/`, fd);
-            toast.info('Seat layout uploaded in a follow-up request.');
+            toast.info(t('venues.layoutUploadedFollowup'));
         } catch (err) {
             // The venue is saved; don't lose it. Surface a clear warning
             // so the operator can retry from the venue's layout editor.
@@ -280,9 +282,9 @@ const CreateVenue = () => {
                 err.response?.data?.error
                 || err.response?.data?.detail
                 || err.message
-                || 'Unknown error';
+                || t('venues.unknownError');
             toast.warn(
-                `Venue saved, but the seat layout could not be uploaded: ${msg}`
+                t('venues.layoutUploadFailed', { error: msg })
             );
         }
         return true;
@@ -295,14 +297,14 @@ const CreateVenue = () => {
 
         try {
             if (!formData.name) {
-                setError('Venue name is required');
+                setError(t('venues.nameRequired'));
                 return;
             }
             if (!formData.organization_id) {
                 setError(
                     organizations.length > 1
-                        ? 'Please select the organization this venue belongs to.'
-                        : 'You need to create an organization before adding venues.',
+                        ? t('venues.organizationRequiredMulti')
+                        : t('venues.organizationRequiredNone'),
                 );
                 return;
             }
@@ -313,10 +315,7 @@ const CreateVenue = () => {
                 && !svgFile
                 && !hasExistingSeats
             ) {
-                setError(
-                    'Upload an SVG seat layout for a reserved-seating venue. '
-                    + 'It will be saved together with the venue in one step.',
-                );
+                setError(t('venues.reservedLayoutRequired'));
                 return;
             }
 
@@ -335,7 +334,7 @@ const CreateVenue = () => {
             if (!isNew) {
                 const response = await api.put(`/venues/${id}/`, payload);
                 await ensureLayoutUploaded(id, response.data);
-                toast.success('Venue updated successfully!');
+                toast.success(t('venues.updatedSuccess'));
                 if (returnTo) {
                     const sep = returnTo.includes('?') ? '&' : '?';
                     navigate(`${returnTo}${sep}venue_id=${id}`);
@@ -349,7 +348,7 @@ const CreateVenue = () => {
             const response = await api.post('/venues/', payload);
             const created = response.data;
             await ensureLayoutUploaded(created?.id, created);
-            toast.success('Venue created successfully!');
+            toast.success(t('venues.createdSuccess'));
 
             if (returnTo && created?.id) {
                 const sep = returnTo.includes('?') ? '&' : '?';
@@ -364,7 +363,7 @@ const CreateVenue = () => {
             console.error('Submit error:', err);
 
             const data = err.response?.data;
-            let msg = 'Failed to save venue';
+            let msg = t('venues.saveFailed');
             if (typeof data === 'string') {
                 msg = data;
             } else if (data && typeof data === 'object') {
@@ -400,7 +399,7 @@ const CreateVenue = () => {
             <PageContainer>
                 <PageHeader>
                     <PageHeaderLeft>
-                        <PageTitle>Add New Venue</PageTitle>
+                        <PageTitle>{t('venues.createTitle')}</PageTitle>
                     </PageHeaderLeft>
                 </PageHeader>
                 <Alert
@@ -411,12 +410,11 @@ const CreateVenue = () => {
                             size="small"
                             onClick={() => navigate('/app/organizations')}
                         >
-                            Create Organization
+                            {t('venues.createOrganization')}
                         </Button>
                     }
                 >
-                    You need to belong to an organization before creating venues.
-                    Create one now — you'll become its owner automatically.
+                    {t('venues.needsOrganizationBody')}
                 </Alert>
             </PageContainer>
         );
@@ -428,11 +426,11 @@ const CreateVenue = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>{isNew ? 'Add New Venue' : 'Edit Venue'}</PageTitle>
+                    <PageTitle>{isNew ? t('venues.createTitle') : t('venues.editVenue')}</PageTitle>
                 </PageHeaderLeft>
                 {returnTo && isNew && (
                     <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                        Your event draft is preserved — you'll return to it after saving.
+                        {t('venues.draftPreserved')}
                     </Typography>
                 )}
             </PageHeader>
@@ -445,14 +443,14 @@ const CreateVenue = () => {
                         {showOrgPicker && (
                             <>
                                 <Grid item xs={12}>
-                                    <SectionTitle variant="h6">Organization</SectionTitle>
+                                    <SectionTitle variant="h6">{t('venues.organizationSection')}</SectionTitle>
                                     <Divider sx={{ borderColor: 'divider' }} />
                                 </Grid>
                                 <Grid item xs={12} sm={6}>
                                     <StyledTextField
                                         fullWidth
                                         select
-                                        label="Organization"
+                                        label={t('venues.organizationLabel')}
                                         name="organization_id"
                                         value={formData.organization_id || ''}
                                         onChange={(e) => {
@@ -461,7 +459,7 @@ const CreateVenue = () => {
                                             setCurrentOrgId(val);
                                         }}
                                         required
-                                        helperText="The tenant this venue belongs to."
+                                        helperText={t('venues.organizationHelper')}
                                     >
                                         {organizations.map((org) => (
                                             <MenuItem key={org.id} value={org.id}>
@@ -474,14 +472,14 @@ const CreateVenue = () => {
                         )}
 
                         <Grid item xs={12}>
-                            <SectionTitle variant="h6">Basic Information</SectionTitle>
+                            <SectionTitle variant="h6">{t('venues.basicInfoSection')}</SectionTitle>
                             <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
                             <StyledTextField
                                 fullWidth
-                                label="Venue Name"
+                                label={t('venues.nameLabel')}
                                 name="name"
                                 value={formData.name}
                                 onChange={handleChange}
@@ -493,7 +491,7 @@ const CreateVenue = () => {
                         <Grid item xs={12}>
                             <StyledTextField
                                 fullWidth
-                                label="Description"
+                                label={t('venues.descriptionLabel')}
                                 name="description"
                                 value={formData.description}
                                 onChange={handleChange}
@@ -506,21 +504,21 @@ const CreateVenue = () => {
                             <StyledTextField
                                 fullWidth
                                 select
-                                label="Venue Type"
+                                label={t('venues.typeLabel')}
                                 name="venue_type"
                                 value={formData.venue_type}
                                 onChange={handleChange}
                             >
-                                <MenuItem value="indoor">Indoor</MenuItem>
-                                <MenuItem value="outdoor">Outdoor</MenuItem>
-                                <MenuItem value="both">Both</MenuItem>
+                                <MenuItem value="indoor">{t('venues.typeIndoor')}</MenuItem>
+                                <MenuItem value="outdoor">{t('venues.typeOutdoor')}</MenuItem>
+                                <MenuItem value="both">{t('venues.typeBoth')}</MenuItem>
                             </StyledTextField>
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
                                 fullWidth
-                                label="Capacity"
+                                label={t('venues.capacityLabel')}
                                 name="capacity"
                                 type="number"
                                 inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
@@ -530,14 +528,14 @@ const CreateVenue = () => {
                         </Grid>
 
                         <Grid item xs={12}>
-                            <SectionTitle variant="h6">Address</SectionTitle>
+                            <SectionTitle variant="h6">{t('venues.addressSection')}</SectionTitle>
                             <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12}>
                             <StyledTextField
                                 fullWidth
-                                label="Address Line 1"
+                                label={t('venues.addressLine1')}
                                 name="address_line1"
                                 value={formData.address_line1}
                                 onChange={handleChange}
@@ -548,7 +546,7 @@ const CreateVenue = () => {
                         <Grid item xs={12}>
                             <StyledTextField
                                 fullWidth
-                                label="Address Line 2"
+                                label={t('venues.addressLine2')}
                                 name="address_line2"
                                 value={formData.address_line2}
                                 onChange={handleChange}
@@ -559,7 +557,7 @@ const CreateVenue = () => {
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
                                 fullWidth
-                                label="City"
+                                label={t('venues.cityLabel')}
                                 name="city"
                                 value={formData.city}
                                 onChange={handleChange}
@@ -570,7 +568,7 @@ const CreateVenue = () => {
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
                                 fullWidth
-                                label="State"
+                                label={t('venues.stateLabel')}
                                 name="state"
                                 value={formData.state}
                                 onChange={handleChange}
@@ -581,7 +579,7 @@ const CreateVenue = () => {
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
                                 fullWidth
-                                label="Postal Code"
+                                label={t('venues.postalCodeLabel')}
                                 name="postal_code"
                                 inputProps={{ inputMode: 'numeric' }}
                                 value={formData.postal_code}
@@ -594,7 +592,7 @@ const CreateVenue = () => {
                             <StyledTextField
                                 fullWidth
                                 select
-                                label="Country"
+                                label={t('venues.countryLabel')}
                                 name="country"
                                 value={formData.country}
                                 onChange={handleChange}
@@ -611,14 +609,14 @@ const CreateVenue = () => {
                         </Grid>
 
                         <Grid item xs={12}>
-                            <SectionTitle variant="h6">Contact Information</SectionTitle>
+                            <SectionTitle variant="h6">{t('venues.contactSection')}</SectionTitle>
                             <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
                                 fullWidth
-                                label="Contact Phone"
+                                label={t('venues.contactPhoneLabel')}
                                 name="contact_phone"
                                 type="tel"
                                 inputProps={{ inputMode: 'tel', autoComplete: 'tel' }}
@@ -630,7 +628,7 @@ const CreateVenue = () => {
                         <Grid item xs={12} sm={6}>
                             <StyledTextField
                                 fullWidth
-                                label="Contact Email"
+                                label={t('venues.contactEmailLabel')}
                                 name="contact_email"
                                 type="email"
                                 inputProps={{ inputMode: 'email', autoComplete: 'email' }}
@@ -640,7 +638,7 @@ const CreateVenue = () => {
                         </Grid>
 
                         <Grid item xs={12}>
-                            <SectionTitle variant="h6">Settings</SectionTitle>
+                            <SectionTitle variant="h6">{t('venues.settingsSection')}</SectionTitle>
                             <Divider sx={{ borderColor: 'divider' }} />
                         </Grid>
 
@@ -657,7 +655,7 @@ const CreateVenue = () => {
                                         }}
                                     />
                                 }
-                                label="Has Reserved Seating"
+                                label={t('venues.hasReservedSeating')}
                                 sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
@@ -675,7 +673,7 @@ const CreateVenue = () => {
                                         }}
                                     />
                                 }
-                                label="Active"
+                                label={t('venues.activeLabel')}
                                 sx={{ color: 'text.secondary' }}
                             />
                         </Grid>
@@ -686,27 +684,21 @@ const CreateVenue = () => {
                         {formData.has_reserved_seating && (
                             <>
                                 <Grid item xs={12}>
-                                    <SectionTitle variant="h6">Seat Layout</SectionTitle>
+                                    <SectionTitle variant="h6">{t('venues.seatLayout')}</SectionTitle>
                                     <Divider sx={{ borderColor: 'divider' }} />
                                     <Alert
                                         severity="info"
                                         sx={{ mt: 2, alignItems: 'flex-start' }}
                                     >
                                         <Typography variant="body2">
-                                            Upload an SVG with one shape per seat.
-                                            The venue details and the seat layout are
-                                            saved together in one step — this creates
-                                            a single venue version. Seat categories and
-                                            pricing are assigned on the event wizard's{' '}
-                                            <em>Seat Categories</em> step.
+                                            {t('venues.layoutInfo')}
                                         </Typography>
                                         {existingLayout?.seats?.length > 0 && (
                                             <Typography
                                                 variant="caption"
                                                 sx={{ display: 'block', mt: 1, color: 'success.main', fontWeight: 600 }}
                                             >
-                                                ✅ {existingLayout.seats.length} seat(s) already
-                                                parsed — upload a new SVG to replace them.
+                                                {t('venues.existingSeats', { count: existingLayout.seats.length })}
                                             </Typography>
                                         )}
                                     </Alert>
@@ -719,7 +711,7 @@ const CreateVenue = () => {
                                         startIcon={<UploadFileIcon />}
                                         sx={{ textTransform: 'none' }}
                                     >
-                                        {svgFile ? 'Replace SVG' : 'Choose SVG file'}
+                                        {svgFile ? t('venues.replaceSvg') : t('venues.chooseSvg')}
                                         <input
                                             type="file"
                                             hidden
@@ -727,7 +719,7 @@ const CreateVenue = () => {
                                             onChange={(e) => {
                                                 const file = e.target.files?.[0] || null;
                                                 if (file && !/\.svg$/i.test(file.name)) {
-                                                    toast.error('Please choose an .svg file.');
+                                                    toast.error(t('venues.svgOnly'));
                                                     e.target.value = '';
                                                     return;
                                                 }
@@ -742,8 +734,8 @@ const CreateVenue = () => {
                                         {svgFile
                                             ? svgFile.name
                                             : existingLayout?.seats?.length > 0
-                                                ? 'Keep the existing layout or choose a new file.'
-                                                : 'No SVG selected yet.'}
+                                                ? t('venues.keepExistingLayout')
+                                                : t('venues.noSvgSelected')}
                                     </Typography>
                                 </Grid>
 
@@ -752,7 +744,7 @@ const CreateVenue = () => {
                                         <Grid item xs={6}>
                                             <StyledTextField
                                                 fullWidth
-                                                label="Canvas width"
+                                                label={t('venues.canvasWidth')}
                                                 type="number"
                                                 value={canvasWidth}
                                                 onChange={(e) => setCanvasWidth(e.target.value)}
@@ -762,7 +754,7 @@ const CreateVenue = () => {
                                         <Grid item xs={6}>
                                             <StyledTextField
                                                 fullWidth
-                                                label="Canvas height"
+                                                label={t('venues.canvasHeight')}
                                                 type="number"
                                                 value={canvasHeight}
                                                 onChange={(e) => setCanvasHeight(e.target.value)}
@@ -777,7 +769,7 @@ const CreateVenue = () => {
                                             onClick={() => navigate(buildLayoutEditorUrl(id))}
                                             sx={{ textTransform: 'none', mt: 1 }}
                                         >
-                                            Open advanced layout editor
+                                            {t('venues.openAdvancedEditor')}
                                         </Button>
                                     )}
                                 </Grid>
@@ -803,9 +795,9 @@ const CreateVenue = () => {
                                     {submitting ? (
                                         <CircularProgress size={24} sx={{ color: C.textInverse }} />
                                     ) : isNew ? (
-                                        'Create Venue'
+                                        t('venues.createButton')
                                     ) : (
-                                        'Update Venue'
+                                        t('venues.updateButton')
                                     )}
                                 </PrimaryButton>
                                 <OutlineButton
@@ -814,9 +806,7 @@ const CreateVenue = () => {
                                         if (returnTo) {
                                             if (
                                                 window.confirm(
-                                                    'Leave without saving? Your venue will '
-                                                    + 'not be created, and you will return '
-                                                    + 'to the event draft.',
+                                                    t('venues.leaveWithoutSaving'),
                                                 )
                                             ) {
                                                 navigate(returnTo);
@@ -827,7 +817,7 @@ const CreateVenue = () => {
                                     }}
                                     sx={isMobile ? { width: '100%' } : undefined}
                                 >
-                                    Cancel
+                                    {t('venues.cancelButton')}
                                 </OutlineButton>
                             </Box>
                         </Grid>

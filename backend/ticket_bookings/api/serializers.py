@@ -287,6 +287,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
 
 class PublicEventSerializer(serializers.ModelSerializer):
     venue = serializers.SerializerMethodField()
+    currency_code = serializers.CharField(source='organization.currency_code', read_only=True)
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
@@ -297,8 +298,8 @@ class PublicEventSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
-            'members_only', 'min_membership_tier',
-            'start_date', 'end_date', 'timezone',
+            'members_only', 'min_membership_tier', 'donations_enabled',
+            'start_date', 'end_date', 'timezone', 'currency_code',
             'cover_image', 'gallery_images',
             'status', 'is_public',
             'total_tickets_sold',
@@ -447,6 +448,7 @@ class CancellationPolicySerializer(serializers.ModelSerializer):
 
 class EventSerializer(serializers.ModelSerializer):
     venue = serializers.SerializerMethodField()
+    currency_code = serializers.CharField(source='organization.currency_code', read_only=True)
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
@@ -479,8 +481,8 @@ class EventSerializer(serializers.ModelSerializer):
             'id', 'organizer', 'organizer_id', 'organizer_username', 'organizer_email',
             'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
-            'members_only', 'min_membership_tier',
-            'start_date', 'end_date', 'timezone',
+            'members_only', 'min_membership_tier', 'donations_enabled',
+            'start_date', 'end_date', 'timezone', 'currency_code',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
             'status', 'is_public', 'is_featured',
@@ -568,6 +570,7 @@ class EventSerializer(serializers.ModelSerializer):
 
 class EventDetailSerializer(serializers.ModelSerializer):
     sessions = serializers.SerializerMethodField()
+    currency_code = serializers.CharField(source='organization.currency_code', read_only=True)
     tiers = serializers.SerializerMethodField()
     venue = serializers.SerializerMethodField()
     tier_count = serializers.SerializerMethodField()
@@ -602,8 +605,8 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'id', 'organizer', 'organizer_id', 'organizer_username', 'organizer_email',
             'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
-            'members_only', 'min_membership_tier',
-            'start_date', 'end_date', 'timezone',
+            'members_only', 'min_membership_tier', 'donations_enabled',
+            'start_date', 'end_date', 'timezone', 'currency_code',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
             'status', 'is_public', 'is_featured',
@@ -885,6 +888,9 @@ class BookingSerializer(serializers.ModelSerializer):
             'id', 'booking_reference', 'customer_name', 'customer_email',
             'customer_phone', 'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'discount_applied', 'discount_code',
+            'donation_amount', 'donation_currency_code',
+            'donation_tax_receipt_number', 'donation_tax_receipt_issued_at',
+            'donation_tax_eligible',
             'paid_at', 'created_at', 'updated_at', 'notes',
             'event_title', 'event_id', 'event',
             'ticket_count', 'checked_in_count',
@@ -894,6 +900,10 @@ class BookingSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'booking_reference', 'created_at', 'updated_at',
             'discount_applied',
+            'donation_currency_code',
+            'donation_tax_receipt_number',
+            'donation_tax_receipt_issued_at',
+            'donation_tax_eligible',
         ]
 
     def get_ticket_count(self, obj):
@@ -994,7 +1004,14 @@ class BookingSerializer(serializers.ModelSerializer):
                 )
             except PricingError as exc:
                 raise serializers.ValidationError({'tickets': str(exc)})
-            data['total_amount'] = computed_total
+            donation = Decimal(str(data.get('donation_amount') or 0))
+            if donation > 0 and not self._event_obj.donations_enabled:
+                raise serializers.ValidationError(
+                    {'donation_amount': 'Donations are not enabled for this event.'}
+                )
+            data['total_amount'] = (computed_total + donation).quantize(
+                Decimal('0.01')
+            )
 
         session_id = (
             data.get('session')
@@ -1055,20 +1072,29 @@ class BookingSerializer(serializers.ModelSerializer):
             request = self.context.get('request')
             requester = getattr(request, 'user', None)
 
+            # Discounts apply to the TICKET subtotal only — never to the
+            # optional donation.
+            order_subtotal = (
+                Decimal(str(data.get('total_amount') or 0))
+                - Decimal(str(data.get('donation_amount') or 0))
+            ).quantize(Decimal('0.01'))
+            if order_subtotal < 0:
+                order_subtotal = Decimal('0.00')
+
             try:
                 _validate_discount(
                     discount=discount_obj,
                     user=requester if requester and requester.is_authenticated else None,
                     event=self._event_obj,
                     ticket_count=requested_count,
-                    order_subtotal=data.get('total_amount', Decimal('0.00')),
+                    order_subtotal=order_subtotal,
                 )
             except DiscountError as exc:
                 raise serializers.ValidationError({'discount_code': str(exc)})
 
             if discount_obj.type == 'percentage':
                 discount_amount = (
-                    data['total_amount'] * Decimal(str(discount_obj.value)) / Decimal('100')
+                    order_subtotal * Decimal(str(discount_obj.value)) / Decimal('100')
                 ).quantize(Decimal('0.01'))
                 if (
                     discount_obj.max_discount
@@ -1077,8 +1103,8 @@ class BookingSerializer(serializers.ModelSerializer):
                     discount_amount = Decimal(str(discount_obj.max_discount))
             else:
                 discount_amount = Decimal(str(discount_obj.value))
-                if discount_amount > data['total_amount']:
-                    discount_amount = data['total_amount']
+                if discount_amount > order_subtotal:
+                    discount_amount = order_subtotal
 
             data['discount_code'] = discount_obj.code
             data['discount_applied'] = discount_amount
@@ -1224,6 +1250,13 @@ class BookingSerializer(serializers.ModelSerializer):
                 customer_email=customer_email,
                 customer_name=customer_name,
                 customer_phone=customer_phone,
+            )
+
+        # Snapshot the donation currency from the event's organization.
+        donation = validated_data.get('donation_amount') or Decimal('0.00')
+        if donation and donation > 0:
+            validated_data['donation_currency_code'] = (
+                event.organization.currency_code or ''
             )
 
         # Fallback if total_amount wasn't set by validate (e.g. empty ticket list).
@@ -1410,6 +1443,9 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'id', 'booking_reference', 'customer_name', 'customer_email',
             'customer_phone', 'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'discount_applied', 'discount_code',
+            'donation_amount', 'donation_currency_code',
+            'donation_tax_receipt_number', 'donation_tax_receipt_issued_at',
+            'donation_tax_eligible',
             'paid_at', 'created_at', 'updated_at', 'notes',
             'event', 'tickets', 'ticket_count', 'checked_in_count',
             'formatted_date', 'metadata',
@@ -1776,6 +1812,9 @@ class BookingAdminSerializer(serializers.ModelSerializer):
             'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'notes',
             'discount_applied', 'discount_code', 'net_amount',
+            'donation_amount', 'donation_currency_code',
+            'donation_tax_receipt_number', 'donation_tax_receipt_issued_at',
+            'donation_tax_eligible',
             'paid_at', 'created_at', 'updated_at',
             'tickets', 'ticket_count', 'checked_in_count',
             'metadata', 'refund_amount',

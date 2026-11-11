@@ -14,6 +14,7 @@ import {
     LocalOffer as LocalOfferIcon, ZoomIn, ZoomOut, FitScreen,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -24,17 +25,20 @@ import useBookingDraft from '../../hooks/useBookingDraft';
 import EventCard from '../../components/Common/EventCard';
 
 import SeatingCanvas from '../../components/Seating/SeatingCanvas';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 // Branding colors
 const BRAND_COLORS = {
-    charcoal: '#333333',
-    red: '#FF2A2A',
-    darkGray: '#555555',
-    lightGray: '#f4f4f4',
-    border: '#e2e8f0',
-    success: '#22c55e',
-    warning: '#f59e0b',
-    info: '#3b82f6',
+    charcoal: C.primary,
+    red: C.secondary,
+    darkGray: C.primaryLight,
+    lightGray: C.bgPrimary,
+    border: C.borderLight,
+    success: C.success,
+    warning: C.warning,
+    info: C.info,
 };
 
 const STEP_KEYS = {
@@ -43,12 +47,15 @@ const STEP_KEYS = {
 };
 
 const STEP_LABELS = {
-    [STEP_KEYS.EVENT]: 'Select Event', [STEP_KEYS.SLOT]: 'Choose Slot',
-    [STEP_KEYS.ENTRIES]: 'Number of Entries', [STEP_KEYS.TICKETS]: 'Choose Tickets',
-    [STEP_KEYS.ATTENDEES]: 'Attendee Details', [STEP_KEYS.REVIEW]: 'Review & Confirm',
+    [STEP_KEYS.EVENT]: 'booking.wizard.stepSelectEvent',
+    [STEP_KEYS.SLOT]: 'booking.wizard.stepChooseSlot',
+    [STEP_KEYS.ENTRIES]: 'booking.wizard.stepNumberOfEntries',
+    [STEP_KEYS.TICKETS]: 'booking.wizard.stepChooseTickets',
+    [STEP_KEYS.ATTENDEES]: 'booking.wizard.stepAttendeeDetails',
+    [STEP_KEYS.REVIEW]: 'booking.wizard.stepReviewConfirm',
 };
 
-const FREE_ATTENDEES_LABEL = 'Registrant Details';
+const FREE_ATTENDEES_LABEL = 'booking.wizard.stepRegistrantDetails';
 
 const formatVenueAddress = (venue) => {
     if (!venue) return '';
@@ -100,6 +107,7 @@ const firstFieldMessage = (value) => {
 const CreateBooking = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { t } = useTranslation();
     const { user, isAuthenticated } = useAuth();
     const { role } = useRole();
     const { formatMoney, settings } = useSettings();
@@ -129,6 +137,7 @@ const CreateBooking = () => {
     const [appliedDiscount, setAppliedDiscount] = useState(null);
     const [validatingDiscount, setValidatingDiscount] = useState(false);
     const [submitError, setSubmitError] = useState(null);
+    const [donationAmount, setDonationAmount] = useState('');
 
     const hasReservedSeating = selectedEvent?.venue?.has_reserved_seating;
     const [selectedSeats, setSelectedSeats] = useState([]);
@@ -168,18 +177,22 @@ const CreateBooking = () => {
         const stats = {};
         seatingLayout.seats.forEach(seat => {
             let groupName = 'General';
-            let groupColor = '#94a3b8';
+            let groupColor = C.textLight;
+            let labelKey = 'bookings.general';
             if (seat.status === 'sold' || seat.status === 'booked') {
                 groupName = 'Sold / Unavailable';
-                groupColor = '#e0e0e0';
+                groupColor = C.borderLight;
+                labelKey = 'bookings.soldUnavailable';
             } else if (seat.status === 'held') {
                 groupName = 'Held';
                 groupColor = BRAND_COLORS.warning;
+                labelKey = 'bookings.held';
             } else if (seat.category_name) {
                 groupName = seat.category_name;
-                groupColor = seat.category_color || '#94a3b8';
+                groupColor = seat.category_color || C.textLight;
+                labelKey = null;
             }
-            if (!stats[groupName]) stats[groupName] = { name: groupName, color: groupColor, count: 0 };
+            if (!stats[groupName]) stats[groupName] = { name: groupName, color: groupColor, count: 0, labelKey };
             stats[groupName].count++;
         });
         return Object.values(stats).sort((a, b) => {
@@ -274,6 +287,9 @@ const CreateBooking = () => {
 
     const discountAmount = appliedDiscount?.valid ? appliedDiscount.discount_amount : 0;
     const netAmount = Math.max(0, totalAmount - discountAmount);
+    const donationValue = Math.max(0, Number(donationAmount) || 0);
+    const seatSubtotal = selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0);
+    const grandTotal = (hasReservedSeating ? seatSubtotal : netAmount) + donationValue;
 
     const handleEmailChange = (value) => {
         handleCustomerChange('email', value);
@@ -300,7 +316,9 @@ const CreateBooking = () => {
         return steps;
     }, [sessions, isFreeRegistrationFlow]);
 
-    const stepLabel = (key) => isFreeRegistrationFlow && key === STEP_KEYS.ATTENDEES ? FREE_ATTENDEES_LABEL : STEP_LABELS[key];
+    const stepLabel = (key) => t(
+        isFreeRegistrationFlow && key === STEP_KEYS.ATTENDEES ? FREE_ATTENDEES_LABEL : STEP_LABELS[key]
+    );
     const stepIndex = (key) => visibleSteps.indexOf(key);
 
     const getNextStep = (key) => {
@@ -355,7 +373,10 @@ const CreateBooking = () => {
                 if (res.data?.valid) setAppliedDiscount(res.data);
                 else {
                     setAppliedDiscount(null); setDiscountInput('');
-                    toast.info(`Discount "${appliedDiscount.code}" is no longer valid: ${res.data?.reason || 'conditions changed'}`);
+                    toast.info(t('bookings.discountInvalid', {
+                        code: appliedDiscount.code,
+                        reason: res.data?.reason || t('bookings.discountConditionsChanged'),
+                    }));
                 }
             } catch {
                 if (!cancelled) { setAppliedDiscount(null); setDiscountInput(''); }
@@ -405,14 +426,14 @@ const CreateBooking = () => {
             if (data.length === 0) {
                 setEventLoadError(
                     canManageEvents
-                        ? 'No events found. Please create an event first!'
-                        : 'No active events available for booking. Check back later!'
+                        ? t('events.noEventsCreateFirst')
+                        : t('events.noPublicEvents')
                 );
             }
         } catch (error) {
-            let errorMsg = 'Failed to load events';
-            if (error.response?.status === 404) errorMsg = 'Events endpoint not found. Please check the backend.';
-            else if (error.response?.status === 401 || error.response?.status === 403) errorMsg = 'Authentication required. Please log in again.';
+            let errorMsg = t('events.loadEventsFailed');
+            if (error.response?.status === 404) errorMsg = t('bookings.eventsEndpointNotFound');
+            else if (error.response?.status === 401 || error.response?.status === 403) errorMsg = t('bookings.authRequired');
             else if (error.response?.data?.detail) errorMsg = error.response.data.detail;
             else if (error.response?.data?.error) errorMsg = error.response.data.error;
             else if (error.message) errorMsg = error.message;
@@ -443,11 +464,11 @@ const CreateBooking = () => {
 
             const isFree = data.event_flow === 'free_registration';
             if (!isFree) {
-                if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) toast.info('All tickets for this event are sold out');
-                else if (availableTiers.length === 0) toast.info('No tickets available for this event');
+                if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) toast.info(t('booking.wizard.allTicketsSoldOutInfo'));
+                else if (availableTiers.length === 0) toast.info(t('booking.wizard.noTicketsAvailable'));
             }
         } catch (error) {
-            let errorMsg = 'Failed to load event details';
+            let errorMsg = t('events.loadDetailsFailed');
             if (error.response?.data?.detail) errorMsg = error.response.data.detail;
             else if (error.response?.data?.error) errorMsg = error.response.data.error;
             else if (error.message) errorMsg = error.message;
@@ -462,6 +483,7 @@ const CreateBooking = () => {
         resetDraft(); setSubmitError(null); setSelectedEvent(event); setSelectedSession(null);
         setSlotPreferences([]); setSlotPreferencesInput(''); setTiers([]); setEventDetails(null);
         setDiscountInput(''); setAppliedDiscount(null); setSelectedSeats([]); setReservedAttendees([]);
+        setDonationAmount('');
         setSeatingLayout(null);                 // ✅ reset layout
         loadEventDetails(event.id);
         const hasSessionsPreview = (event.session_count ?? event.sessions?.length ?? 0) > 0;
@@ -479,15 +501,15 @@ const CreateBooking = () => {
                 subtotal: totalAmount, ticket_count: totalTickets,
             }, { skipAuthRedirect: !isAuthenticated });
             const data = res.data;
-            if (data.valid) { setAppliedDiscount(data); toast.success(`Discount applied: −${formatMoney(data.discount_amount)}`); }
-            else { setAppliedDiscount(null); toast.error(data.reason || 'Invalid discount code'); }
+            if (data.valid) { setAppliedDiscount(data); toast.success(t('bookings.discountAppliedAmount', { amount: formatMoney(data.discount_amount) })); }
+            else { setAppliedDiscount(null); toast.error(data.reason || t('bookings.invalidDiscountCode')); }
         } catch (err) {
-            const reason = err.response?.data?.reason || err.response?.data?.error || err.response?.data?.detail || 'Failed to validate code';
+            const reason = err.response?.data?.reason || err.response?.data?.error || err.response?.data?.detail || t('bookings.failedValidateCode');
             setAppliedDiscount(null); toast.error(reason);
         } finally { setValidatingDiscount(false); }
     };
 
-    const removeDiscount = () => { setAppliedDiscount(null); setDiscountInput(''); toast.info('Discount removed'); };
+    const removeDiscount = () => { setAppliedDiscount(null); setDiscountInput(''); toast.info(t('bookings.discountRemoved')); };
 
     const handleSelectSlot = (sessionId) => {
         const session = sessions.find((s) => s.id === sessionId);
@@ -495,9 +517,9 @@ const CreateBooking = () => {
     };
 
     const handleSlotPreferences = () => {
-        if (!slotPreferencesInput.trim()) { toast.warning('Please enter your slot preferences'); return; }
+        if (!slotPreferencesInput.trim()) { toast.warning(t('bookings.enterSlotPreferences')); return; }
         const preferences = slotPreferencesInput.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n > 0 && n <= sessions.length);
-        if (preferences.length === 0) { toast.warning('Please enter valid slot numbers (e.g., 1,2,3)'); return; }
+        if (preferences.length === 0) { toast.warning(t('bookings.enterValidSlotNumbers')); return; }
         const uniquePreferences = []; const seen = new Set();
         for (const pref of preferences) if (!seen.has(pref)) { seen.add(pref); uniquePreferences.push(pref); }
         setSlotPreferences(uniquePreferences);
@@ -505,32 +527,32 @@ const CreateBooking = () => {
         for (const pref of uniquePreferences) {
             const slot = sessions[pref - 1];
             if (slot && slot.capacity - slot.booked > 0) {
-                allocatedSlot = slot; allocationMessage = `Allocated based on your Preference #${uniquePreferences.indexOf(pref) + 1}`; break;
+                allocatedSlot = slot; allocationMessage = t('bookings.allocatedPreference', { number: uniquePreferences.indexOf(pref) + 1 }); break;
             }
         }
         if (!allocatedSlot) {
             for (let i = 0; i < sessions.length; i++) {
                 const slot = sessions[i];
                 if (slot.capacity - slot.booked > 0) {
-                    allocatedSlot = slot; allocationMessage = 'Allocated to next available slot (your preferred slots were full)'; break;
+                    allocatedSlot = slot; allocationMessage = t('bookings.allocatedNextAvailable'); break;
                 }
             }
         }
-        if (!allocatedSlot) { toast.error('No slots available for this event'); return; }
+        if (!allocatedSlot) { toast.error(t('bookings.noSlotsAvailable')); return; }
         setSelectedSession(allocatedSlot);
-        toast.success(`✅ Slot allocated: ${allocationMessage}`);
+        toast.success(t('bookings.slotAllocated', { message: allocationMessage }));
     };
 
     const handleSubmit = async () => {
         setSubmitError(null);
         if (hasReservedSeating) {
-            if (selectedSeats.length === 0) { toast.error('Please select at least one seat'); return; }
-            if (reservedAttendees.some((a) => !a.name?.trim())) { toast.error('Please enter a name for every selected seat'); setActiveStep(STEP_KEYS.ATTENDEES); return; }
+            if (selectedSeats.length === 0) { toast.error(t('bookings.selectSeatAtLeastOne')); return; }
+            if (reservedAttendees.some((a) => !a.name?.trim())) { toast.error(t('bookings.enterNameEverySeat')); setActiveStep(STEP_KEYS.ATTENDEES); return; }
         } else if (!isFreeRegistrationFlow) {
-            if (!validate()) { toast.error('Please fix all errors before submitting'); return; }
+            if (!validate()) { toast.error(t('booking.wizard.pleaseFixErrors')); return; }
         } else {
-            if (!customer.name?.trim() || !customer.email?.trim() || !customer.phone?.trim()) { toast.error('Please fill in name, email, and phone'); return; }
-            if (freeAttendees.some((a) => !a.name?.trim())) { toast.error('Please enter a name for every entry'); return; }
+            if (!customer.name?.trim() || !customer.email?.trim() || !customer.phone?.trim()) { toast.error(t('booking.wizard.pleaseFillPrimary')); return; }
+            if (freeAttendees.some((a) => !a.name?.trim())) { toast.error(t('booking.wizard.pleaseEnterNameEveryEntry')); return; }
         }
 
         setLoading(true);
@@ -549,19 +571,28 @@ const CreateBooking = () => {
                         attendee_phone: reservedAttendees[index]?.phone || customer.phone,
                         price: Number(seat.price) || 0, category_name: seat.category_name || 'General',
                     })),
-                    total_amount: selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0),
+                    total_amount: selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0)
+                        + Math.max(0, Number(donationAmount) || 0),
+                    donation_amount: Math.max(0, Number(donationAmount) || 0),
                     metadata: { slot_preferences: slotPreferences, booking_source: isRegularUser ? 'user_portal' : 'admin_portal' }
                 };
                 if (appliedDiscount?.valid && appliedDiscount?.code) payload.discount_code = appliedDiscount.code;
             } else {
                 payload = buildPayload();
                 if (isFreeRegistrationFlow) { payload.tickets = []; payload.total_amount = 0; delete payload.discount_code; }
-                else if (appliedDiscount?.valid && appliedDiscount?.code) payload.discount_code = appliedDiscount.code;
+                else {
+                    const donation = Math.max(0, Number(donationAmount) || 0);
+                    if (donation > 0) {
+                        payload.donation_amount = donation;
+                        payload.total_amount = (Number(payload.total_amount) || 0) + donation;
+                    }
+                    if (appliedDiscount?.valid && appliedDiscount?.code) payload.discount_code = appliedDiscount.code;
+                }
             }
 
             const response = await api.post('/bookings/', payload, { skipAuthRedirect: !isAuthenticated });
             const result = response.data;
-            toast.success(`✅ Booking created! Ref: ${result.booking_reference}`);
+            toast.success(t('bookings.bookingCreated', { ref: result.booking_reference }));
 
             if (isAuthenticated) navigate('/app/bookings', { replace: true });
             else navigate('/', { replace: true, state: { bookingReference: result.booking_reference, customerEmail: result.customer_email, justBooked: true } });
@@ -582,30 +613,30 @@ const CreateBooking = () => {
                 const anyFieldMessage = firstFieldMessage(fieldErrors);
                 if (anyFieldMessage) { toast.error(anyFieldMessage); return; }
             }
-            if (toastMsg) toast.error(toastMsg); else toast.error('Failed to create booking');
-            if (status === 401) toast.error('Your session expired. Please refresh the page and try again.');
+            if (toastMsg) toast.error(toastMsg); else toast.error(t('bookings.createBookingFailed'));
+            if (status === 401) toast.error(t('bookings.sessionExpired'));
         } finally { setLoading(false); }
     };
 
     const handleBack = () => setActiveStep(getPrevStep(activeStep));
 
     const handleNext = () => {
-        if (activeStep === STEP_KEYS.EVENT && !selectedEvent) { toast.warning('Please select an event'); return; }
-        if (activeStep === STEP_KEYS.SLOT && !selectedSession && sessions.length > 0) { toast.warning('Please select a slot or use Auto-Allocate'); return; }
-        if (activeStep === STEP_KEYS.ENTRIES && freeEntries < 1) { toast.warning('Please select at least one entry'); return; }
+        if (activeStep === STEP_KEYS.EVENT && !selectedEvent) { toast.warning(t('booking.wizard.pleaseSelectEvent')); return; }
+        if (activeStep === STEP_KEYS.SLOT && !selectedSession && sessions.length > 0) { toast.warning(t('booking.wizard.pleaseSelectSlot')); return; }
+        if (activeStep === STEP_KEYS.ENTRIES && freeEntries < 1) { toast.warning(t('booking.wizard.pleaseSelectEntry')); return; }
         if (activeStep === STEP_KEYS.TICKETS) {
-            if (hasReservedSeating) { if (selectedSeats.length === 0) { toast.warning('Please select at least one seat'); return; } }
-            else { if (totalTickets === 0) { toast.warning('Please select at least one ticket'); return; } }
+            if (hasReservedSeating) { if (selectedSeats.length === 0) { toast.warning(t('bookings.selectSeatAtLeastOne')); return; } }
+            else { if (totalTickets === 0) { toast.warning(t('booking.wizard.pleaseSelectTicket')); return; } }
         }
         if (activeStep === STEP_KEYS.ATTENDEES) {
-            if (hasReservedSeating) { if (reservedAttendees.some((a) => !a.name?.trim())) { toast.warning('Please enter a name for every selected seat'); return; } }
+            if (hasReservedSeating) { if (reservedAttendees.some((a) => !a.name?.trim())) { toast.warning(t('bookings.enterNameEverySeat')); return; } }
             else if (isFreeRegistrationFlow) {
-                if (freeAttendees.some((a) => !a.name?.trim())) { toast.warning('Please enter a name for every entry'); return; }
+                if (freeAttendees.some((a) => !a.name?.trim())) { toast.warning(t('booking.wizard.pleaseEnterNameEveryEntry')); return; }
                 const badEmail = freeAttendees.some((a) => a.email?.trim() && !/^\S+@\S+\.\S+$/.test(a.email.trim()));
-                if (badEmail) { toast.warning('One or more entries have an invalid email'); return; }
+                if (badEmail) { toast.warning(t('booking.wizard.invalidEntryEmail')); return; }
             } else {
                 const allFilled = attendees.every((a) => a.name?.trim());
-                if (!allFilled) { toast.warning('Please enter names for all attendees'); return; }
+                if (!allFilled) { toast.warning(t('booking.wizard.pleaseEnterAllAttendeeNames')); return; }
             }
         }
         setActiveStep(getNextStep(activeStep));
@@ -615,8 +646,8 @@ const CreateBooking = () => {
         <Box sx={{ py: 2 }}>
             {eventLoadError || (events.length === 0 && !loading) ? (
                 <Alert severity="info" sx={{ mb: 3 }}>
-                    {eventLoadError || (canManageEvents ? 'No events available. Create an event first!' : 'No active events available for booking. Check back later!')}
-                    {eventLoadError && <Button size="small" onClick={loadEvents} sx={{ ml: 2 }}>Retry</Button>}
+                    {eventLoadError || (canManageEvents ? t('events.noEventsCreateFirst') : t('events.noPublicEvents'))}
+                    {eventLoadError && <Button size="small" onClick={loadEvents} sx={{ ml: 2 }}>{t('common.retry')}</Button>}
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3}>
@@ -632,11 +663,11 @@ const CreateBooking = () => {
 
     const renderSlotSelection = () => {
         const hasSessions = sessions && sessions.length > 0;
-        if (!hasSessions) return <Box sx={{ py: 2 }}><Alert severity="info">This event does not have time slots. Click Next to continue.</Alert></Box>;
+        if (!hasSessions) return <Box sx={{ py: 2 }}><Alert severity="info">{t('booking.wizard.noSlotsHint')}</Alert></Box>;
         return (
             <Box sx={{ py: 2 }}>
                 <Alert severity="info" sx={{ mb: 3 }}>
-                    <ScheduleIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> Select your preferred time slot for <strong>{selectedEvent?.title}</strong>
+                    <ScheduleIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> {t('booking.wizard.selectPreferredSlot', { event: selectedEvent?.title })}
                 </Alert>
                 <Grid container spacing={2} sx={{ mb: 3 }}>
                     {sessions.map((session, index) => {
@@ -645,15 +676,15 @@ const CreateBooking = () => {
                         const isSelected = selectedSession?.id === session.id;
                         return (
                             <Grid item xs={12} sm={6} md={4} key={session.id}>
-                                <Card sx={{ cursor: isAvailable ? 'pointer' : 'not-allowed', border: isSelected ? '2px solid rgba(51, 51, 51, 1)' : '1px solid #e2e8f0', opacity: isAvailable ? 1 : 0.5, '&:hover': isAvailable ? { borderColor: 'primary.main' } : {}, '&:active': isAvailable ? { transform: 'scale(0.99)' } : {}, transition: 'all 0.2s' }} onClick={() => isAvailable && handleSelectSlot(session.id)}>
+                                <Card sx={{ cursor: isAvailable ? 'pointer' : 'not-allowed', border: isSelected ? `2px solid ${C.primary}` : `1px solid ${C.borderLight}`, opacity: isAvailable ? 1 : 0.5, '&:hover': isAvailable ? { borderColor: 'primary.main' } : {}, '&:active': isAvailable ? { transform: 'scale(0.99)' } : {}, transition: 'all 0.2s' }} onClick={() => isAvailable && handleSelectSlot(session.id)}>
                                     <CardContent>
                                         <Box display="flex" justifyContent="space-between" alignItems="center">
                                             <Box>
-                                                <Typography variant="h6" sx={{ color: 'text.primary' }}>Slot #{index + 1}</Typography>
+                                                <Typography variant="h6" sx={{ color: 'text.primary' }}>{t('booking.wizard.slotHeader', { index: index + 1 })}</Typography>
                                                 <Typography variant="body2" sx={{ color: 'text.primary' }}>🕐 {formatPlatformTime(session.start_time, platformTimezone)} - {formatPlatformTime(session.end_time, platformTimezone)}</Typography>
-                                                <Typography variant="body2" sx={{ color: isAvailable ? '#16a34a' : '#ef4444' }}>{isAvailable ? `✅ ${remaining} seats available` : '❌ Fully booked'}</Typography>
+                                                <Typography variant="body2" sx={{ color: isAvailable ? C.successDark : C.error }}>{isAvailable ? `✅ ${remaining} ${t('booking.wizard.slotsAvailable')}` : t('booking.wizard.slotsFull')}</Typography>
                                             </Box>
-                                            {isSelected && <Chip label="Selected" size="small" color="primary" />}
+                                            {isSelected && <Chip label={t('booking.wizard.selected')} size="small" color="primary" />}
                                         </Box>
                                     </CardContent>
                                 </Card>
@@ -662,14 +693,14 @@ const CreateBooking = () => {
                     })}
                 </Grid>
                 <Paper sx={{ p: isMobile ? 2 : 3, bgcolor: 'background.default' }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>📋 Slot Preferences (Optional)</Typography>
-                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>Enter your slot preferences in order (e.g., 1,3,2 means Slot 1 is your first preference)</Typography>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}>📋 {t('booking.wizard.slotPreferencesTitle')}</Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>{t('booking.wizard.slotPreferencesHint')}</Typography>
                     <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
-                        <TextField label="Slot Preferences" placeholder="1,3,2" value={slotPreferencesInput} onChange={(e) => setSlotPreferencesInput(e.target.value)} size="small" sx={{ minWidth: isMobile ? '100%' : 200, flex: isMobile ? 1 : 'unset' }} helperText={`Enter numbers 1-${sessions.length}`} />
-                        <PrimaryButton variant="contained" onClick={handleSlotPreferences} disabled={!slotPreferencesInput.trim()} sx={isMobile ? { width: '100%' } : undefined}>Auto-Allocate</PrimaryButton>
+                        <TextField label={t('booking.wizard.slotPreferencesLabel')} placeholder={t('booking.wizard.slotPreferencesPlaceholder')} value={slotPreferencesInput} onChange={(e) => setSlotPreferencesInput(e.target.value)} size="small" sx={{ minWidth: isMobile ? '100%' : 200, flex: isMobile ? 1 : 'unset' }} helperText={t('booking.wizard.slotPreferencesHelper', { max: sessions.length })} />
+                        <PrimaryButton variant="contained" onClick={handleSlotPreferences} disabled={!slotPreferencesInput.trim()} sx={isMobile ? { width: '100%' } : undefined}>{t('booking.wizard.autoAllocate')}</PrimaryButton>
                     </Box>
-                    {slotPreferences.length > 0 && <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(51, 51, 51, 0.08)', borderRadius: 1 }}><Typography variant="body2" sx={{ color: 'primary.main' }}>✅ Preferences: {slotPreferences.join(' → ')}</Typography></Box>}
-                    {selectedSession && <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}><Typography variant="body2" sx={{ color: 'success.main' }}>✅ Allocated Slot: Slot #{sessions.indexOf(selectedSession) + 1} ({formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)})</Typography></Box>}
+                    {slotPreferences.length > 0 && <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(51, 51, 51, 0.08)', borderRadius: 1 }}><Typography variant="body2" sx={{ color: 'primary.main' }}>✅ {t('booking.wizard.preferences', { list: slotPreferences.join(' → ') })}</Typography></Box>}
+                    {selectedSession && <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}><Typography variant="body2" sx={{ color: 'success.main' }}>✅ {t('booking.wizard.allocatedSlot', { index: sessions.indexOf(selectedSession) + 1 })} ({formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)})</Typography></Box>}
                 </Paper>
             </Box>
         );
@@ -679,16 +710,16 @@ const CreateBooking = () => {
         const max = eventDetails?.max_tickets_per_order || 10;
         return (
             <Box sx={{ py: 2 }}>
-                <Alert severity="info" sx={{ mb: 3 }}>How many people are you registering? You'll enter each person's name and email on the next step.</Alert>
+                <Alert severity="info" sx={{ mb: 3 }}>{t('bookings.howManyRegistering')}</Alert>
                 <Paper sx={{ p: isMobile ? 2 : 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-                    <Box><Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Number of entries</Typography><Typography variant="body2" sx={{ color: 'text.secondary' }}>Max {max} per registration</Typography></Box>
+                    <Box><Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{t('bookings.numberOfEntries')}</Typography><Typography variant="body2" sx={{ color: 'text.secondary' }}>{t('booking.wizard.maxPerRegistration', { max })}</Typography></Box>
                     <Box display="flex" alignItems="center" gap={2}>
-                        <IconButton onClick={() => updateFreeEntries(-1)} disabled={freeEntries <= 0} sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }} aria-label="Decrease entries"><RemoveIcon fontSize="small" /></IconButton>
+                        <IconButton onClick={() => updateFreeEntries(-1)} disabled={freeEntries <= 0} sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }} aria-label={t('booking.wizard.decreaseEntries')}><RemoveIcon fontSize="small" /></IconButton>
                         <Typography variant="h5" sx={{ minWidth: 44, textAlign: 'center', fontWeight: 700 }}>{freeEntries}</Typography>
-                        <IconButton onClick={() => updateFreeEntries(1)} disabled={freeEntries >= max} sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }} aria-label="Increase entries"><AddIcon fontSize="small" /></IconButton>
+                        <IconButton onClick={() => updateFreeEntries(1)} disabled={freeEntries >= max} sx={{ bgcolor: 'action.hover', minWidth: 44, minHeight: 44 }} aria-label={t('booking.wizard.increaseEntries')}><AddIcon fontSize="small" /></IconButton>
                     </Box>
                 </Paper>
-                <Box sx={{ mt: 3, p: 2, bgcolor: 'background.default', borderRadius: 2 }}><Typography variant="body2" sx={{ color: 'text.secondary' }}>You are registering <strong>{freeEntries}</strong> {freeEntries === 1 ? 'person' : 'people'}. Each person will receive their own registration pass.</Typography></Box>
+                <Box sx={{ mt: 3, p: 2, bgcolor: 'background.default', borderRadius: 2 }}><Typography variant="body2" sx={{ color: 'text.secondary' }}>{t('booking.wizard.registeringCount', { count: freeEntries, people: t(freeEntries === 1 ? 'bookings.person_one' : 'bookings.person_other') })} {t('bookings.registeringPass')}</Typography></Box>
             </Box>
         );
     };
@@ -724,9 +755,9 @@ const CreateBooking = () => {
                             sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}
                         >
                             <LocationIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                            Select your seats on the map below for <strong>{selectedEvent?.title}</strong>
+                            {t('bookings.selectSeatsHint', { event: selectedEvent?.title })}
                             {selectedSession && (
-                                <span> • <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} /> Slot: {formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)}</span>
+                                <span> • <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} /> {t('booking.wizard.sessionDateLabel', { start: formatPlatformTime(selectedSession.start_time, platformTimezone), end: formatPlatformTime(selectedSession.end_time, platformTimezone) })}</span>
                             )}
                         </Alert>
                         
@@ -739,10 +770,10 @@ const CreateBooking = () => {
                             border: `1px solid ${BRAND_COLORS.border}`,
                             borderRadius: 1,
                             minWidth: '200px',
-                            bgcolor: '#f8fafc',
+                            bgcolor: C.bgPrimary,
                         }}>
                             <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary' }}>
-                                🎫 {selectedSeats.length} seat(s) selected
+                                🎫 {t('bookings.seatsSelected', { count: selectedSeats.length })}
                             </Typography>
                             <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>
                                 {formatMoney(selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0))}
@@ -816,16 +847,16 @@ const CreateBooking = () => {
                                 <Box key={stat.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                     <Box sx={{ width: 12, height: 12, border: `1px solid ${BRAND_COLORS.charcoal}`, borderRadius: 0.5, bgcolor: stat.color }} />
                                     <Typography variant="caption" sx={{ fontWeight: 600, color: BRAND_COLORS.darkGray }}>
-                                        {stat.name}: {stat.count}
+                                        {stat.labelKey ? t(stat.labelKey) : stat.name}: {stat.count}
                                     </Typography>
                                 </Box>
                             ))}
                             
                             {selectedSeats.length > 0 && (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, pl: 1, borderLeft: `1px solid ${BRAND_COLORS.border}` }}>
-                                    <Box sx={{ width: 12, height: 12, border: `1px solid #000000`, borderRadius: 0.5, bgcolor: '#333333' }} />
-                                    <Typography variant="caption" sx={{ fontWeight: 700, color: '#333333' }}>
-                                        Selected: {selectedSeats.length}
+                                    <Box sx={{ width: 12, height: 12, border: `1px solid ${C.black}`, borderRadius: 0.5, bgcolor: C.primary }} />
+                                    <Typography variant="caption" sx={{ fontWeight: 700, color: C.primary }}>
+                                        {t('booking.wizard.selected')}: {selectedSeats.length}
                                     </Typography>
                                 </Box>
                             )}
@@ -838,10 +869,10 @@ const CreateBooking = () => {
         return (
             <Box sx={{ py: 2 }}>
                 <Alert severity="info" sx={{ mb: 3 }}>
-                    Selected: <strong>{selectedEvent?.title}</strong>
-                    {selectedSession && <span> • <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} /> Slot: {formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)}</span>}
+                    {t('booking.wizard.selected')}: <strong>{selectedEvent?.title}</strong>
+                    {selectedSession && <span> • <ScheduleIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} /> {t('booking.wizard.sessionDateLabel', { start: formatPlatformTime(selectedSession.start_time, platformTimezone), end: formatPlatformTime(selectedSession.end_time, platformTimezone) })}</span>}
                 </Alert>
-                {tiers.length === 0 ? <Alert severity="warning">{eventDetails?.tiers?.length > 0 ? 'All tickets are sold out!' : 'No ticket tiers available for this event'}</Alert> : (
+                {tiers.length === 0 ? <Alert severity="warning">{eventDetails?.tiers?.length > 0 ? t('booking.wizard.allTicketsSoldOut') : t('booking.wizard.noTiers')}</Alert> : (
                     <Box>
                         {tiers.map((tier) => {
                             const available = (typeof tier.available === 'number') ? tier.available : Math.max(0, (tier.quantity_total || 0) - (tier.quantity_sold || 0));
@@ -849,7 +880,7 @@ const CreateBooking = () => {
                             const qty = quantities[tier.id] || 0;
                             return (
                                 <Paper key={tier.id} sx={{ p: 2, mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-                                    <Box sx={{ minWidth: 0, flex: 1 }}><Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary' }}>{tier.name}</Typography><Typography variant="body2" sx={{ color: 'text.secondary' }}>{formatMoney(tier.price)} each • {available} available</Typography></Box>
+                                    <Box sx={{ minWidth: 0, flex: 1 }}><Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary' }}>{tier.name}</Typography><Typography variant="body2" sx={{ color: 'text.secondary' }}>{t('booking.wizard.tierPriceLine', { price: formatMoney(tier.price), available })}</Typography></Box>
                                     <Box display="flex" alignItems="center" gap={2}>
                                         <IconButton size="small" onClick={() => updateQuantity(tier.id, -1)} disabled={qty <= 0} sx={{ bgcolor: qty > 0 ? 'action.hover' : 'background.default', minWidth: 40, minHeight: 40 }}><RemoveIcon fontSize="small" /></IconButton>
                                         <Typography variant="h6" sx={{ minWidth: 40, textAlign: 'center', color: 'text.primary' }}>{qty}</Typography>
@@ -858,16 +889,16 @@ const CreateBooking = () => {
                                 </Paper>
                             );
                         })}
-                        {totalTickets > 0 && <Box sx={{ mt: 3, p: 2, bgcolor: 'background.default', borderRadius: 2 }}><Typography variant="subtitle1" sx={{ color: 'text.primary' }}>🎫 {totalTickets} ticket(s) selected</Typography><Typography variant="h6" sx={{ color: 'primary.main' }}>Total: {formatMoney(totalAmount)}</Typography></Box>}
+                        {totalTickets > 0 && <Box sx={{ mt: 3, p: 2, bgcolor: 'background.default', borderRadius: 2 }}><Typography variant="subtitle1" sx={{ color: 'text.primary' }}>🎫 {t('booking.wizard.ticketsSelected', { count: totalTickets })}</Typography><Typography variant="h6" sx={{ color: 'primary.main' }}>{t('booking.wizard.totalAmount', { amount: formatMoney(totalAmount) })}</Typography></Box>}
                         {totalTickets > 0 && (
                             <Paper sx={{ mt: 3, p: isMobile ? 2 : 3, bgcolor: 'background.default' }}>
-                                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}><LocalOfferIcon fontSize="small" /> Have a discount code?</Typography>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}><LocalOfferIcon fontSize="small" /> {t('booking.wizard.discountQuestion')}</Typography>
                                 <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
-                                    <TextField label="Discount Code" placeholder="SAVE20" value={discountInput} onChange={(e) => setDiscountInput(e.target.value.toUpperCase())} size="small" disabled={!!appliedDiscount?.valid || validatingDiscount} sx={{ minWidth: isMobile ? '100%' : 220, flex: isMobile ? 1 : 'unset' }} onKeyDown={(e) => { if (e.key === 'Enter' && !appliedDiscount?.valid) { e.preventDefault(); validateDiscount(); } }} />
-                                    {appliedDiscount?.valid ? <Button variant="outlined" size="small" onClick={removeDiscount} sx={{ textTransform: 'none', color: 'error.main', borderColor: '#fecaca', '&:hover': { borderColor: '#ef4444' } }}>Remove</Button> : <PrimaryButton variant="contained" size="small" disabled={validatingDiscount || !discountInput.trim()} onClick={validateDiscount} startIcon={validatingDiscount ? <CircularProgress size={16} color="inherit" /> : null} sx={isMobile ? { width: '100%' } : undefined}>{validatingDiscount ? 'Checking…' : 'Apply'}</PrimaryButton>}
+                                    <TextField label={t('booking.wizard.discountCode')} placeholder={t('booking.wizard.discountPlaceholder')} value={discountInput} onChange={(e) => setDiscountInput(e.target.value.toUpperCase())} size="small" disabled={!!appliedDiscount?.valid || validatingDiscount} sx={{ minWidth: isMobile ? '100%' : 220, flex: isMobile ? 1 : 'unset' }} onKeyDown={(e) => { if (e.key === 'Enter' && !appliedDiscount?.valid) { e.preventDefault(); validateDiscount(); } }} />
+                                    {appliedDiscount?.valid ? <Button variant="outlined" size="small" onClick={removeDiscount} sx={{ textTransform: 'none', color: 'error.main', borderColor: C.errorLight, '&:hover': { borderColor: C.error } }}>{t('booking.wizard.remove')}</Button> : <PrimaryButton variant="contained" size="small" disabled={validatingDiscount || !discountInput.trim()} onClick={validateDiscount} startIcon={validatingDiscount ? <CircularProgress size={16} color="inherit" /> : null} sx={isMobile ? { width: '100%' } : undefined}>{validatingDiscount ? t('booking.wizard.checking') : t('booking.wizard.apply')}</PrimaryButton>}
                                 </Box>
-                                {appliedDiscount?.valid && <Box sx={{ mt: 2, p: 1.5, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}><Typography variant="body2" sx={{ color: 'success.dark', fontWeight: 600 }}>✅ {appliedDiscount.code} applied — you save {formatMoney(appliedDiscount.discount_amount)}</Typography></Box>}
-                                {appliedDiscount?.valid && <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}><Typography variant="body2" sx={{ color: 'text.secondary' }}>New total</Typography><Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 700 }}>{formatMoney(netAmount)}</Typography></Box>}
+                                {appliedDiscount?.valid && <Box sx={{ mt: 2, p: 1.5, bgcolor: 'rgba(16, 185, 129, 0.10)', borderRadius: 1 }}><Typography variant="body2" sx={{ color: 'success.dark', fontWeight: 600 }}>✅ {t('booking.wizard.discountApplied', { code: appliedDiscount.code, amount: formatMoney(appliedDiscount.discount_amount) })}</Typography></Box>}
+                                {appliedDiscount?.valid && <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}><Typography variant="body2" sx={{ color: 'text.secondary' }}>{t('booking.wizard.newTotal')}</Typography><Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 700 }}>{formatMoney(netAmount)}</Typography></Box>}
                             </Paper>
                         )}
                     </Box>
@@ -880,29 +911,29 @@ const CreateBooking = () => {
         return (
             <Box sx={{ py: 2 }}>
                 <Alert severity="info" sx={{ mb: 3 }}>
-                    {hasReservedSeating ? `Enter details for ${selectedSeats.length} attendee(s)` : isFreeRegistrationFlow ? `Enter the details for ${freeEntries} ${freeEntries === 1 ? 'person' : 'people'}` : `Enter details for ${totalTickets} attendee(s)`}
+                    {hasReservedSeating ? t('bookings.enterDetailsAttendees', { count: selectedSeats.length }) : isFreeRegistrationFlow ? t('bookings.enterDetailsPeople', { count: freeEntries, people: t(freeEntries === 1 ? 'bookings.person_one' : 'bookings.person_other') }) : t('bookings.enterDetailsAttendees', { count: totalTickets })}
                 </Alert>
                 <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />{isFreeRegistrationFlow ? 'Primary Contact' : 'Customer Details'}</Typography>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} />{isFreeRegistrationFlow ? t('booking.wizard.primaryContact') : t('booking.wizard.customerDetails')}</Typography>
                     <Grid container spacing={2}>
-                        <Grid item xs={12} md={4}><TextField fullWidth label="Full Name *" value={customer.name} onChange={(e) => handleCustomerChange('name', e.target.value)} error={!!errors.name} helperText={errors.name} size="small" /></Grid>
-                        <Grid item xs={12} md={4}><TextField fullWidth label="Email *" type="email" value={customer.email} onChange={(e) => handleEmailChange(e.target.value)} error={!!errors.email} helperText={errors.email} size="small" /></Grid>
-                        <Grid item xs={12} md={4}><TextField fullWidth label="Phone *" value={customer.phone} onChange={(e) => handleCustomerChange('phone', e.target.value)} error={!!errors.phone} helperText={errors.phone} size="small" /></Grid>
-                        <Grid item xs={12} md={6}><TextField fullWidth label="WhatsApp Number (if different)" value={customer.whatsapp} onChange={(e) => handleCustomerChange('whatsapp', e.target.value)} size="small" /></Grid>
-                        <Grid item xs={12} md={6}><TextField fullWidth label="Notes / Special Requests" value={customer.notes} onChange={(e) => handleCustomerChange('notes', e.target.value)} size="small" multiline rows={1} /></Grid>
+                        <Grid item xs={12} md={4}><TextField fullWidth label={t('booking.wizard.fullName')} value={customer.name} onChange={(e) => handleCustomerChange('name', e.target.value)} error={!!errors.name} helperText={errors.name} size="small" /></Grid>
+                        <Grid item xs={12} md={4}><TextField fullWidth label={t('booking.wizard.email')} type="email" value={customer.email} onChange={(e) => handleEmailChange(e.target.value)} error={!!errors.email} helperText={errors.email} size="small" /></Grid>
+                        <Grid item xs={12} md={4}><TextField fullWidth label={t('booking.wizard.phone')} value={customer.phone} onChange={(e) => handleCustomerChange('phone', e.target.value)} error={!!errors.phone} helperText={errors.phone} size="small" /></Grid>
+                        <Grid item xs={12} md={6}><TextField fullWidth label={t('booking.wizard.whatsapp')} value={customer.whatsapp} onChange={(e) => handleCustomerChange('whatsapp', e.target.value)} size="small" /></Grid>
+                        <Grid item xs={12} md={6}><TextField fullWidth label={t('booking.wizard.notes')} value={customer.notes} onChange={(e) => handleCustomerChange('notes', e.target.value)} size="small" multiline rows={1} /></Grid>
                     </Grid>
                 </Paper>
                 {hasReservedSeating ? (
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />Attendee Details for Selected Seats ({selectedSeats.length})</Typography>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />{t('bookings.attendeeSeatsTitle', { count: selectedSeats.length })}</Typography>
                         <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
                             {reservedAttendees.map((attendee, index) => (
                                 <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
-                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>Seat #{index + 1}: Row {selectedSeats[index]?.row_label} Seat {selectedSeats[index]?.seat_number}</Typography>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>{t('bookings.seatLine', { index: index + 1, row: selectedSeats[index]?.row_label, seat: selectedSeats[index]?.seat_number })}</Typography>
                                     <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                        <Grid item xs={12} md={6}><TextField fullWidth placeholder="Full Name *" value={attendee.name} onChange={(e) => updateReservedAttendee(index, 'name', e.target.value)} size="small" error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES} /></Grid>
-                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder="Email" value={attendee.email} onChange={(e) => updateReservedAttendee(index, 'email', e.target.value)} size="small" /></Grid>
-                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder="Phone" value={attendee.phone} onChange={(e) => updateReservedAttendee(index, 'phone', e.target.value)} size="small" /></Grid>
+                                        <Grid item xs={12} md={6}><TextField fullWidth placeholder={t('booking.wizard.fullName')} value={attendee.name} onChange={(e) => updateReservedAttendee(index, 'name', e.target.value)} size="small" error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES} /></Grid>
+                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder={t('bookings.labelEmail')} value={attendee.email} onChange={(e) => updateReservedAttendee(index, 'email', e.target.value)} size="small" /></Grid>
+                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder={t('bookings.labelPhone')} value={attendee.phone} onChange={(e) => updateReservedAttendee(index, 'phone', e.target.value)} size="small" /></Grid>
                                     </Grid>
                                 </Paper>
                             ))}
@@ -910,39 +941,39 @@ const CreateBooking = () => {
                     </Paper>
                 ) : isFreeRegistrationFlow ? (
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> Entry Details ({freeEntries})</Typography>
-                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>Each entry receives its own registration pass. Blank email/phone will fall back to the primary contact's.</Typography>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> {t('booking.wizard.entryDetails', { count: freeEntries })}</Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>{t('bookings.eachEntryPass')}</Typography>
                         {errors.freeAttendees && <Typography variant="caption" sx={{ color: 'error.main', display: 'block', mb: 1 }}>{errors.freeAttendees}</Typography>}
                         <Box sx={{ maxHeight: 480, overflowY: 'auto' }}>
                             {freeAttendees.map((att, index) => (
                                 <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
-                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>Entry #{index + 1}{index === 0 ? ' — primary contact' : ''}</Typography>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>{t('booking.wizard.entryLabel', { index: index + 1 })}{index === 0 ? ` — ${t('booking.wizard.primaryContactHint')}` : ''}</Typography>
                                     <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                        <Grid item xs={12} md={4}><TextField fullWidth placeholder="Full Name *" value={att.name} onChange={(e) => updateFreeAttendee(index, 'name', e.target.value)} size="small" error={!att.name?.trim() && activeStep === STEP_KEYS.ATTENDEES} /></Grid>
-                                        <Grid item xs={12} md={4}><TextField fullWidth placeholder={index === 0 ? 'Email (defaults to primary)' : 'Email (optional)'} value={att.email} onChange={(e) => updateFreeAttendee(index, 'email', e.target.value)} size="small" type="email" /></Grid>
-                                        <Grid item xs={12} md={4}><TextField fullWidth placeholder={index === 0 ? 'Phone (defaults to primary)' : 'Phone (optional)'} value={att.phone} onChange={(e) => updateFreeAttendee(index, 'phone', e.target.value)} size="small" /></Grid>
+                                        <Grid item xs={12} md={4}><TextField fullWidth placeholder={t('booking.wizard.fullName')} value={att.name} onChange={(e) => updateFreeAttendee(index, 'name', e.target.value)} size="small" error={!att.name?.trim() && activeStep === STEP_KEYS.ATTENDEES} /></Grid>
+                                        <Grid item xs={12} md={4}><TextField fullWidth placeholder={index === 0 ? t('booking.wizard.emailDefaultsToPrimary') : t('booking.wizard.emailOptional')} value={att.email} onChange={(e) => updateFreeAttendee(index, 'email', e.target.value)} size="small" type="email" /></Grid>
+                                        <Grid item xs={12} md={4}><TextField fullWidth placeholder={index === 0 ? t('booking.wizard.phoneDefaultsToPrimary') : t('booking.wizard.phoneOptional')} value={att.phone} onChange={(e) => updateFreeAttendee(index, 'phone', e.target.value)} size="small" /></Grid>
                                     </Grid>
                                 </Paper>
                             ))}
                         </Box>
-                        <Button variant="text" size="small" onClick={() => { if (!customer.name?.trim()) { toast.warning('Enter the primary contact name first'); return; } freeAttendees.forEach((att, i) => { if (i > 0 && !att.name?.trim()) updateFreeAttendee(i, 'name', customer.name); }); }} sx={{ mt: 1 }}>Fill empty names with primary contact</Button>
+                        <Button variant="text" size="small" onClick={() => { if (!customer.name?.trim()) { toast.warning(t('bookings.enterPrimaryNameFirst')); return; } freeAttendees.forEach((att, i) => { if (i > 0 && !att.name?.trim()) updateFreeAttendee(i, 'name', customer.name); }); }} sx={{ mt: 1 }}>{t('booking.wizard.fillEmptyNamesWithPrimary')}</Button>
                     </Paper>
                 ) : (
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> Attendee Details{errors.attendees && <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>{errors.attendees}</Typography>}</Typography>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> {t('booking.wizard.stepAttendeeDetails')}{errors.attendees && <Typography variant="caption" sx={{ color: 'error.main', ml: 2 }}>{errors.attendees}</Typography>}</Typography>
                         <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
                             {attendees.map((attendee, index) => (
                                 <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
                                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>#{index + 1} • {attendee.tier_name}</Typography>
                                     <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                        <Grid item xs={12} md={6}><TextField fullWidth placeholder="Full Name *" value={attendee.name} onChange={(e) => updateAttendee(index, 'name', e.target.value)} size="small" error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES} /></Grid>
-                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder="Email" value={attendee.email} onChange={(e) => updateAttendee(index, 'email', e.target.value)} size="small" /></Grid>
-                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder="Phone" value={attendee.phone} onChange={(e) => updateAttendee(index, 'phone', e.target.value)} size="small" /></Grid>
+                                        <Grid item xs={12} md={6}><TextField fullWidth placeholder={t('booking.wizard.fullName')} value={attendee.name} onChange={(e) => updateAttendee(index, 'name', e.target.value)} size="small" error={!attendee.name?.trim() && activeStep === STEP_KEYS.ATTENDEES} /></Grid>
+                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder={t('bookings.labelEmail')} value={attendee.email} onChange={(e) => updateAttendee(index, 'email', e.target.value)} size="small" /></Grid>
+                                        <Grid item xs={12} md={3}><TextField fullWidth placeholder={t('bookings.labelPhone')} value={attendee.phone} onChange={(e) => updateAttendee(index, 'phone', e.target.value)} size="small" /></Grid>
                                     </Grid>
                                 </Paper>
                             ))}
                         </Box>
-                        <Button variant="text" size="small" onClick={fillEmptyNamesWithCustomer} sx={{ mt: 1 }}>Fill empty names with customer name</Button>
+                        <Button variant="text" size="small" onClick={fillEmptyNamesWithCustomer} sx={{ mt: 1 }}>{t('booking.wizard.fillEmptyNamesWithCustomer')}</Button>
                     </Paper>
                 )}
             </Box>
@@ -951,42 +982,42 @@ const CreateBooking = () => {
 
     const renderReview = () => (
         <Box sx={{ py: 2 }}>
-            <Alert severity="success" sx={{ mb: 3 }}>Review your booking details before confirming</Alert>
+            <Alert severity="success" sx={{ mb: 3 }}>{t('booking.wizard.reviewHint')}</Alert>
             <Grid container spacing={isMobile ? 2 : 3}>
                 <Grid item xs={12} md={6}>
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><EventIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> Event Details</Typography>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><EventIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> {t('booking.wizard.eventDetails')}</Typography>
                         <Box>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Event:</strong> {selectedEvent?.title}</Typography>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Venue:</strong> {formatVenueAddress(selectedEvent?.venue) || 'TBD'}</Typography>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Date:</strong> {selectedEvent?.start_date ? new Date(selectedEvent.start_date).toLocaleDateString() : 'TBD'}</Typography>
-                            {selectedSession && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Slot:</strong> {formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)}</Typography>}
-                            {slotPreferences.length > 0 && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Slot Preferences:</strong> {slotPreferences.map((n, i) => `#${i + 1}: Slot ${n}`).join(' · ')}</Typography>}
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('booking.event')}:</strong> {selectedEvent?.title}</Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('events.venueLabel')}:</strong> {formatVenueAddress(selectedEvent?.venue) || t('common.tbd')}</Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('booking.date')}:</strong> {selectedEvent?.start_date ? new Date(selectedEvent.start_date).toLocaleDateString() : t('common.tbd')}</Typography>
+                            {selectedSession && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.reviewSlotLabel')}:</strong> {formatPlatformTime(selectedSession.start_time, platformTimezone)} - {formatPlatformTime(selectedSession.end_time, platformTimezone)}</Typography>}
+                            {slotPreferences.length > 0 && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('booking.wizard.slotPreferencesLabel')}</strong> {slotPreferences.map((n, i) => `#${i + 1}: Slot ${n}`).join(' · ')}</Typography>}
                         </Box>
                     </Paper>
                 </Grid>
                 <Grid item xs={12} md={6}>
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> Customer Details</Typography>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><PersonIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> {t('booking.wizard.customerDetails')}</Typography>
                         <Box>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Name:</strong> {customer.name}</Typography>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Email:</strong> {customer.email}</Typography>
-                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Phone:</strong> {customer.phone}</Typography>
-                            {customer.whatsapp && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>WhatsApp:</strong> {customer.whatsapp}</Typography>}
-                            {customer.notes && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>Notes:</strong> {customer.notes}</Typography>}
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.labelName')}:</strong> {customer.name}</Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.labelEmail')}:</strong> {customer.email}</Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.labelPhone')}:</strong> {customer.phone}</Typography>
+                            {customer.whatsapp && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.labelWhatsApp')}:</strong> {customer.whatsapp}</Typography>}
+                            {customer.notes && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('booking.notes')}:</strong> {customer.notes}</Typography>}
                         </Box>
                     </Paper>
                 </Grid>
                 <Grid item xs={12}>
                     <Paper sx={{ p: isMobile ? 2 : 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />{hasReservedSeating ? `Reserved Seats (${selectedSeats.length})` : isFreeRegistrationFlow ? 'Registration' : `Tickets (${totalTickets})`}</Typography>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', mb: 2 }}><TicketIcon sx={{ mr: 1, verticalAlign: 'middle' }} />{hasReservedSeating ? t('bookings.reservedSeatsTitle', { count: selectedSeats.length }) : isFreeRegistrationFlow ? t('booking.wizard.registrationLabel') : t('bookings.ticketsTitle', { count: totalTickets })}</Typography>
                         <Box>
                             {hasReservedSeating ? (
                                 <Box>
                                     {selectedSeats.map((seat, i) => (
-                                        <Box key={seat.id} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.75, borderBottom: '1px solid #f1f5f9', gap: 1 }}>
+                                        <Box key={seat.id} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.75, borderBottom: `1px solid ${C.bgCardHover}`, gap: 1 }}>
                                             <Box sx={{ minWidth: 0 }}>
-                                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>#{i + 1} {seat.category_name || 'General'} - Row {seat.row_label} Seat {seat.seat_number}</Typography>
+                                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>#{i + 1} {seat.category_name || t('bookings.general')} - {t('bookings.rowSeat', { row: seat.row_label, seat: seat.seat_number })}</Typography>
                                                 {reservedAttendees[i]?.name && <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>{reservedAttendees[i].name}</Typography>}
                                             </Box>
                                             <Typography variant="body2" sx={{ color: 'text.primary', flexShrink: 0 }}>{formatMoney(Number(seat.price) || 0)}</Typography>
@@ -995,36 +1026,62 @@ const CreateBooking = () => {
                                 </Box>
                             ) : isFreeRegistrationFlow ? (
                                 <Box>
-                                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>Free registration — <strong>{freeEntries}</strong> {freeEntries === 1 ? 'pass' : 'passes'} will be issued, one per entry.</Typography>
+                                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>{t('booking.wizard.freeRegistrationInfo', { count: freeEntries, passes: t(freeEntries === 1 ? 'booking.wizard.freeRegistrationPassCount_one' : 'booking.wizard.freeRegistrationPassCount_other') })}</Typography>
                                     {freeAttendees.map((att, i) => (
-                                        <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.75, borderBottom: '1px solid #f1f5f9', gap: 1 }}>
+                                        <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.75, borderBottom: `1px solid ${C.bgCardHover}`, gap: 1 }}>
                                             <Box sx={{ minWidth: 0 }}>
-                                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>#{i + 1} {att.name || '(name missing)'}</Typography>
+                                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>#{i + 1} {att.name || t('bookings.nameMissing')}</Typography>
                                                 {att.email && <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>{att.email}</Typography>}
                                             </Box>
-                                            <Chip size="small" label="REG" variant="outlined" sx={{ alignSelf: 'center', fontSize: '10px', height: '20px' }} />
+                                            <Chip size="small" label={t('booking.wizard.entryShortLabel')} variant="outlined" sx={{ alignSelf: 'center', fontSize: '10px', height: '20px' }} />
                                         </Box>
                                     ))}
                                 </Box>
                             ) : (
                                 <>
                                     {ticketList.map((ticket, index) => (
-                                        <Box key={index} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, borderBottom: '1px solid #f1f5f9', gap: 1 }}>
+                                        <Box key={index} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${C.bgCardHover}`, gap: 1 }}>
                                             <Typography variant="body2" sx={{ color: 'text.primary', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>#{index + 1} {ticket.tier_name}{attendees[index]?.name && ` - ${attendees[index].name}`}</Typography>
                                             <Typography variant="body2" sx={{ color: 'text.primary', flexShrink: 0 }}>{formatMoney(ticket.price)}</Typography>
                                         </Box>
                                     ))}
                                 </>
                             )}
+                            {eventDetails?.donations_enabled && !isFreeRegistrationFlow && (
+                                <Box sx={{ mt: 2, p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}>
+                                    <Typography variant="subtitle2" sx={{ color: 'text.primary', fontWeight: 700, mb: 0.5 }}>
+                                        {t('booking.donationTitle')}
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mb: 1.5 }}>
+                                        {t('booking.donationHelper', { currency: eventDetails?.currency_code || 'HKD' })}
+                                    </Typography>
+                                    <TextField
+                                        fullWidth
+                                        size="small"
+                                        type="number"
+                                        label={t('booking.donationAmountLabel')}
+                                        value={donationAmount}
+                                        onChange={(e) => setDonationAmount(e.target.value)}
+                                        inputProps={{ min: 0, step: '0.01' }}
+                                        helperText={t('booking.donationTaxHint')}
+                                    />
+                                </Box>
+                            )}
                             <Divider sx={{ my: 2 }} />
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>Subtotal ({hasReservedSeating ? selectedSeats.length : totalTickets} {hasReservedSeating ? (selectedSeats.length === 1 ? 'seat' : 'seats') : (totalTickets === 1 ? 'ticket' : 'tickets')})</Typography>
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>{hasReservedSeating ? t('bookings.subtotalSeats', { count: selectedSeats.length }) : t('bookings.subtotalTickets', { count: totalTickets })}</Typography>
                                 <Typography variant="body2" sx={{ color: 'text.primary' }}>{formatMoney(hasReservedSeating ? selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0) : totalAmount)}</Typography>
                             </Box>
-                            {appliedDiscount?.valid && <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}><Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>Discount ({appliedDiscount.code})</Typography><Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>−{formatMoney(appliedDiscount.discount_amount)}</Typography></Box>}
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 1.5, mt: 1, borderTop: '2px solid #e2e8f0' }}>
-                                <Typography variant="subtitle1" sx={{ color: 'text.primary', fontWeight: 700 }}>Total</Typography>
-                                <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>{formatMoney(hasReservedSeating ? (selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0) - discountAmount) : netAmount)}</Typography>
+                            {appliedDiscount?.valid && <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}><Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>{t('booking.discount')} ({appliedDiscount.code})</Typography><Typography variant="body2" sx={{ color: 'success.main', fontWeight: 600 }}>−{formatMoney(appliedDiscount.discount_amount)}</Typography></Box>}
+                            {donationValue > 0 && (
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                                    <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>{t('booking.donationLine')}</Typography>
+                                    <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>{formatMoney(donationValue)}</Typography>
+                                </Box>
+                            )}
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 1.5, mt: 1, borderTop: `2px solid ${C.borderLight}` }}>
+                                <Typography variant="subtitle1" sx={{ color: 'text.primary', fontWeight: 700 }}>{t('booking.wizard.totalLabel')}</Typography>
+                                <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>{formatMoney(grandTotal)}</Typography>
                             </Box>
                         </Box>
                     </Paper>
@@ -1052,10 +1109,10 @@ const CreateBooking = () => {
             <PageHeader>
                 <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
                     {isAuthenticated && <IconButton onClick={() => navigate('/app/bookings')}><ArrowBackIcon /></IconButton>}
-                    <PageTitle variant="h4">{isAuthenticated ? (isRegularUser ? 'Book Tickets' : 'New Booking') : 'Register for Event'}</PageTitle>
+                    <PageTitle variant="h4">{isAuthenticated ? (isRegularUser ? t('booking.wizard.title') : t('booking.wizard.titleAdmin')) : t('booking.wizard.titleGuest')}</PageTitle>
                 </Box>
                 <Box display="flex" gap={1}>
-                    <OutlineButton onClick={() => { if (isAuthenticated) navigate('/app/bookings'); else navigate('/', { replace: true }); }}>{isAuthenticated ? 'Cancel' : 'Back to Home'}</OutlineButton>
+                    <OutlineButton onClick={() => { if (isAuthenticated) navigate('/app/bookings'); else navigate('/', { replace: true }); }}>{isAuthenticated ? t('booking.wizard.cancel') : t('booking.wizard.backToHome')}</OutlineButton>
                 </Box>
             </PageHeader>
             <Paper sx={{ p: isMobile ? 2 : 4, mt: 2 }}>
@@ -1064,12 +1121,12 @@ const CreateBooking = () => {
                 </Stepper>
                 {loading || isLoadingEvent ? <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box> : <Box>{getStepContent(safeActiveStep)}</Box>}
                 <Box sx={{ display: 'flex', flexDirection: isMobile ? 'column-reverse' : 'row', justifyContent: 'space-between', gap: isMobile ? 1.5 : 0, mt: 4, pt: 2, borderTop: '1px solid rgba(226, 232, 240, 1)' }}>
-                    <Button variant="outlined" onClick={handleBack} disabled={stepIndex(safeActiveStep) === 0} startIcon={<ArrowBackIcon />} sx={isMobile ? { width: '100%' } : undefined}>Back</Button>
+                    <Button variant="outlined" onClick={handleBack} disabled={stepIndex(safeActiveStep) === 0} startIcon={<ArrowBackIcon />} sx={isMobile ? { width: '100%' } : undefined}>{t('booking.wizard.back')}</Button>
                     <Box sx={isMobile ? { width: '100%' } : undefined}>
                         {safeActiveStep === STEP_KEYS.REVIEW ? (
-                            <PrimaryButton variant="contained" onClick={handleSubmit} disabled={loading} startIcon={loading ? <CircularProgress size={20} /> : <CheckIcon />} sx={isMobile ? { width: '100%' } : undefined}>{loading ? 'Creating...' : 'Confirm Booking'}</PrimaryButton>
+                            <PrimaryButton variant="contained" onClick={handleSubmit} disabled={loading} startIcon={loading ? <CircularProgress size={20} /> : <CheckIcon />} sx={isMobile ? { width: '100%' } : undefined}>{loading ? t('booking.wizard.creating') : t('booking.wizard.confirmBooking')}</PrimaryButton>
                         ) : (
-                            <PrimaryButton variant="contained" onClick={handleNext} endIcon={<ArrowForwardIcon />} disabled={safeActiveStep === STEP_KEYS.ENTRIES && freeEntries === 0} sx={isMobile ? { width: '100%' } : undefined}>Next</PrimaryButton>
+                            <PrimaryButton variant="contained" onClick={handleNext} endIcon={<ArrowForwardIcon />} disabled={safeActiveStep === STEP_KEYS.ENTRIES && freeEntries === 0} sx={isMobile ? { width: '100%' } : undefined}>{t('booking.wizard.next')}</PrimaryButton>
                         )}
                     </Box>
                 </Box>

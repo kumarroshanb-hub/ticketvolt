@@ -1,6 +1,7 @@
 // frontend/src/pages/Venues/VenueLayoutEditor.js
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
     Box, Typography, Paper, Button, Alert, CircularProgress,
     TextField, IconButton, Chip, Stack, Divider, Tooltip,
@@ -17,20 +18,24 @@ import {
 import { toast } from 'react-toastify';
 import api from '../../services/api';
 import SeatingCanvas from '../../components/Seating/SeatingCanvas';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 const BRAND = {
-    charcoal: '#333333',
-    red: '#FF2A2A',
-    redDark: '#e62626',
-    border: '#e0e0e0',
-    bg: '#f5f5f5',
-    bgSubtle: '#fafafa',
-    textMuted: '#888888',
+    charcoal: C.primary,
+    red: C.secondary,
+    redDark: C.secondaryDark,
+    border: C.borderLight,
+    bg: C.bgPrimary,
+    bgSubtle: C.bgPrimary,
+    textMuted: C.textMuted,
 };
 
 const VenueLayoutEditor = () => {
     const { venueId } = useParams();
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const [searchParams] = useSearchParams();
 
     const returnTo = searchParams.get('return');
@@ -61,7 +66,7 @@ const VenueLayoutEditor = () => {
             } catch (err) {
                 // eslint-disable-next-line no-console
                 console.error('Venue detail error:', err);
-                toast.error('Failed to load venue details');
+                toast.error(t('venues.loadDetailsFailed'));
                 navigate('/app/venues');
             } finally {
                 if (!cancelled) setLoadingVenue(false);
@@ -85,7 +90,7 @@ const VenueLayoutEditor = () => {
             } else {
                 // eslint-disable-next-line no-console
                 console.error('Failed to load layout data:', err);
-                toast.error('Failed to load layout data.');
+                toast.error(t('seatLayout.loadLayoutFailed'));
             }
         } finally {
             setLoadingLayout(false);
@@ -97,12 +102,12 @@ const VenueLayoutEditor = () => {
         const file = e.target.files?.[0];
         if (!file) return;
         if (!file.name.toLowerCase().endsWith('.svg')) {
-            toast.error('Please select a valid SVG file.');
+            toast.error(t('seatLayout.invalidSvg'));
             setSvgFile(null);
             return;
         }
         if (file.size > 5 * 1024 * 1024) {
-            toast.error('SVG must be under 5 MB.');
+            toast.error(t('seatLayout.svgTooLarge'));
             setSvgFile(null);
             return;
         }
@@ -111,7 +116,7 @@ const VenueLayoutEditor = () => {
 
     const handleUpload = async () => {
         if (!svgFile) {
-            toast.warning('Please select an SVG file first.');
+            toast.warning(t('seatLayout.selectSvgFirst'));
             return;
         }
 
@@ -125,14 +130,14 @@ const VenueLayoutEditor = () => {
             const res = await api.post(`/venues/${venueId}/layout/upload/`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
-            toast.success(res.data.message || 'Layout parsed successfully.');
+            toast.success(res.data.message || t('seatLayout.parseSuccess'));
             setSvgFile(null);
             await fetchLayoutData();
         } catch (err) {
             const msg =
                 err.response?.data?.error
                 || err.response?.data?.detail
-                || 'Failed to upload and parse layout.';
+                || t('seatLayout.uploadFailed');
             toast.error(msg);
         } finally {
             setUploading(false);
@@ -207,7 +212,7 @@ const VenueLayoutEditor = () => {
                     px: 3, py: 1.5,
                     flexShrink: 0,
                     borderBottom: `1px solid ${BRAND.border}`,
-                    bgcolor: '#fff',
+                    bgcolor: C.white,
                     borderRadius: 0,
                     display: 'flex',
                     alignItems: 'center',
@@ -224,11 +229,10 @@ const VenueLayoutEditor = () => {
                             variant="h6"
                             sx={{ fontWeight: 700, color: BRAND.charcoal, lineHeight: 1 }}
                         >
-                            Seating Layout: {venue?.name}
+                            {t('seatLayout.title', { name: venue?.name })}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                            Upload an SVG with one shape per seat. Categories are
-                            assigned on the event wizard.
+                            {t('seatLayout.subtitle')}
                         </Typography>
                     </Box>
                 </Stack>
@@ -236,14 +240,14 @@ const VenueLayoutEditor = () => {
                 <Stack direction="row" spacing={1} alignItems="center">
                     {hasExistingLayout && !svgFile && (
                         <Chip
-                            label={`${layoutData.seats.length} Seats Loaded`}
+                            label={t('seatLayout.seatsLoaded', { count: layoutData.seats.length })}
                             color="success"
                             size="small"
                             icon={<CheckIcon />}
                             sx={{ mr: 1 }}
                         />
                     )}
-                    <Tooltip title="Toggle instructions">
+                    <Tooltip title={t('seatLayout.toggleInstructions')}>
                         <IconButton
                             onClick={() => setShowInstructions((v) => !v)}
                             size="small"
@@ -290,7 +294,7 @@ const VenueLayoutEditor = () => {
                                     boxShadow: 'none',
                                 }}
                             >
-                                {svgFile ? 'Change File' : (hasExistingLayout ? 'Replace SVG' : 'Choose SVG')}
+                                {svgFile ? t('seatLayout.changeFile') : (hasExistingLayout ? t('seatLayout.replaceSvg') : t('seatLayout.chooseSvg'))}
                                 <input
                                     type="file"
                                     hidden
@@ -328,7 +332,7 @@ const VenueLayoutEditor = () => {
                         >
                             <TextField
                                 size="small"
-                                label="W"
+                                label={t('seatLayout.widthShort')}
                                 type="number"
                                 value={canvasWidth}
                                 onChange={(e) => setCanvasWidth(e.target.value)}
@@ -337,7 +341,7 @@ const VenueLayoutEditor = () => {
                             <Typography variant="caption">×</Typography>
                             <TextField
                                 size="small"
-                                label="H"
+                                label={t('seatLayout.heightShort')}
                                 type="number"
                                 value={canvasHeight}
                                 onChange={(e) => setCanvasHeight(e.target.value)}
@@ -354,10 +358,10 @@ const VenueLayoutEditor = () => {
                                 textTransform: 'none',
                                 borderColor: BRAND.red,
                                 color: BRAND.red,
-                                '&:hover': { borderColor: BRAND.redDark, bgcolor: '#fff5f5' },
+                                '&:hover': { borderColor: BRAND.redDark, bgcolor: C.bgPrimary },
                             }}
                         >
-                            {uploading ? 'Parsing…' : 'Upload & Parse'}
+                            {uploading ? t('seatLayout.parsing') : t('seatLayout.uploadParse')}
                         </Button>
                     </Stack>
 
@@ -367,11 +371,8 @@ const VenueLayoutEditor = () => {
                             onClose={() => setShowInstructions(false)}
                             sx={{ mt: 2, fontSize: '0.85rem', py: 1 }}
                         >
-                            <strong>How to prepare the SVG:</strong>{' '}
-                            Include one <code>&lt;circle&gt;</code> or <code>&lt;rect&gt;</code>{' '}
-                            per seat. The parser extracts their centers and auto-numbers
-                            rows top-to-bottom and seats left-to-right. You'll assign
-                            categories on the event wizard's Seat Categories step.
+                            <strong>{t('seatLayout.howToTitle')}</strong>{' '}
+                            {t('seatLayout.howToBody')}
                         </Alert>
                     )}
                 </Paper>
@@ -394,7 +395,7 @@ const VenueLayoutEditor = () => {
                             justifyContent: 'center',
                             alignItems: 'center',
                             height: '100%',
-                            bgcolor: '#fff',
+                            bgcolor: C.white,
                             borderRadius: 2,
                             border: `1px solid ${BRAND.border}`,
                         }}
@@ -418,16 +419,16 @@ const VenueLayoutEditor = () => {
                             flexDirection: 'column',
                             justifyContent: 'center',
                             alignItems: 'center',
-                            bgcolor: '#fff',
+                            bgcolor: C.white,
                             border: `2px dashed ${BRAND.border}`,
                             borderRadius: 2,
                             color: 'text.secondary',
                         }}
                     >
                         <MapIcon sx={{ fontSize: 80, mb: 2, opacity: 0.3 }} />
-                        <Typography variant="h6">No Layout Uploaded</Typography>
+                        <Typography variant="h6">{t('seatLayout.noLayoutTitle')}</Typography>
                         <Typography variant="body2">
-                            Upload an SVG file above to generate the seating grid.
+                            {t('seatLayout.noLayoutHint')}
                         </Typography>
                     </Box>
                 )}
@@ -440,7 +441,7 @@ const VenueLayoutEditor = () => {
                             mt: 2,
                             p: 2,
                             flexShrink: 0,
-                            bgcolor: '#fff',
+                            bgcolor: C.white,
                             border: `1px solid ${BRAND.border}`,
                             display: 'flex',
                             alignItems: 'center',
@@ -451,12 +452,12 @@ const VenueLayoutEditor = () => {
                     >
                         <Box>
                             <Typography variant="body2" sx={{ fontWeight: 600, color: BRAND.charcoal }}>
-                                Layout looks right?
+                                {t('seatLayout.layoutRight')}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
                                 {returnTo
-                                    ? 'You’ll return to the event draft and continue with seat categories.'
-                                    : 'Return to the venue list when finished.'}
+                                    ? t('seatLayout.returnToDraft')
+                                    : t('seatLayout.returnToVenues')}
                             </Typography>
                         </Box>
                         <Stack direction="row" spacing={1}>
@@ -465,7 +466,7 @@ const VenueLayoutEditor = () => {
                                 onClick={handleBack}
                                 sx={{ textTransform: 'none', color: BRAND.textMuted }}
                             >
-                                {returnTo ? 'Skip for now' : 'Back to Venues'}
+                                {returnTo ? t('seatLayout.skipForNow') : t('venues.notFoundBack')}
                             </Button>
                             <Button
                                 variant="contained"
@@ -474,10 +475,10 @@ const VenueLayoutEditor = () => {
                                 sx={{
                                     textTransform: 'none',
                                     bgcolor: BRAND.charcoal,
-                                    '&:hover': { bgcolor: '#000' },
+                                    '&:hover': { bgcolor: C.black },
                                 }}
                             >
-                                {returnTo ? 'Save & Continue' : 'Done'}
+                                {returnTo ? t('seatLayout.saveContinue') : t('seatLayout.done')}
                             </Button>
                         </Stack>
                     </Paper>

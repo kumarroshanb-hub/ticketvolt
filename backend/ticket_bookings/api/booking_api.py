@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.exceptions import PermissionDenied, NotFound
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
@@ -586,6 +587,40 @@ class BookingViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+        # ---- Optional donation (validated server-side) ----
+        from decimal import Decimal, InvalidOperation
+        donation_amount = Decimal('0.00')
+        raw_donation = data.get('donation_amount')
+        if raw_donation not in (None, ''):
+            try:
+                donation_amount = Decimal(str(raw_donation))
+            except (InvalidOperation, TypeError, ValueError):
+                return Response(
+                    {'donation_amount': 'Enter a valid donation amount.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        if donation_amount < 0:
+            return Response(
+                {'donation_amount': 'Donation cannot be negative.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if donation_amount > Decimal('1000000.00'):
+            return Response(
+                {'donation_amount': 'Donation exceeds the allowed maximum.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if donation_amount > 0:
+            if not (event_obj and event_obj.donations_enabled):
+                return Response(
+                    {'donation_amount': 'Donations are not enabled for this event.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if event_obj.event_flow == 'free_registration':
+                return Response(
+                    {'donation_amount': 'Donations are only available on paid bookings.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         if event_obj and event_obj.event_flow == 'free_registration':
             return self._create_free_registration(request, event_obj, data)
 
@@ -605,9 +640,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 or []
             )
             try:
-                data['total_amount'] = str(
-                    compute_booking_subtotal(event_obj, items_for_pricing)
+                ticket_subtotal = compute_booking_subtotal(
+                    event_obj, items_for_pricing,
                 )
+                data['donation_amount'] = str(donation_amount)
+                data['donation_currency_code'] = (
+                    event_obj.organization.currency_code or ''
+                )
+                data['total_amount'] = str(ticket_subtotal + donation_amount)
             except PricingError as exc:
                 return Response(
                     {'error': str(exc)},
@@ -688,6 +728,44 @@ class BookingViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         return Response(_with_total_display(serializer.data, instance))
+
+    # ------------------------------------------------------------------
+    # Donation tax receipt
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=['get'], url_path='donation-tax-receipt')
+    def donation_tax_receipt(self, request, pk=None):
+        """Download (and issue once) the HK donation tax receipt.
+
+        Allowed for the booking owner and for org operators/managers.
+        """
+        booking = self.get_object()
+        if not self._can_view_booking(request.user, booking):
+            raise PermissionDenied(
+                'You do not have permission to access this booking.'
+            )
+
+        from ..services.donation_receipt import (
+            DonationReceiptError,
+            build_tax_receipt_pdf,
+            ensure_tax_receipt_number,
+        )
+
+        try:
+            booking = ensure_tax_receipt_number(booking)
+        except DonationReceiptError as exc:
+            return Response(
+                {'error': str(exc), 'code': 'DONATION_NOT_ELIGIBLE'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pdf = build_tax_receipt_pdf(booking)
+        filename = f'donation-receipt-{booking.booking_reference}.pdf'
+        return FileResponse(
+            pdf,
+            as_attachment=True,
+            filename=filename,
+            content_type='application/pdf',
+        )
 
     def _update_event_counts(self, event):
         if not event:

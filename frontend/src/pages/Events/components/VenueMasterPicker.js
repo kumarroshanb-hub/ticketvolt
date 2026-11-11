@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/VenueMasterPicker.js
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Box, Card, CardContent, Typography, TextField, InputAdornment,
     Chip, CircularProgress, Grid, Alert, Button,
@@ -11,13 +12,14 @@ import { theme } from '../../../theme/tokens';
 const C = theme.colors;
 
 export const VenueMasterPicker = ({ value, onSelect, onCreateVenue }) => {
+    const { t } = useTranslation();
     const [search, setSearch] = useState('');
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         let cancelled = false;
-        const t = setTimeout(() => {
+        const timer = setTimeout(() => {
             setLoading(true);
             // ✅ `listLatest` dedupes to one row per venue (latest version).
             // The catalog is cross-tenant on purpose: a tenant can reuse
@@ -29,7 +31,7 @@ export const VenueMasterPicker = ({ value, onSelect, onCreateVenue }) => {
                 .catch(() => { if (!cancelled) setItems([]); })
                 .finally(() => { if (!cancelled) setLoading(false); });
         }, 250);
-        return () => { cancelled = true; clearTimeout(t); };
+        return () => { cancelled = true; clearTimeout(timer); };
     }, [search]);
 
     return (
@@ -37,7 +39,7 @@ export const VenueMasterPicker = ({ value, onSelect, onCreateVenue }) => {
             <TextField
                 fullWidth
                 size="small"
-                placeholder="Search venue master (name, city, country)…"
+                placeholder={t('eventWizard.searchVenuePlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 InputProps={{
@@ -65,16 +67,12 @@ export const VenueMasterPicker = ({ value, onSelect, onCreateVenue }) => {
                                 startIcon={<AddIcon />}
                                 onClick={onCreateVenue}
                             >
-                                Create Venue
+                                {t('venues.createButton')}
                             </Button>
                         ) : null
                     }
                 >
-                    No venues in the shared catalog yet. Create one now — you
-                    will be taken to the venue form, then (for reserved
-                    seating) the seat-layout upload, and returned here
-                    automatically with the new venue selected. Published
-                    venues are available to other tenants too.
+                    {t('eventWizard.noVenuesInCatalog')}
                 </Alert>
             ) : (
                 <Grid container spacing={1.5}>
@@ -107,9 +105,9 @@ export const VenueMasterPicker = ({ value, onSelect, onCreateVenue }) => {
                                         </Typography>
                                         <Box sx={{ display: 'flex', gap: 0.5, mt: 1, flexWrap: 'wrap' }}>
                                             {m.has_reserved_seating && (
-                                                <Chip size="small" icon={<SeatIcon />} label="Reserved" variant="outlined" />
+                                                <Chip size="small" icon={<SeatIcon />} label={t('eventWizard.reservedShort')} variant="outlined" />
                                             )}
-                                            <Chip size="small" label={`${m.seat_count || 0} seats`} variant="outlined" />
+                                            <Chip size="small" label={t('venues.seatCount', { count: m.seat_count || 0 })} variant="outlined" />
                                         </Box>
                                     </CardContent>
                                 </Card>

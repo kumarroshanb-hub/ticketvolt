@@ -46,15 +46,38 @@ export const EventTicketSettings = ({ formData, onChange }) => {
                 </FormHelperText>
             </Grid>
 
+            <Grid item xs={12} md={6}>
+                <FormControlLabel
+                    control={
+                        <Switch
+                            checked={formData.donations_enabled === true}
+                            onChange={onChange}
+                            name="donations_enabled"
+                            sx={{
+                                '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
+                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                                    backgroundColor: C.primary,
+                                },
+                            }}
+                        />
+                    }
+                    label={t('events.donationsEnabled')}
+                    sx={{ color: C.textSecondary }}
+                />
+                <FormHelperText>
+                    {t('events.donationsHelper')}
+                </FormHelperText>
+            </Grid>
+
             <Grid item xs={12}>
-                <SectionTitle variant="h6">Ticket Settings</SectionTitle>
+                <SectionTitle variant="h6">{t('events.ticketSettingsTitle')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
             </Grid>
 
             <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                     <FormLabel sx={{ color: C.textPrimary, fontWeight: 600, mb: 1 }}>
-                        Ticket Format
+                        {t('events.ticketFormatLabel')}
                     </FormLabel>
                     <RadioGroup
                         row={!isMobile}
@@ -62,11 +85,11 @@ export const EventTicketSettings = ({ formData, onChange }) => {
                         value={formData.ticket_format || 'pdf'}
                         onChange={onChange}
                     >
-                        <FormControlLabel value="pdf" control={<Radio />} label={<Typography variant="body2">📄 PDF</Typography>} />
-                        <FormControlLabel value="png" control={<Radio />} label={<Typography variant="body2">🖼️ PNG</Typography>} />
-                        <FormControlLabel value="both" control={<Radio />} label={<Typography variant="body2">📄➕🖼️ Both</Typography>} />
+                        <FormControlLabel value="pdf" control={<Radio />} label={<Typography variant="body2">📄 {t('events.ticketFormatPdf')}</Typography>} />
+                        <FormControlLabel value="png" control={<Radio />} label={<Typography variant="body2">🖼️ {t('events.ticketFormatPng')}</Typography>} />
+                        <FormControlLabel value="both" control={<Radio />} label={<Typography variant="body2">📄➕🖼️ {t('events.ticketFormatBoth')}</Typography>} />
                     </RadioGroup>
-                    <FormHelperText>Choose the format for ticket delivery to customers</FormHelperText>
+                    <FormHelperText>{t('events.ticketFormatHelper')}</FormHelperText>
                 </FormControl>
             </Grid>
 
@@ -85,22 +108,22 @@ export const EventTicketSettings = ({ formData, onChange }) => {
                             }}
                         />
                     }
-                    label="Combine tickets into single file"
+                    label={t('events.combineTicketsLabel')}
                     sx={{ color: C.textSecondary }}
                 />
                 <FormHelperText>
-                    Combine all tickets into one file instead of individual files
+                    {t('events.combineTicketsHelper')}
                 </FormHelperText>
             </Grid>
 
             <Grid item xs={12} md={6}>
                 <StyledTextField
-                    fullWidth label="Tickets Per Page"
+                    fullWidth label={t('events.ticketsPerPageLabel')}
                     name="tickets_per_page" type="number"
                     value={formData.tickets_per_page || 4}
                     onChange={onChange}
                     InputProps={{ inputProps: { min: 1, max: 10 } }}
-                    helperText="Number of tickets to show per page (for combined tickets)"
+                    helperText={t('events.ticketsPerPageHelper')}
                     disabled={!formData.combine_tickets}
                 />
             </Grid>

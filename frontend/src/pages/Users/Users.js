@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useMediaQuery, useTheme } from '@mui/material';
 import { toast } from 'react-toastify';
+import { useTranslation } from 'react-i18next';
 import {
   Search,
   Edit,
@@ -40,7 +41,6 @@ import usePlatformFilter from '../../hooks/usePlatformFilter';
 import { OrgFilterSelect } from '../../components/Common';
 import {
   PLATFORM_ROLES, MEMBERSHIP_ROLES,
-  PLATFORM_ROLE_LABELS, MEMBERSHIP_ROLE_LABELS,
 } from '../../constants';
 
 const C = theme.colors;
@@ -703,8 +703,23 @@ const getAvatarColor = (name) => {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 };
 
-const getRoleLabel = (role) =>
-  PLATFORM_ROLE_LABELS[role] || MEMBERSHIP_ROLE_LABELS[role] || role || 'Regular User';
+const getRoleLabel = (role, t) => {
+  switch (role) {
+    case PLATFORM_ROLES.SUPER_ADMIN:
+      return t('users.roleSuperAdmin');
+    case MEMBERSHIP_ROLES.OWNER:
+    case 'organizer':
+      return t('roles.owner');
+    case MEMBERSHIP_ROLES.ADMIN:
+      return t('roles.admin');
+    case MEMBERSHIP_ROLES.STAFF:
+      return t('roles.staff');
+    case MEMBERSHIP_ROLES.MEMBER:
+      return t('roles.member');
+    default:
+      return t('users.roleUser');
+  }
+};
 
 const getRoleIcon = (role) => {
   if (role === PLATFORM_ROLES.SUPER_ADMIN) return <SupervisorAccount fontSize="small" />;
@@ -758,14 +773,14 @@ const normalizeUserResponse = (data) => {
 // the Organizations page (Assign Owner / Transfer Ownership).
 // ============================================
 const PLATFORM_ROLE_OPTIONS = [
-  { value: PLATFORM_ROLES.USER,        label: 'Regular User' },
-  { value: PLATFORM_ROLES.SUPER_ADMIN, label: 'Platform Admin' },
+  { value: PLATFORM_ROLES.USER },
+  { value: PLATFORM_ROLES.SUPER_ADMIN },
 ];
 
 const ORG_ROLE_OPTIONS = [
-  { value: MEMBERSHIP_ROLES.MEMBER, label: 'Member' },
-  { value: MEMBERSHIP_ROLES.STAFF,  label: 'Staff' },
-  { value: MEMBERSHIP_ROLES.ADMIN,  label: 'Admin' },
+  { value: MEMBERSHIP_ROLES.MEMBER },
+  { value: MEMBERSHIP_ROLES.STAFF },
+  { value: MEMBERSHIP_ROLES.ADMIN },
 ];
 
 // ============================================================================
@@ -785,6 +800,7 @@ const UserFormModal = ({
   requesterOrgs,
   isSubmitting,
 }) => {
+  const { t } = useTranslation();
   const isEdit = mode === 'edit';
   const phoneInvalid = !isEdit && formData.phone && !isValidPhone(formData.phone);
 
@@ -798,7 +814,7 @@ const UserFormModal = ({
         <ModalHeader>
           <ModalTitle>
             {isEdit ? <Edit /> : <PersonAdd />}
-            {isEdit ? 'Edit User' : 'Create New User'}
+            {isEdit ? t('users.editTitle') : t('users.createTitle')}
           </ModalTitle>
           <ModalClose onClick={onClose}>
             <Close fontSize="small" />
@@ -808,7 +824,7 @@ const UserFormModal = ({
           <form onSubmit={onSubmit}>
             <FormGrid>
               <FormGroup>
-                <FormLabel>Email *</FormLabel>
+                <FormLabel>{t('users.emailLabel')}</FormLabel>
                 <FormInput
                   type="email"
                   value={formData.email}
@@ -820,7 +836,9 @@ const UserFormModal = ({
               </FormGroup>
               <FormGroup>
                 <FormLabel>
-                  Mobile Number {isEdit ? '(optional)' : '*'}
+                  {isEdit
+                    ? t('users.phoneOptionalLabel')
+                    : t('users.phoneLabel')}
                 </FormLabel>
                 <FormInput
                   type="tel"
@@ -831,38 +849,38 @@ const UserFormModal = ({
                   style={{ borderColor: phoneInvalid ? C.error : undefined }}
                 />
                 {phoneInvalid && (
-                  <FormError>Enter a valid mobile number (7–15 digits)</FormError>
+                  <FormError>{t('users.phoneInvalid')}</FormError>
                 )}
               </FormGroup>
 
               {!isEdit && (
                 <div style={{ gridColumn: '1 / -1', padding: '12px', borderRadius: 8, background: `${C.info}1A`, border: `1px solid ${C.info}4D` }}>
                   <p style={{ margin: 0, fontSize: '13px', color: C.infoDark, fontFamily: F.family }}>
-                    🔐 <strong>Passwordless:</strong> The user will receive a secure magic link via email to log in. No password is required.
+                    🔐 <strong>{t('users.passwordlessTitle')}</strong> {t('users.passwordlessBody')}
                   </p>
                 </div>
               )}
 
               <FormGroup>
-                <FormLabel>First Name</FormLabel>
+                <FormLabel>{t('users.firstNameLabel')}</FormLabel>
                 <FormInput
                   type="text"
                   value={formData.first_name}
                   onChange={(e) => setFormData(prev => ({ ...prev, first_name: e.target.value }))}
-                  placeholder="John"
+                  placeholder={t('users.firstNamePlaceholder')}
                 />
               </FormGroup>
               <FormGroup>
-                <FormLabel>Last Name</FormLabel>
+                <FormLabel>{t('users.lastNameLabel')}</FormLabel>
                 <FormInput
                   type="text"
                   value={formData.last_name}
                   onChange={(e) => setFormData(prev => ({ ...prev, last_name: e.target.value }))}
-                  placeholder="Doe"
+                  placeholder={t('users.lastNamePlaceholder')}
                 />
               </FormGroup>
               <FormGroup>
-                <FormLabel>WhatsApp Number</FormLabel>
+                <FormLabel>{t('users.whatsappLabel')}</FormLabel>
                 <FormInput
                   type="tel"
                   value={formData.whatsapp_number}
@@ -871,25 +889,25 @@ const UserFormModal = ({
                 />
               </FormGroup>
               <FormGroup>
-                <FormLabel>City</FormLabel>
+                <FormLabel>{t('users.cityLabel')}</FormLabel>
                 <FormInput
                   type="text"
                   value={formData.city}
                   onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
-                  placeholder="Mumbai"
+                  placeholder={t('users.cityPlaceholder')}
                 />
               </FormGroup>
               <FormGroup>
-                <FormLabel>State</FormLabel>
+                <FormLabel>{t('users.stateLabel')}</FormLabel>
                 <FormInput
                   type="text"
                   value={formData.state}
                   onChange={(e) => setFormData(prev => ({ ...prev, state: e.target.value }))}
-                  placeholder="Maharashtra"
+                  placeholder={t('users.statePlaceholder')}
                 />
               </FormGroup>
               <FormGroup>
-                <FormLabel>Country</FormLabel>
+                <FormLabel>{t('users.countryLabel')}</FormLabel>
                 <FormSelect
                   value={normaliseCountryName(formData.country) || defaultCountry}
                   onChange={(e) => setFormData(prev => ({ ...prev, country: e.target.value }))}
@@ -903,7 +921,7 @@ const UserFormModal = ({
               {/* Org picker: required for org-bound roles. */}
               {showOrgPicker && (
                 <FormGroup>
-                  <FormLabel>Organization *</FormLabel>
+                  <FormLabel>{t('users.organizationLabel')}</FormLabel>
                   <FormSelect
                     value={formData.organization_id || ''}
                     onChange={(e) => {
@@ -913,14 +931,14 @@ const UserFormModal = ({
                     required
                     disabled={isEdit}
                   >
-                    <option value="">Select an organization…</option>
+                    <option value="">{t('users.selectOrganization')}</option>
                     {requesterOrgs.map((org) => (
                       <option key={org.id} value={org.id}>{org.name}</option>
                     ))}
                   </FormSelect>
                   {isEdit && (
                     <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                      Organization can't be changed here — use the Organizations page.
+                      {t('users.orgCannotChange')}
                     </p>
                   )}
                 </FormGroup>
@@ -929,7 +947,7 @@ const UserFormModal = ({
               {/* Platform role — only superusers can change. Hidden on edit. */}
               {!isEdit && isSuperuser && (
                 <FormGroup>
-                  <FormLabel>Platform Role</FormLabel>
+                  <FormLabel>{t('users.platformRoleLabel')}</FormLabel>
                   <FormSelect
                     value={formData.platformRole || PLATFORM_ROLES.USER}
                     onChange={(e) => {
@@ -945,11 +963,15 @@ const UserFormModal = ({
                     }}
                   >
                     {PLATFORM_ROLE_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                      <option key={o.value} value={o.value}>
+                        {o.value === PLATFORM_ROLES.SUPER_ADMIN
+                          ? t('users.roleSuperAdmin')
+                          : t('users.roleUser')}
+                      </option>
                     ))}
                   </FormSelect>
                   <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                    <strong>Platform role</strong> is system-wide (superuser only).
+                    <strong>{t('users.platformRoleLabel')}</strong> {t('users.platformRoleHelper')}
                   </p>
                 </FormGroup>
               )}
@@ -957,22 +979,23 @@ const UserFormModal = ({
               {/* Org role — shown when an org is selected and the target isn't platform staff. */}
               {!isEdit && (showOrgPicker || !isSuperuser) && (
                 <FormGroup>
-                  <FormLabel>Organization Role</FormLabel>
+                  <FormLabel>{t('users.organizationRoleLabel')}</FormLabel>
                   <FormSelect
                     value={formData.orgRole || MEMBERSHIP_ROLES.MEMBER}
                     onChange={(e) => setFormData(prev => ({ ...prev, orgRole: e.target.value }))}
                     disabled={isSuperuser && formData.platformRole && formData.platformRole !== PLATFORM_ROLES.USER}
                   >
                     {ORG_ROLE_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                      <option key={o.value} value={o.value}>
+                        {getRoleLabel(o.value, t)}
+                      </option>
                     ))}
                   </FormSelect>
                   <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                    Membership in the selected organization. Can be changed later on the Team page.
+                    {t('users.orgRoleHelper')}
                   </p>
                   <p style={{ margin: '4px 0 0', fontSize: '11px', color: C.textLight, fontFamily: F.family }}>
-                    Ownership is assigned via the Organizations page
-                    (Transfer Ownership / Assign Owner).
+                    {t('users.ownershipAssigned')}
                   </p>
                 </FormGroup>
               )}
@@ -980,15 +1003,14 @@ const UserFormModal = ({
               {isEdit && (
                 <div style={{ gridColumn: '1 / -1', padding: '12px', borderRadius: 8, background: `${C.info}1A`, border: `1px solid ${C.info}4D` }}>
                   <p style={{ margin: 0, fontSize: '13px', color: C.infoDark, fontFamily: F.family }}>
-                    ℹ️ Roles are read-only here. To change this user's organization role, use the
-                    Organization → Team page. Platform roles are managed by a superuser.
+                    ℹ️ {t('users.rolesReadOnly')}
                   </p>
                 </div>
               )}
             </FormGrid>
 
             <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}` }}>
-              <FormLabel style={{ marginBottom: '8px', display: 'block' }}>Account Status</FormLabel>
+              <FormLabel style={{ marginBottom: '8px', display: 'block' }}>{t('users.accountStatusLabel')}</FormLabel>
               <SwitchRow>
                 <Switch>
                   <input
@@ -1000,7 +1022,7 @@ const UserFormModal = ({
                 </Switch>
                 <span className="switch-label">
                   {formData.is_active ? <CheckCircle color="success" /> : <Block color="error" />}
-                  {formData.is_active ? 'Active' : 'Inactive'}
+                  {formData.is_active ? t('users.statusActive') : t('users.statusInactive')}
                 </span>
               </SwitchRow>
             </div>
@@ -1009,11 +1031,15 @@ const UserFormModal = ({
         <ModalFooter>
           <Button className="secondary" onClick={onClose} disabled={isSubmitting}>
             <Cancel fontSize="small" />
-            Cancel
+            {t('users.cancelButton')}
           </Button>
           <Button className="primary" type="button" onClick={onSubmit} disabled={isSubmitting}>
             <Save fontSize="small" />
-            {isSubmitting ? 'Saving…' : isEdit ? 'Save Changes' : 'Create User'}
+            {isSubmitting
+              ? t('users.saving')
+              : isEdit
+                ? t('users.saveButton')
+                : t('users.createButton')}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1022,6 +1048,7 @@ const UserFormModal = ({
 };
 
 const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
+  const { t } = useTranslation();
   if (!user) return null;
   return (
     <ModalOverlay onClick={onClose}>
@@ -1029,7 +1056,7 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
         <ModalHeader>
           <ModalTitle>
             <Visibility />
-            User Profile
+            {t('users.viewTitle')}
           </ModalTitle>
           <ModalClose onClick={onClose}>
             <Close fontSize="small" />
@@ -1049,34 +1076,34 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
               </p>
               <RoleBadge className={user.role}>
                 {getRoleIcon(user.role)}
-                {getRoleLabel(user.role)}
+                {getRoleLabel(user.role, t)}
               </RoleBadge>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
             <div>
-              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Email</p>
+              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>{t('users.colEmail')}</p>
               <p style={{ margin: '4px 0', fontSize: '14px', wordBreak: 'break-all', fontFamily: F.family }}>
                 <Email fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
                 {user.email}
               </p>
             </div>
             <div>
-              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Phone</p>
+              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>{t('users.viewLabelPhone')}</p>
               <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
                 <Phone fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
-                {user.profile?.phone || 'N/A'}
+                {user.profile?.phone || t('common.nA')}
               </p>
             </div>
             <div>
-              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Location</p>
+              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>{t('users.viewLabelLocation')}</p>
               <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
                 <LocationOn fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
-                {[user.profile?.city, user.profile?.state].filter(Boolean).join(', ') || 'N/A'}
+                {[user.profile?.city, user.profile?.state].filter(Boolean).join(', ') || t('common.nA')}
               </p>
             </div>
             <div>
-              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>Joined</p>
+              <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: C.textSecondary, fontFamily: F.family }}>{t('users.viewLabelJoined')}</p>
               <p style={{ margin: '4px 0', fontSize: '14px', fontFamily: F.family }}>
                 <CalendarToday fontSize="small" style={{ verticalAlign: 'middle', marginRight: '8px', color: C.primary }} />
                 {formatDate(user.date_joined)}
@@ -1086,23 +1113,23 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
           <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${C.borderLight}`, display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
             <Badge className={user.is_active !== false ? 'active' : 'inactive'}>
               {user.is_active !== false ? <CheckCircle fontSize="small" /> : <Block fontSize="small" />}
-              {user.is_active !== false ? 'Active' : 'Inactive'}
+              {user.is_active !== false ? t('users.statusActive') : t('users.statusInactive')}
             </Badge>
             {/* Legacy flag indicator: is_staff no longer maps to a platform role
                 option, but the underlying boolean may still be set. */}
             {user.is_staff && (
               <Badge className="active">
                 <AdminPanelSettings fontSize="small" />
-                Staff
+                {t('users.viewLabelStaff')}
               </Badge>
             )}
           </div>
         </ModalBody>
         <ModalFooter>
-          <Button className="secondary" onClick={onClose}>Close</Button>
+          <Button className="secondary" onClick={onClose}>{t('users.viewClose')}</Button>
           <Button className="primary" onClick={() => onEdit(user)}>
             <Edit fontSize="small" />
-            Edit
+            {t('users.viewEdit')}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1111,6 +1138,7 @@ const ViewUserModal = ({ user, isMobile, onClose, onEdit }) => {
 };
 
 const DeleteUserModal = ({ user, onClose, onConfirm, isSubmitting }) => {
+  const { t } = useTranslation();
   if (!user) return null;
   return (
     <ModalOverlay onClick={onClose}>
@@ -1118,7 +1146,7 @@ const DeleteUserModal = ({ user, onClose, onConfirm, isSubmitting }) => {
         <ModalHeader>
           <ModalTitle>
             <Delete />
-            Delete User
+            {t('users.deleteTitle')}
           </ModalTitle>
           <ModalClose onClick={onClose}>
             <Close fontSize="small" />
@@ -1126,20 +1154,20 @@ const DeleteUserModal = ({ user, onClose, onConfirm, isSubmitting }) => {
         </ModalHeader>
         <ModalBody>
           <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: 1.6, fontFamily: F.family }}>
-            Are you sure you want to delete the user <strong>{user.username}</strong>?
+            {t('users.deleteConfirm', { username: user.username })}
           </p>
           <p style={{ margin: 0, fontSize: '14px', color: C.error, fontFamily: F.family }}>
-            This action cannot be undone. All associated data will be permanently deleted.
+            {t('users.deleteWarning')}
           </p>
         </ModalBody>
         <ModalFooter>
           <Button className="secondary" onClick={onClose} disabled={isSubmitting}>
             <Cancel fontSize="small" />
-            Cancel
+            {t('users.cancelButton')}
           </Button>
           <Button className="danger" onClick={onConfirm} disabled={isSubmitting}>
             <Delete fontSize="small" />
-            {isSubmitting ? 'Deleting…' : 'Delete User'}
+            {isSubmitting ? t('users.deleting') : t('users.deleteButton')}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1151,6 +1179,7 @@ const DeleteUserModal = ({ user, onClose, onConfirm, isSubmitting }) => {
 // MAIN COMPONENT
 // ============================================================================
 const Users = () => {
+  const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const { settings } = useSettings();
   const theme = useTheme();
@@ -1291,12 +1320,12 @@ const Users = () => {
       });
     } catch (err) {
       console.error('Error loading users:', err);
-      setError(err.response?.data?.detail || 'Failed to load users');
-      toast.error('Failed to load users');
+      setError(err.response?.data?.detail || t('users.loadFailed'));
+      toast.error(t('users.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [page, search, roleFilter, statusFilter, PAGE_SIZE, orgParams]);
+  }, [page, search, roleFilter, statusFilter, PAGE_SIZE, orgParams, t]);
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
@@ -1356,17 +1385,17 @@ const Users = () => {
 
   const handleCreateUser = async (e) => {
     if (e?.preventDefault) e.preventDefault();
-    if (!formData.email) return toast.error('Email is required');
-    if (!formData.phone?.trim()) return toast.error('Mobile number is required');
-    if (!isValidPhone(formData.phone)) return toast.error('Enter a valid mobile number (7–15 digits)');
+    if (!formData.email) return toast.error(t('users.emailRequired'));
+    if (!formData.phone?.trim()) return toast.error(t('users.phoneRequired'));
+    if (!isValidPhone(formData.phone)) return toast.error(t('users.phoneInvalid'));
 
     // Determine whether this user should be an org member
     const wantsOrgMembership = !!formData.organization_id && !!formData.orgRole;
     if (wantsOrgMembership && !formData.organization_id) {
-      return toast.error('Please select an organization for the membership role');
+      return toast.error(t('users.selectOrganizationForRole'));
     }
     if (!isSuperuser && !wantsOrgMembership) {
-      return toast.error('Please select an organization and role');
+      return toast.error(t('users.organizationAndRoleRequired'));
     }
 
     // Build payload: `role` (platform) OR `requested_role` (org) — not both.
@@ -1404,14 +1433,14 @@ const Users = () => {
     // backend rejects it for non-superusers (and superusers should use
     // assign_owner / transfer_ownership on the Organizations page).
     if (payload.requested_role === MEMBERSHIP_ROLES.OWNER) {
-      toast.error('Ownership is assigned via Organizations → Transfer Ownership.');
+      toast.error(t('users.ownershipViaOrganizations'));
       return;
     }
 
     setSubmitting(true);
     try {
       await api.post('/users/', payload);
-      toast.success('User created successfully. A welcome email has been sent.');
+      toast.success(t('users.createdSuccessWithEmail'));
       setShowCreateModal(false);
       resetForm();
       loadUsers();
@@ -1422,7 +1451,7 @@ const Users = () => {
         if (Array.isArray(errorData.organizations) && errorData.organizations.length) {
           setRequesterOrgs(errorData.organizations);
         }
-        toast.error(errorData.detail || 'Please select an organization.');
+        toast.error(errorData.detail || t('users.selectOrganizationRequired'));
         return;
       }
 
@@ -1431,7 +1460,7 @@ const Users = () => {
         errorData?.phone?.[0] ||
         errorData?.whatsapp_number?.[0] ||
         Object.values(errorData || {})[0] ||
-        'Failed to create user';
+        t('users.createFailed');
       toast.error(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
     } finally {
       setSubmitting(false);
@@ -1472,7 +1501,7 @@ const Users = () => {
     setSubmitting(true);
     try {
       await api.patch(`/users/${selectedUser.id}/`, payload);
-      toast.success('User updated successfully');
+      toast.success(t('users.updatedSuccess'));
       setShowEditModal(false);
       setSelectedUser(null);
       resetForm();
@@ -1484,7 +1513,7 @@ const Users = () => {
       if (status === 403) {
         toast.error(
           errorData?.detail ||
-          'You do not have permission to change this user\'s role. Ask a superuser.'
+          t('users.permissionRoleChange')
         );
         return;
       }
@@ -1493,7 +1522,7 @@ const Users = () => {
         errorData?.error ||
         errorData?.detail ||
         Object.values(errorData || {})[0] ||
-        'Failed to update user';
+        t('users.updateFailed');
       toast.error(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
     } finally {
       setSubmitting(false);
@@ -1505,12 +1534,12 @@ const Users = () => {
     setSubmitting(true);
     try {
       await api.delete(`/users/${selectedUser.id}/`);
-      toast.success('User deleted successfully');
+      toast.success(t('users.deletedSuccess'));
       setShowDeleteModal(false);
       setSelectedUser(null);
       loadUsers();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to delete user');
+      toast.error(err.response?.data?.detail || t('users.deleteFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -1519,10 +1548,13 @@ const Users = () => {
   const handleToggleActive = async (user) => {
     try {
       const response = await api.post(`/users/${user.id}/toggle_active/`);
-      toast.success(response.data.message || `User ${user.is_active !== false ? 'deactivated' : 'activated'}`);
+      toast.success(response.data.message || t(
+        user.is_active !== false ? 'users.deactivatedSuccess' : 'users.activatedSuccess',
+        { username: user.username },
+      ));
       loadUsers();
     } catch (err) {
-      toast.error('Failed to update user status');
+      toast.error(t('users.toggleFailed'));
     }
   };
 
@@ -1530,7 +1562,7 @@ const Users = () => {
     setActionBusy(true);
     try {
       const { data } = await api.post(`/users/${user.id}/unlock/`);
-      toast.success(data.message || `Unlocked ${user.username}`);
+      toast.success(data.message || t('users.unlockedSuccess', { username: user.username }));
       setLockStatus((prev) => ({
         ...prev,
         [user.id]: {
@@ -1542,7 +1574,7 @@ const Users = () => {
       }));
       await loadUsers();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to unlock user');
+      toast.error(err.response?.data?.error || t('users.unlockFailed'));
     } finally {
       setActionBusy(false);
     }
@@ -1591,7 +1623,7 @@ const Users = () => {
   const renderRoleBadge = (role) => (
     <RoleBadge className={role}>
       {getRoleIcon(role)}
-      {getRoleLabel(role)}
+      {getRoleLabel(role, t)}
     </RoleBadge>
   );
 
@@ -1600,7 +1632,7 @@ const Users = () => {
     return (
       <Badge className={active ? 'active' : 'inactive'}>
         {active ? <CheckCircle fontSize="small" /> : <Block fontSize="small" />}
-        {active ? 'Active' : 'Inactive'}
+        {active ? t('users.statusActive') : t('users.statusInactive')}
       </Badge>
     );
   };
@@ -1609,8 +1641,8 @@ const Users = () => {
     const info = lockStatus[userId];
     if (!info?.is_locked) return null;
     return (
-      <Badge className="locked" title={`${info.failures_since_start} failed attempt(s)`}>
-        🔒 Locked
+      <Badge className="locked" title={t('users.lockedTooltip', { count: info.failures_since_start })}>
+        🔒 {t('users.lockedBadge')}
       </Badge>
     );
   };
@@ -1624,20 +1656,20 @@ const Users = () => {
     <PageContainer>
       <PageHeader>
         <div>
-          <PageTitle>User Management</PageTitle>
-          <PageSubtitle>Manage all users in the system</PageSubtitle>
+          <PageTitle>{t('users.title')}</PageTitle>
+          <PageSubtitle>{t('users.subtitle')}</PageSubtitle>
         </div>
         <HeaderActions>
           <Button className="secondary" onClick={loadUsers}>
             <Refresh fontSize="small" />
-            Refresh
+            {t('users.refresh')}
           </Button>
           <Button className="primary" onClick={() => {
             resetForm();
             setShowCreateModal(true);
           }}>
             <PersonAdd fontSize="small" />
-            Add User
+            {t('users.addUser')}
           </Button>
         </HeaderActions>
       </PageHeader>
@@ -1648,28 +1680,28 @@ const Users = () => {
             <Group />
           </StatIcon>
           <StatValue>{totalUsers}</StatValue>
-          <StatLabel>Total Users</StatLabel>
+          <StatLabel>{t('users.statTotal')}</StatLabel>
         </StatCard>
         <StatCard>
           <StatIcon $bg={`${C.success}1A`} $color={C.success}>
             <CheckCircle />
           </StatIcon>
           <StatValue>{stats.active}</StatValue>
-          <StatLabel>Active Users</StatLabel>
+          <StatLabel>{t('users.statActive')}</StatLabel>
         </StatCard>
         <StatCard>
           <StatIcon $bg={`${C.warning}1A`} $color={C.warningDark}>
             <Storefront />
           </StatIcon>
           <StatValue>{stats.owners}</StatValue>
-          <StatLabel>Owners</StatLabel>
+          <StatLabel>{t('users.statOwners')}</StatLabel>
         </StatCard>
         <StatCard>
           <StatIcon $bg={`${C.info}1A`} $color={C.infoDark}>
             <AdminPanelSettings />
           </StatIcon>
           <StatValue>{stats.admins}</StatValue>
-          <StatLabel>Admins</StatLabel>
+          <StatLabel>{t('users.statAdmins')}</StatLabel>
         </StatCard>
       </StatsGrid>
 
@@ -1686,7 +1718,7 @@ const Users = () => {
             <Search className="search-icon" fontSize="small" />
             <SearchInput
               type="text"
-              placeholder="Search users..."
+              placeholder={t('users.searchPlaceholder')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -1698,13 +1730,13 @@ const Users = () => {
               setPage(1);
             }}
           >
-            <option value="all">All Roles</option>
-            <option value="super_admin">Super Admin</option>
-            <option value="admin">Tenant Admin</option>
-            <option value="owner">Owner</option>
-            <option value="staff">Staff</option>
-            <option value="member">Member</option>
-            <option value="user">Regular User</option>
+            <option value="all">{t('users.filterAllRoles')}</option>
+            <option value="super_admin">{t('users.roleSuperAdmin')}</option>
+            <option value="admin">{t('users.roleTenantAdmin')}</option>
+            <option value="owner">{t('roles.owner')}</option>
+            <option value="staff">{t('roles.staff')}</option>
+            <option value="member">{t('roles.member')}</option>
+            <option value="user">{t('users.roleUser')}</option>
           </Select>
           <Select
             value={statusFilter}
@@ -1713,9 +1745,9 @@ const Users = () => {
               setPage(1);
             }}
           >
-            <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
+            <option value="all">{t('users.filterAllStatus')}</option>
+            <option value="active">{t('users.filterActive')}</option>
+            <option value="inactive">{t('users.filterInactive')}</option>
           </Select>
         </FilterGrid>
       </FilterCard>
@@ -1725,21 +1757,21 @@ const Users = () => {
           <LoadingState>
             <div style={{ textAlign: 'center' }}>
               <Spinner />
-              Loading users...
+              {t('users.loadingUsers')}
             </div>
           </LoadingState>
         ) : error ? (
           <LoadingState>
             <div style={{ textAlign: 'center', color: C.error }}>
-              <p style={{ fontSize: '16px', fontWeight: 600, fontFamily: F.family }}>Error loading users</p>
+              <p style={{ fontSize: '16px', fontWeight: 600, fontFamily: F.family }}>{t('users.errorLoading')}</p>
               <p style={{ fontSize: '14px', fontFamily: F.family }}>{error}</p>
             </div>
           </LoadingState>
         ) : users.length === 0 ? (
           <EmptyState>
             <EmptyIcon></EmptyIcon>
-            <EmptyText>No users found</EmptyText>
-            <EmptySubtext>Try adjusting your search or filters</EmptySubtext>
+            <EmptyText>{t('users.noUsers')}</EmptyText>
+            <EmptySubtext>{t('users.noUsersHint')}</EmptySubtext>
           </EmptyState>
         ) : isMobile ? (
           <div style={{ padding: 12 }}>
@@ -1758,15 +1790,15 @@ const Users = () => {
                 </MobileUserHeader>
                 <MobileUserBody>
                   <div className="full-width">
-                    <span className="field-label">Email</span>
+                    <span className="field-label">{t('users.colEmail')}</span>
                     <span className="field-value">{user.email}</span>
                   </div>
                   <div>
-                    <span className="field-label">Role</span>
+                    <span className="field-label">{t('users.colRole')}</span>
                     <span className="field-value">{renderRoleBadge(user.role)}</span>
                   </div>
                   <div>
-                    <span className="field-label">Joined</span>
+                    <span className="field-label">{t('users.colJoined')}</span>
                     <span className="field-value">{formatDate(user.date_joined)}</span>
                   </div>
                 </MobileUserBody>
@@ -1776,14 +1808,14 @@ const Users = () => {
                     onClick={(e) => { e.stopPropagation(); handleViewUser(user); }}
                   >
                     <Visibility fontSize="small" />
-                    View
+                    {t('users.actionView')}
                   </Button>
                   <Button
                     className="secondary"
                     onClick={(e) => { e.stopPropagation(); handleEditUser(user); }}
                   >
                     <Edit fontSize="small" />
-                    Edit
+                    {t('users.actionEdit')}
                   </Button>
                   {needsUnlock(user) && (
                     <Button
@@ -1792,7 +1824,7 @@ const Users = () => {
                       disabled={actionBusy}
                     >
                       <LockOpen fontSize="small" />
-                      Unlock
+                      {t('users.actionUnlock')}
                     </Button>
                   )}
                   <Button
@@ -1801,7 +1833,7 @@ const Users = () => {
                     style={{ color: user.is_active !== false ? C.error : C.success }}
                   >
                     {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
-                    {user.is_active !== false ? 'Block' : 'Unblock'}
+                    {user.is_active !== false ? t('users.actionBlock') : t('users.actionUnblock')}
                   </Button>
                   <Button
                     className="danger"
@@ -1821,12 +1853,12 @@ const Users = () => {
           <Table>
             <TableHead>
               <tr>
-                <TableHeaderCell>User</TableHeaderCell>
-                <TableHeaderCell>Email</TableHeaderCell>
-                <TableHeaderCell>Role</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>Joined</TableHeaderCell>
-                <TableHeaderCell align="right">Actions</TableHeaderCell>
+                <TableHeaderCell>{t('users.colUser')}</TableHeaderCell>
+                <TableHeaderCell>{t('users.colEmail')}</TableHeaderCell>
+                <TableHeaderCell>{t('users.colRole')}</TableHeaderCell>
+                <TableHeaderCell>{t('users.colStatus')}</TableHeaderCell>
+                <TableHeaderCell>{t('users.colJoined')}</TableHeaderCell>
+                <TableHeaderCell align="right">{t('users.colActions')}</TableHeaderCell>
               </tr>
             </TableHead>
             <TableBody>
@@ -1850,17 +1882,17 @@ const Users = () => {
                   <TableCell>{formatDate(user.date_joined)}</TableCell>
                   <TableCell align="right">
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                      <ActionButton onClick={(e) => { e.stopPropagation(); handleViewUser(user); }} title="View">
+                      <ActionButton onClick={(e) => { e.stopPropagation(); handleViewUser(user); }} title={t('users.actionView')}>
                         <Visibility fontSize="small" />
                       </ActionButton>
-                      <ActionButton onClick={(e) => { e.stopPropagation(); handleEditUser(user); }} title="Edit">
+                      <ActionButton onClick={(e) => { e.stopPropagation(); handleEditUser(user); }} title={t('users.actionEdit')}>
                         <Edit fontSize="small" />
                       </ActionButton>
                       {needsUnlock(user) && (
                         <ActionButton
                           className="success"
                           onClick={(e) => { e.stopPropagation(); handleUnlock(user); }}
-                          title="Unlock & reactivate"
+                          title={t('users.actionUnlockReactivate')}
                           disabled={actionBusy}
                         >
                           <LockOpen fontSize="small" />
@@ -1869,7 +1901,7 @@ const Users = () => {
                       <ActionButton
                         className="danger"
                         onClick={(e) => { e.stopPropagation(); handleToggleActive(user); }}
-                        title={user.is_active !== false ? 'Deactivate' : 'Activate'}
+                        title={user.is_active !== false ? t('users.actionDeactivate') : t('users.actionActivate')}
                       >
                         {user.is_active !== false ? <Block fontSize="small" /> : <LockOpen fontSize="small" />}
                       </ActionButton>
@@ -1880,7 +1912,7 @@ const Users = () => {
                           setSelectedUser(user);
                           setShowDeleteModal(true);
                         }}
-                        title="Delete"
+                        title={t('users.actionDelete')}
                       >
                         <Delete fontSize="small" />
                       </ActionButton>
@@ -1894,14 +1926,14 @@ const Users = () => {
         {!loading && !error && users.length > 0 && (
           <PaginationContainer>
             <PaginationInfo>
-              Showing {users.length} of {totalUsers} users
+              {t('users.showingCount', { shown: users.length, total: totalUsers })}
             </PaginationInfo>
             <PaginationButtons>
               <PageButton
                 onClick={() => setPage(Math.max(1, page - 1))}
                 disabled={page === 1}
               >
-                ← Prev
+                ← {t('users.prevPage')}
               </PageButton>
               {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                 let startPage = Math.max(1, page - 2);
@@ -1927,7 +1959,7 @@ const Users = () => {
                 onClick={() => setPage(Math.min(totalPages, page + 1))}
                 disabled={page === totalPages}
               >
-                Next →
+                {t('users.nextPage')} →
               </PageButton>
             </PaginationButtons>
           </PaginationContainer>

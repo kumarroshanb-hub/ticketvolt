@@ -6,6 +6,7 @@
  * failure — the same convention already used by `canLeaveBasics` in
  * `pages/Events/Create.js`.
  */
+import i18n from '../i18n';
 
 /**
  * Validate a start/end date pair.
@@ -32,25 +33,26 @@ export function validateDateRange(start, end, opts = {}) {
     } = opts;
 
     if (!start && !end) {
-        return requireBoth ? `${startLabel} is required.` : null;
+        return requireBoth ? i18n.t('validation.startRequired', { label: startLabel }) : null;
     }
-    if (!start) return `${startLabel} is required.`;
-    if (!end) return `${endLabel} is required.`;
+    if (!start) return i18n.t('validation.startRequired', { label: startLabel });
+    if (!end) return i18n.t('validation.startRequired', { label: endLabel });
 
     const s = start instanceof Date ? start : new Date(start);
     const e = end instanceof Date ? end : new Date(end);
 
-    if (Number.isNaN(s.getTime())) return `${startLabel} is not a valid date.`;
-    if (Number.isNaN(e.getTime())) return `${endLabel} is not a valid date.`;
+    if (Number.isNaN(s.getTime())) return i18n.t('validation.invalidDate', { label: startLabel });
+    if (Number.isNaN(e.getTime())) return i18n.t('validation.invalidDate', { label: endLabel });
 
     if (allowEqual ? e < s : e <= s) {
-        return `${endLabel} must be ${
-            allowEqual ? 'on or ' : ''
-        }after ${startLabel.toLowerCase()}.`;
+        return i18n.t(
+            allowEqual ? 'validation.endAfterStart' : 'validation.endAfterStartStrict',
+            { endLabel, startLabel: startLabel.toLowerCase() },
+        );
     }
 
     if (requireFuture && s < now) {
-        return `${startLabel} must be in the future.`;
+        return i18n.t('validation.startFuture', { label: startLabel });
     }
 
     return null;

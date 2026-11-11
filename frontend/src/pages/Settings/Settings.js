@@ -19,6 +19,7 @@ import {
     useTheme,
 } from '@mui/material';
 import { toast } from 'react-toastify';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import {
@@ -222,16 +223,16 @@ const switchSx = {
 
 // The 5 user-facing tabs are always present.
 // The Platform tab is appended only for superadmins.
-const getSettingsTabs = (canManagePlatform) => {
+const getSettingsTabs = (canManagePlatform, t) => {
     const tabs = [
-        { id: 'profile', label: 'Profile', icon: <PersonIcon /> },
-        { id: 'security', label: 'Security', icon: <SecurityIcon /> },
-        { id: 'notifications', label: 'Notifications', icon: <NotificationsIcon /> },
-        { id: 'appearance', label: 'Appearance', icon: <PaletteIcon /> },
-        { id: 'language', label: 'Language', icon: <LanguageIcon /> },
+        { id: 'profile', label: t('settings.tabProfile'), icon: <PersonIcon /> },
+        { id: 'security', label: t('settings.tabSecurity'), icon: <SecurityIcon /> },
+        { id: 'notifications', label: t('settings.tabNotifications'), icon: <NotificationsIcon /> },
+        { id: 'appearance', label: t('settings.tabAppearance'), icon: <PaletteIcon /> },
+        { id: 'language', label: t('settings.tabLanguage'), icon: <LanguageIcon /> },
     ];
     if (canManagePlatform) {
-        tabs.push({ id: 'platform', label: 'Platform', icon: <SettingsIcon /> });
+        tabs.push({ id: 'platform', label: t('settings.tabPlatform'), icon: <SettingsIcon /> });
     }
     return tabs;
 };
@@ -241,6 +242,7 @@ const getSettingsTabs = (canManagePlatform) => {
 // ============================================
 
 const Settings = () => {
+    const { t } = useTranslation();
     const { user, updateUser } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -320,12 +322,12 @@ const Settings = () => {
 
             if (updateUser) updateUser(response.data);
 
-            setSuccess('Profile updated successfully!');
-            toast.success('Profile updated successfully!');
+            setSuccess(t('settings.profileUpdated'));
+            toast.success(t('settings.profileUpdated'));
         } catch (err) {
             console.error('Save error:', err);
-            setError(err.response?.data?.detail || 'Failed to update profile');
-            toast.error('Failed to update profile');
+            setError(err.response?.data?.detail || t('settings.profileUpdateFailed'));
+            toast.error(t('settings.profileUpdateFailed'));
         } finally {
             setLoading(false);
         }
@@ -333,8 +335,8 @@ const Settings = () => {
 
     const handleSavePassword = async () => {
         if (passwordData.newPassword !== passwordData.confirmPassword) {
-            setError('Passwords do not match');
-            toast.error('Passwords do not match');
+            setError(t('settings.passwordsMismatch'));
+            toast.error(t('settings.passwordsMismatch'));
             return;
         }
 
@@ -347,13 +349,13 @@ const Settings = () => {
                 new_password: passwordData.newPassword,
             });
 
-            setSuccess('Password updated successfully!');
-            toast.success('Password updated successfully!');
+            setSuccess(t('settings.passwordUpdated'));
+            toast.success(t('settings.passwordUpdated'));
             setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
         } catch (err) {
             console.error('Password error:', err);
-            setError(err.response?.data?.detail || 'Failed to update password');
-            toast.error('Failed to update password');
+            setError(err.response?.data?.detail || t('settings.passwordUpdateFailed'));
+            toast.error(t('settings.passwordUpdateFailed'));
         } finally {
             setLoading(false);
         }
@@ -369,12 +371,12 @@ const Settings = () => {
                 push_notifications: formData.pushNotifications,
             });
 
-            setSuccess('Notification preferences updated!');
-            toast.success('Notification preferences updated!');
+            setSuccess(t('settings.notificationsUpdated'));
+            toast.success(t('settings.notificationsUpdated'));
         } catch (err) {
             console.error('Save error:', err);
-            setError(err.response?.data?.detail || 'Failed to update preferences');
-            toast.error('Failed to update preferences');
+            setError(err.response?.data?.detail || t('settings.notificationsUpdateFailed'));
+            toast.error(t('settings.notificationsUpdateFailed'));
         } finally {
             setLoading(false);
         }
@@ -387,12 +389,12 @@ const Settings = () => {
         try {
             await api.put('/settings/appearance/', { theme: formData.theme });
 
-            setSuccess('Theme updated successfully!');
-            toast.success('Theme updated successfully!');
+            setSuccess(t('settings.themeUpdated'));
+            toast.success(t('settings.themeUpdated'));
         } catch (err) {
             console.error('Save error:', err);
-            setError(err.response?.data?.detail || 'Failed to update theme');
-            toast.error('Failed to update theme');
+            setError(err.response?.data?.detail || t('settings.themeUpdateFailed'));
+            toast.error(t('settings.themeUpdateFailed'));
         } finally {
             setLoading(false);
         }
@@ -405,12 +407,12 @@ const Settings = () => {
         try {
             await api.put('/settings/language/', { language: formData.language });
 
-            setSuccess('Language updated successfully!');
-            toast.success('Language updated successfully!');
+            setSuccess(t('settings.languageUpdated'));
+            toast.success(t('settings.languageUpdated'));
         } catch (err) {
             console.error('Save error:', err);
-            setError(err.response?.data?.detail || 'Failed to update language');
-            toast.error('Failed to update language');
+            setError(err.response?.data?.detail || t('settings.languageUpdateFailed'));
+            toast.error(t('settings.languageUpdateFailed'));
         } finally {
             setLoading(false);
         }
@@ -425,14 +427,14 @@ const Settings = () => {
             case 'profile':
                 return (
                     <SettingsSection>
-                        <h2>Profile Settings</h2>
-                        <p className="description">Update your personal information</p>
+                        <h2>{t('settings.profileTitle')}</h2>
+                        <p className="description">{t('settings.profileSubtitle')}</p>
 
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
                         <FormGroup>
-                            <label htmlFor="fullName">Full Name</label>
+                            <label htmlFor="fullName">{t('settings.fullNameLabel')}</label>
                             <input
                                 id="fullName"
                                 name="name"
@@ -440,11 +442,11 @@ const Settings = () => {
                                 value={formData.name}
                                 onChange={handleChange}
                                 autoComplete="name"
-                                placeholder="Enter your full name"
+                                placeholder={t('settings.fullNamePlaceholder')}
                             />
                         </FormGroup>
                         <FormGroup>
-                            <label htmlFor="emailAddress">Email Address</label>
+                            <label htmlFor="emailAddress">{t('settings.emailLabel')}</label>
                             <input
                                 id="emailAddress"
                                 name="email"
@@ -453,11 +455,11 @@ const Settings = () => {
                                 onChange={handleChange}
                                 autoComplete="email"
                                 inputMode="email"
-                                placeholder="Enter your email address"
+                                placeholder={t('settings.emailPlaceholder')}
                             />
                         </FormGroup>
                         <FormGroup>
-                            <label htmlFor="timezone">Timezone</label>
+                            <label htmlFor="timezone">{t('settings.timezoneLabel')}</label>
                             <select
                                 id="timezone"
                                 name="timezone"
@@ -498,7 +500,7 @@ const Settings = () => {
                             ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
-                                    Save Changes
+                                    {t('settings.saveChanges')}
                                 </>
                             )}
                         </SaveButton>
@@ -508,43 +510,43 @@ const Settings = () => {
             case 'security':
                 return (
                     <SettingsSection>
-                        <h2>Security Settings</h2>
-                        <p className="description">Manage your security preferences</p>
+                        <h2>{t('settings.securityTitle')}</h2>
+                        <p className="description">{t('settings.securitySubtitle')}</p>
 
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
                         <FormGroup>
-                            <label htmlFor="currentPassword">Current Password</label>
+                            <label htmlFor="currentPassword">{t('settings.currentPasswordLabel')}</label>
                             <input
                                 id="currentPassword"
                                 name="currentPassword"
                                 type={showPassword ? 'text' : 'password'}
-                                placeholder="Enter current password"
+                                placeholder={t('settings.currentPasswordPlaceholder')}
                                 value={passwordData.currentPassword}
                                 onChange={handlePasswordChange}
                                 autoComplete="current-password"
                             />
                         </FormGroup>
                         <FormGroup>
-                            <label htmlFor="newPassword">New Password</label>
+                            <label htmlFor="newPassword">{t('settings.newPasswordLabel')}</label>
                             <input
                                 id="newPassword"
                                 name="newPassword"
                                 type={showPassword ? 'text' : 'password'}
-                                placeholder="Enter new password"
+                                placeholder={t('settings.newPasswordPlaceholder')}
                                 value={passwordData.newPassword}
                                 onChange={handlePasswordChange}
                                 autoComplete="new-password"
                             />
                         </FormGroup>
                         <FormGroup>
-                            <label htmlFor="confirmPassword">Confirm New Password</label>
+                            <label htmlFor="confirmPassword">{t('settings.confirmPasswordLabel')}</label>
                             <input
                                 id="confirmPassword"
                                 name="confirmPassword"
                                 type={showPassword ? 'text' : 'password'}
-                                placeholder="Confirm new password"
+                                placeholder={t('settings.confirmPasswordPlaceholder')}
                                 value={passwordData.confirmPassword}
                                 onChange={handlePasswordChange}
                                 autoComplete="new-password"
@@ -559,7 +561,7 @@ const Settings = () => {
                                     sx={switchSx}
                                 />
                             }
-                            label="Show passwords"
+                            label={t('settings.showPasswords')}
                             sx={{ color: C.textSecondary, mb: 2 }}
                         />
 
@@ -569,7 +571,7 @@ const Settings = () => {
                             ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
-                                    Update Password
+                                    {t('settings.updatePassword')}
                                 </>
                             )}
                         </SaveButton>
@@ -579,8 +581,8 @@ const Settings = () => {
             case 'notifications':
                 return (
                     <SettingsSection>
-                        <h2>Notification Preferences</h2>
-                        <p className="description">Choose what notifications you receive</p>
+                        <h2>{t('settings.notificationsTitle')}</h2>
+                        <p className="description">{t('settings.notificationsSubtitle')}</p>
 
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
@@ -595,7 +597,7 @@ const Settings = () => {
                                         sx={switchSx}
                                     />
                                 }
-                                label="Email Notifications"
+                                label={t('settings.emailNotificationsLabel')}
                                 sx={{ color: C.textSecondary }}
                             />
                         </FormGroup>
@@ -609,7 +611,7 @@ const Settings = () => {
                                         sx={switchSx}
                                     />
                                 }
-                                label="Push Notifications"
+                                label={t('settings.pushNotificationsLabel')}
                                 sx={{ color: C.textSecondary }}
                             />
                         </FormGroup>
@@ -620,7 +622,7 @@ const Settings = () => {
                             ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
-                                    Save Preferences
+                                    {t('settings.savePreferences')}
                                 </>
                             )}
                         </SaveButton>
@@ -630,23 +632,23 @@ const Settings = () => {
             case 'appearance':
                 return (
                     <SettingsSection>
-                        <h2>Appearance Settings</h2>
-                        <p className="description">Customize the look and feel</p>
+                        <h2>{t('settings.appearanceTitle')}</h2>
+                        <p className="description">{t('settings.appearanceSubtitle')}</p>
 
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
                         <FormGroup>
-                            <label htmlFor="themeSelect">Theme</label>
+                            <label htmlFor="themeSelect">{t('settings.themeLabel')}</label>
                             <select
                                 id="themeSelect"
                                 name="theme"
                                 value={formData.theme}
                                 onChange={handleChange}
                             >
-                                <option value="light">Light</option>
-                                <option value="dark">Dark</option>
-                                <option value="system">System Default</option>
+                                <option value="light">{t('settings.themeLight')}</option>
+                                <option value="dark">{t('settings.themeDark')}</option>
+                                <option value="system">{t('settings.themeSystem')}</option>
                             </select>
                         </FormGroup>
 
@@ -656,7 +658,7 @@ const Settings = () => {
                             ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
-                                    Save Theme
+                                    {t('settings.saveTheme')}
                                 </>
                             )}
                         </SaveButton>
@@ -666,34 +668,34 @@ const Settings = () => {
             case 'language':
                 return (
                     <SettingsSection>
-                        <h2>Language Settings</h2>
-                        <p className="description">Choose your preferred language</p>
+                        <h2>{t('settings.languageTitle')}</h2>
+                        <p className="description">{t('settings.languageSubtitle')}</p>
 
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
                         <FormGroup>
-                            <label htmlFor="languageSelect">Language</label>
+                            <label htmlFor="languageSelect">{t('settings.languageLabel')}</label>
                             <select
                                 id="languageSelect"
                                 name="language"
                                 value={formData.language}
                                 onChange={handleChange}
                             >
-                                <option value="English">English</option>
-                                <option value="Spanish">Spanish</option>
-                                <option value="French">French</option>
-                                <option value="German">German</option>
-                                <option value="Chinese">Chinese (Simplified)</option>
-                                <option value="Chinese Traditional">Chinese (Traditional)</option>
-                                <option value="Japanese">Japanese</option>
-                                <option value="Korean">Korean</option>
-                                <option value="Portuguese">Portuguese</option>
-                                <option value="Russian">Russian</option>
-                                <option value="Arabic">Arabic</option>
-                                <option value="Hindi">Hindi</option>
-                                <option value="Italian">Italian</option>
-                                <option value="Dutch">Dutch</option>
+                                <option value="English">{t('settings.languageOptionEnglish')}</option>
+                                <option value="Spanish">{t('settings.languageOptionSpanish')}</option>
+                                <option value="French">{t('settings.languageOptionFrench')}</option>
+                                <option value="German">{t('settings.languageOptionGerman')}</option>
+                                <option value="Chinese">{t('settings.languageOptionChineseSimplified')}</option>
+                                <option value="Chinese Traditional">{t('settings.languageOptionChineseTraditional')}</option>
+                                <option value="Japanese">{t('settings.languageOptionJapanese')}</option>
+                                <option value="Korean">{t('settings.languageOptionKorean')}</option>
+                                <option value="Portuguese">{t('settings.languageOptionPortuguese')}</option>
+                                <option value="Russian">{t('settings.languageOptionRussian')}</option>
+                                <option value="Arabic">{t('settings.languageOptionArabic')}</option>
+                                <option value="Hindi">{t('settings.languageOptionHindi')}</option>
+                                <option value="Italian">{t('settings.languageOptionItalian')}</option>
+                                <option value="Dutch">{t('settings.languageOptionDutch')}</option>
                             </select>
                         </FormGroup>
 
@@ -703,7 +705,7 @@ const Settings = () => {
                             ) : (
                                 <>
                                     <SaveIcon fontSize="small" />
-                                    Save Language
+                                    {t('settings.saveLanguage')}
                                 </>
                             )}
                         </SaveButton>
@@ -715,9 +717,9 @@ const Settings = () => {
                 if (!canManagePlatform) {
                     return (
                         <SettingsSection>
-                            <h2>Access denied</h2>
+                            <h2>{t('settings.accessDeniedTitle')}</h2>
                             <p className="description">
-                                You do not have permission to view platform settings.
+                                {t('settings.accessDeniedBody')}
                             </p>
                         </SettingsSection>
                     );
@@ -729,7 +731,7 @@ const Settings = () => {
                 );
 
             default:
-                return <div>Select a tab</div>;
+                return <div>{t('settings.selectTab')}</div>;
         }
     };
 
@@ -737,16 +739,16 @@ const Settings = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Settings</PageTitle>
+                    <PageTitle>{t('settings.title')}</PageTitle>
                     {!isMobile && (
-                        <PageSubtitle>Manage your account settings and preferences</PageSubtitle>
+                        <PageSubtitle>{t('settings.subtitle')}</PageSubtitle>
                     )}
                 </PageHeaderLeft>
             </PageHeader>
 
             <SettingsGrid>
                 <SettingsSidebar>
-                    {getSettingsTabs(canManagePlatform).map((tab) => (
+                    {getSettingsTabs(canManagePlatform, t).map((tab) => (
                         <SettingsTab
                             key={tab.id}
                             active={activeTab === tab.id}

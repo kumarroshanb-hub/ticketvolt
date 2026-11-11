@@ -10,6 +10,7 @@ import {
     Check as CheckIcon, ArrowBack as ArrowBackIcon, ArrowForward as ArrowForwardIcon,
 } from '@mui/icons-material';
 import { useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 
 import {
@@ -78,6 +79,7 @@ const ROUTE = {
 
 const CreateEvent = () => {
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const location = useLocation();
     const { id: editEventId } = useParams();
     const isEdit = Boolean(editEventId);
@@ -248,15 +250,15 @@ const CreateEvent = () => {
 
     const visibleSteps = useMemo(() => {
         const steps = [
-            { key: STEP.BASICS, label: 'Basics' },
-            { key: STEP.VENUE, label: 'Venue' },
+            { key: STEP.BASICS, label: t('eventWizard.stepBasics') },
+            { key: STEP.VENUE, label: t('eventWizard.stepVenue') },
         ];
         if (seatStepRequired) {
-            steps.push({ key: STEP.SEATS, label: 'Seat Categories & Pricing' });
+            steps.push({ key: STEP.SEATS, label: t('eventWizard.stepSeats') });
         }
-        steps.push({ key: STEP.DETAILS, label: 'Details' });
+        steps.push({ key: STEP.DETAILS, label: t('eventWizard.stepDetails') });
         return steps;
-    }, [seatStepRequired]);
+    }, [seatStepRequired, t]);
 
     // -------------------------------------------------------------------
     // ?venue_id= auto-select
@@ -390,8 +392,8 @@ const CreateEvent = () => {
         // this, `currentIndex === -1` and the wizard renders an invalid
         // step with broken Back/Continue buttons.
         if (visibleSteps.some((s) => s.key === activeStep)) return;
-        const t = setTimeout(() => setActiveStep(STEP.VENUE), 0);
-        return () => clearTimeout(t);
+        const timer = setTimeout(() => setActiveStep(STEP.VENUE), 0);
+        return () => clearTimeout(timer);
     }, [activeStep, visibleSteps]);
 
     useEffect(() => {
@@ -417,10 +419,10 @@ const CreateEvent = () => {
     };
 
     const canLeaveBasics = () => {
-        if (!formData.title?.trim()) return 'Please give the event a title.';
-        if (!formData.event_type) return 'Please choose an event type.';
-        if (!formData.category) return 'Please choose a category.';
-        if (!formData.event_flow) return 'Please choose a registration type.';
+        if (!formData.title?.trim()) return t('eventWizard.titleRequired');
+        if (!formData.event_type) return t('eventWizard.typeRequired');
+        if (!formData.category) return t('eventWizard.categoryRequired');
+        if (!formData.event_flow) return t('eventWizard.registrationRequired');
         return validateDateRange(formData.start_date, formData.end_date, {
             requireBoth: true,
             startLabel: 'Start date',
@@ -503,17 +505,17 @@ const CreateEvent = () => {
     const renderBasics = () => (
         <Grid container spacing={3}>
             <Grid item xs={12}>
-                <SectionTitle variant="h6">Event Basics</SectionTitle>
+                <SectionTitle variant="h6">{t('eventWizard.basicSection')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
                 <Typography variant="body2" sx={{ color: C.textSecondary, mt: 1 }}>
-                    Give the event a name, set its dates and classification. You'll pick a venue next.
+                    {t('eventWizard.basicHint')}
                 </Typography>
             </Grid>
 
             <Grid item xs={12}>
                 <TextField
                     fullWidth
-                    label="Event Title"
+                    label={t('events.titleLabel')}
                     name="title"
                     value={formData.title}
                     onChange={handleChange}
@@ -523,17 +525,17 @@ const CreateEvent = () => {
 
             <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                    <InputLabel id="event-type-label">Event Type</InputLabel>
+                    <InputLabel id="event-type-label">{t('events.eventTypeLabel')}</InputLabel>
                     <Select
                         labelId="event-type-label"
                         name="event_type"
                         value={formData.event_type || ''}
                         onChange={handleChange}
-                        label="Event Type"
+                        label={t('events.eventTypeLabel')}
                     >
                         {Object.values(EVENT_TYPE).map((type) => (
                             <MenuItem key={type} value={type}>
-                                {EVENT_TYPE_LABELS[type] || type}
+                                {t(`eventType.${type}`, { defaultValue: EVENT_TYPE_LABELS[type] || type })}
                             </MenuItem>
                         ))}
                     </Select>
@@ -542,17 +544,17 @@ const CreateEvent = () => {
 
             <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                    <InputLabel id="category-label">Category</InputLabel>
+                    <InputLabel id="category-label">{t('events.categoryLabel')}</InputLabel>
                     <Select
                         labelId="category-label"
                         name="category"
                         value={formData.category || ''}
                         onChange={handleChange}
-                        label="Category"
+                        label={t('events.categoryLabel')}
                     >
                         {Object.values(EVENT_CATEGORY).map((cat) => (
                             <MenuItem key={cat} value={cat}>
-                                {EVENT_CATEGORY_LABELS[cat] || cat}
+                                {t(`category.${cat}`, { defaultValue: EVENT_CATEGORY_LABELS[cat] || cat })}
                             </MenuItem>
                         ))}
                     </Select>
@@ -561,17 +563,17 @@ const CreateEvent = () => {
 
             <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                    <InputLabel id="event-flow-label">Registration Type</InputLabel>
+                    <InputLabel id="event-flow-label">{t('eventWizard.registrationType')}</InputLabel>
                     <Select
                         labelId="event-flow-label"
                         name="event_flow"
                         value={formData.event_flow || 'ticketed'}
                         onChange={handleChange}
-                        label="Registration Type"
+                        label={t('eventWizard.registrationType')}
                     >
-                        <MenuItem value="ticketed">Ticketed</MenuItem>
-                        <MenuItem value="paid_registration">Paid Registration</MenuItem>
-                        <MenuItem value="free_registration">Free Registration</MenuItem>
+                        <MenuItem value="ticketed">{t('eventWizard.flowTicketed')}</MenuItem>
+                        <MenuItem value="paid_registration">{t('events.flowPaid')}</MenuItem>
+                        <MenuItem value="free_registration">{t('events.flowFree')}</MenuItem>
                     </Select>
                 </FormControl>
             </Grid>
@@ -579,7 +581,7 @@ const CreateEvent = () => {
             <Grid item xs={12} sm={isSingleDay ? 12 : 6}>
                 <TextField
                     fullWidth
-                    label="Start Date"
+                    label={t('events.startDateLabel')}
                     name="start_date"
                     type="datetime-local"
                     value={formData.start_date}
@@ -598,7 +600,7 @@ const CreateEvent = () => {
                 <Grid item xs={12} sm={6}>
                     <TextField
                         fullWidth
-                        label="End Date"
+                        label={t('events.endDateLabel')}
                         name="end_date"
                         type="datetime-local"
                         value={formData.end_date}
@@ -612,7 +614,7 @@ const CreateEvent = () => {
             <Grid item xs={12}>
                 <TextField
                     fullWidth
-                    label="Short Description (optional)"
+                    label={t('eventWizard.shortDescOptional')}
                     name="short_description"
                     value={formData.short_description || ''}
                     onChange={handleChange}
@@ -624,7 +626,7 @@ const CreateEvent = () => {
             <Grid item xs={12}>
                 <TextField
                     fullWidth
-                    label="Long Description (optional)"
+                    label={t('eventWizard.longDescOptional')}
                     name="description"
                     value={formData.description || ''}
                     onChange={handleChange}
@@ -657,7 +659,7 @@ const CreateEvent = () => {
                 setSelectedMaster(detail);
             } catch (err) {
                 console.error('Failed to load master detail', err);
-                toast.error('Failed to load seat layout details.');
+                toast.error(t('eventWizard.seatLayoutLoadFailed'));
                 setSelectedMaster(master);
             } finally {
                 setMasterLoading(false);
@@ -670,13 +672,10 @@ const CreateEvent = () => {
     const renderVenueStep = () => (
         <Grid container spacing={3}>
             <Grid item xs={12}>
-                <SectionTitle variant="h6">Venue</SectionTitle>
+                <SectionTitle variant="h6">{t('eventWizard.stepVenue')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
                 <Typography variant="body2" sx={{ color: C.textSecondary, mt: 1 }}>
-                    Pick a venue from the master catalog. If the venue you
-                    need isn't listed, create it — it will be published to
-                    the master automatically and selected here when you
-                    return.
+                    {t('eventWizard.venueStepHint')}
                 </Typography>
             </Grid>
 
@@ -708,7 +707,7 @@ const CreateEvent = () => {
                             letterSpacing: 0.6,
                         }}
                     >
-                        OR
+                        {t('eventWizard.or')}
                     </Typography>
                     <Divider sx={{ flex: 1, borderColor: C.borderLight }} />
                 </Box>
@@ -719,7 +718,7 @@ const CreateEvent = () => {
                         onClick={goCreateVenue}
                         sx={{ textTransform: 'none', fontWeight: 600 }}
                     >
-                        Create a new venue (with seat layout)
+                        {t('eventWizard.createNewVenue')}
                     </Button>
                 </Box>
             </Grid>
@@ -729,7 +728,7 @@ const CreateEvent = () => {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <CircularProgress size={16} />
                         <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                            Loading venue master…
+                            {t('eventWizard.loadingVenueMaster')}
                         </Typography>
                     </Box>
                 </Grid>
@@ -750,34 +749,34 @@ const CreateEvent = () => {
                         }}
                     >
                         <Typography variant="body2" sx={{ fontWeight: 600, mr: 1 }}>
-                            Selected: {chosenVenue.name}
+                            {t('eventWizard.selectedVenue', { name: chosenVenue.name })}
                         </Typography>
                         {hasReservedSeating ? (
                             <Chip
                                 size="small"
                                 icon={<SeatIcon />}
                                 color="primary"
-                                label="Reserved seating"
+                                label={t('eventWizard.reservedSeating')}
                             />
                         ) : (
                             <Chip
                                 size="small"
                                 variant="outlined"
-                                label="General admission"
+                                label={t('eventWizard.generalAdmission')}
                             />
                         )}
                         {hasReservedSeating && layoutState.status === 'missing' && (
                             <Chip
                                 size="small"
                                 color="warning"
-                                label="No seat layout yet"
+                                label={t('eventWizard.noSeatLayoutYet')}
                             />
                         )}
                         {hasReservedSeating && layoutState.status === 'present' && (
                             <Chip
                                 size="small"
                                 color="success"
-                                label={`Seat layout ready (${layoutState.seatCount} seats)`}
+                                label={t('eventWizard.seatLayoutReady', { count: layoutState.seatCount })}
                             />
                         )}
                     </Paper>
@@ -790,8 +789,7 @@ const CreateEvent = () => {
         if (!hasReservedSeating) {
             return (
                 <Alert severity="info">
-                    This venue does not use reserved seating, so there are no
-                    seat categories to configure.
+                    {t('eventWizard.noReservedSeating')}
                 </Alert>
             );
         }
@@ -808,15 +806,10 @@ const CreateEvent = () => {
             return (
                 <Alert severity="warning">
                     <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                        This venue has no seat layout yet.
+                        {t('eventWizard.missingLayoutTitle')}
                     </Typography>
                     <Typography variant="body2">
-                        <strong>{chosenVenue?.name}</strong> is marked as
-                        reserved-seating, but its current venue master contains
-                        no seats. Open{' '}
-                        <strong>Venues → {chosenVenue?.name} → Edit</strong>,
-                        upload an SVG layout, and return here to configure seat
-                        categories.
+                        {t('eventWizard.missingLayoutBody', { name: chosenVenue?.name })}
                     </Typography>
                 </Alert>
             );
@@ -844,7 +837,7 @@ const CreateEvent = () => {
     const renderDetails = () => (
         <Grid container spacing={3}>
             <Grid item xs={12}>
-                <SectionTitle variant="h6">Details</SectionTitle>
+                <SectionTitle variant="h6">{t('eventWizard.detailsSection')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
             </Grid>
 
@@ -854,7 +847,7 @@ const CreateEvent = () => {
                         <TextField
                             select
                             fullWidth
-                            label="Organization"
+                            label={t('events.organizationLabel')}
                             name="organization_id"
                             value={formData.organization_id || ''}
                             onChange={(e) => {
@@ -865,7 +858,7 @@ const CreateEvent = () => {
                                 handleChange({ target: { name: 'organization_id', value: val } });
                                 setCurrentOrgId(val);
                             }}
-                            helperText="The tenant this event belongs to."
+                            helperText={t('events.organizationHelper')}
                         >
                             {organizations.map((org) => (
                                 <MenuItem key={org.id} value={org.id}>{org.name}</MenuItem>
@@ -915,8 +908,7 @@ const CreateEvent = () => {
                     {requirements.sessionsRequired && (
                         <Grid item xs={12}>
                             <Alert severity="info">
-                                Ticketed events require at least one session
-                                (start and end time).
+                                {t('eventWizard.sessionsRequired')}
                             </Alert>
                         </Grid>
                     )}
@@ -930,7 +922,7 @@ const CreateEvent = () => {
             ) : (
                 <Grid item xs={12}>
                     <Alert severity="info">
-                        Sessions are only configured for ticketed events.
+                        {t('eventWizard.sessionsTicketedOnly')}
                     </Alert>
                 </Grid>
             )}
@@ -944,7 +936,7 @@ const CreateEvent = () => {
                     {requirements.tiersRequired && (
                         <Grid item xs={12}>
                             <Alert severity="info">
-                                Add at least one ticket tier (name and price).
+                                {t('eventWizard.tiersRequired')}
                             </Alert>
                         </Grid>
                     )}
@@ -953,27 +945,25 @@ const CreateEvent = () => {
                         onAdd={addTier}
                         onRemove={removeTier}
                         onUpdate={updateTier}
+                        isRegistrationFees={formData.event_flow === 'paid_registration'}
                         label={
                             formData.event_flow === 'paid_registration'
-                                ? 'Registration Fees'
-                                : 'Ticket Tiers'
+                                ? t('events.tiersTitleFees')
+                                : t('events.tiersTitle')
                         }
                     />
                 </>
             ) : hasReservedSeating ? (
                 <Grid item xs={12}>
                     <Alert severity="info">
-                        This venue uses reserved seating. Seat prices are set on
-                        the Seat Categories &amp; Pricing step — this event does
-                        not use ticket tiers.
+                        {t('eventWizard.reservedNoTiers')}
                     </Alert>
                 </Grid>
             ) : formData.event_flow === 'free_registration' ? (
                 <Grid item xs={12}>
                     <Box sx={{ p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}>
                         <Typography variant="body2" sx={{ color: C.textSecondary }}>
-                            ✅ Free registration — a General Registration tier
-                            will be created automatically.
+                            {t('events.freeRegistrationBanner')}
                         </Typography>
                     </Box>
                 </Grid>
@@ -1008,7 +998,7 @@ const CreateEvent = () => {
             <PageContainer>
                 <PageHeader>
                     <PageHeaderLeft>
-                        <PageTitle>Create New Event</PageTitle>
+                        <PageTitle>{t('events.createTitle')}</PageTitle>
                     </PageHeaderLeft>
                 </PageHeader>
                 <Alert
@@ -1019,11 +1009,11 @@ const CreateEvent = () => {
                             size="small"
                             onClick={() => navigate(ROUTE.ORGANIZATIONS)}
                         >
-                            Create Organization
+                            {t('eventWizard.createOrganization')}
                         </Button>
                     }
                 >
-                    You need to belong to an organization before creating events.
+                    {t('eventWizard.needsOrganizationBody')}
                 </Alert>
             </PageContainer>
         );
@@ -1051,21 +1041,15 @@ const CreateEvent = () => {
 
         if (activeStep === STEP.VENUE) {
             if (!chosenVenue) {
-                window.alert('Please choose a venue.');
+                window.alert(t('eventWizard.venueRequired'));
                 return;
             }
             if (hasReservedSeating && layoutState.status === 'unknown') {
-                window.alert(
-                    'Loading venue layout… please wait a moment and try again.'
-                );
+                window.alert(t('eventWizard.layoutLoadingWait'));
                 return;
             }
             if (hasReservedSeating && layoutState.status === 'missing') {
-                window.alert(
-                    'This venue is marked as reserved-seating, but it has no '
-                    + 'seat layout yet. Edit the venue to upload an SVG layout, '
-                    + 'then return here.'
-                );
+                window.alert(t('eventWizard.layoutMissingAlert'));
                 return;
             }
         }
@@ -1077,11 +1061,11 @@ const CreateEvent = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>{isEdit ? 'Edit Event' : 'Create Event'}</PageTitle>
+                    <PageTitle>{isEdit ? t('events.editTitle') : t('events.formActionsCreate')}</PageTitle>
                 </PageHeaderLeft>
                 <PageHeaderRight>
                     <OutlineButton onClick={handleCancel}>
-                        Cancel
+                        {t('common.cancel')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -1120,7 +1104,7 @@ const CreateEvent = () => {
                     disabled={isFirst}
                     startIcon={<ArrowBackIcon />}
                 >
-                    Back
+                    {t('common.back')}
                 </OutlineButton>
 
                 {!isLast && (
@@ -1128,7 +1112,7 @@ const CreateEvent = () => {
                         onClick={handleNextClick}
                         endIcon={<ArrowForwardIcon />}
                     >
-                        Continue
+                        {t('eventWizard.continue')}
                     </PrimaryButton>
                 )}
                 {isLast && (
@@ -1137,7 +1121,7 @@ const CreateEvent = () => {
                         disabled={submitting}
                         startIcon={submitting ? <CircularProgress size={18} /> : <CheckIcon />}
                     >
-                        {isEdit ? 'Save Changes' : 'Create Event'}
+                        {isEdit ? t('eventWizard.saveChanges') : t('events.formActionsCreate')}
                     </PrimaryButton>
                 )}
             </Box>

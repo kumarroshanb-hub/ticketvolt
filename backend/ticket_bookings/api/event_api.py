@@ -510,6 +510,7 @@ class EventViewSet(viewsets.ModelViewSet):
                     cancellation_policy=cancellation_policy,
                     cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
                     members_only=bool(data.get('members_only', False)),
+                    donations_enabled=bool(data.get('donations_enabled', False)),
                     min_membership_tier_id=data.get('min_membership_tier_id') or None,
                 )
                 venue_plan_payload = None
@@ -927,7 +928,7 @@ class EventViewSet(viewsets.ModelViewSet):
             'refundable_until',
             'cancellation_policy_text',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
-            'members_only',
+            'members_only', 'donations_enabled',
         ]
         for field in fields:
             if field in data:

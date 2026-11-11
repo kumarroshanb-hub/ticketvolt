@@ -26,6 +26,7 @@ import ResetPassword from './pages/ResetPassword/ResetPassword';
 // Authenticated app pages
 import Dashboard from './pages/Dashboard/Dashboard';
 import Events from './pages/Events/index';
+import PublicEvents from './pages/Events/PublicEvents';
 import Venues from './pages/Venues/index';
 import CreateVenue from './pages/Venues/Create';   // ✅ NEW import
 import Bookings from './pages/Bookings/Bookings';
@@ -33,6 +34,7 @@ import BookingTickets from './pages/Bookings/BookingTickets';
 import CreateBooking from './pages/Bookings/CreateBooking';
 import Checkin from './pages/Checkin/Checkin';
 import Analytics from './pages/Analytics/Analytics';
+import Billing from './pages/Billing/Billing';
 import Discounts from './pages/Discounts/Discounts';
 import Settings from './pages/Settings/Settings';
 import Login from './pages/Login/Login';
@@ -162,6 +164,24 @@ const OrgRoleRoute = ({ children, minOrgRole }) => {
     return <Navigate to="/app/unauthorized" replace />;
 };
 
+const EventsEntry = () => {
+    const { hasNoMemberships, loading: orgLoading } = useOrg();
+    const { isSuperAdmin } = useRole();
+
+    if (orgLoading) return <LoadingSpinner />;
+
+    // Customers without an organisation membership get the public
+    // browse page. Org members/managers get the workspace Events module.
+    if (hasNoMemberships && !isSuperAdmin) {
+        return <PublicEvents />;
+    }
+    return (
+        <OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.MEMBER}>
+            <Events />
+        </OrgRoleRoute>
+    );
+};
+
 const GuestAllowedRoute = ({ children }) => {
     return children;
 };
@@ -238,7 +258,7 @@ const AppRoutes = () => {
                 {/* Org-admin pages: owner/admin membership in current org. */}
                 <Route
                     path="events/*"
-                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.MEMBER}><Events /></OrgRoleRoute>}
+                    element={<ProtectedRoute><EventsEntry /></ProtectedRoute>}
                 />
 
                 {/* ============================================
@@ -279,6 +299,10 @@ const AppRoutes = () => {
                 <Route
                     path="analytics"
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Analytics /></OrgRoleRoute>}
+                />
+                <Route
+                    path="billing"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.STAFF}><Billing /></OrgRoleRoute>}
                 />
                 <Route
                     path="cancellation-policies"

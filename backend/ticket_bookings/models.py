@@ -409,6 +409,13 @@ class Event(models.Model):
             'organization may view or book.'
         ),
     )
+    donations_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            'Allow buyers to add an optional donation at checkout. '
+            'Donations above HKD 2,000 qualify for a tax receipt.'
+        ),
+    )
     min_membership_tier = models.ForeignKey(
         'ticket_bookings.MembershipTier',
         null=True, blank=True,
@@ -627,6 +634,23 @@ class Booking(models.Model):
     discount_applied = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount_code = models.CharField(max_length=50, blank=True)
 
+    # ---- Optional donation (checkout) ----
+    donation_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Optional donation added above the ticket price.',
+    )
+    donation_currency_code = models.CharField(
+        max_length=3, blank=True, default='',
+        help_text='Currency snapshot for the donation (e.g. HKD).',
+    )
+    donation_tax_receipt_number = models.CharField(
+        max_length=40, blank=True, null=True, unique=True,
+        help_text='Generated HK tax-donation receipt number.',
+    )
+    donation_tax_receipt_issued_at = models.DateTimeField(
+        null=True, blank=True,
+    )
+
     paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -647,6 +671,23 @@ class Booking(models.Model):
     )
 
     objects = BookingManager()
+
+    @property
+    def donation_tax_eligible(self):
+        """True when this booking's donation can get an HK tax receipt.
+
+        Rules:
+          • donation strictly above HKD 2,000
+          • currency snapshot is HKD
+          • booking is paid/confirmed/completed (not cancelled/refunded)
+        """
+        if not self.donation_amount or self.donation_amount <= 0:
+            return False
+        if (self.donation_currency_code or '').upper() != 'HKD':
+            return False
+        if self.donation_amount <= 2000:
+            return False
+        return self.status in ('paid', 'confirmed', 'completed')
 
     def save(self, *args, **kwargs):
         if not self.booking_reference:

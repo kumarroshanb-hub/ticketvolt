@@ -18,6 +18,7 @@ import {
     People as PeopleIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
+import { useTranslation } from 'react-i18next';
 
 import membershipService from '../../services/membershipService';
 import { useAuth } from '../../context/AuthContext';
@@ -34,10 +35,10 @@ import { ROLES } from '../../constants';
 const C = appTheme.colors;
 
 const BILLING_PERIODS = [
-    { value: 'one_time',  label: 'One-time' },
-    { value: 'monthly',   label: 'Monthly' },
-    { value: 'quarterly', label: 'Quarterly' },
-    { value: 'yearly',    label: 'Yearly' },
+    { value: 'one_time' },
+    { value: 'monthly' },
+    { value: 'quarterly' },
+    { value: 'yearly' },
 ];
 
 const EMPTY_FORM = {
@@ -52,6 +53,7 @@ const EMPTY_FORM = {
 };
 
 const ManagePlans = () => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -98,12 +100,12 @@ const ManagePlans = () => {
             setTiers(list);
         } catch (err) {
             console.error('Failed to load tiers:', err);
-            toast.error(err.response?.data?.detail || 'Failed to load plans');
+            toast.error(err.response?.data?.detail || t('managePlans.loadFailed'));
             setTiers([]);
         } finally {
             setLoading(false);
         }
-    }, [orgId]);
+    }, [orgId, t]);
 
     useEffect(() => { loadTiers(); }, [loadTiers]);
 
@@ -150,15 +152,15 @@ const ManagePlans = () => {
         setFormError('');
 
         if (!form.name.trim()) {
-            setFormError('Name is required.');
+            setFormError(t('managePlans.nameRequired'));
             return;
         }
         if (Number(form.price) < 0) {
-            setFormError('Price cannot be negative.');
+            setFormError(t('managePlans.priceNegative'));
             return;
         }
         if (Number(form.max_members) < 1) {
-            setFormError('Max members must be at least 1 (the primary member).');
+            setFormError(t('managePlans.maxMembersMin'));
             return;
         }
 
@@ -167,10 +169,10 @@ const ManagePlans = () => {
             try {
                 benefits = JSON.parse(form.benefits_text);
                 if (typeof benefits !== 'object' || Array.isArray(benefits) || benefits === null) {
-                    throw new Error('Benefits must be a JSON object.');
+                    throw new Error(t('managePlans.benefitsMustBeObject'));
                 }
             } catch (err) {
-                setFormError(`Benefits JSON error: ${err.message}`);
+                setFormError(t('managePlans.benefitsJsonError', { message: err.message }));
                 return;
             }
         }
@@ -191,10 +193,10 @@ const ManagePlans = () => {
         try {
             if (editingTier) {
                 await membershipService.updateTier(editingTier.id, payload);
-                toast.success('Plan updated.');
+                toast.success(t('managePlans.planUpdated'));
             } else {
                 await membershipService.createTier(payload);
-                toast.success('Plan created.');
+                toast.success(t('managePlans.planCreated'));
             }
             closeDialog();
             await loadTiers();
@@ -204,7 +206,7 @@ const ManagePlans = () => {
                 (data && typeof data === 'object' && Object.values(data).flat?.()[0]) ||
                 data?.detail ||
                 data?.error ||
-                'Failed to save plan.';
+                t('managePlans.saveFailed');
             setFormError(Array.isArray(msg) ? msg[0] : String(msg));
         } finally {
             setSaving(false);
@@ -217,10 +219,14 @@ const ManagePlans = () => {
     const toggleFlag = async (tier, flag) => {
         try {
             await membershipService.updateTier(tier.id, { [flag]: !tier[flag] });
-            toast.success(`${flag === 'is_active' ? 'Active' : 'Public'} toggled.`);
+            toast.success(
+                flag === 'is_active'
+                    ? t('managePlans.activeToggled')
+                    : t('managePlans.publicToggled'),
+            );
             await loadTiers();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to update plan.');
+            toast.error(err.response?.data?.error || t('managePlans.updateFailed'));
         }
     };
 
@@ -232,11 +238,11 @@ const ManagePlans = () => {
         setDeleting(true);
         try {
             await membershipService.deleteTier(deleteTarget.id);
-            toast.success('Plan removed.');
+            toast.success(t('managePlans.planRemoved'));
             setDeleteTarget(null);
             await loadTiers();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to delete plan.');
+            toast.error(err.response?.data?.error || t('managePlans.deleteFailed'));
         } finally {
             setDeleting(false);
         }
@@ -249,7 +255,7 @@ const ManagePlans = () => {
         return (
             <PageContainer>
                 <Alert severity="warning">
-                    Select an organization to manage its membership plans.
+                    {t('managePlans.selectOrgFirst')}
                 </Alert>
             </PageContainer>
         );
@@ -258,7 +264,7 @@ const ManagePlans = () => {
         return (
             <PageContainer>
                 <Alert severity="error">
-                    Only the organization Owner or Admin can manage plans.
+                    {t('managePlans.ownerOnly')}
                 </Alert>
             </PageContainer>
         );
@@ -276,10 +282,10 @@ const ManagePlans = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Membership Plans</PageTitle>
+                    <PageTitle>{t('managePlans.title')}</PageTitle>
                     {!isMobile && (
                         <PageSubtitle>
-                            Create and manage the plans your organization sells.
+                            {t('managePlans.subtitle')}
                         </PageSubtitle>
                     )}
                 </PageHeaderLeft>
@@ -288,7 +294,7 @@ const ManagePlans = () => {
                         <TextField
                             select
                             size="small"
-                            label="Organization"
+                            label={t('bulkUpload.organization')}
                             value={orgId}
                             onChange={(e) => setOrgId(e.target.value)}
                             sx={{ minWidth: 200 }}
@@ -299,17 +305,17 @@ const ManagePlans = () => {
                         </TextField>
                     )}
                     <OutlineButton startIcon={<RefreshIcon />} onClick={loadTiers}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     <PrimaryButton startIcon={<AddIcon />} onClick={openCreate}>
-                        New Plan
+                        {t('managePlans.newPlan')}
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
 
             {tiers.length === 0 ? (
                 <Alert severity="info">
-                    No plans yet. Create your first plan to start selling memberships.
+                    {t('managePlans.noPlans')}
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3}>
@@ -330,7 +336,7 @@ const ManagePlans = () => {
                                         </Typography>
                                         <Chip
                                             size="small"
-                                            label={tier.is_active ? 'ACTIVE' : 'PAUSED'}
+                                            label={tier.is_active ? t('managePlans.statusActive') : t('managePlans.statusPaused')}
                                             color={tier.is_active ? 'success' : 'default'}
                                         />
                                     </Box>
@@ -345,7 +351,12 @@ const ManagePlans = () => {
                                         {formatMoney(tier.price)}
                                     </Typography>
                                     <Typography variant="caption" sx={{ color: C.textMuted, display: 'block', mb: 2 }}>
-                                        {tier.billing_period.replace('_', ' ')} · covers {tier.max_members} {tier.max_members === 1 ? 'person' : 'people'}
+                                        {t('managePlans.billingCovers', {
+                                            period: t(`membership.billingPeriods.${tier.billing_period}`, {
+                                                defaultValue: tier.billing_period.replace('_', ' '),
+                                            }),
+                                            count: tier.max_members,
+                                        })}
                                     </Typography>
 
                                     <Divider sx={{ my: 2 }} />
@@ -356,25 +367,27 @@ const ManagePlans = () => {
                                                 ? <PublicIcon fontSize="small" sx={{ color: C.success }} />
                                                 : <HiddenIcon fontSize="small" sx={{ color: C.textMuted }} />}
                                             <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                                                {tier.is_public ? 'Visible on public plans page' : 'Hidden from buyers'}
+                                                {tier.is_public ? t('managePlans.visiblePublic') : t('managePlans.hiddenFromBuyers')}
                                             </Typography>
                                         </Box>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <PeopleIcon fontSize="small" sx={{ color: C.textMuted }} />
                                             <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                                                {Object.keys(tier.benefits || {}).length} benefit(s)
+                                                {t('managePlans.benefitsCount', {
+                                                    count: Object.keys(tier.benefits || {}).length,
+                                                })}
                                             </Typography>
                                         </Box>
                                     </Box>
                                 </CardContent>
 
                                 <Box sx={{ p: 2, pt: 0, display: 'flex', gap: 0.5, borderTop: `1px solid ${C.bgInput}` }}>
-                                    <Tooltip title="Edit">
+                                    <Tooltip title={t('common.edit')}>
                                         <IconButton size="small" sx={{ color: C.primary }} onClick={() => openEdit(tier)}>
                                             <EditIcon fontSize="small" />
                                         </IconButton>
                                     </Tooltip>
-                                    <Tooltip title={tier.is_active ? 'Pause (hide from new buyers)' : 'Reactivate'}>
+                                    <Tooltip title={tier.is_active ? t('managePlans.pauseTooltip') : t('managePlans.reactivateTooltip')}>
                                         <IconButton
                                             size="small"
                                             sx={{ color: tier.is_active ? C.warning : C.success }}
@@ -383,7 +396,7 @@ const ManagePlans = () => {
                                             {tier.is_active ? <PauseIcon fontSize="small" /> : <PlayIcon fontSize="small" />}
                                         </IconButton>
                                     </Tooltip>
-                                    <Tooltip title={tier.is_public ? 'Hide from public' : 'Publish publicly'}>
+                                    <Tooltip title={tier.is_public ? t('managePlans.hideTooltip') : t('managePlans.publishTooltip')}>
                                         <IconButton
                                             size="small"
                                             sx={{ color: C.textSecondary }}
@@ -393,7 +406,7 @@ const ManagePlans = () => {
                                         </IconButton>
                                     </Tooltip>
                                     <Box sx={{ flex: 1 }} />
-                                    <Tooltip title="Delete">
+                                    <Tooltip title={t('common.delete')}>
                                         <IconButton size="small" sx={{ color: C.error }} onClick={() => setDeleteTarget(tier)}>
                                             <DeleteIcon fontSize="small" />
                                         </IconButton>
@@ -407,21 +420,21 @@ const ManagePlans = () => {
 
             {/* ---- Create / Edit dialog ---- */}
             <Dialog open={dialogOpen} onClose={closeDialog} maxWidth="sm" fullWidth>
-                <DialogTitle>{editingTier ? 'Edit Plan' : 'New Plan'}</DialogTitle>
+                <DialogTitle>{editingTier ? t('managePlans.editPlan') : t('managePlans.newPlan')}</DialogTitle>
                 <DialogContent>
                     {formError && (
                         <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{formError}</Alert>
                     )}
                     <Stack spacing={2} sx={{ mt: 1 }}>
                         <TextField
-                            label="Plan name"
+                            label={t('managePlans.planName')}
                             value={form.name}
                             onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                             required
                             fullWidth
                         />
                         <TextField
-                            label="Description"
+                            label={t('managePlans.description')}
                             value={form.description}
                             onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                             multiline
@@ -430,7 +443,7 @@ const ManagePlans = () => {
                         />
                         <Box sx={{ display: 'flex', gap: 2 }}>
                             <TextField
-                                label="Price"
+                                label={t('managePlans.price')}
                                 type="number"
                                 value={form.price}
                                 onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))}
@@ -439,33 +452,35 @@ const ManagePlans = () => {
                             />
                             <TextField
                                 select
-                                label="Billing period"
+                                label={t('managePlans.billingPeriod')}
                                 value={form.billing_period}
                                 onChange={(e) => setForm((p) => ({ ...p, billing_period: e.target.value }))}
                                 fullWidth
                             >
                                 {BILLING_PERIODS.map((b) => (
-                                    <MenuItem key={b.value} value={b.value}>{b.label}</MenuItem>
+                                    <MenuItem key={b.value} value={b.value}>
+                                        {t(`membership.billingPeriods.${b.value}`)}
+                                    </MenuItem>
                                 ))}
                             </TextField>
                         </Box>
                         <TextField
-                            label="Max members (incl. primary)"
+                            label={t('managePlans.maxMembers')}
                             type="number"
                             value={form.max_members}
                             onChange={(e) => setForm((p) => ({ ...p, max_members: e.target.value }))}
                             inputProps={{ min: 1, max: 100 }}
-                            helperText="1 = primary only. 5 = primary + up to 4 dependents."
+                            helperText={t('managePlans.maxMembersHelper')}
                             fullWidth
                         />
                         <TextField
-                            label="Benefits (JSON, optional)"
+                            label={t('managePlans.benefitsJson')}
                             value={form.benefits_text}
                             onChange={(e) => setForm((p) => ({ ...p, benefits_text: e.target.value }))}
                             multiline
                             rows={4}
                             placeholder='{"member_discount_pct": 15, "members_only_events": true}'
-                            helperText="Structured perks granted to members on this plan."
+                            helperText={t('managePlans.benefitsHelper')}
                             inputProps={{ style: { fontFamily: 'monospace', fontSize: 13 } }}
                             fullWidth
                         />
@@ -477,7 +492,7 @@ const ManagePlans = () => {
                                         onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))}
                                     />
                                 }
-                                label="Active"
+                                label={t('managePlans.active')}
                             />
                             <FormControlLabel
                                 control={
@@ -486,34 +501,33 @@ const ManagePlans = () => {
                                         onChange={(e) => setForm((p) => ({ ...p, is_public: e.target.checked }))}
                                     />
                                 }
-                                label="Publicly visible"
+                                label={t('managePlans.publiclyVisible')}
                             />
                         </Box>
                     </Stack>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={closeDialog} disabled={saving}>Cancel</Button>
+                    <Button onClick={closeDialog} disabled={saving}>{t('common.cancel')}</Button>
                     <PrimaryButton onClick={handleSubmit} disabled={saving}>
-                        {saving ? <CircularProgress size={20} /> : (editingTier ? 'Save Changes' : 'Create Plan')}
+                        {saving ? <CircularProgress size={20} /> : (editingTier ? t('settings.saveChanges') : t('managePlans.createPlan'))}
                     </PrimaryButton>
                 </DialogActions>
             </Dialog>
 
             {/* ---- Delete dialog ---- */}
             <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
-                <DialogTitle>Delete Plan</DialogTitle>
+                <DialogTitle>{t('managePlans.deleteTitle')}</DialogTitle>
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2 }}>
-                        Plans with active members will be <strong>paused</strong> rather than
-                        deleted, so existing members keep their benefits until expiry.
+                        {t('managePlans.deleteWarning')}
                     </Alert>
                     <Typography>
-                        Delete <strong>{deleteTarget?.name}</strong>?
+                        {t('managePlans.deleteConfirm', { name: deleteTarget?.name })}
                     </Typography>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         color="error"
@@ -521,7 +535,7 @@ const ManagePlans = () => {
                         onClick={handleDelete}
                         disabled={deleting}
                     >
-                        {deleting ? <CircularProgress size={18} /> : 'Delete'}
+                        {deleting ? <CircularProgress size={18} /> : t('common.delete')}
                     </Button>
                 </DialogActions>
             </Dialog>

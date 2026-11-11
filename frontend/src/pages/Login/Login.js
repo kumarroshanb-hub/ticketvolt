@@ -44,10 +44,10 @@ if (IS_PRODUCTION && SHOW_DEMO_CREDS) {
 
 const DEMO_CREDS_RAW = SHOW_DEMO_CREDS
     ? [
-          { roleKey: 'Super Admin', icon: '👑', email: process.env.REACT_APP_DEMO_SUPERADMIN_EMAIL },
-          { roleKey: 'Admin', icon: '🛡️', email: process.env.REACT_APP_DEMO_ADMIN_EMAIL },
-          { roleKey: 'Owner', icon: '📋', email: process.env.REACT_APP_DEMO_OWNER_EMAIL || process.env.REACT_APP_DEMO_ORGANIZER_EMAIL },
-          { roleKey: 'User', icon: '👤', email: process.env.REACT_APP_DEMO_USER_EMAIL },
+          { roleKey: 'roles.superAdmin', icon: '👑', email: process.env.REACT_APP_DEMO_SUPERADMIN_EMAIL },
+          { roleKey: 'roles.admin', icon: '🛡️', email: process.env.REACT_APP_DEMO_ADMIN_EMAIL },
+          { roleKey: 'roles.owner', icon: '📋', email: process.env.REACT_APP_DEMO_OWNER_EMAIL || process.env.REACT_APP_DEMO_ORGANIZER_EMAIL },
+          { roleKey: 'roles.user', icon: '👤', email: process.env.REACT_APP_DEMO_USER_EMAIL },
       ].filter((c) => c.email)
     : [];
 
@@ -101,7 +101,7 @@ const Login = () => {
         try {
             if (authMethod === 'magic_link') {
                 if (!identifier.includes('@')) {
-                    throw new Error('Please enter a valid email address for Magic Link.');
+                    throw new Error(t('auth.invalidEmailMagicLink'));
                 }
                 await api.post('/auth/request-magic-link/', { email: identifier });
                 setStep('success_magic');
@@ -113,7 +113,7 @@ const Login = () => {
                 setCooldown(30); // 30 second cooldown
             }
         } catch (err) {
-            const errorMsg = err.response?.data?.error || err.message || 'Failed to send code. Please try again.';
+            const errorMsg = err.response?.data?.error || err.message || t('auth.sendCodeFailed');
             setError(errorMsg);
         } finally {
             setIsSubmitting(false);
@@ -122,7 +122,7 @@ const Login = () => {
 
     const handleVerifyOtp = async () => {
         if (otpCode.length !== 6) {
-            setError('Please enter the complete 6-digit code.');
+            setError(t('auth.enterCompleteCode'));
             return;
         }
         setError('');
@@ -142,7 +142,7 @@ const Login = () => {
                 navigate(redirectTo, { replace: true });
             }
         } catch (err) {
-            const errorMsg = err.response?.data?.error || 'Invalid or expired code.';
+            const errorMsg = err.response?.data?.error || t('auth.invalidExpiredCode');
             setError(errorMsg);
         } finally {
             setIsSubmitting(false);
@@ -155,9 +155,9 @@ const Login = () => {
             const channel = identifier.includes('@') ? 'email' : 'whatsapp';
             await api.post('/auth/request-otp/', { identifier, channel });
             setCooldown(30);
-            toast.success('New code sent!');
+            toast.success(t('auth.newCodeSent'));
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to resend code.');
+            toast.error(err.response?.data?.error || t('auth.resendCodeFailed'));
         }
     };
 
@@ -220,7 +220,7 @@ const Login = () => {
                     color: 'rgba(255, 255, 255, 0.6)', textTransform: 'none', fontWeight: 600, fontFamily: F.family,
                     '&:hover': { color: 'rgba(255, 255, 255, 0.95)', bgcolor: 'rgba(255, 255, 255, 0.08)' },
                 }}>
-                    {!isMobile && 'Back to Home'}
+                    {!isMobile && t('auth.backToHome')}
                 </Button>
             </Box>
 
@@ -235,8 +235,8 @@ const Login = () => {
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
                     <Logo variant="full" height={80} inverse />
                     <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.65)', mt: 3, fontSize: '15px', fontFamily: F.family }}>
-                        {step === 'input' ? 'Sign in to your account' : 
-                         step === 'otp' ? 'Verify your identity' : 'Check your inbox'}
+                        {step === 'input' ? t('auth.signInSubtitle') :
+                         step === 'otp' ? t('auth.verifyIdentity') : t('auth.checkInbox')}
                     </Typography>
                 </Box>
 
@@ -256,7 +256,7 @@ const Login = () => {
                     <form onSubmit={handleRequest} noValidate>
                         <FormControl fullWidth sx={{ mb: 2.5 }}>
                             <InputLabel shrink sx={labelSx}>
-                                {authMethod === 'magic_link' ? 'Email Address' : 'Email or Mobile Number'}
+                                {authMethod === 'magic_link' ? t('auth.emailAddress') : t('auth.emailOrMobile')}
                             </InputLabel>
                             <TextField
                                 fullWidth
@@ -264,7 +264,7 @@ const Login = () => {
                                 value={identifier}
                                 onChange={(e) => setIdentifier(e.target.value)}
                                 required
-                                placeholder={authMethod === 'magic_link' ? 'you@example.com' : 'email or +1234567890'}
+                                placeholder={authMethod === 'magic_link' ? t('auth.emailPlaceholder') : t('auth.emailOrPhonePlaceholder')}
                                 sx={fieldSx}
                                 disabled={isSubmitting}
                             />
@@ -275,19 +275,19 @@ const Login = () => {
                                 <FormControlLabel 
                                     value="magic_link" 
                                     control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
-                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>Magic Link</Typography>} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.magicLink')}</Typography>} 
                                 />
                                 <FormControlLabel 
                                     value="otp" 
                                     control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
-                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>OTP Code</Typography>} 
+                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.otpCode')}</Typography>} 
                                 />
                             </RadioGroup>
                         </FormControl>
 
                         <Button type="submit" fullWidth variant="contained" disabled={isSubmitting || !identifier}
                             endIcon={!isSubmitting && <ArrowForwardIcon />} sx={primaryBtnSx}>
-                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : 'Continue'}
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.continue')}
                         </Button>
 
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2.5 }}>
@@ -295,7 +295,7 @@ const Login = () => {
                                 color: 'rgba(255, 255, 255, 0.65)', fontSize: '13px', fontFamily: F.family, textDecoration: 'none',
                                 '&:hover': { color: C.secondary, textDecoration: 'underline' },
                             }}>
-                                Don't have an account? Sign up
+                                {t('auth.noAccountSignUp')}
                             </Link>
                         </Box>
                     </form>
@@ -307,7 +307,7 @@ const Login = () => {
                 {step === 'otp' && (
                     <Box sx={{ textAlign: 'center' }}>
                         <Typography sx={{ color: 'rgba(255,255,255,0.8)', mb: 1, fontSize: 15 }}>
-                            We sent a 6-digit code to
+                            {t('auth.sentCodeTo')}
                         </Typography>
                         <Typography sx={{ color: C.textInverse, fontWeight: 700, fontSize: 18, mb: 3 }}>
                             {identifier}
@@ -344,16 +344,16 @@ const Login = () => {
 
                         <Button fullWidth variant="contained" onClick={handleVerifyOtp} 
                             disabled={isSubmitting || otpCode.length !== 6} sx={primaryBtnSx}>
-                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : 'Verify & Login'}
+                            {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.verifyLogin')}
                         </Button>
 
                         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Button onClick={resetFlow} sx={{ color: 'rgba(255,255,255,0.6)', textTransform: 'none' }}>
-                                Change Email/Phone
+                                {t('auth.changeEmailPhone')}
                             </Button>
                             <Button onClick={handleResendOtp} disabled={cooldown > 0} 
                                 sx={{ color: cooldown > 0 ? 'rgba(255,255,255,0.3)' : C.secondary, textTransform: 'none' }}>
-                                {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend Code'}
+                                {cooldown > 0 ? t('auth.resendIn', { seconds: cooldown }) : t('auth.resendCode')}
                             </Button>
                         </Box>
                     </Box>
@@ -366,17 +366,18 @@ const Login = () => {
                     <Box sx={{ textAlign: 'center' }}>
                         <SuccessIcon sx={{ fontSize: 60, color: C.success, mb: 2 }} />
                         <Typography variant="h6" sx={{ color: C.textInverse, mb: 1, fontWeight: 700 }}>
-                            Check your email
+                            {t('auth.checkYourEmail')}
                         </Typography>
                         <Typography sx={{ color: 'rgba(255,255,255,0.6)', mb: 3, fontSize: 14 }}>
-                            We sent a secure login link to <strong style={{color: C.textInverse}}>{identifier}</strong>.<br/>
-                            Click the link in the email to log in instantly.
+                            {t('auth.secureLinkSentLogin', { email: identifier })}
+                            <br />
+                            {t('auth.clickLinkLogin')}
                         </Typography>
                         <Button variant="outlined" onClick={resetFlow} sx={{
                             color: C.textInverse, borderColor: C.bgDarkBorder, textTransform: 'none',
                             '&:hover': { borderColor: C.secondary, color: C.secondary },
                         }}>
-                            Try another email
+                            {t('login.tryAnotherEmail')}
                         </Button>
                     </Box>
                 )}
@@ -388,7 +389,7 @@ const Login = () => {
                             color: 'rgba(255, 255, 255, 0.35)', textTransform: 'uppercase',
                             letterSpacing: 1, fontSize: '10px', fontWeight: 600,
                         }}>
-                            Demo Credentials
+                            {t('auth.demoCredentials')}
                         </Typography>
                         <Box sx={{ mt: 1.5 }}>
                             {DEMO_CREDS_RAW.map((cred, index) => (
@@ -397,7 +398,7 @@ const Login = () => {
                                     fontSize: '12px', py: 0.75, cursor: 'pointer', borderRadius: 1,
                                     '&:hover': { color: 'rgba(255, 255, 255, 0.95)', background: 'rgba(255, 255, 255, 0.05)' },
                                 }}>
-                                    {cred.icon} {cred.roleKey}: <span style={{ color: C.secondary }}>{cred.email}</span>
+                                    {cred.icon} {t(cred.roleKey)}: <span style={{ color: C.secondary }}>{cred.email}</span>
                                 </Typography>
                             ))}
                         </Box>

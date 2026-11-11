@@ -20,6 +20,7 @@ import {
   Business as BusinessIcon,
   WorkspacePremium as MembershipIcon,
   Devices as SessionsIcon,
+  AccountBalanceWallet as BillingIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
@@ -290,7 +291,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       icon: <EventIcon />,
       label: t('nav.events'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
-      minOrgRole: MEMBERSHIP_ROLES.MEMBER,
       section: 'main',
     },
     {
@@ -314,6 +314,14 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       label: t('nav.membership', 'Membership'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
+    },
+    {
+      path: '/app/billing',
+      icon: <BillingIcon />,
+      label: t('nav.billing'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.STAFF,
+      section: 'operations',
     },
     {
       path: '/app/checkin',

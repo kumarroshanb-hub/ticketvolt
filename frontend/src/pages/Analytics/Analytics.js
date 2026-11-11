@@ -19,6 +19,7 @@ import {
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { useAuth } from '../../context/AuthContext';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -139,6 +140,7 @@ const EMPTY_ANALYTICS = {
 
 const Analytics = () => {
     useAuth();
+    const { t } = useTranslation();
     const { formatMoney } = useSettings();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -176,12 +178,12 @@ const Analytics = () => {
             });
         } catch (error) {
             console.error('Analytics error:', error);
-            toast.error('Failed to load analytics');
+            toast.error(t('analytics.loadFailed'));
             setAnalytics(EMPTY_ANALYTICS);
         } finally {
             setLoading(false);
         }
-    }, [timeframe, orgParams]);  // ✅ Added orgParams to deps
+    }, [timeframe, orgParams, t]);  // ✅ Added orgParams to deps
 
     useEffect(() => {
         loadAnalytics();
@@ -206,10 +208,10 @@ const Analytics = () => {
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            toast.success('Analytics exported');
+            toast.success(t('analytics.exported'));
         } catch (err) {
             console.error('Export error:', err);
-            toast.error('Failed to export analytics');
+            toast.error(t('analytics.exportFailed'));
         }
     };
 
@@ -226,28 +228,28 @@ const Analytics = () => {
     // ✅ All colors + alphas derived from tokens
     const overviewStats = [
         {
-            title: 'Total Events',
+            title: t('analytics.totalEvents'),
             value: overview.total_events || 0,
             icon: <EventIcon />,
             color: C.primary,
             bg: `${C.primary}14`,
         },
         {
-            title: 'Total Bookings',
+            title: t('analytics.totalBookings'),
             value: overview.total_bookings || 0,
             icon: <PeopleIcon />,
             color: C.secondary,
             bg: `${C.secondary}14`,
         },
         {
-            title: 'Revenue',
+            title: t('analytics.revenue'),
             value: formatMoney(overview.total_revenue || 0),
             icon: <MoneyIcon />,
             color: C.success,
             bg: `${C.success}14`,
         },
         {
-            title: 'Tickets Issued',
+            title: t('analytics.ticketsIssued'),
             value: overview.total_tickets || 0,
             icon: <TicketIcon />,
             color: C.warning,
@@ -265,9 +267,9 @@ const Analytics = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Analytics</PageTitle>
+                    <PageTitle>{t('analytics.title')}</PageTitle>
                     {!isMobile && (
-                        <PageSubtitle>Track performance and insights</PageSubtitle>
+                        <PageSubtitle>{t('analytics.subtitle')}</PageSubtitle>
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
@@ -307,7 +309,7 @@ const Analytics = () => {
                                     }),
                                 }}
                             >
-                                {tf}
+                                {t(`analytics.timeframe${tf.charAt(0).toUpperCase()}${tf.slice(1)}`)}
                             </Button>
                         ))}
                         <Button
@@ -317,7 +319,7 @@ const Analytics = () => {
                             onClick={loadAnalytics}
                             sx={{ textTransform: 'none', borderColor: C.borderLight, color: C.textSecondary }}
                         >
-                            Refresh
+                            {t('analytics.refresh')}
                         </Button>
                         <Button
                             variant="outlined"
@@ -326,7 +328,7 @@ const Analytics = () => {
                             onClick={handleExport}
                             sx={{ textTransform: 'none', borderColor: C.borderLight, color: C.textSecondary }}
                         >
-                            Export
+                            {t('analytics.export')}
                         </Button>
                     </Stack>
                 </PageHeaderRight>
@@ -391,13 +393,13 @@ const Analytics = () => {
                             </StatIcon>
                             <Box>
                                 <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
-                                    Conversion Rate
+                                    {t('analytics.conversionRate')}
                                 </Typography>
                                 <Typography variant="h6" sx={{ fontWeight: 700, color: C.textPrimary }}>
                                     {overview.conversion_rate || 0}%
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: C.textLight }}>
-                                    check-ins / tickets issued
+                                    {t('analytics.conversionHint')}
                                 </Typography>
                             </Box>
                         </Box>
@@ -411,13 +413,13 @@ const Analytics = () => {
                             </StatIcon>
                             <Box>
                                 <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
-                                    Total Check-ins
+                                    {t('analytics.totalCheckins')}
                                 </Typography>
                                 <Typography variant="h6" sx={{ fontWeight: 700, color: C.textPrimary }}>
                                     {overview.total_checkins || 0}
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: C.textLight }}>
-                                    tickets scanned
+                                    {t('analytics.totalCheckinsHint')}
                                 </Typography>
                             </Box>
                         </Box>
@@ -431,15 +433,15 @@ const Analytics = () => {
                 <Grid item xs={12} lg={8}>
                     <ChartCard>
                         <ChartHeader>
-                            <ChartTitle>Revenue &amp; Bookings Overview</ChartTitle>
+                            <ChartTitle>{t('analytics.chartRevenueTitle')}</ChartTitle>
                             <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Chip
-                                    label="Revenue"
+                                    label={t('analytics.chartRevenueRevenue')}
                                     size="small"
                                     sx={{ backgroundColor: C.primary, color: C.textInverse }}
                                 />
                                 <Chip
-                                    label="Bookings"
+                                    label={t('analytics.chartRevenueBookings')}
                                     size="small"
                                     sx={{ backgroundColor: C.secondary, color: C.textInverse }}
                                 />
@@ -448,7 +450,7 @@ const Analytics = () => {
                         <ChartWrapper>
                             {revenueData.length === 0 ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: C.textLight }}>No data for this timeframe</Typography>
+                                    <Typography sx={{ color: C.textLight }}>{t('analytics.noDataTimeframe')}</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -492,12 +494,12 @@ const Analytics = () => {
                 <Grid item xs={12} lg={4}>
                     <ChartCard>
                         <ChartHeader>
-                            <ChartTitle>Booking Source</ChartTitle>
+                            <ChartTitle>{t('analytics.chartSourceTitle')}</ChartTitle>
                         </ChartHeader>
                         <ChartWrapper>
                             {deviceData.length === 0 || deviceData.every(d => d.value === 0) ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: C.textLight }}>No data yet</Typography>
+                                    <Typography sx={{ color: C.textLight }}>{t('analytics.noData')}</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -529,12 +531,12 @@ const Analytics = () => {
                 <Grid item xs={12} lg={6}>
                     <ChartCard>
                         <ChartHeader>
-                            <ChartTitle>Revenue by Event Category</ChartTitle>
+                            <ChartTitle>{t('analytics.chartCategoryTitle')}</ChartTitle>
                         </ChartHeader>
                         <ChartWrapper>
                             {eventData.length === 0 || eventData.every(d => d.value === 0) ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                                    <Typography sx={{ color: C.textLight }}>No revenue yet</Typography>
+                                    <Typography sx={{ color: C.textLight }}>{t('analytics.noRevenue')}</Typography>
                                 </Box>
                             ) : (
                                 <ResponsiveContainer width="100%" height="100%">
@@ -544,7 +546,7 @@ const Analytics = () => {
                                         <YAxis stroke={C.textLight} axisLine={false} tickLine={false} />
                                         <Tooltip
                                             contentStyle={TOOLTIP_CONTENT_STYLE}
-                                            formatter={(value) => [formatMoney(value), 'Revenue']}
+                                            formatter={(value) => [formatMoney(value), t('analytics.revenue')]}
                                         />
                                         <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                                             {eventData.map((entry, index) => (
@@ -562,12 +564,12 @@ const Analytics = () => {
                 <Grid item xs={12} lg={6}>
                     <ChartCard>
                         <ChartHeader>
-                            <ChartTitle>Top Performing Events</ChartTitle>
+                            <ChartTitle>{t('analytics.chartTopEventsTitle')}</ChartTitle>
                         </ChartHeader>
                         <Box>
                             {topEvents.length === 0 ? (
                                 <Typography sx={{ color: C.textLight, textAlign: 'center', py: 4 }}>
-                                    No event data available
+                                    {t('analytics.noEventData')}
                                 </Typography>
                             ) : (
                                 topEvents.slice(0, 5).map((event, index) => (
@@ -595,7 +597,7 @@ const Analytics = () => {
                                                     {event.name}
                                                 </Typography>
                                                 <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                                                    {event.bookings || 0} bookings • {formatMoney(event.revenue || 0)}
+                                                    {t('analytics.bookingsLabel', { count: event.bookings || 0, revenue: formatMoney(event.revenue || 0) })}
                                                 </Typography>
                                             </Box>
                                             <Chip
@@ -631,11 +633,11 @@ const Analytics = () => {
                 <Grid item xs={12}>
                     <ChartCard>
                         <ChartHeader>
-                            <ChartTitle>Bookings by Status</ChartTitle>
+                            <ChartTitle>{t('analytics.chartStatusTitle')}</ChartTitle>
                         </ChartHeader>
                         {statusBreakdown.length === 0 ? (
                             <Typography sx={{ color: C.textLight, textAlign: 'center', py: 2 }}>
-                                No bookings yet
+                                {t('analytics.noBookings')}
                             </Typography>
                         ) : (
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>

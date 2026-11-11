@@ -4,6 +4,8 @@
 // Kept in one place so the form validator, the editors, and the submit
 // payload builder all agree.
 
+import i18n from '../../i18n';
+
 export const EVENT_FLOW = {
     TICKETED: 'ticketed',
     PAID_REGISTRATION: 'paid_registration',
@@ -57,7 +59,7 @@ export const validateSessions = (sessions, { required }) => {
         (s) => s && s.start_time && s.end_time
     );
     if (filled.length === 0) {
-        return 'Add at least one session (start and end time).';
+        return i18n.t('validation.addSession');
     }
     return null;
 };
@@ -72,7 +74,7 @@ export const validateTiers = (tiers, { required }) => {
         (t) => t && String(t.name || '').trim() !== '' && t.price !== '' && t.price !== null
     );
     if (filled.length === 0) {
-        return 'Add at least one ticket tier (name and price).';
+        return i18n.t('validation.addTier');
     }
     return null;
 };

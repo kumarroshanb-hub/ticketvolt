@@ -1,6 +1,7 @@
 // frontend/src/pages/Events/Events.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
     Box, Grid, Typography, Button, CircularProgress, Alert,
     IconButton, Tooltip, Paper, Stack, Dialog, DialogTitle,
@@ -51,6 +52,7 @@ const EventCardWithAdminActions = ({
     onPublish,
     onDelete,
 }) => {
+    const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
 
     const ownerLabel = event.organizer_username || event.organizer || null;
@@ -106,7 +108,7 @@ const EventCardWithAdminActions = ({
                         boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
                     }}
                 >
-                    <Tooltip title="View Details">
+                    <Tooltip title={t('eventCard.viewDetails')}>
                         <IconButton
                             size="small"
                             onClick={(e) => {
@@ -118,7 +120,7 @@ const EventCardWithAdminActions = ({
                             <ViewIcon fontSize="small" />
                         </IconButton>
                     </Tooltip>
-                    <Tooltip title="Edit">
+                    <Tooltip title={t('common.edit')}>
                         <IconButton
                             size="small"
                             onClick={(e) => {
@@ -131,7 +133,7 @@ const EventCardWithAdminActions = ({
                         </IconButton>
                     </Tooltip>
                     {isDraft && (
-                        <Tooltip title="Publish">
+                        <Tooltip title={t('events.publish')}>
                             <IconButton
                                 size="small"
                                 disabled={actionLoading}
@@ -145,7 +147,7 @@ const EventCardWithAdminActions = ({
                             </IconButton>
                         </Tooltip>
                     )}
-                    <Tooltip title="Delete">
+                    <Tooltip title={t('common.delete')}>
                         <IconButton
                             size="small"
                             disabled={actionLoading}
@@ -166,6 +168,7 @@ const EventCardWithAdminActions = ({
 
 const Events = () => {
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const { hasOrgRole, isSuperAdmin } = useRole();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -213,7 +216,7 @@ const Events = () => {
             setEvents(eventsData);
         } catch (err) {
             console.error('Events error:', err);
-            setError(err.response?.data?.detail || 'Failed to load events');
+            setError(err.response?.data?.detail || t('events.loadEventsFailed'));
         } finally {
             setLoading(false);
         }
@@ -234,12 +237,12 @@ const Events = () => {
         setActionLoading(true);
         try {
             await api.delete(`/events/${deleteConfirm.eventId}/`);
-            toast.success('Event deleted successfully');
+            toast.success(t('events.deletedSuccess'));
             setDeleteConfirm({ open: false, eventId: null, eventTitle: '' });
             loadEvents();
         } catch (err) {
             console.error('Delete error:', err);
-            toast.error(err.response?.data?.error || 'Failed to delete event');
+            toast.error(err.response?.data?.error || t('events.deleteFailed'));
         } finally {
             setActionLoading(false);
         }
@@ -249,11 +252,11 @@ const Events = () => {
         setActionLoading(true);
         try {
             await api.post(`/events/${event.id}/publish/`);
-            toast.success('Event published successfully');
+            toast.success(t('events.publishSuccess'));
             loadEvents();
         } catch (err) {
             console.error('Publish error:', err);
-            toast.error(err.response?.data?.error || 'Failed to publish event');
+            toast.error(err.response?.data?.error || t('events.publishFailed'));
         } finally {
             setActionLoading(false);
         }
@@ -272,7 +275,7 @@ const Events = () => {
             <PageHeader>
                 <PageHeaderLeft>
                     <PageTitle variant="h4">
-                        {isRegularUser ? 'Browse Events' : 'Events Management'}
+                        {isRegularUser ? t('events.browseTitle') : t('events.managementTitle')}
                     </PageTitle>
                     {isRegularUser && (
                         <Typography
@@ -284,7 +287,7 @@ const Events = () => {
                                 width: isMobile ? '100%' : 'auto',
                             }}
                         >
-                            Find and book events
+                            {t('events.browseSubtitle')}
                         </Typography>
                     )}
                 </PageHeaderLeft>
@@ -297,11 +300,11 @@ const Events = () => {
                         setOrgFilter={setOrgFilter}
                     />
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadEvents}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     {canCreateEvents && (
                         <PrimaryButton variant="contained" startIcon={<AddIcon />} onClick={handleCreateEvent}>
-                            New Event
+                            {t('events.newEvent')}
                         </PrimaryButton>
                     )}
                 </PageHeaderRight>
@@ -311,7 +314,7 @@ const Events = () => {
                 <Alert severity="error" sx={{ mb: 3 }}>
                     {error}
                     <Button size="small" onClick={loadEvents} sx={{ ml: 2 }}>
-                        Retry
+                        {t('common.retry')}
                     </Button>
                 </Alert>
             )}
@@ -327,7 +330,7 @@ const Events = () => {
                             }}
                         >
                             <Typography variant="h6" sx={{ color: C.textSecondary }}>
-                                {isRegularUser ? 'No events available' : 'No events found'}
+                                {isRegularUser ? t('events.noEventsAvailable') : t('events.noEventsFound')}
                             </Typography>
                             {canCreateEvents && (
                                 <Button
@@ -336,7 +339,7 @@ const Events = () => {
                                     onClick={handleCreateEvent}
                                     sx={{ mt: 2 }}
                                 >
-                                    Create your first event
+                                    {t('events.createFirst')}
                                 </Button>
                             )}
                         </Paper>
@@ -379,12 +382,10 @@ const Events = () => {
                     },
                 }}
             >
-                <DialogTitle sx={{ color: C.textPrimary }}>Delete Event</DialogTitle>
+                <DialogTitle sx={{ color: C.textPrimary }}>{t('events.deleteTitle')}</DialogTitle>
                 <DialogContent>
                     <Typography sx={{ color: C.textSecondary }}>
-                        Are you sure you want to delete{' '}
-                        <strong>{deleteConfirm.eventTitle}</strong>? This action cannot
-                        be undone.
+                        {t('events.deleteConfirm', { title: deleteConfirm.eventTitle })}
                     </Typography>
                 </DialogContent>
                 <DialogActions>
@@ -393,7 +394,7 @@ const Events = () => {
                             setDeleteConfirm({ open: false, eventId: null, eventTitle: '' })
                         }
                     >
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         onClick={handleDeleteEvent}
@@ -401,7 +402,7 @@ const Events = () => {
                         variant="contained"
                         disabled={actionLoading}
                     >
-                        {actionLoading ? <CircularProgress size={20} /> : 'Delete'}
+                        {actionLoading ? <CircularProgress size={20} /> : t('common.delete')}
                     </Button>
                 </DialogActions>
             </Dialog>

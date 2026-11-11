@@ -69,11 +69,11 @@ const ReviewOffline = () => {
             setSelectedIds([]);
         } catch (err) {
             console.error('Failed to load pending offline memberships:', err);
-            toast.error(err.response?.data?.error || 'Failed to load pending requests.');
+            toast.error(err.response?.data?.error || t('reviewOffline.loadFailed'));
         } finally {
             setLoading(false);
         }
-    }, [orgId]);
+    }, [orgId, t]);
 
     useEffect(() => { loadPending(); }, [loadPending]);
 
@@ -107,7 +107,7 @@ const ReviewOffline = () => {
 
     const openBulk = (action) => {
         if (selectedIds.length === 0) {
-            toast.warning('Select at least one request.');
+            toast.warning(t('reviewOffline.selectAtLeastOne'));
             return;
         }
         setDialog({
@@ -137,20 +137,31 @@ const ReviewOffline = () => {
                 });
                 const ok = res.succeeded || 0;
                 const fail = res.failed || 0;
-                if (ok) toast.success(`${ok} request(s) ${dialog.action === 'activate' ? 'activated' : 'rejected'}.`);
-                if (fail) toast.warning(`${fail} request(s) could not be processed.`);
+                if (ok) {
+                    toast.success(t(
+                        dialog.action === 'activate'
+                            ? 'reviewOffline.bulkActivated'
+                            : 'reviewOffline.bulkRejected',
+                        { count: ok },
+                    ));
+                }
+                if (fail) toast.warning(t('reviewOffline.bulkFailed', { count: fail }));
             } else {
                 await membershipService.reviewOffline(dialog.target, {
                     action: dialog.action,
                     reference: dialog.reference,
                     reason: dialog.reason,
                 });
-                toast.success(dialog.action === 'activate' ? 'Membership activated.' : 'Request rejected.');
+                toast.success(
+                    dialog.action === 'activate'
+                        ? t('reviewOffline.activated')
+                        : t('reviewOffline.rejected'),
+                );
             }
             closeDialog();
             await loadPending();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Review failed.');
+            toast.error(err.response?.data?.error || t('reviewOffline.reviewFailed'));
         } finally {
             setSubmitting(false);
         }
@@ -162,7 +173,7 @@ const ReviewOffline = () => {
     if (!orgId) {
         return (
             <PageContainer>
-                <Alert severity="warning">Select an organization first.</Alert>
+                <Alert severity="warning">{t('reviewOffline.selectOrg')}</Alert>
             </PageContainer>
         );
     }
@@ -179,10 +190,10 @@ const ReviewOffline = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Offline Membership Requests</PageTitle>
+                    <PageTitle>{t('reviewOffline.title')}</PageTitle>
                     {!isMobile && (
                         <PageSubtitle>
-                            Review cash / offline payments and activate members.
+                            {t('reviewOffline.subtitle')}
                         </PageSubtitle>
                     )}
                 </PageHeaderLeft>
@@ -191,7 +202,7 @@ const ReviewOffline = () => {
                         <TextField
                             select
                             size="small"
-                            label="Organization"
+                            label={t('bulkUpload.organization')}
                             value={orgId}
                             onChange={(e) => setOrgId(e.target.value)}
                             sx={{ minWidth: 200 }}
@@ -208,14 +219,14 @@ const ReviewOffline = () => {
                         {t('membership.bulkAddMembers')}
                     </OutlineButton>
                     <OutlineButton startIcon={<RefreshIcon />} onClick={loadPending}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
 
             {pendingCount === 0 ? (
                 <Alert severity="success" icon={<CheckIcon />}>
-                    No pending offline requests. You're all caught up.
+                    {t('reviewOffline.noPending')}
                 </Alert>
             ) : (
                 <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
@@ -227,12 +238,15 @@ const ReviewOffline = () => {
                                 onChange={toggleAll}
                             />
                             <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                {selectedIds.length} of {pendingCount} selected
+                                {t('reviewOffline.selectedCount', {
+                                    selected: selectedIds.length,
+                                    total: pendingCount,
+                                })}
                             </Typography>
                             <Box sx={{ flex: 1 }} />
                             <TextField
                                 size="small"
-                                label="Receipt / reference (optional)"
+                                label={t('reviewOffline.receiptReference')}
                                 value={reference}
                                 onChange={(e) => setReference(e.target.value)}
                                 sx={{ minWidth: 200 }}
@@ -246,7 +260,7 @@ const ReviewOffline = () => {
                                     openBulk('activate');
                                 }}
                             >
-                                Bulk Activate
+                                {t('reviewOffline.bulkActivate')}
                             </Button>
                             <Button
                                 variant="outlined"
@@ -255,7 +269,7 @@ const ReviewOffline = () => {
                                 disabled={selectedIds.length === 0}
                                 onClick={() => openBulk('reject')}
                             >
-                                Bulk Reject
+                                {t('reviewOffline.bulkReject')}
                             </Button>
                         </Box>
 
@@ -294,7 +308,7 @@ const ReviewOffline = () => {
                                             color="warning"
                                         />
                                         {m.offline_reference && (
-                                            <Tooltip title="Reference provided by user">
+                                            <Tooltip title={t('reviewOffline.referenceProvided')}>
                                                 <Chip
                                                     size="small"
                                                     icon={<ReceiptIcon />}
@@ -305,7 +319,9 @@ const ReviewOffline = () => {
                                         )}
                                     </Box>
                                     <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: C.textMuted }}>
-                                        Requested {new Date(m.created_at).toLocaleString()}
+                                        {t('reviewOffline.requested', {
+                                            date: new Date(m.created_at).toLocaleString(),
+                                        })}
                                     </Typography>
                                 </Box>
                                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -315,7 +331,7 @@ const ReviewOffline = () => {
                                         onClick={() => openSingle(m.id, 'activate')}
                                         sx={{ background: C.success, '&:hover': { background: C.successDark } }}
                                     >
-                                        Activate
+                                        {t('reviewOffline.activate')}
                                     </PrimaryButton>
                                     <Button
                                         size="small"
@@ -324,7 +340,7 @@ const ReviewOffline = () => {
                                         startIcon={<CloseIcon />}
                                         onClick={() => openSingle(m.id, 'reject')}
                                     >
-                                        Reject
+                                        {t('reviewOffline.reject')}
                                     </Button>
                                 </Stack>
                             </Box>
@@ -336,21 +352,23 @@ const ReviewOffline = () => {
             {/* ---- Confirm dialog ---- */}
             <Dialog open={dialog.open} onClose={closeDialog} maxWidth="sm" fullWidth>
                 <DialogTitle>
-                    {dialog.action === 'activate' ? 'Activate Membership' : 'Reject Membership'}
+                    {dialog.action === 'activate'
+                        ? t('reviewOffline.activateTitle')
+                        : t('reviewOffline.rejectTitle')}
                 </DialogTitle>
                 <DialogContent>
                     <Typography sx={{ mb: 2 }}>
                         {dialog.action === 'activate'
                             ? (dialog.bulk
-                                ? `Activate ${selectedIds.length} offline membership(s)?`
-                                : 'Activate this offline membership?')
+                                ? t('reviewOffline.activateBulk', { count: selectedIds.length })
+                                : t('reviewOffline.activateSingle'))
                             : (dialog.bulk
-                                ? `Reject ${selectedIds.length} offline membership(s)?`
-                                : 'Reject this offline membership?')}
+                                ? t('reviewOffline.rejectBulk', { count: selectedIds.length })
+                                : t('reviewOffline.rejectSingle'))}
                     </Typography>
                     {dialog.action === 'activate' && (
                         <TextField
-                            label="Receipt / reference (optional)"
+                            label={t('reviewOffline.receiptReference')}
                             value={dialog.reference}
                             onChange={(e) => setDialog((d) => ({ ...d, reference: e.target.value }))}
                             fullWidth
@@ -359,7 +377,7 @@ const ReviewOffline = () => {
                     )}
                     {dialog.action === 'reject' && (
                         <TextField
-                            label="Reason (optional)"
+                            label={t('reviewOffline.reason')}
                             value={dialog.reason}
                             onChange={(e) => setDialog((d) => ({ ...d, reason: e.target.value }))}
                             multiline
@@ -370,12 +388,12 @@ const ReviewOffline = () => {
                     )}
                     <Alert severity={dialog.action === 'activate' ? 'success' : 'warning'}>
                         {dialog.action === 'activate'
-                            ? 'The user will be notified their membership is active.'
-                            : 'The membership will be marked rejected. The user can reapply later.'}
+                            ? t('reviewOffline.activateNotice')
+                            : t('reviewOffline.rejectNotice')}
                     </Alert>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={closeDialog} disabled={submitting}>Cancel</Button>
+                    <Button onClick={closeDialog} disabled={submitting}>{t('common.cancel')}</Button>
                     <PrimaryButton
                         onClick={handleConfirm}
                         disabled={submitting}
@@ -386,7 +404,7 @@ const ReviewOffline = () => {
                             },
                         }}
                     >
-                        {submitting ? <CircularProgress size={18} /> : 'Confirm'}
+                        {submitting ? <CircularProgress size={18} /> : t('common.confirm')}
                     </PrimaryButton>
                 </DialogActions>
             </Dialog>

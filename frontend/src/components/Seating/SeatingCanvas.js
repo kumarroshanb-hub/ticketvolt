@@ -1,16 +1,19 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Konva from 'konva';
 import { Box, CircularProgress, Typography } from '@mui/material';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 const BRAND_COLORS = {
-  charcoal: '#333333',
-  red: '#FF2A2A',
-  darkGray: '#555555',
-  lightGray: '#f4f4f4',
-  border: '#e2e8f0',
-  success: '#22c55e',
-  warning: '#f59e0b',
-  info: '#3b82f6',
+  charcoal: C.primary,
+  red: C.secondary,
+  darkGray: C.primaryLight,
+  lightGray: C.bgPrimary,
+  border: C.borderLight,
+  success: C.success,
+  warning: C.warning,
+  info: C.info,
 };
 
 const SEAT_SIZE = 24;
@@ -22,15 +25,15 @@ const PADDING_BOTTOM = 80;
 const PADDING_SIDE = 40;
 
 const getSeatColor = (seat, isSelected) => {
-  if (isSelected) return '#333333';
-  if (seat.status === 'booked' || seat.status === 'sold') return '#e0e0e0';
+  if (isSelected) return C.primary;
+  if (seat.status === 'booked' || seat.status === 'sold') return C.borderLight;
   if (seat.status === 'held') return BRAND_COLORS.warning;
-  return seat.category_color || '#94a3b8';
+  return seat.category_color || C.textLight;
 };
 
 const getSeatStroke = (seat, isSelected) => {
-  if (isSelected) return '#000000';
-  if (seat.status === 'booked' || seat.status === 'sold') return '#bdbdbd';
+  if (isSelected) return C.black;
+  if (seat.status === 'booked' || seat.status === 'sold') return C.textLight;
   return BRAND_COLORS.charcoal;
 };
 
@@ -60,16 +63,16 @@ const SeatingCanvas = forwardRef(({
     const stats = {};
     layoutData.seats.forEach(seat => {
       let groupName = 'General';
-      let groupColor = '#94a3b8';
+      let groupColor = C.textLight;
       if (seat.status === 'sold' || seat.status === 'booked') {
         groupName = 'Sold / Unavailable';
-        groupColor = '#e0e0e0';
+        groupColor = C.borderLight;
       } else if (seat.status === 'held') {
         groupName = 'Held';
         groupColor = BRAND_COLORS.warning;
       } else if (seat.category_name) {
         groupName = seat.category_name;
-        groupColor = seat.category_color || '#94a3b8';
+        groupColor = seat.category_color || C.textLight;
       }
       if (!stats[groupName]) stats[groupName] = { name: groupName, color: groupColor, count: 0 };
       stats[groupName].count++;
@@ -170,7 +173,7 @@ const SeatingCanvas = forwardRef(({
           fill: getSeatColor(seat, isSelected),
           stroke: getSeatStroke(seat, isSelected),
           strokeWidth: isSelected ? 2.5 : 1.5,
-          shadowColor: isSelected ? '#000000' : 'transparent',
+          shadowColor: isSelected ? C.black : 'transparent',
           shadowBlur: isSelected ? 10 : 0,
           shadowOpacity: 0.5,
           perfectDrawEnabled: false,
@@ -180,7 +183,7 @@ const SeatingCanvas = forwardRef(({
         const text = new Konva.Text({
           text: seatNumber,
           fontSize: FONT_SIZE,
-          fill: isSelected ? '#ffffff' : BRAND_COLORS.charcoal,
+          fill: isSelected ? C.textInverse : BRAND_COLORS.charcoal,
           width: SEAT_SIZE,
           align: 'center',
           y: (SEAT_SIZE - FONT_SIZE) / 2 + 1,
@@ -202,9 +205,9 @@ const SeatingCanvas = forwardRef(({
           rect.fill(getSeatColor(seat, newIsSelected));
           rect.stroke(getSeatStroke(seat, newIsSelected));
           rect.strokeWidth(newIsSelected ? 2.5 : 1.5);
-          rect.shadowColor(newIsSelected ? '#000000' : 'transparent');
+          rect.shadowColor(newIsSelected ? C.black : 'transparent');
           rect.shadowBlur(newIsSelected ? 10 : 0);
-          text.fill(newIsSelected ? '#ffffff' : BRAND_COLORS.charcoal);
+          text.fill(newIsSelected ? C.textInverse : BRAND_COLORS.charcoal);
           text.fontStyle(newIsSelected ? 'bold' : 'normal');
           layer.batchDraw();
 
@@ -294,9 +297,9 @@ const SeatingCanvas = forwardRef(({
       node.rect.fill(getSeatColor(seat, isSelected));
       node.rect.stroke(getSeatStroke(seat, isSelected));
       node.rect.strokeWidth(isSelected ? 2.5 : 1.5);
-      node.rect.shadowColor(isSelected ? '#000000' : 'transparent');
+      node.rect.shadowColor(isSelected ? C.black : 'transparent');
       node.rect.shadowBlur(isSelected ? 10 : 0);
-      node.text.fill(isSelected ? '#ffffff' : BRAND_COLORS.charcoal);
+      node.text.fill(isSelected ? C.textInverse : BRAND_COLORS.charcoal);
       node.text.fontStyle(isSelected ? 'bold' : 'normal');
     });
     layer.batchDraw();
@@ -392,7 +395,7 @@ const SeatingCanvas = forwardRef(({
       flexDirection: 'column',
       overflow: 'hidden',
       position: 'relative',
-      bgcolor: '#fafafa',
+      bgcolor: C.bgPrimary,
     }}>
       <Box sx={{
         flexShrink: 0,

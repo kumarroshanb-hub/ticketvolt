@@ -63,7 +63,7 @@ const HeroWrapper = styled.section`
     background:
         radial-gradient(circle at 20% 20%, rgba(255, 42, 42, 0.15) 0%, transparent 45%),
         radial-gradient(circle at 80% 80%, rgba(51, 51, 51, 0.4) 0%, transparent 55%),
-        linear-gradient(135deg, #1a1a1a 0%, #2b2b2b 55%, #0f0f0f 100%);
+        linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primary} 55%, ${C.bgDark} 100%);
 
     &::before {
         content: '';
@@ -496,7 +496,7 @@ const SkeletonBar = styled.div`
 `;
 
 const Footer = styled.footer`
-    background: #1a1a1a;
+    background: ${C.primaryDark};
     color: rgba(255, 255, 255, 0.65);
     padding: 48px 0 32px 0;
     margin-top: 40px;

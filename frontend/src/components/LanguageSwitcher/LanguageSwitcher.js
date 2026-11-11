@@ -48,7 +48,7 @@ const Trigger = styled.button`
                 ? 'rgba(255,255,255,0.18)'
                 : C.borderLight};
     color: ${(p) =>
-        p.$variant === 'dark' ? '#ffffff' : C.textPrimary};
+        p.$variant === 'dark' ? C.white : C.textPrimary};
 
     &:hover {
         border-color: ${C.secondary};

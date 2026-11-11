@@ -27,6 +27,7 @@ import {
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../context/SettingsContext';
+import { theme as brandTheme } from '../../theme/tokens';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -39,6 +40,8 @@ import {
     OutlineButton,
     LoadingWrapper,
 } from '../../components/Common';
+
+const C = brandTheme.colors;
 
 const VenueDetail = () => {
     const { id } = useParams();
@@ -81,7 +84,7 @@ const VenueDetail = () => {
             }
         } catch (error) {
             console.error('Venue detail error:', error);
-            toast.error('Failed to load venue details');
+            toast.error(t('venues.loadDetailsFailed'));
             navigate('/app/venues');
         }
         setLoading(false);
@@ -106,7 +109,7 @@ const VenueDetail = () => {
                 map.set(key, {
                     key,
                     name: seat.category_name || 'Uncategorized',
-                    color: seat.category_color || '#94a3b8',
+                    color: seat.category_color || C.textLight,
                     price: seat.price ?? 0,
                     count: 1,
                 });
@@ -135,14 +138,14 @@ const VenueDetail = () => {
     };
 
     const handleDelete = async () => {
-        if (!window.confirm(`Are you sure you want to delete "${venue?.name}"?`)) return;
+        if (!window.confirm(t('venues.deleteConfirm', { name: venue?.name }))) return;
         try {
             await api.delete(`/venues/${id}/`);
-            toast.success('Venue deleted successfully');
+            toast.success(t('venues.deletedSuccess'));
             navigate('/app/venues');
         } catch (error) {
             console.error('Delete error:', error);
-            toast.error('Failed to delete venue');
+            toast.error(t('venues.deleteFailed'));
         }
     };
 
@@ -157,9 +160,9 @@ const VenueDetail = () => {
     if (!venue) {
         return (
             <Box sx={{ p: 3, textAlign: 'center' }}>
-                <Typography sx={{ color: 'text.disabled' }}>Venue not found</Typography>
+                <Typography sx={{ color: 'text.disabled' }}>{t('venues.notFound')}</Typography>
                 <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/app/venues')}>
-                    Back to Venues
+                    {t('venues.notFoundBack')}
                 </Button>
             </Box>
         );
@@ -192,7 +195,7 @@ const VenueDetail = () => {
                         sx={{ width: isMobile ? '100%' : 'auto' }}
                     >
                         <Chip
-                            label={venue.is_active ? 'Active' : 'Inactive'}
+                            label={venue.is_active ? t('venues.activeLabel') : t('venues.inactive')}
                             color={venue.is_active ? 'success' : 'default'}
                             sx={{ fontWeight: 600, alignSelf: isMobile ? 'flex-start' : 'center' }}
                         />
@@ -202,7 +205,7 @@ const VenueDetail = () => {
                             onClick={loadVenue}
                             sx={isMobile ? { width: '100%' } : undefined}
                         >
-                            Refresh
+                            {t('venues.detailRefresh')}
                         </OutlineButton>
                         <PrimaryButton
                             variant="contained"
@@ -210,7 +213,7 @@ const VenueDetail = () => {
                             onClick={handleEdit}
                             sx={isMobile ? { width: '100%' } : undefined}
                         >
-                            Edit
+                            {t('venues.detailEdit')}
                         </PrimaryButton>
                         {isMobile && (
                             <OutlineButton
@@ -220,7 +223,7 @@ const VenueDetail = () => {
                                 onClick={handleDelete}
                                 sx={{ width: '100%' }}
                             >
-                                Delete
+                                {t('venues.detailDelete')}
                             </OutlineButton>
                         )}
                     </Stack>
@@ -232,10 +235,10 @@ const VenueDetail = () => {
                     <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)', mb: 3 }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600, mb: 2 }}>
-                                Description
+                                {t('venues.detailTitle')}
                             </Typography>
                             <Typography variant="body2" sx={{ color: 'text.primary', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                {venue.description || 'No description provided'}
+                                {venue.description || t('venues.detailNoDescription')}
                             </Typography>
                         </CardContent>
                     </Card>
@@ -245,7 +248,7 @@ const VenueDetail = () => {
                     <Card sx={{ borderRadius: 2, border: '1px solid rgba(226, 232, 240, 1)', mb: 3 }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600, mb: 2 }}>
-                                Contact Information
+                                {t('venues.detailContact')}
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                 {venue.contact_phone && (
@@ -262,7 +265,7 @@ const VenueDetail = () => {
                                             color: 'text.primary',
                                             textDecoration: 'none',
                                             transition: 'background 0.2s',
-                                            '&:hover': { background: '#f1f5f9' },
+                                            '&:hover': { background: C.bgCardHover },
                                         }}
                                     >
                                         <PhoneIcon sx={{ fontSize: 18, color: 'primary.main', flexShrink: 0 }} />
@@ -285,7 +288,7 @@ const VenueDetail = () => {
                                             color: 'text.primary',
                                             textDecoration: 'none',
                                             transition: 'background 0.2s',
-                                            '&:hover': { background: '#f1f5f9' },
+                                            '&:hover': { background: C.bgCardHover },
                                         }}
                                     >
                                         <EmailIcon sx={{ fontSize: 18, color: 'primary.main', flexShrink: 0 }} />
@@ -310,12 +313,12 @@ const VenueDetail = () => {
                                             color: 'primary.main',
                                             textDecoration: 'none',
                                             transition: 'background 0.2s',
-                                            '&:hover': { background: '#eef2ff' },
+                                            '&:hover': { background: C.infoBanner },
                                         }}
                                     >
                                         <LanguageIcon sx={{ fontSize: 18, color: 'primary.main', flexShrink: 0 }} />
                                         <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
-                                            Visit Website
+                                            {t('venues.detailVisitWebsite')}
                                         </Typography>
                                     </Box>
                                 )}
@@ -329,7 +332,7 @@ const VenueDetail = () => {
                                 {t('venues.capacitySeating')}
                             </Typography>
                             <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                                {venue.capacity || 'N/A'}
+                                {venue.capacity || t('common.nA')}
                             </Typography>
                             <Typography
                                 variant="body2"
@@ -448,7 +451,7 @@ const VenueDetail = () => {
                                                         border: '1px solid',
                                                         borderColor: 'divider',
                                                         borderRadius: 2,
-                                                        bgcolor: '#f8fafc',
+                                                        bgcolor: C.bgPrimary,
                                                         p: 1,
                                                         overflow: 'hidden',
                                                     }}
@@ -459,7 +462,7 @@ const VenueDetail = () => {
                                                         preserveAspectRatio="xMidYMid meet"
                                                         sx={{ width: '100%', height: 320, display: 'block' }}
                                                         role="img"
-                                                        aria-label="Seat layout preview"
+                                                        aria-label={t('venues.seatPreviewAria')}
                                                     >
                                                         {seats.map((seat) => (
                                                             <circle
@@ -467,7 +470,7 @@ const VenueDetail = () => {
                                                                 cx={seat.x_coord}
                                                                 cy={seat.y_coord}
                                                                 r={seatRadius}
-                                                                fill={seat.category_color || '#94a3b8'}
+                                                                fill={seat.category_color || C.textLight}
                                                             />
                                                         ))}
                                                     </Box>
@@ -509,7 +512,7 @@ const VenueDetail = () => {
                                                                 {category.name}
                                                             </Typography>
                                                             <Typography variant="caption" sx={{ color: 'text.secondary', minWidth: 60, textAlign: 'right' }}>
-                                                                {category.count} seats
+                                                                {t('venues.seatCount', { count: category.count })}
                                                             </Typography>
                                                             <Typography variant="body2" sx={{ minWidth: 80, textAlign: 'right' }}>
                                                                 {formatMoney(category.price)}

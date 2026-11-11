@@ -5,11 +5,14 @@ import {
     Typography, CircularProgress,
 } from '@mui/material';
 import { PrimaryButton, OutlineButton } from '../../../components/Common';
+import { useTranslation } from 'react-i18next';
 import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
 
-export const ConfirmActionDialog = ({ dialog, onConfirm, onClose, loading }) => (
+export const ConfirmActionDialog = ({ dialog, onConfirm, onClose, loading }) => {
+    const { t } = useTranslation();
+    return (
     <Dialog
         open={dialog.open}
         onClose={onClose}
@@ -27,10 +30,11 @@ export const ConfirmActionDialog = ({ dialog, onConfirm, onClose, loading }) => 
             <Typography sx={{ color: C.textSecondary }}>{dialog.message}</Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-            <OutlineButton onClick={onClose}>Cancel</OutlineButton>
+            <OutlineButton onClick={onClose}>{t('common.cancel')}</OutlineButton>
             <PrimaryButton onClick={onConfirm} disabled={loading}>
-                {loading ? <CircularProgress size={24} /> : 'Confirm'}
+                {loading ? <CircularProgress size={24} /> : t('common.confirm')}
             </PrimaryButton>
         </DialogActions>
     </Dialog>
-);
+    );
+};

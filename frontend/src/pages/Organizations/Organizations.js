@@ -21,6 +21,7 @@ import {
     AdminPanelSettings as AssignOwnerIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { useOrg } from '../../context/OrgContext';
 import { useAuth } from '../../context/AuthContext';
@@ -46,13 +47,18 @@ const STAGE_CONFIRM = 'confirm';
 
 const OWNER_GROUP_ORDER = { 'Super Admin': 0, 'Owner': 1 };
 
-const ownerGroupLabel = (u) => {
+const ownerGroupKey = (u) => {
     if (!u) return 'Owner';
     if (u.is_superuser || u.role === 'super_admin') return 'Super Admin';
     return 'Owner';
 };
 
-const resolveOwnerIntent = ({ selectedOwner, isPlatformAdmin }) => {
+const ownerGroupLabel = (u, t) =>
+    ownerGroupKey(u) === 'Super Admin'
+        ? t('organizations.superAdmin')
+        : t('organizations.owner');
+
+const resolveOwnerIntent = ({ selectedOwner, isPlatformAdmin }, t) => {
     if (selectedOwner) {
         return {
             kind: 'assigned',
@@ -62,14 +68,14 @@ const resolveOwnerIntent = ({ selectedOwner, isPlatformAdmin }) => {
                     .filter(Boolean).join(' ').trim()
                 || selectedOwner.username
                 || selectedOwner.email
-                || 'the selected user',
+                || t('organizations.selectedUser'),
             email: selectedOwner.email || null,
         };
     }
     if (isPlatformAdmin) {
-        return { kind: 'unassigned', label: 'Unassigned — assign later', email: null };
+        return { kind: 'unassigned', label: t('organizations.unassignedLater'), email: null };
     }
-    return { kind: 'self', label: 'You', email: null };
+    return { kind: 'self', label: t('organizations.you'), email: null };
 };
 
 const formatApiError = (data, fallback = 'Request failed') => {
@@ -101,6 +107,7 @@ const displayName = (u) => {
 };
 
 const Organizations = () => {
+    const { t } = useTranslation();
     const { organizations, loading, refresh, isPlatformAdmin } = useOrg();
     const { user: currentUser } = useAuth();
     const navigate = useNavigate();
@@ -192,8 +199,8 @@ const Organizations = () => {
                 }
 
                 merged.sort((a, b) => {
-                    const oa = OWNER_GROUP_ORDER[ownerGroupLabel(a)] ?? 99;
-                    const ob = OWNER_GROUP_ORDER[ownerGroupLabel(b)] ?? 99;
+                    const oa = OWNER_GROUP_ORDER[ownerGroupKey(a)] ?? 99;
+                    const ob = OWNER_GROUP_ORDER[ownerGroupKey(b)] ?? 99;
                     if (oa !== ob) return oa - ob;
                     const na = (a.name || a.username || a.email || '').toLowerCase();
                     const nb = (b.name || b.username || b.email || '').toLowerCase();
@@ -203,7 +210,7 @@ const Organizations = () => {
                 if (!cancelled) setPotentialOwners(merged);
             } catch {
                 if (!cancelled) {
-                    toast.error('Could not load Owners/Superusers to assign.');
+                    toast.error(t('organizations.ownersLoadFailed'));
                     setPotentialOwners([]);
                 }
             } finally {
@@ -212,7 +219,7 @@ const Organizations = () => {
         })();
 
         return () => { cancelled = true; };
-    }, [isPlatformAdmin, dialogOpen, currentUser]);
+    }, [isPlatformAdmin, dialogOpen, currentUser, t]);
 
     const resetDialog = () => {
         setFormData(EMPTY_FORM);
@@ -270,7 +277,7 @@ const Organizations = () => {
     const handleSaveEdit = async () => {
         if (!selectedOrg) return;
         if (!editForm.name.trim()) {
-            toast.error('Organization name is required');
+            toast.error(t('organizations.nameRequired'));
             return;
         }
         setSaving(true);
@@ -284,13 +291,13 @@ const Organizations = () => {
                 default_timezone: editForm.default_timezone.trim(),
             };
             await api.patch(`/organizations/${selectedOrg.id}/`, payload);
-            toast.success('Organization updated successfully.');
+            toast.success(t('organizations.updatedSuccess'));
             setEditOpen(false);
             setEditForm(EMPTY_EDIT_FORM);
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            toast.error(formatApiError(err.response?.data, 'Failed to update organization'));
+            toast.error(formatApiError(err.response?.data, t('organizations.updateFailed')));
         } finally {
             setSaving(false);
         }
@@ -319,7 +326,7 @@ const Organizations = () => {
             const list = await fetchOrganizationMembers(org.id);
             setMembers(list);
         } catch {
-            toast.error('Could not load organization members.');
+            toast.error(t('organizations.membersLoadFailed'));
             setMembers([]);
         } finally {
             setMembersLoading(false);
@@ -346,7 +353,7 @@ const Organizations = () => {
 
     const handleTransferOwnership = async () => {
         if (!selectedOrg || !selectedNewOwner) {
-            toast.error('Please select a new owner.');
+            toast.error(t('organizations.selectNewOwner'));
             return;
         }
         setTransferring(true);
@@ -354,16 +361,16 @@ const Organizations = () => {
             await api.post(`/organizations/${selectedOrg.id}/transfer-ownership/`, {
                 new_owner_user_id: selectedNewOwner.user_id,
             });
-            toast.success(
-                `Ownership transferred to ${selectedNewOwner.full_name || selectedNewOwner.email}.`
-            );
+            toast.success(t('organizations.transferSuccess', {
+                name: selectedNewOwner.full_name || selectedNewOwner.email,
+            }));
             setTransferOpen(false);
             setSelectedNewOwner(null);
             setMembers([]);
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            toast.error(formatApiError(err.response?.data, 'Failed to transfer ownership'));
+            toast.error(formatApiError(err.response?.data, t('organizations.transferFailed')));
         } finally {
             setTransferring(false);
         }
@@ -396,7 +403,7 @@ const Organizations = () => {
                 list.filter((u) => u && !u.is_superuser && u.is_active !== false)
             );
         } catch {
-            toast.error('Could not load users to assign.');
+            toast.error(t('organizations.usersLoadFailed'));
             setAssignCandidates([]);
         } finally {
             setAssignLoading(false);
@@ -413,7 +420,7 @@ const Organizations = () => {
 
     const handleAssignOwner = async () => {
         if (!selectedOrg || !selectedAssignee) {
-            toast.error('Please select a user to become the owner.');
+            toast.error(t('organizations.selectAssignee'));
             return;
         }
         setAssigning(true);
@@ -421,16 +428,16 @@ const Organizations = () => {
             await api.post(`/organizations/${selectedOrg.id}/assign-owner/`, {
                 new_owner_user_id: selectedAssignee.id,
             });
-            toast.success(
-                `Owner assigned: ${selectedAssignee.name || selectedAssignee.username || selectedAssignee.email}.`
-            );
+            toast.success(t('organizations.assignSuccess', {
+                name: selectedAssignee.name || selectedAssignee.username || selectedAssignee.email,
+            }));
             setAssignOpen(false);
             setSelectedAssignee(null);
             setAssignCandidates([]);
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            toast.error(formatApiError(err.response?.data, 'Failed to assign owner'));
+            toast.error(formatApiError(err.response?.data, t('organizations.assignFailed')));
         } finally {
             setAssigning(false);
         }
@@ -456,12 +463,12 @@ const Organizations = () => {
         setDeleting(true);
         try {
             await api.delete(`/organizations/${selectedOrg.id}/`);
-            toast.success('Organization deleted successfully.');
+            toast.success(t('organizations.deletedSuccess'));
             setDeleteOpen(false);
             setSelectedOrg(null);
             await refresh();
         } catch (err) {
-            toast.error(formatApiError(err.response?.data, 'Failed to delete organization'));
+            toast.error(formatApiError(err.response?.data, t('organizations.deleteFailed')));
         } finally {
             setDeleting(false);
         }
@@ -490,7 +497,7 @@ const Organizations = () => {
     const handleInviteSubmit = async (e) => {
         e.preventDefault();
         if (!inviteEmail || !inviteEmail.includes('@')) {
-            toast.error('Please enter a valid email address.');
+            toast.error(t('team.invalidEmail'));
             return;
         }
         setIsInviting(true);
@@ -502,10 +509,10 @@ const Organizations = () => {
                 valid_until: validUntil ? new Date(validUntil).toISOString() : undefined,
             };
             await api.post(`/organizations/${selectedOrg.id}/invite/`, payload);
-            toast.success(`Invitation sent to ${payload.email}!`);
+            toast.success(t('team.inviteSent', { email: payload.email }));
             handleCloseInvite();
         } catch (err) {
-            toast.error(formatApiError(err.response?.data, 'Failed to send invitation.'));
+            toast.error(formatApiError(err.response?.data, t('team.inviteFailed')));
         } finally {
             setIsInviting(false);
         }
@@ -516,7 +523,7 @@ const Organizations = () => {
     // -----------------------------------------------------------------------
     const handleRequestCreate = () => {
         if (!formData.name.trim()) {
-            toast.error('Organization name is required');
+            toast.error(t('organizations.nameRequired'));
             return;
         }
         if (
@@ -525,9 +532,7 @@ const Organizations = () => {
             currentUser &&
             selectedOwner.id === currentUser.id
         ) {
-            toast.error(
-                'A Platform Admin cannot own a tenant. Pick a different user, or leave the owner blank.'
-            );
+            toast.error(t('organizations.adminCannotOwn'));
             return;
         }
         setStage(STAGE_CONFIRM);
@@ -543,9 +548,7 @@ const Organizations = () => {
 
             if (isPlatformAdmin && selectedOwner) {
                 if (currentUser && selectedOwner.id === currentUser.id) {
-                    toast.error(
-                        'A Platform Admin cannot own a tenant. Pick a different user, or leave the owner blank.'
-                    );
+                    toast.error(t('organizations.adminCannotOwn'));
                     setCreating(false);
                     setStage(STAGE_FORM);
                     return;
@@ -566,16 +569,16 @@ const Organizations = () => {
             const ownerLabel = serverOwner
                 ? serverOwner
                 : isPlatformAdmin
-                    ? 'unassigned'
-                    : 'you';
+                    ? t('organizations.unassigned')
+                    : t('organizations.you');
 
-            toast.success(`Organization created. Owner: ${ownerLabel}.`);
+            toast.success(t('organizations.createdSuccess', { owner: ownerLabel }));
 
             setDialogOpen(false);
             resetDialog();
             await refresh();
         } catch (err) {
-            toast.error(formatApiError(err.response?.data, 'Failed to create organization'));
+            toast.error(formatApiError(err.response?.data, t('organizations.createFailed')));
             setStage(STAGE_FORM);
         } finally {
             setCreating(false);
@@ -583,8 +586,8 @@ const Organizations = () => {
     };
 
     const ownerIntent = useMemo(
-        () => resolveOwnerIntent({ selectedOwner, isPlatformAdmin }),
-        [selectedOwner, isPlatformAdmin]
+        () => resolveOwnerIntent({ selectedOwner, isPlatformAdmin }, t),
+        [selectedOwner, isPlatformAdmin, t]
     );
 
     if (loading) {
@@ -604,48 +607,43 @@ const Organizations = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Organizations</PageTitle>
+                    <PageTitle>{t('organizations.title')}</PageTitle>
                     <PageSubtitle>
-                        Every event, venue, discount, and policy belongs to one
-                        organization. Create one to get started.
+                        {t('organizations.subtitle')}
                     </PageSubtitle>
                 </PageHeaderLeft>
                 <PageHeaderRight>
                     <OutlineButton startIcon={<RefreshIcon />} onClick={refresh}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     <PrimaryButton
                         variant="contained"
                         startIcon={<AddIcon />}
                         onClick={handleOpen}
                     >
-                        New Organization
+                        {t('organizations.newOrganization')}
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
 
             {isPlatformAdmin && (
                 <Alert severity="info" sx={{ mb: 2 }}>
-                    You are a Platform Admin — you can see every organization.
-                    New organizations you create will be <strong>unowned</strong>
-                    {' '}unless you explicitly assign an owner. Use{' '}
-                    <em>Assign Owner</em> from the organization's action menu
-                    once a tenant owner exists.
+                    {t('organizations.platformAdminNotice')}
                 </Alert>
             )}
 
             {organizations.length === 0 ? (
                 <Paper sx={{ p: 4, textAlign: 'center' }}>
-                    <Typography variant="h6">No organizations yet</Typography>
+                    <Typography variant="h6">{t('organizations.noOrganizations')}</Typography>
                     <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-                        Create one to start adding venues and events.
+                        {t('organizations.noOrganizationsHint')}
                     </Typography>
                     <PrimaryButton
                         variant="contained"
                         startIcon={<AddIcon />}
                         onClick={handleOpen}
                     >
-                        Create your first organization
+                        {t('organizations.createFirst')}
                     </PrimaryButton>
                 </Paper>
             ) : (
@@ -659,11 +657,11 @@ const Organizations = () => {
                                             {org.name}
                                         </Typography>
                                         {(canManageOrg(org) || canTransferOrg(org) || canDeleteOrg()) && (
-                                            <Tooltip title="Organization actions">
+                                            <Tooltip title={t('organizations.orgActions')}>
                                                 <IconButton
                                                     size="small"
                                                     onClick={(e) => handleOpenMenu(e, org)}
-                                                    aria-label={`Actions for ${org.name}`}
+                                                    aria-label={t('organizations.actionsFor', { name: org.name })}
                                                 >
                                                     <MoreVertIcon fontSize="small" />
                                                 </IconButton>
@@ -674,7 +672,11 @@ const Organizations = () => {
                                     <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
                                         <Chip
                                             size="small"
-                                            label={org.is_owner ? 'Owner' : (org.role || 'member')}
+                                            label={org.is_owner
+                                                ? t('roles.owner')
+                                                : t(`roles.org_${org.role || 'member'}`, {
+                                                    defaultValue: org.role || 'member',
+                                                })}
                                             color={
                                                 org.is_owner || org.role === 'owner'
                                                     ? 'success'
@@ -686,7 +688,7 @@ const Organizations = () => {
                                             }
                                         />
                                         {org.can_manage && (
-                                            <Chip size="small" label="manage" variant="outlined" />
+                                            <Chip size="small" label={t('organizations.manage')} variant="outlined" />
                                         )}
                                     </Stack>
 
@@ -701,7 +703,9 @@ const Organizations = () => {
                                         variant="caption"
                                         sx={{ display: 'block', color: 'text.secondary' }}
                                     >
-                                        Owner: {org.owner_username || '— unassigned —'}
+                                        {t('organizations.ownerLabel', {
+                                            owner: org.owner_username || t('organizations.unassigned'),
+                                        })}
                                     </Typography>
                                 </CardContent>
                             </Card>
@@ -721,7 +725,7 @@ const Organizations = () => {
                     onClick={() => selectedOrg && handleOpenEdit(selectedOrg)}
                 >
                     <EditIcon fontSize="small" sx={{ mr: 1 }} />
-                    Edit Organization
+                    {t('organizations.editOrganization')}
                 </MenuItem>
 
                 <MenuItem
@@ -734,7 +738,7 @@ const Organizations = () => {
                     }}
                 >
                     <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
-                    Manage Members
+                    {t('organizations.manageMembers')}
                 </MenuItem>
 
                 {/* Choose the right dialog based on the *live* owner. Uses
@@ -754,12 +758,12 @@ const Organizations = () => {
                     {selectedOrgOwner ? (
                         <>
                             <TransferIcon fontSize="small" sx={{ mr: 1 }} />
-                            Transfer Ownership
+                            {t('organizations.transferOwnership')}
                         </>
                     ) : (
                         <>
                             <AssignOwnerIcon fontSize="small" sx={{ mr: 1 }} />
-                            Assign Owner
+                            {t('organizations.assignOwner')}
                         </>
                     )}
                 </MenuItem>
@@ -770,7 +774,7 @@ const Organizations = () => {
                     sx={{ color: 'error.main' }}
                 >
                     <DeleteIcon fontSize="small" sx={{ mr: 1 }} />
-                    Delete Organization
+                    {t('organizations.deleteOrganization')}
                 </MenuItem>
             </Menu>
 
@@ -782,7 +786,9 @@ const Organizations = () => {
                 fullWidth
             >
                 <DialogTitle>
-                    {stage === STAGE_CONFIRM ? 'Confirm new organization' : 'New Organization'}
+                    {stage === STAGE_CONFIRM
+                        ? t('organizations.confirmNewOrg')
+                        : t('organizations.newOrganization')}
                 </DialogTitle>
 
                 <DialogContent>
@@ -790,23 +796,18 @@ const Organizations = () => {
                         <>
                             {isPlatformAdmin ? (
                                 <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
-                                    As a Platform Admin, you may assign ownership of
-                                    this new organization to another user. Leave the
-                                    owner blank to create it <strong>unowned</strong>
-                                    {' '}— you will then assign an owner afterward
-                                    via <em>Assign Owner</em>.
+                                    {t('organizations.createAdminNotice')}
                                 </Alert>
                             ) : (
                                 <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
-                                    You will become the owner. You can invite other
-                                    Admins or Staff from the Team page afterwards.
+                                    {t('organizations.createSelfNotice')}
                                 </Alert>
                             )}
 
                             <TextField
                                 fullWidth
                                 autoFocus
-                                label="Organization name"
+                                label={t('organizations.organizationName')}
                                 value={formData.name}
                                 onChange={(e) => setFormData({ name: e.target.value })}
                                 sx={{ mt: 1, mb: 2 }}
@@ -819,7 +820,7 @@ const Organizations = () => {
                                     loading={ownersLoading}
                                     value={selectedOwner}
                                     onChange={(_, value) => setSelectedOwner(value)}
-                                    groupBy={ownerGroupLabel}
+                                    groupBy={(option) => ownerGroupLabel(option, t)}
                                     getOptionLabel={(option) => {
                                         if (!option) return '';
                                         const display = displayName(option);
@@ -838,7 +839,7 @@ const Organizations = () => {
                                         });
                                     }}
                                     renderOption={(props, option) => {
-                                        const isSuper = ownerGroupLabel(option) === 'Super Admin';
+                                        const isSuper = ownerGroupKey(option) === 'Super Admin';
                                         return (
                                             <li {...props}>
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
@@ -852,7 +853,7 @@ const Organizations = () => {
                                                     </Box>
                                                     <Chip
                                                         size="small"
-                                                        label={isSuper ? 'Super Admin' : 'Owner'}
+                                                        label={isSuper ? t('organizations.superAdmin') : t('organizations.owner')}
                                                         color={isSuper ? 'success' : 'warning'}
                                                         variant="outlined"
                                                     />
@@ -862,14 +863,14 @@ const Organizations = () => {
                                     }}
                                     noOptionsText={
                                         ownersLoading
-                                            ? 'Loading…'
-                                            : 'No Owners or Superusers found'
+                                            ? t('common.loading')
+                                            : t('organizations.noOwnersFound')
                                     }
                                     renderInput={(params) => (
                                         <TextField
                                             {...params}
-                                            label="Assign Owner (optional)"
-                                            helperText="Pick an existing Owner or Superuser to own this organization. Leave blank to create an unowned tenant (Platform Admin) or to own it yourself (Regular user)."
+                                            label={t('organizations.assignOwnerOptional')}
+                                            helperText={t('organizations.assignOwnerHelper')}
                                             disabled={creating}
                                             InputProps={{
                                                 ...params.InputProps,
@@ -894,58 +895,46 @@ const Organizations = () => {
                             <Alert severity="warning" icon={<WarningIcon />} sx={{ mb: 2 }}>
                                 {ownerIntent.kind === 'assigned' && (
                                     <>
-                                        You're about to create a new tenant owned by{' '}
-                                        <strong>{ownerIntent.label}</strong>
-                                        {ownerIntent.email ? ` (${ownerIntent.email})` : ''}.
-                                        Venues, events, discounts, and policies
-                                        created under it will belong to that
-                                        organization.
+                                        {t('organizations.confirmAssigned', {
+                                            name: ownerIntent.label,
+                                        })}
+                                        {ownerIntent.email ? ` (${ownerIntent.email})` : ''}
                                     </>
                                 )}
                                 {ownerIntent.kind === 'unassigned' && (
                                     <>
-                                        You're about to create a new{' '}
-                                        <strong>unowned tenant</strong>. Use{' '}
-                                        <em>Assign Owner</em> afterwards to
-                                        hand it to a tenant owner. Venues, events,
-                                        discounts, and policies created under it
-                                        will belong to the organization, not to you.
+                                        {t('organizations.confirmUnassigned')}
                                     </>
                                 )}
                                 {ownerIntent.kind === 'self' && (
                                     <>
-                                        You're about to become the owner of a new
-                                        tenant. Venues, events, discounts, and
-                                        policies you create will belong to it.
+                                        {t('organizations.confirmSelf')}
                                     </>
                                 )}
                             </Alert>
 
                             <Typography variant="body2" sx={{ mb: 0.5 }}>
-                                <strong>Name:</strong> {formData.name.trim()}
+                                <strong>{t('organizations.labelName')}</strong> {formData.name.trim()}
                             </Typography>
 
                             <Typography variant="body2">
-                                <strong>Owner:</strong>{' '}
+                                <strong>{t('organizations.labelOwner')}</strong>{' '}
                                 {ownerIntent.kind === 'assigned' ? (
                                     <>
                                         {ownerIntent.label}
                                         {ownerIntent.email ? ` (${ownerIntent.email})` : ''}
                                     </>
                                 ) : ownerIntent.kind === 'unassigned' ? (
-                                    <em>Unassigned — assign later</em>
+                                    <em>{t('organizations.unassignedLater')}</em>
                                 ) : (
-                                    'You'
+                                    t('organizations.you')
                                 )}
                             </Typography>
 
                             <Divider sx={{ my: 2 }} />
 
                             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                This action creates a new tenant and seeds its
-                                regional defaults (currency, country, timezone,
-                                branding) from platform settings. You can change
-                                these later in Settings.
+                                {t('organizations.confirmFooter')}
                             </Typography>
                         </Box>
                     )}
@@ -958,7 +947,7 @@ const Organizations = () => {
                                 onClick={() => setStage(STAGE_FORM)}
                                 disabled={creating}
                             >
-                                Back
+                                {t('common.back')}
                             </Button>
                             <Button
                                 variant="contained"
@@ -968,20 +957,20 @@ const Organizations = () => {
                                     creating ? <CircularProgress size={16} /> : <AddIcon />
                                 }
                             >
-                                Confirm & Create
+                                {t('organizations.confirmAndCreate')}
                             </Button>
                         </>
                     ) : (
                         <>
                             <Button onClick={handleClose} disabled={creating}>
-                                Cancel
+                                {t('common.cancel')}
                             </Button>
                             <Button
                                 variant="contained"
                                 onClick={handleRequestCreate}
                                 startIcon={<AddIcon />}
                             >
-                                Continue
+                                {t('organizations.continue')}
                             </Button>
                         </>
                     )}
@@ -995,15 +984,14 @@ const Organizations = () => {
                 maxWidth="sm"
                 fullWidth
             >
-                <DialogTitle>Edit Organization</DialogTitle>
+                <DialogTitle>{t('organizations.editOrganization')}</DialogTitle>
                 <DialogContent>
                     <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
-                        Organization settings apply to all events, venues, discounts,
-                        and policies under this tenant.
+                        {t('organizations.settingsNotice')}
                     </Alert>
                     <TextField
                         fullWidth
-                        label="Organization name"
+                        label={t('organizations.organizationName')}
                         value={editForm.name}
                         onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                         sx={{ mb: 2 }}
@@ -1011,7 +999,7 @@ const Organizations = () => {
                     />
                     <TextField
                         fullWidth
-                        label="Organization email"
+                        label={t('organizations.orgEmail')}
                         value={editForm.org_email}
                         onChange={(e) => setEditForm({ ...editForm, org_email: e.target.value })}
                         sx={{ mb: 2 }}
@@ -1019,7 +1007,7 @@ const Organizations = () => {
                     />
                     <TextField
                         fullWidth
-                        label="Logo URL"
+                        label={t('organizations.logoUrl')}
                         value={editForm.org_logo_url}
                         onChange={(e) => setEditForm({ ...editForm, org_logo_url: e.target.value })}
                         sx={{ mb: 2 }}
@@ -1027,7 +1015,7 @@ const Organizations = () => {
                     />
                     <TextField
                         fullWidth
-                        label="Email sender name"
+                        label={t('organizations.emailSenderName')}
                         value={editForm.email_from_name}
                         onChange={(e) => setEditForm({ ...editForm, email_from_name: e.target.value })}
                         sx={{ mb: 2 }}
@@ -1037,7 +1025,7 @@ const Organizations = () => {
                         <Grid item xs={12} sm={6}>
                             <TextField
                                 fullWidth
-                                label="Currency code"
+                                label={t('organizations.currencyCode')}
                                 value={editForm.currency_code}
                                 onChange={(e) => setEditForm({ ...editForm, currency_code: e.target.value })}
                                 disabled={saving}
@@ -1046,7 +1034,7 @@ const Organizations = () => {
                         <Grid item xs={12} sm={6}>
                             <TextField
                                 fullWidth
-                                label="Timezone"
+                                label={t('organizations.timezone')}
                                 value={editForm.default_timezone}
                                 onChange={(e) => setEditForm({ ...editForm, default_timezone: e.target.value })}
                                 disabled={saving}
@@ -1056,7 +1044,7 @@ const Organizations = () => {
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleCloseEdit} disabled={saving}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         variant="contained"
@@ -1064,7 +1052,7 @@ const Organizations = () => {
                         disabled={saving}
                         startIcon={saving ? <CircularProgress size={16} /> : <EditIcon />}
                     >
-                        Save Changes
+                        {t('settings.saveChanges')}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -1076,12 +1064,10 @@ const Organizations = () => {
                 maxWidth="sm"
                 fullWidth
             >
-                <DialogTitle>Transfer Ownership</DialogTitle>
+                <DialogTitle>{t('organizations.transferOwnership')}</DialogTitle>
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2, mt: 1 }}>
-                        The selected member will become the new Owner of{' '}
-                        <strong>{selectedOrg?.name}</strong>.
-                        The current owner will be retained as Admin.
+                        {t('organizations.transferNotice', { name: selectedOrg?.name })}
                     </Alert>
                     {membersLoading ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
@@ -1102,12 +1088,12 @@ const Organizations = () => {
                                 return option.email ? `${display} (${option.email})` : display;
                             }}
                             isOptionEqualToValue={(opt, val) => opt?.user_id === val?.user_id}
-                            noOptionsText="No eligible members found"
+                            noOptionsText={t('organizations.noEligibleMembers')}
                             renderInput={(params) => (
                                 <TextField
                                     {...params}
-                                    label="New owner"
-                                    helperText="Only existing active members can receive ownership."
+                                    label={t('organizations.newOwner')}
+                                    helperText={t('organizations.newOwnerHelper')}
                                     disabled={transferring}
                                 />
                             )}
@@ -1116,20 +1102,25 @@ const Organizations = () => {
                     {selectedNewOwner && (
                         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                             <Typography variant="subtitle2" gutterBottom>
-                                Selected new owner
+                                {t('organizations.selectedNewOwner')}
                             </Typography>
                             <Typography variant="body2">
                                 {selectedNewOwner.full_name || selectedNewOwner.username}
                             </Typography>
                             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                {selectedNewOwner.email} · Current role: {selectedNewOwner.role}
+                                {t('organizations.currentRole', {
+                                    email: selectedNewOwner.email,
+                                    role: t(`roles.org_${selectedNewOwner.role}`, {
+                                        defaultValue: selectedNewOwner.role,
+                                    }),
+                                })}
                             </Typography>
                         </Paper>
                     )}
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleCloseTransfer} disabled={transferring}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         variant="contained"
@@ -1137,7 +1128,7 @@ const Organizations = () => {
                         disabled={transferring || !selectedNewOwner}
                         startIcon={transferring ? <CircularProgress size={16} /> : <TransferIcon />}
                     >
-                        Confirm Transfer
+                        {t('organizations.confirmTransfer')}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -1149,13 +1140,10 @@ const Organizations = () => {
                 maxWidth="sm"
                 fullWidth
             >
-                <DialogTitle>Assign Owner</DialogTitle>
+                <DialogTitle>{t('organizations.assignOwner')}</DialogTitle>
                 <DialogContent>
                     <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
-                        <strong>{selectedOrg?.name}</strong> is currently unowned.
-                        Choose the user who will own it. The new owner will receive
-                        a full OWNER membership and become the canonical owner of
-                        this organization.
+                        {t('organizations.assignNotice', { name: selectedOrg?.name })}
                     </Alert>
                     {assignLoading ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
@@ -1183,12 +1171,12 @@ const Organizations = () => {
                                     return hay.includes(q);
                                 });
                             }}
-                            noOptionsText="No eligible users found"
+                            noOptionsText={t('organizations.noEligibleUsers')}
                             renderInput={(params) => (
                                 <TextField
                                     {...params}
-                                    label="New owner"
-                                    helperText="Must be an existing, active, non-superuser account."
+                                    label={t('organizations.newOwner')}
+                                    helperText={t('organizations.assignHelper')}
                                     disabled={assigning}
                                 />
                             )}
@@ -1197,7 +1185,7 @@ const Organizations = () => {
                     {selectedAssignee && (
                         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                             <Typography variant="subtitle2" gutterBottom>
-                                Selected owner
+                                {t('organizations.selectedOwner')}
                             </Typography>
                             <Typography variant="body2">
                                 {displayName(selectedAssignee)}
@@ -1210,7 +1198,7 @@ const Organizations = () => {
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleCloseAssign} disabled={assigning}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         variant="contained"
@@ -1218,7 +1206,7 @@ const Organizations = () => {
                         disabled={assigning || !selectedAssignee}
                         startIcon={assigning ? <CircularProgress size={16} /> : <AssignOwnerIcon />}
                     >
-                        Assign Owner
+                        {t('organizations.assignOwner')}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -1230,18 +1218,15 @@ const Organizations = () => {
                 maxWidth="xs"
                 fullWidth
             >
-                <DialogTitle>Delete Organization</DialogTitle>
+                <DialogTitle>{t('organizations.deleteOrganization')}</DialogTitle>
                 <DialogContent>
                     <DialogContentText>
-                        Are you sure you want to delete{' '}
-                        <strong>{selectedOrg?.name}</strong>?
-                        This action cannot be undone and may affect associated events,
-                        venues, bookings, discounts, and policies.
+                        {t('organizations.deleteConfirm', { name: selectedOrg?.name })}
                     </DialogContentText>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleCloseDelete} disabled={deleting}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         color="error"
@@ -1250,7 +1235,7 @@ const Organizations = () => {
                         disabled={deleting}
                         startIcon={deleting ? <CircularProgress size={16} /> : <DeleteIcon />}
                     >
-                        Delete
+                        {t('common.delete')}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -1266,7 +1251,7 @@ const Organizations = () => {
                 }}
             >
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    Invite Member
+                    {t('team.inviteMember')}
                     <IconButton onClick={handleCloseInvite} disabled={isInviting} size="small">
                         <CloseIcon />
                     </IconButton>
@@ -1275,13 +1260,12 @@ const Organizations = () => {
                 <form onSubmit={handleInviteSubmit}>
                     <DialogContent sx={{ pt: 1 }}>
                         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
-                            Enter the email address of the person you want to invite.
-                            They will receive a magic link to join your organization.
+                            {t('team.inviteDescription')}
                         </Typography>
 
                         <TextField
                             fullWidth
-                            label="Email Address"
+                            label={t('team.emailAddress')}
                             type="email"
                             value={inviteEmail}
                             onChange={(e) => setInviteEmail(e.target.value)}
@@ -1293,16 +1277,16 @@ const Organizations = () => {
                         <TextField
                             fullWidth
                             select
-                            label="Assign Role"
+                            label={t('team.assignRole')}
                             value={inviteRole}
                             onChange={(e) => setInviteRole(e.target.value)}
                             sx={{ mb: 2.5 }}
                             disabled={isInviting}
-                            helperText="Ownership transfers only via Transfer Ownership."
+                            helperText={t('team.roleHelper')}
                         >
-                            <MenuItem value="member">Member</MenuItem>
-                            <MenuItem value="staff">Staff</MenuItem>
-                            <MenuItem value="admin">Admin</MenuItem>
+                            <MenuItem value="member">{t('roles.org_member')}</MenuItem>
+                            <MenuItem value="staff">{t('roles.org_staff')}</MenuItem>
+                            <MenuItem value="admin">{t('roles.org_admin')}</MenuItem>
                             {/* Owner intentionally omitted — backend rejects
                                 owner invites. Use Transfer Ownership for
                                 existing members or Assign Owner for unowned orgs. */}
@@ -1311,7 +1295,7 @@ const Organizations = () => {
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                             <TextField
                                 fullWidth
-                                label="Valid From"
+                                label={t('team.validFrom')}
                                 type="date"
                                 value={validFrom}
                                 onChange={(e) => setValidFrom(e.target.value)}
@@ -1321,12 +1305,12 @@ const Organizations = () => {
                             />
                             <TextField
                                 fullWidth
-                                label="Valid Until (Optional)"
+                                label={t('team.validUntil')}
                                 type="date"
                                 value={validUntil}
                                 onChange={(e) => setValidUntil(e.target.value)}
                                 InputLabelProps={{ shrink: true }}
-                                helperText="Leave blank for indefinite membership"
+                                helperText={t('team.validUntilHelper')}
                                 sx={{ flex: 1, minWidth: '140px' }}
                                 disabled={isInviting}
                             />
@@ -1338,7 +1322,7 @@ const Organizations = () => {
                             onClick={handleCloseInvite}
                             disabled={isInviting}
                         >
-                            Cancel
+                            {t('common.cancel')}
                         </Button>
                         <Button
                             type="submit"
@@ -1346,7 +1330,7 @@ const Organizations = () => {
                             disabled={isInviting || !inviteEmail}
                             sx={{ minWidth: 120 }}
                         >
-                            {isInviting ? <CircularProgress size={20} /> : 'Send Invite'}
+                            {isInviting ? <CircularProgress size={20} /> : t('team.sendInvite')}
                         </Button>
                     </DialogActions>
                 </form>

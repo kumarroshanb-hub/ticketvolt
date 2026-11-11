@@ -125,21 +125,21 @@ const TeamMembers = () => {
     const handleRemoveMember = async (member) => {
         const userId = member.user_id;
         if (!userId) {
-            toast.error('Cannot remove member: missing user id.');
+            toast.error(t('team.missingUserId'));
             return;
         }
 
-        const label = member.name || member.full_name || member.email || 'this member';
-        if (!window.confirm(`Remove ${label} from this organization?`)) return;
+        const label = member.name || member.full_name || member.email || t('team.thisMember');
+        if (!window.confirm(t('team.removeConfirm', { name: label }))) return;
 
         setRemovingId(userId);
         try {
             await api.delete(`/organizations/${orgId}/members/${userId}/`);
-            toast.success(`${label} removed from the organization.`);
+            toast.success(t('team.removedSuccess', { name: label }));
             await fetchMembers();
         } catch (err) {
             toast.error(
-                formatApiError(err.response?.data, 'Failed to remove member')
+                formatApiError(err.response?.data, t('team.removeFailed'))
             );
         } finally {
             setRemovingId(null);
@@ -265,7 +265,7 @@ const TeamMembers = () => {
                                                     sx={{ color: C.error }}
                                                     onClick={() => handleRemoveMember(member)}
                                                     disabled={removingId === member.user_id}
-                                                    title={`Remove ${memberLabel}`}
+                                                    title={t('team.removeTooltip', { name: memberLabel })}
                                                 >
                                                     {removingId === member.user_id
                                                         ? <CircularProgress size={16} sx={{ color: C.error }} />
@@ -323,7 +323,7 @@ const TeamMembers = () => {
                             value={inviteRole}
                             onChange={(e) => setInviteRole(e.target.value)}
                             sx={{ mb: 2.5, '& .MuiOutlinedInput-root': { bgcolor: C.bgInput } }}
-                            helperText="Ownership transfers only via the Organizations page (Transfer Ownership / Assign Owner)."
+                            helperText={t('team.roleHelper')}
                         >
                             <MenuItem value={MEMBERSHIP_ROLES.MEMBER}>{t('roles.org_member')}</MenuItem>
                             <MenuItem value={MEMBERSHIP_ROLES.STAFF}>{t('roles.org_staff')}</MenuItem>

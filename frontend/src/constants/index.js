@@ -1,4 +1,7 @@
 // frontend/src/constants/index.js
+import { theme } from '../theme/tokens';
+
+const C = theme.colors;
 
 // ============================================
 // TICKET CONSTANTS - MUI Color Names
@@ -99,13 +102,13 @@ export const BOOKING_STATUS_COLORS = {
 };
 
 export const BOOKING_STATUS_DOT_COLORS = {
-    [BOOKING_STATUS.PENDING]: '#f59e0b',
-    [BOOKING_STATUS.PROCESSING]: '#3b82f6',
-    [BOOKING_STATUS.PAID]: '#22c55e',
-    [BOOKING_STATUS.CONFIRMED]: '#8b5cf6',
-    [BOOKING_STATUS.COMPLETED]: '#10b981',
-    [BOOKING_STATUS.CANCELLED]: '#ef4444',
-    [BOOKING_STATUS.REFUNDED]: '#f97316',
+    [BOOKING_STATUS.PENDING]: C.warning,
+    [BOOKING_STATUS.PROCESSING]: C.info,
+    [BOOKING_STATUS.PAID]: C.success,
+    [BOOKING_STATUS.CONFIRMED]: C.secondary,
+    [BOOKING_STATUS.COMPLETED]: C.successDark,
+    [BOOKING_STATUS.CANCELLED]: C.error,
+    [BOOKING_STATUS.REFUNDED]: C.warningDark,
 };
 
 export const BOOKING_TRANSITIONS = {
@@ -129,7 +132,7 @@ export const BookingStatusUtils = {
         return BOOKING_STATUS_COLORS[status] || 'default';
     },
     getDotColor: function(status) {
-        return BOOKING_STATUS_DOT_COLORS[status] || '#6b7280';
+        return BOOKING_STATUS_DOT_COLORS[status] || C.textLight;
     },
     canTransition: function(from, to) {
         var transitions = BOOKING_TRANSITIONS[from] || [];

@@ -10,7 +10,9 @@ import {
     ShoppingCart as ShoppingCartIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
+import api from '../../services/api';
 
 import {
     PageContainer, PageHeader, PageTitle, PageHeaderLeft, PageHeaderRight,
@@ -43,6 +45,7 @@ const C = appTheme.colors;
 
 const Bookings = () => {
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const { hasOrgRole } = useRole();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -99,6 +102,29 @@ const Bookings = () => {
 
     const handleBookTickets = useCallback(() => navigate('/app/bookings/create'), [navigate]);
 
+    const handleDownloadTaxReceipt = useCallback(async (booking) => {
+        try {
+            const res = await api.get(
+                `/bookings/${booking.id}/donation-tax-receipt/`,
+                { responseType: 'blob' },
+            );
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `donation-receipt-${booking.booking_reference}.pdf`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            toast.error(
+                err.response?.data?.error
+                || err.message
+                || t('booking.taxReceiptFailed'),
+            );
+        }
+    }, [t]);
+
     const handleBulkApply = useCallback(() => {
         actions.promptBulkAction(selection.bulkAction, selection.selectedIds);
     }, [actions, selection.bulkAction, selection.selectedIds]);
@@ -116,7 +142,7 @@ const Bookings = () => {
             <PageHeader>
                 <PageHeaderLeft>
                     <PageTitle variant="h4">
-                        {isRegularUser ? 'My Bookings' : 'Bookings'}
+                        {isRegularUser ? t('booking.myBookings') : t('booking.bookings')}
                     </PageTitle>
                     <Typography
                         variant="body2"
@@ -128,10 +154,10 @@ const Bookings = () => {
                         }}
                     >
                         {isRegularUser
-                            ? 'View and manage your bookings'
-                            : isPlatformAdmin 
-                                ? 'Manage all customer bookings across the platform'
-                                : 'Manage all customer bookings'}
+                            ? t('booking.viewManageMyBookings')
+                            : isPlatformAdmin
+                                ? t('bookings.manageAllPlatformBookings')
+                                : t('booking.manageAllBookings')}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
@@ -145,7 +171,7 @@ const Bookings = () => {
                     />
                     
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadBookings}>
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     {!isRegularUser && (
                         <PrimaryButton
@@ -153,7 +179,7 @@ const Bookings = () => {
                             startIcon={<ShoppingCartIcon />}
                             onClick={handleBookTickets}
                         >
-                            Book Tickets
+                            {t('booking.bookTickets')}
                         </PrimaryButton>
                     )}
                 </PageHeaderRight>
@@ -165,15 +191,14 @@ const Bookings = () => {
                 <Alert severity="error" sx={{ mb: 3 }}>
                     {error}
                     <Button size="small" onClick={loadBookings} sx={{ ml: 2 }}>
-                        Retry
+                        {t('common.retry')}
                     </Button>
                 </Alert>
             )}
 
             {isRegularUser && bookings.length === 0 && !error && (
                 <Alert severity="info" sx={{ mb: 3 }}>
-                    You don't have any bookings yet. Click "Book Tickets" to browse events and book
-                    your first ticket!
+                    {t('booking.noBookingsCta')}
                 </Alert>
             )}
 
@@ -240,6 +265,7 @@ const Bookings = () => {
                     closeDetails();
                     handleViewTickets(id);
                 }}
+                onDownloadTaxReceipt={handleDownloadTaxReceipt}
             />
 
             <Dialog
@@ -259,7 +285,7 @@ const Bookings = () => {
                                 event={tickets.eticketData.event}
                                 showActions
                                 showNavigation
-                                onDownload={() => toast.success('Ticket downloaded!')}
+                                onDownload={() => toast.success(t('ticket.downloadedToast'))}
                                 onPrint={() => window.print()}
                                 onEmail={() =>
                                     tickets.handleSendEmail(tickets.eticketData.booking)

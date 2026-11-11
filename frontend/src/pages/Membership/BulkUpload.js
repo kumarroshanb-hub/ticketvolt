@@ -105,15 +105,15 @@ const BulkUpload = () => {
         setResult(null);
 
         if (!orgId) {
-            setError('Select an organization first.');
+            setError(t('bulkUpload.organizationRequired'));
             return;
         }
         if (!tierId) {
-            setError('Choose the membership plan for this batch.');
+            setError(t('bulkUpload.choosePlanError'));
             return;
         }
         if (!file) {
-            setError('Choose a CSV file.');
+            setError(t('bulkUpload.chooseFileError'));
             return;
         }
 
@@ -126,9 +126,9 @@ const BulkUpload = () => {
             });
             setResult(data);
             if (data.created_count > 0) {
-                toast.success(`Added ${data.created_count} member(s) to the offline review queue.`);
+                toast.success(t('bulkUpload.addedCount', { count: data.created_count }));
             } else {
-                toast.info('No new members were created.');
+                toast.info(t('bulkUpload.noNewMembers'));
             }
         } catch (err) {
             const data = err.response?.data;
@@ -137,7 +137,7 @@ const BulkUpload = () => {
                 || (data && typeof data === 'object'
                     ? `${Object.keys(data)[0]}: ${Object.values(data)[0]}`
                     : err.message)
-                || 'Upload failed';
+                || t('bulkUpload.uploadFailed');
             setError(String(msg));
             toast.error(String(msg));
         } finally {
@@ -253,7 +253,7 @@ const BulkUpload = () => {
                                         onChange={(e) => {
                                             const picked = e.target.files?.[0] || null;
                                             if (picked && !/\.csv$/i.test(picked.name)) {
-                                                toast.error('Please choose a .csv file.');
+                                                toast.error(t('bulkUpload.chooseCsvError'));
                                                 e.target.value = '';
                                                 return;
                                             }
@@ -273,7 +273,7 @@ const BulkUpload = () => {
                                 {selectedTier && (
                                     <Chip
                                         size="small"
-                                        label={`${selectedTier.name} · ${selectedTier.duration_days || 0} days`}
+                                        label={`${selectedTier.name} · ${t('bulkUpload.durationDays', { count: selectedTier.duration_days || 0 })}`}
                                         sx={{ mb: 2 }}
                                     />
                                 )}
@@ -326,7 +326,9 @@ const BulkUpload = () => {
                                                                     <TableCell>{row.email}</TableCell>
                                                                     <TableCell>{row.name || '—'}</TableCell>
                                                                     <TableCell align="right">
-                                                                        {row.user_created ? 'new user' : 'existing user'}
+                                                                        {row.user_created
+                                                                            ? t('bulkUpload.newUser')
+                                                                            : t('bulkUpload.existingUser')}
                                                                     </TableCell>
                                                                 </TableRow>
                                                             ))}
@@ -345,9 +347,9 @@ const BulkUpload = () => {
                                                     <Table size="small">
                                                         <TableHead>
                                                             <TableRow>
-                                                                <TableCell>Row</TableCell>
-                                                                <TableCell>Email</TableCell>
-                                                                <TableCell>Error</TableCell>
+                                                                <TableCell>{t('bulkUpload.colRow')}</TableCell>
+                                                                <TableCell>{t('bulkUpload.colEmail')}</TableCell>
+                                                                <TableCell>{t('bulkUpload.colError')}</TableCell>
                                                             </TableRow>
                                                         </TableHead>
                                                         <TableBody>

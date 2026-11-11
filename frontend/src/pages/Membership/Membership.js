@@ -38,11 +38,11 @@ const C = appTheme.colors;
 const F = appTheme.fonts;
 
 const RELATIONSHIPS = [
-    { value: 'spouse', label: 'Spouse' },
-    { value: 'child', label: 'Child' },
-    { value: 'parent', label: 'Parent' },
-    { value: 'sibling', label: 'Sibling' },
-    { value: 'other', label: 'Other' },
+    { value: 'spouse' },
+    { value: 'child' },
+    { value: 'parent' },
+    { value: 'sibling' },
+    { value: 'other' },
 ];
 
 const EMPTY_DEP = {
@@ -115,11 +115,11 @@ const Membership = () => {
             setMyMemberships(mineList);
         } catch (err) {
             console.error('Membership load failed:', err);
-            toast.error(err.response?.data?.error || 'Failed to load memberships');
+            toast.error(err.response?.data?.error || t('membership.loadFailed'));
         } finally {
             setLoading(false);
         }
-    }, [currentOrgId]);
+    }, [currentOrgId, t]);
 
     useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -160,15 +160,15 @@ const Membership = () => {
         try {
             const result = await membershipService.createCheckout({ tierId: tier.id });
             if (result.status === 'active') {
-                toast.success('Membership activated!');
+                toast.success(t('membership.activated'));
                 setCheckoutOpen(false);
                 setCheckoutTier(null);
                 await loadAll();
                 return;
             }
-            toast.error('Unexpected response from server.');
+            toast.error(t('membership.unexpectedResponse'));
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not activate membership.');
+            toast.error(err.response?.data?.error || t('membership.activateFailed'));
         } finally {
             setProcessing(false);
         }
@@ -181,12 +181,12 @@ const Membership = () => {
                 tierId: tier.id,
                 method: 'cash',
             });
-            toast.success(result.message || 'Request submitted.');
+            toast.success(result.message || t('membership.requestSubmitted'));
             setCheckoutOpen(false);
             setCheckoutTier(null);
             await loadAll();  // refresh my memberships (will show "pending")
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not submit request.');
+            toast.error(err.response?.data?.error || t('membership.requestFailed'));
         } finally {
             setProcessing(false);
         }
@@ -202,7 +202,7 @@ const Membership = () => {
 
             const loaded = await loadRazorpayScript();
             if (!loaded || !window.Razorpay) {
-                toast.error('Razorpay SDK not loaded. Please refresh and try again.');
+                toast.error(t('membership.razorpayNotLoaded'));
                 setProcessing(false);
                 return;
             }
@@ -215,12 +215,12 @@ const Membership = () => {
                             membershipPaymentId: order.membership_payment_id,
                             params: response,
                         });
-                        toast.success('Membership activated!');
+                        toast.success(t('membership.activated'));
                         setCheckoutOpen(false);
                         setCheckoutTier(null);
                         await loadAll();
                     } catch (err) {
-                        toast.error(err.response?.data?.error || 'Payment verification failed.');
+                        toast.error(err.response?.data?.error || t('membership.paymentVerificationFailed'));
                     } finally {
                         // ✅ FIX [RAZORPAY-DOUBLE-CHARGE]:
                         // Reset only AFTER the handler resolves, not in
@@ -231,14 +231,14 @@ const Membership = () => {
                 modal: {
                     ondismiss: () => {
                         setProcessing(false);
-                        toast.info('Checkout cancelled.');
+                        toast.info(t('membership.checkoutCancelled'));
                     },
                 },
             });
             // ✅ NOTE: `processing` stays true until handler/ondismiss.
             rzp.open();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not start checkout.');
+            toast.error(err.response?.data?.error || t('membership.checkoutFailed'));
             setProcessing(false);
         }
         // ✅ NOTE: no `finally { setProcessing(false) }` here — the
@@ -272,20 +272,17 @@ const Membership = () => {
 
             if (hostedUrl) {
                 // Real Stripe Checkout Session — safe to redirect.
-                toast.info('Redirecting to Stripe…');
+                toast.info(t('membership.redirectingStripe'));
                 window.location.assign(hostedUrl);
                 return;
             }
 
             // Embedded Elements path — the app has no dedicated page
             // for it yet, so be explicit rather than 404ing.
-            toast.error(
-                'Stripe embedded checkout is not enabled on this deployment. ' +
-                'Please use Razorpay or pay at the office.'
-            );
+            toast.error(t('membership.stripeNotEnabled'));
             setProcessing(false);
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not start Stripe checkout.');
+            toast.error(err.response?.data?.error || t('membership.stripeStartFailed'));
             setProcessing(false);
         }
     };
@@ -306,7 +303,7 @@ const Membership = () => {
 
     const handleAddDependent = async () => {
         if (!depForm.full_name.trim()) {
-            toast.error('Full name is required.');
+            toast.error(t('membership.fullNameRequired'));
             return;
         }
         setDepSaving(true);
@@ -315,35 +312,35 @@ const Membership = () => {
                 ...depForm,
                 date_of_birth: depForm.date_of_birth || null,
             });
-            toast.success('Family member added.');
+            toast.success(t('membership.familyAdded'));
             closeDepDialog();
             await loadAll();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not add dependent.');
+            toast.error(err.response?.data?.error || t('membership.addDependentFailed'));
         } finally {
             setDepSaving(false);
         }
     };
 
     const handleRemoveDependent = async (membershipId, depId, name) => {
-        if (!window.confirm(`Remove ${name} from your membership?`)) return;
+        if (!window.confirm(t('membership.removeConfirm', { name }))) return;
         try {
             await membershipService.removeDependent(membershipId, depId);
-            toast.success('Family member removed.');
+            toast.success(t('membership.familyRemoved'));
             await loadAll();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not remove dependent.');
+            toast.error(err.response?.data?.error || t('membership.removeDependentFailed'));
         }
     };
 
     const handlePromoteDependent = async (membershipId, depId) => {
-        if (!window.confirm('Give this family member their own login?')) return;
+        if (!window.confirm(t('membership.promoteConfirm'))) return;
         try {
             const res = await membershipService.promoteDependent(membershipId, depId);
-            toast.success(res.message || 'Login link sent.');
+            toast.success(res.message || t('membership.loginLinkSent'));
             await loadAll();
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Could not promote dependent.');
+            toast.error(err.response?.data?.error || t('membership.promoteFailed'));
         }
     };
 
@@ -393,7 +390,7 @@ const Membership = () => {
                         startIcon={<RefreshIcon />}
                         onClick={loadAll}
                     >
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     {canManageOrg && (
                         <PrimaryButton
@@ -425,13 +422,12 @@ const Membership = () => {
 
             {/* Active memberships */}
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                My Active Memberships
+                {t('membership.myActiveMemberships')}
             </Typography>
 
             {shownMemberships.filter((m) => m.is_active).length === 0 ? (
                 <Alert severity="info" sx={{ mb: 4 }}>
-                    You don't have an active membership in any organization yet.
-                    Browse available plans below.
+                    {t('membership.noActiveMembership')}
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3} sx={{ mb: 4 }}>
@@ -455,7 +451,7 @@ const Membership = () => {
                                         }}>
                                             <Box>
                                                 <Typography variant="overline" sx={{ color: C.textMuted }}>
-                                                    {org?.name || 'Organization'}
+                                                    {org?.name || t('membership.organizationFallback')}
                                                 </Typography>
                                                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
                                                     {m.tier.name}
@@ -465,10 +461,10 @@ const Membership = () => {
                                                 icon={<CheckCircleIcon />}
                                                 label={
                                                     m.is_active
-                                                        ? 'ACTIVE'
+                                                        ? t('membership.statusActive')
                                                         : m.status === 'pending_offline'
-                                                            ? 'AWAITING REVIEW'
-                                                            : 'REJECTED'
+                                                            ? t('membership.statusAwaitingReview')
+                                                            : t('membership.statusRejected')
                                                 }
                                                 color={
                                                     m.is_active
@@ -484,17 +480,17 @@ const Membership = () => {
                                         <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
                                             <Box>
                                                 <Typography variant="caption" color="text.secondary">
-                                                    Valid until
+                                                    {t('membership.validUntil')}
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                                     {m.valid_until
                                                         ? new Date(m.valid_until).toLocaleDateString()
-                                                        : 'Lifetime'}
+                                                        : t('membership.lifetime')}
                                                 </Typography>
                                             </Box>
                                             <Box>
                                                 <Typography variant="caption" color="text.secondary">
-                                                    Seats
+                                                    {t('membership.seats')}
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                                     {m.seats_used} / {m.seats_max}
@@ -502,7 +498,7 @@ const Membership = () => {
                                             </Box>
                                             <Box>
                                                 <Typography variant="caption" color="text.secondary">
-                                                    Paid
+                                                    {t('membership.paid')}
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                                     {formatMoney(m.price_paid)}
@@ -514,7 +510,7 @@ const Membership = () => {
 
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                                             <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                                                Family Members ({depCount})
+                                                {t('membership.familyMembers', { count: depCount })}
                                             </Typography>
                                             <Button
                                                 size="small"
@@ -522,13 +518,13 @@ const Membership = () => {
                                                 onClick={() => openAddDependent(m)}
                                                 disabled={m.seats_used >= m.seats_max}
                                             >
-                                                Add
+                                                {t('membership.add')}
                                             </Button>
                                         </Box>
 
                                         {depCount === 0 ? (
                                             <Typography variant="body2" sx={{ color: C.textMuted }}>
-                                                No dependents added.
+                                                {t('membership.noDependents')}
                                             </Typography>
                                         ) : (
                                             <Stack spacing={1}>
@@ -551,11 +547,11 @@ const Membership = () => {
                                                             </Typography>
                                                             <Typography variant="caption" sx={{ color: C.textMuted, fontFamily: F.familyMono }}>
                                                                 {dep.member_code}
-                                                                {dep.promoted_user && ' · Has own login'}
+                                                                {dep.promoted_user && t('membership.hasOwnLogin')}
                                                             </Typography>
                                                         </Box>
                                                         {!dep.promoted_user && dep.email && (
-                                                            <Tooltip title="Give this person their own login">
+                                                            <Tooltip title={t('membership.promoteTooltip')}>
                                                                 <IconButton
                                                                     size="small"
                                                                     onClick={() => handlePromoteDependent(m.id, dep.id)}
@@ -564,7 +560,7 @@ const Membership = () => {
                                                                 </IconButton>
                                                             </Tooltip>
                                                         )}
-                                                        <Tooltip title="Remove">
+                                                        <Tooltip title={t('membership.removeTooltip')}>
                                                             <IconButton
                                                                 size="small"
                                                                 color="error"
@@ -587,12 +583,12 @@ const Membership = () => {
 
             {/* Available plans */}
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                Available Plans
+                {t('membership.availablePlans')}
             </Typography>
 
             {purchasableTiers.length === 0 ? (
                 <Alert severity="info">
-                    No plans available to purchase right now.
+                    {t('membership.noPlansAvailable')}
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3}>
@@ -609,7 +605,7 @@ const Membership = () => {
                                 }}>
                                     <CardContent sx={{ flex: 1 }}>
                                         <Typography variant="overline" sx={{ color: C.textMuted }}>
-                                            {org?.name || 'Organization'}
+                                            {org?.name || t('membership.organizationFallback')}
                                         </Typography>
                                         <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
                                             {tier.name}
@@ -624,12 +620,16 @@ const Membership = () => {
                                                 {formatMoney(tier.price)}
                                             </Typography>
                                             <Typography variant="caption" sx={{ color: C.textMuted }}>
-                                                {tier.billing_period.replace('_', ' ')}
+                                                {t(`membership.billingPeriods.${tier.billing_period}`, {
+                                                    defaultValue: tier.billing_period.replace('_', ' '),
+                                                })}
                                             </Typography>
                                         </Box>
                                         <Stack spacing={0.5}>
                                             <Typography variant="body2" sx={{ color: C.textPrimary }}>
-                                                👥 Covers up to {tier.max_members} {tier.max_members === 1 ? 'person' : 'people'}
+                                                {`👥 ${t('membership.coversUpTo', {
+                                                    count: tier.max_members,
+                                                })}`}
                                             </Typography>
                                             {Object.entries(tier.benefits || {}).map(([k, v]) => (
                                                 <Typography key={k} variant="body2" sx={{ color: C.textSecondary }}>
@@ -644,7 +644,7 @@ const Membership = () => {
                                             startIcon={<StarIcon />}
                                             onClick={() => openCheckout(tier)}
                                         >
-                                            {tier.price > 0 ? 'Join Plan' : 'Activate Free'}
+                                            {tier.price > 0 ? t('membership.joinPlan') : t('membership.activateFree')}
                                         </PrimaryButton>
                                     </Box>
                                 </Card>
@@ -656,16 +656,21 @@ const Membership = () => {
 
             {/* ---- Checkout dialog ---- */}
             <Dialog open={checkoutOpen} onClose={closeCheckout} maxWidth="xs" fullWidth>
-                <DialogTitle>Join {checkoutTier?.name}</DialogTitle>
+                <DialogTitle>{t('membership.joinDialogTitle', { name: checkoutTier?.name })}</DialogTitle>
                 <DialogContent>
                     {checkoutTier && (
                         <>
                             <Typography variant="body2" sx={{ color: C.textSecondary, mb: 2 }}>
-                                You'll be charged {formatMoney(checkoutTier.price)} for {checkoutTier.billing_period.replace('_', ' ')}.
-                                Covers up to {checkoutTier.max_members} {checkoutTier.max_members === 1 ? 'person' : 'people'}.
+                                {t('membership.checkoutCharge', {
+                                    amount: formatMoney(checkoutTier.price),
+                                    period: t(`membership.billingPeriods.${checkoutTier.billing_period}`, {
+                                        defaultValue: checkoutTier.billing_period.replace('_', ' '),
+                                    }),
+                                    count: checkoutTier.max_members,
+                                })}
                             </Typography>
                             <Alert severity="info" sx={{ mb: 2 }}>
-                                Choose your payment method:
+                                {t('membership.choosePaymentMethod')}
                             </Alert>
                             <Stack spacing={1}>
                                 <Button
@@ -674,7 +679,7 @@ const Membership = () => {
                                     disabled={processing}
                                     onClick={() => startRazorpayCheckout(checkoutTier)}
                                 >
-                                    Pay with Razorpay
+                                    {t('membership.payWithRazorpay')}
                                 </Button>
                                 <Button
                                     fullWidth
@@ -682,7 +687,7 @@ const Membership = () => {
                                     disabled={processing}
                                     onClick={() => startStripeCheckout(checkoutTier)}
                                 >
-                                    Pay with Stripe
+                                    {t('membership.payWithStripe')}
                                 </Button>
                                 {checkoutTier.price === 0 && (
                                     <Button
@@ -692,7 +697,7 @@ const Membership = () => {
                                         disabled={processing}
                                         onClick={() => startFreeActivation(checkoutTier)}
                                     >
-                                        Activate Free Membership
+                                        {t('membership.activateFreeMembership')}
                                     </Button>
                                 )}
                                 {checkoutTier.price > 0 && (
@@ -703,7 +708,7 @@ const Membership = () => {
                                         disabled={processing}
                                         onClick={() => startOfflineRequest(checkoutTier)}
                                     >
-                                        Pay at office (Cash)
+                                        {t('membership.payAtOfficeCash')}
                                     </Button>
                                 )}
                             </Stack>
@@ -712,51 +717,51 @@ const Membership = () => {
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={closeCheckout} disabled={processing}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                 </DialogActions>
             </Dialog>
 
             {/* ---- Add dependent dialog ---- */}
             <Dialog open={depOpen} onClose={closeDepDialog} maxWidth="sm" fullWidth>
-                <DialogTitle>Add Family Member</DialogTitle>
+                <DialogTitle>{t('membership.addFamilyMember')}</DialogTitle>
                 <DialogContent>
                     <Stack spacing={2} sx={{ mt: 1 }}>
                         <TextField
-                            label="Full name"
+                            label={t('membership.fullName')}
                             value={depForm.full_name}
                             onChange={(e) => setDepForm((p) => ({ ...p, full_name: e.target.value }))}
                             required
                             fullWidth
                         />
                         <TextField
-                            label="Email (used for check-in QR)"
+                            label={t('membership.emailCheckIn')}
                             value={depForm.email}
                             onChange={(e) => setDepForm((p) => ({ ...p, email: e.target.value }))}
                             type="email"
                             fullWidth
                         />
                         <TextField
-                            label="Phone"
+                            label={t('membership.phone')}
                             value={depForm.phone}
                             onChange={(e) => setDepForm((p) => ({ ...p, phone: e.target.value }))}
                             fullWidth
                         />
                         <TextField
                             select
-                            label="Relationship"
+                            label={t('membership.relationship')}
                             value={depForm.relationship}
                             onChange={(e) => setDepForm((p) => ({ ...p, relationship: e.target.value }))}
                             fullWidth
                         >
                             {RELATIONSHIPS.map((r) => (
                                 <MenuItem key={r.value} value={r.value}>
-                                    {r.label}
+                                    {t(`membership.relationships.${r.value}`)}
                                 </MenuItem>
                             ))}
                         </TextField>
                         <TextField
-                            label="Date of birth"
+                            label={t('membership.dateOfBirth')}
                             type="date"
                             value={depForm.date_of_birth}
                             onChange={(e) => setDepForm((p) => ({ ...p, date_of_birth: e.target.value }))}
@@ -767,10 +772,10 @@ const Membership = () => {
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={closeDepDialog} disabled={depSaving}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <PrimaryButton onClick={handleAddDependent} disabled={depSaving}>
-                        {depSaving ? <CircularProgress size={20} /> : 'Add Member'}
+                        {depSaving ? <CircularProgress size={20} /> : t('membership.addMember')}
                     </PrimaryButton>
                 </DialogActions>
             </Dialog>

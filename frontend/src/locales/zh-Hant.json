@@ -93,7 +93,8 @@
         "auditLogs": "審計日誌",
         "features": "功能權限",
         "mobileNavigation": "流動導覽",
-        "security": "安全"
+        "security": "安全",
+        "platformSettings": "平台設定"
     },
     "landing": {
         "heroTitleLine1": "尋找您的下一個",

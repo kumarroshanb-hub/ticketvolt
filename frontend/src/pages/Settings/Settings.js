@@ -1,5 +1,6 @@
 // frontend/src/pages/Settings/Settings.js
 import React, { useState, useEffect, useCallback } from 'react';
+import { useParams } from 'react-router-dom';
 import styled from 'styled-components';
 import {
     Person as PersonIcon,
@@ -243,6 +244,7 @@ const Settings = () => {
     // Platform settings tab is for superadmin only.
     const { isSuperAdmin } = useRole();
     const canManagePlatform = Boolean(isSuperAdmin);
+    const { section } = useParams();
 
     const [activeTab, setActiveTab] = useState('platform');
     const [loading, setLoading] = useState(false);
@@ -727,6 +729,14 @@ const Settings = () => {
                 return <div>{t('settings.selectTab')}</div>;
         }
     };
+
+    if (isSuperAdmin) {
+        return (
+            <PageContainer>
+                <PlatformSettingsTab section={section || 'payment-gateways'} />
+            </PageContainer>
+        );
+    }
 
     return (
         <PageContainer>

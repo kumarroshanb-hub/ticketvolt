@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Welcome - TiketVault</title></head>
+<body style="margin: 0; padding: 20px; background-color: #f4f4f4; font-family: 'Montserrat', Arial, sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4;">
+  <tr><td align="center" style="padding: 20px 0;">
+    <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden;">
+      <tr><td style="padding: 24px 30px; background-color: #333333; text-align: center;">
+        <h1 style="margin: 0; font-size: 20px; color: #ffffff;">🎫 Welcome to TiketVault!</h1>
+      </td></tr>
+      <tr><td style="padding: 30px;">
+        <h2 style="margin: 0 0 12px; font-size: 18px; color: #1A202C;">Hi {{ user.first_name|default:user.username }},</h2>
+        <p style="color: #4A5568;">Your account has been created successfully.</p>
+        <p style="color: #4A5568;"><strong>Username:</strong> {{ user.username }}<br><strong>Email:</strong> {{ user.email }}</p>
+        <p style="text-align: center; margin: 24px 0;">
+          <a href="{{ login_url }}" style="background-color: #FF2A2A; color: #ffffff; padding: 12px 28px; border-radius: 6px; text-decoration: none; font-weight: 700;">Login Now</a>
+        </p>
+      </td></tr>
+      <tr><td style="padding: 20px 30px; background-color: #f9f9f9; border-top: 1px solid #e5e5e5; text-align: center;">
+        <p style="margin: 0; font-size: 12px; color: #888888;">Thank you for choosing TiketVault.</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>

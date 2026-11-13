@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/OrganizerSelector.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Grid, FormControl, InputLabel, Select, MenuItem,
     FormHelperText, Chip, Box, Typography, Divider,
@@ -24,39 +25,39 @@ export const OrganizerSelector = ({
     organizers,
     loading = false,
     currentUserName = '',
-}) => (
+}) => {
+    const { t } = useTranslation();
+
+    return (
     <>
         <Grid item xs={12}>
-            <SectionTitle variant="h6">Organizer Assignment</SectionTitle>
+            <SectionTitle variant="h6">{t('events.organizerAssignmentTitle')}</SectionTitle>
             <Divider sx={{ borderColor: C.borderLight }} />
             <Typography variant="body2" sx={{ color: C.textSecondary, mt: 1 }}>
-                Assign this event to an organizer. That organizer will own
-                the event, its bookings, check-ins, and analytics from this
-                point forward. Leaving it as "Myself" keeps the event under
-                your own account.
+                {t('events.organizerAssignmentHint')}
             </Typography>
         </Grid>
 
         <Grid item xs={12} md={6}>
             <FormControl fullWidth>
-                <InputLabel id="organizer-select-label">Assign to Organizer</InputLabel>
+                <InputLabel id="organizer-select-label">{t('events.organizerLabel')}</InputLabel>
                 <Select
                     labelId="organizer-select-label"
                     value={value || ''}
                     onChange={(e) => onChange(e.target.value)}
-                    label="Assign to Organizer"
+                    label={t('events.organizerLabel')}
                     disabled={loading}
                     MenuProps={{ PaperProps: { sx: { maxHeight: 400 } } }}
                 >
                     <MenuItem value="">
-                        <em>Myself{currentUserName ? ` (${currentUserName})` : ''}</em>
+                        <em>{currentUserName ? t('events.organizerMyselfWithName', { name: currentUserName }) : t('events.organizerMyself')}</em>
                     </MenuItem>
                     {organizers.map((org) => {
-                        const displayName = org.name || org.username || 'Unnamed';
+                        const displayName = org.name || org.username || t('eventWizard.unnamed');
                         const roleLabel =
-                            org.role === 'super_admin' ? 'Super Admin'
-                            : org.role === 'admin' ? 'Admin'
-                            : 'Organizer';
+                            org.role === 'super_admin' ? t('eventWizard.superAdmin')
+                            : org.role === 'admin' ? t('roles.admin')
+                            : t('users.roleOrganizer');
                         return (
                             <MenuItem key={org.id} value={org.id}>
                                 <Box
@@ -92,10 +93,10 @@ export const OrganizerSelector = ({
                     })}
                 </Select>
                 <FormHelperText>
-                    Only administrators see this picker. Organizers are
-                    automatically attached to the events they create.
+                    {t('events.organizerHelper')}
                 </FormHelperText>
             </FormControl>
         </Grid>
     </>
-);
+    );
+};

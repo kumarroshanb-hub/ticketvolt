@@ -1,6 +1,6 @@
-// frontend/src/pages/Venues/Venues.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // ✅ Added useCallback
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
     Box,
     Grid,
@@ -39,45 +39,60 @@ import {
     LoadingWrapper,
 } from '../../components/Common';
 
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
+
 // ❌ Removed unused EVENT_STATUS import (was dead code)
 
 const Venues = () => {
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+    // ✅ 1. Initialize Platform Filter Hook
+    const { 
+        params: orgParams, 
+        isPlatformAdmin, 
+        orgFilter, 
+        setOrgFilter, 
+        organizations 
+    } = usePlatformFilter();
 
     const [venues, setVenues] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    const loadVenues = async () => {
+    const loadVenues = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await api.get('/venues/');
-            setVenues(response.data || []);
+            // ✅ 2. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/venues/', { params: orgParams });
+            setVenues(response.data?.results || response.data || []);
         } catch (error) {
             console.error('❌ Failed to load venues:', error);
-            setError(error.message || 'Failed to load venues');
-            toast.error('Failed to load venues');
+            setError(error.message || t('venues.loadFailed'));
+            toast.error(t('venues.loadFailed'));
         } finally {
             setLoading(false);
         }
-    };
+    }, [orgParams, t]); // ✅ 3. Added orgParams to dependency array
 
     useEffect(() => {
         loadVenues();
-    }, []);
+    }, [loadVenues]); // ✅ Updated dependencies
 
     const handleDelete = async (id, name) => {
-        if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
+        if (!window.confirm(t('venues.deleteConfirm', { name }))) return;
         try {
             await api.delete(`/venues/${id}/`);
-            toast.success('Venue deleted successfully');
+            toast.success(t('venues.deletedSuccess'));
             loadVenues();
         } catch (error) {
             console.error('Delete error:', error);
-            toast.error('Failed to delete venue');
+            toast.error(t('venues.deleteFailed'));
         }
     };
 
@@ -103,7 +118,7 @@ const Venues = () => {
                     {error}
                 </Alert>
                 <Button variant="contained" onClick={loadVenues}>
-                    Retry
+                    {t('common.retry')}
                 </Button>
             </PageContainer>
         );
@@ -126,8 +141,8 @@ const Venues = () => {
                 }}
             >
                 <PageHeaderLeft sx={{ minWidth: 0 }}>
-                    <PageTitle>Venues</PageTitle>
-                    {!isMobile && <PageSubtitle>Manage your event venues and locations</PageSubtitle>}
+                    <PageTitle>{t('venues.title')}</PageTitle>
+                    {!isMobile && <PageSubtitle>{t('venues.subtitle')}</PageSubtitle>}
                 </PageHeaderLeft>
                 <PageHeaderRight
                     sx={{
@@ -137,13 +152,20 @@ const Venues = () => {
                         width: isMobile ? '100%' : 'auto',
                     }}
                 >
+                    {/* ✅ 4. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton
                         variant="outlined"
                         startIcon={<RefreshIcon />}
                         onClick={loadVenues}
                         sx={isMobile ? { flex: 1, minWidth: 140 } : undefined}
                     >
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     <PrimaryButton
                         variant="contained"
@@ -151,7 +173,7 @@ const Venues = () => {
                         onClick={() => navigate('/app/venues/create')}
                         sx={isMobile ? { flex: 1, minWidth: 140 } : undefined}
                     >
-                        Add Venue
+                        {t('venues.addVenue')}
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -167,10 +189,10 @@ const Venues = () => {
                 >
                     <LocationIcon sx={{ fontSize: 48, opacity: 0.3, mb: 2 }} />
                     <Typography variant="h6" sx={{ color: 'text.secondary' }}>
-                        No venues found
+                        {t('venues.noVenues')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-                        Create your first venue
+                        {t('venues.createFirst')}
                     </Typography>
                     <Button
                         variant="contained"
@@ -178,7 +200,7 @@ const Venues = () => {
                         onClick={() => navigate('/app/venues/create')}
                         sx={{ mt: 2 }}
                     >
-                        Add Venue
+                        {t('venues.addVenue')}
                     </Button>
                 </Box>
             ) : (
@@ -239,7 +261,7 @@ const Venues = () => {
                                                 minWidth: 0,
                                             }}
                                         >
-                                            {venue.city}, {venue.state || venue.country || 'N/A'}
+                                            {venue.city}, {venue.state || venue.country || t('common.nA')}
                                         </Typography>
                                     </Box>
 
@@ -255,7 +277,7 @@ const Venues = () => {
                                             sx={{ fontSize: 16, color: 'text.secondary', flexShrink: 0 }}
                                         />
                                         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                            Capacity: {venue.capacity || 'N/A'}
+                                            {t('venues.capacityLine', { capacity: venue.capacity || t('common.nA') })}
                                         </Typography>
                                     </Box>
 
@@ -270,12 +292,12 @@ const Venues = () => {
                                         }}
                                     >
                                         <Chip
-                                            label={venue.is_active ? 'Active' : 'Inactive'}
+                                            label={venue.is_active ? t('venues.activeLabel') : t('venues.inactive')}
                                             size="small"
                                             color={venue.is_active ? 'success' : 'default'}
                                         />
                                         <Box sx={{ display: 'flex', gap: 0.5 }}>
-                                            <Tooltip title="View Details">
+                                            <Tooltip title={t('eventCard.viewDetails')}>
                                                 <IconButton
                                                     size="small"
                                                     sx={{
@@ -284,12 +306,12 @@ const Venues = () => {
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
                                                     onClick={() => navigate(`/app/venues/${venue.id}`)}
-                                                    aria-label={`View ${venue.name}`}
+                                                    aria-label={t('venues.viewAria', { name: venue.name })}
                                                 >
                                                     <VisibilityIcon fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
-                                            <Tooltip title="Edit">
+                                            <Tooltip title={t('venues.editLabel')}>
                                                 <IconButton
                                                     size="small"
                                                     sx={{
@@ -298,12 +320,12 @@ const Venues = () => {
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
                                                     onClick={() => navigate(`/app/venues/edit/${venue.id}`)}
-                                                    aria-label={`Edit ${venue.name}`}
+                                                    aria-label={t('venues.editAria', { name: venue.name })}
                                                 >
                                                     <EditIcon fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
-                                            <Tooltip title="Delete">
+                                            <Tooltip title={t('venues.deleteLabel')}>
                                                 <IconButton
                                                     size="small"
                                                     sx={{
@@ -312,7 +334,7 @@ const Venues = () => {
                                                         minHeight: { xs: 44, md: 40 },
                                                     }}
                                                     onClick={() => handleDelete(venue.id, venue.name)}
-                                                    aria-label={`Delete ${venue.name}`}
+                                                    aria-label={t('venues.deleteAria', { name: venue.name })}
                                                 >
                                                     <DeleteIcon fontSize="small" />
                                                 </IconButton>

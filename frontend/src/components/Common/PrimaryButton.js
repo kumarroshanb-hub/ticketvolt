@@ -7,7 +7,7 @@ const C = theme.colors;
 
 const PrimaryButton = styled(Button)`
     background: ${C.primaryGradient};
-    color: ${C.textInverse};
+    color: #fff !important;
     text-transform: none;
     font-weight: 600;
     padding: 8px 24px;

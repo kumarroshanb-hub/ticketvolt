@@ -468,7 +468,7 @@ class WhatsAppService {
             this.sock = makeWASocket({
                 auth: state,
                 logger,
-                browser: ['TicketVolt', 'Chrome', '1.0.0'],
+                browser: ['TiketVault', 'Chrome', '1.0.0'],
                 syncFullHistory: false,
                 markOnlineOnConnect: false,
             });
@@ -776,7 +776,7 @@ class WhatsAppService {
 
         // Default / idle prompt.
         return this.sendMessage(sender,
-            '👋 Welcome to TicketVolt!\n\n'
+            '👋 Welcome to TiketVault!\n\n'
             + 'Type *book* to book tickets\n'
             + 'Type *events* to see events\n'
             + 'Type *help* for menu'
@@ -804,7 +804,7 @@ class WhatsAppService {
             : '📧 Email only (after payment)';
 
         const message = `
-🤖 *TicketVolt - Booking Bot*
+🤖 *TiketVault - Booking Bot*
 
 ┌─────────────────────────────────────┐
 │ 📋 *Commands*                       │
@@ -835,7 +835,7 @@ We'll automatically allocate the best available slot.
 💡 *Ticket Delivery:*
    ${delivery}
 
-Thank you for choosing TicketVolt! 🎫`;
+Thank you for choosing TiketVault! 🎫`;
 
         await this.sendMessage(sender, message);
     }

@@ -2,522 +2,651 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import styled from 'styled-components';
+import { useTranslation } from 'react-i18next';
 import {
-    Dashboard as DashboardIcon,
-    Event as EventIcon,
-    Place as VenueIcon,
-    ConfirmationNumber as TicketIcon,
-    Analytics as AnalyticsIcon,
-    Discount as DiscountIcon,
-    Settings as SettingsIcon,
-    ChevronLeft,
-    ChevronRight,
-    QrCodeScanner as ScannerIcon,
-    People as PeopleIcon,
-    Close as CloseIcon,
-    Logout as LogoutIcon,
-    Policy as PolicyIcon,
+  Dashboard as DashboardIcon,
+  Event as EventIcon,
+  Place as VenueIcon,
+  ConfirmationNumber as TicketIcon,
+  Analytics as AnalyticsIcon,
+  Assessment as ReportsIcon,
+  CreditCard as PaymentIcon,
+  AccountBalance as PayoutIcon,
+  ReceiptLong as AuditIcon,
+  ToggleOn as FeatureIcon,
+  Security as SecurityIcon,
+  Discount as DiscountIcon,
+  Settings as SettingsIcon,
+  ChevronLeft,
+  ChevronRight,
+  QrCodeScanner as ScannerIcon,
+  People as PeopleIcon,
+  Close as CloseIcon,
+  Logout as LogoutIcon,
+  Business as BusinessIcon,
+  Policy as PolicyIcon,
+  Devices as SessionsIcon,
+  AccountBalanceWallet as BillingIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
-import { ROLES } from '../../constants';
-import { theme } from '../../theme/tokens';
+import { useOrg } from '../../context/OrgContext';
+import {
+  PLATFORM_ROLES,
+  MEMBERSHIP_ROLES,
+  PlatformRoleUtils,
+  MembershipRoleUtils,
+} from '../../constants';
 import Logo from '../Logo';
-import DevicesIcon from '@mui/icons-material/Devices';
+import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
 const F = theme.fonts;
 
 // ============================================
-// STYLED COMPONENTS
+// STYLED COMPONENTS  (unchanged from original)
 // ============================================
-
 const SidebarContainer = styled.aside`
-    position: ${props => (props.$drawer ? 'relative' : 'fixed')};
-    top: ${props => (props.$drawer ? 'auto' : '0')};
-    left: ${props => (props.$drawer ? 'auto' : '0')};
-    height: ${props => (props.$drawer ? '100%' : '100vh')};
-    width: ${props => {
-        if (props.$drawer) return '100%';
-        return props.collapsed ? '80px' : '260px';
-    }};
-    background: ${props => props.theme?.colors?.bgSidebar || C.bgSidebar};
-    border-right: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    transition: ${props => (props.$drawer ? 'none' : 'width 0.3s ease')};
-    padding: 20px;
-    color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
-    overflow: hidden;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    box-shadow: ${props => (props.$drawer ? 'none' : theme.shadows.card)};
-    box-sizing: border-box;
-    font-family: ${F.family};
+  position: ${props => (props.$drawer ? 'relative' : 'fixed')};
+  top: ${props => (props.$drawer ? 'auto' : '0')};
+  left: ${props => (props.$drawer ? 'auto' : '0')};
+  height: ${props => (props.$drawer ? '100%' : '100vh')};
+  width: ${props => {
+    if (props.$drawer) return '100%';
+    return props.collapsed ? '80px' : '260px';
+  }};
+  background: ${props => props.theme?.colors?.bgSidebar || C.bgSidebar};
+  border-right: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
+  transition: ${props => (props.$drawer ? 'none' : 'width 0.3s ease')};
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
 `;
 
 const LogoWrap = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    margin-bottom: 20px;
-    min-height: 76px;
-    position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 20px;
+  position: relative;
 `;
 
 const LogoLink = styled(NavLink)`
-    display: inline-flex;
-    align-items: center;
-    text-decoration: none;
-    color: inherit;
+  text-decoration: none;
+  display: flex;
+  justify-content: center;
 `;
 
 const RoleBadge = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 12px;
-    margin-bottom: 12px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: ${props => {
-        if (props.role === 'super_admin') return `${C.success}1A`;
-        if (props.role === 'admin')       return `${C.info}1A`;
-        if (props.role === 'organizer')   return `${C.warning}1A`;
-        return C.bgInput;
-    }};
-    color: ${props => {
-        if (props.role === 'super_admin') return C.successDark;
-        if (props.role === 'admin')       return C.infoDark;
-        if (props.role === 'organizer')   return C.warningDark;
-        return C.textSecondary;
-    }};
-    opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-    transition: opacity 0.3s ease;
-
-    .role-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: ${props => {
-            if (props.role === 'super_admin') return C.successDark;
-            if (props.role === 'admin')       return C.infoDark;
-            if (props.role === 'organizer')   return C.warningDark;
-            return C.textSecondary;
-        }};
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: ${props => (props.collapsed ? '8px' : '10px 16px')};
+  background: ${props => {
+    switch (props.$kind) {
+      case 'platform-super': return C.successDark;
+      case 'org-owner':      return C.warningDark;
+      case 'org-admin':      return C.infoDark;
+      case 'org-staff':      return C.secondaryDark;
+      case 'org-finance':    return C.successDark;
+      case 'org-member':     return C.primaryDark;
+      default:               return C.textSecondary;
     }
+  }};
+  border-radius: 8px;
+  margin-bottom: 8px;
+  justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
+
+  .role-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    display: inline-block;
+    margin-right: 8px;
+  }
+
+  .role-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: white;
+    display: ${props => (props.collapsed ? 'none' : 'block')};
+    line-height: 1.3;
+  }
+
+  .role-sub {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: rgba(255,255,255,0.7);
+    display: ${props => (props.collapsed ? 'none' : 'block')};
+    line-height: 1.3;
+  }
 `;
 
 const NavItems = styled.nav`
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow-y: auto;
-    padding-bottom: 10px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding-bottom: 10px;
 
-    &::-webkit-scrollbar { width: 4px; }
-    &::-webkit-scrollbar-thumb {
-        background: ${C.scrollbarThumb};
-        border-radius: 4px;
-    }
-    &::-webkit-scrollbar-thumb:hover {
-        background: ${C.scrollbarThumbHover};
-    }
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb {
+    background: ${C.scrollbarThumb};
+    border-radius: 4px;
+  }
+  &::-webkit-scrollbar-thumb:hover { background: ${C.scrollbarThumbHover}; }
 `;
 
 const NavSection = styled.div`
-    margin-top: ${props => props.marginTop || '0'};
+  margin-top: ${props => props.marginTop || '0'};
 `;
 
-const NavSectionLabel = styled.div`
-    font-size: 10px;
-    font-weight: 600;
-    color: ${C.textLight};
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 8px 14px 4px;
-    opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-    transition: opacity 0.3s ease;
-    white-space: nowrap;
+const SectionLabel = styled.div`
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: ${C.textSecondary};
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 12px 16px 8px;
+  display: ${props => (props.collapsed ? 'none' : 'block')};
 `;
 
 const NavItem = styled(NavLink)`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    min-height: 44px;
-    border-radius: 10px;
-    color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
-    text-decoration: none;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: ${props => (props.collapsed ? '12px' : '12px 16px')};
+  border-radius: 8px;
+  text-decoration: none;
+  color: ${props => (props.isActive ? 'white' : C.textSecondary)};
+  background: ${props => (props.isActive ? C.primaryDark : 'transparent')};
+  transition: all 0.2s ease;
+  justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
+
+  &:hover {
+    background: ${props => (props.isActive ? C.primaryDark : C.bgHover)};
+    color: ${props => (props.isActive ? 'white' : C.textPrimary)};
+  }
+
+  .icon { display: flex; align-items: center; justify-content: center; min-width: 24px; }
+
+  .label {
+    font-size: 0.875rem;
+    font-weight: ${props => (props.isActive ? '600' : '500')};
+    display: ${props => (props.collapsed ? 'none' : 'block')};
     white-space: nowrap;
-    position: relative;
-    cursor: pointer;
-    touch-action: manipulation;
-
-    .icon {
-        min-width: 24px;
-        font-size: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: ${props => props.theme?.colors?.textMuted || C.textMuted};
-    }
-
-    .label {
-        opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-        transition: opacity 0.3s ease;
-    }
-
-    .badge {
-        margin-left: auto;
-        padding: 2px 10px;
-        border-radius: 20px;
-        font-size: 11px;
-        font-weight: 600;
-        background: ${C.primary};
-        color: ${C.textInverse};
-        opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-        transition: opacity 0.3s ease;
-    }
-
-    &:hover {
-        color: ${props => props.theme?.colors?.textPrimary || C.textPrimary};
-        background: ${props => props.theme?.colors?.bgCardHover || C.bgCardHover};
-
-        .icon {
-            color: ${C.primary};
-        }
-    }
-
-    &.active {
-        color: ${C.primary};
-        background: ${C.hoverMedium};
-
-        .icon {
-            color: ${C.primary};
-        }
-
-        &::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 3px;
-            height: 24px;
-            background: ${C.primary};
-            border-radius: 0 3px 3px 0;
-        }
-    }
+  }
 `;
 
 const LogoutSection = styled.div`
-    margin-top: auto;
-    border-top: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    padding-top: 12px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid ${C.borderLight};
 `;
 
 const LogoutButton = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    min-height: 44px;
-    border-radius: 10px;
-    border: none;
-    background: transparent;
-    color: ${C.error};
-    font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: ${props => (props.collapsed ? '12px' : '12px 16px')};
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: ${C.textSecondary};
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.2s ease;
+  justify-content: ${props => (props.collapsed ? 'center' : 'flex-start')};
+
+  &:hover { background: ${C.bgHover}; color: ${C.textPrimary}; }
+
+  .icon { display: flex; align-items: center; justify-content: center; min-width: 24px; }
+  .label {
+    font-size: 0.875rem;
     font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    width: 100%;
+    display: ${props => (props.collapsed ? 'none' : 'block')};
     white-space: nowrap;
-    touch-action: manipulation;
-    font-family: ${F.family};
-
-    .icon {
-        min-width: 24px;
-        font-size: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .label {
-        opacity: ${props => (props.collapsed && !props.$drawer ? 0 : 1)};
-        transition: opacity 0.3s ease;
-    }
-
-    &:hover {
-        background: ${C.error}1A;
-    }
+  }
 `;
 
 const ToggleButton = styled.button`
-    position: absolute;
-    bottom: 20px;
-    right: -12px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 1px solid ${props => props.theme?.colors?.borderLight || C.borderLight};
-    background: ${props => props.theme?.colors?.bgSecondary || C.bgSecondary};
-    color: ${props => props.theme?.colors?.textSecondary || C.textSecondary};
-    cursor: pointer;
-    display: ${props => (props.$drawer ? 'none' : 'flex')};
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    box-shadow: ${theme.shadows.toggle};
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: ${C.bgHover};
+  color: ${C.textSecondary};
+  cursor: pointer;
+  margin-top: 12px;
+  transition: all 0.2s ease;
 
-    &:hover {
-        border-color: ${C.primary};
-        color: ${C.primary};
-        box-shadow: 0 0 0 4px ${C.hoverStrong};
-    }
+  &:hover { background: ${C.bgHover}; color: ${C.textPrimary}; }
 `;
 
 const DrawerCloseButton = styled.button`
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    border: none;
-    background: transparent;
-    color: ${C.textSecondary};
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    touch-action: manipulation;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: ${C.bgHover};
+  color: ${C.textSecondary};
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 
-    &:hover {
-        background: ${C.hoverSubtle};
-        color: ${C.textPrimary};
-    }
+  &:hover { background: ${C.bgHover}; color: ${C.textPrimary}; }
 `;
-
-// ============================================
-// MENU DEFINITIONS
-// ============================================
-
-const MENU_ITEMS = {
-    dashboard: {
-        path: '/app/dashboard',
-        icon: <DashboardIcon />,
-        label: 'Dashboard',
-        roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'main',
-    },
-    bookings: {
-        path: '/app/bookings',
-        icon: <TicketIcon />,
-        label: 'Bookings',
-        roles: [ROLES.USER, ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'main',
-        badge: true,
-    },
-    events: {
-        path: '/app/events',
-        icon: <EventIcon />,
-        label: 'Events',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    venues: {
-        path: '/app/venues',
-        icon: <VenueIcon />,
-        label: 'Venues',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    discounts: {
-        path: '/app/discounts',
-        icon: <DiscountIcon />,
-        label: 'Discounts',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    cancellationPolicies: {
-        path: '/app/cancellation-policies',
-        icon: <PolicyIcon />,
-        label: 'Cancellation Policies',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    analytics: {
-        path: '/app/analytics',
-        icon: <AnalyticsIcon />,
-        label: 'Analytics',
-        roles: [ROLES.ORGANIZER, ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'management',
-    },
-    scanner: {
-        path: '/app/checkin',
-        icon: <ScannerIcon />,
-        label: 'QR Scanner',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-    users: {
-        path: '/app/users',
-        icon: <PeopleIcon />,
-        label: 'Users',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-    settings: {
-        path: '/app/settings',
-        icon: <SettingsIcon />,
-        label: 'Settings',
-        roles: [ROLES.ADMIN, ROLES.SUPER_ADMIN],
-        section: 'admin',
-    },
-    activeSessions: {
-    path: '/app/active-sessions',
-    icon: <DevicesIcon />,          // import DevicesIcon from '@mui/icons-material'
-    label: 'Active Sessions',
-    roles: [ROLES.SUPER_ADMIN],     // SuperAdmin only
-    section: 'admin',
-},
-};
-
-const SECTION_LABELS = {
-    main: 'MAIN',
-    management: 'MANAGEMENT',
-    admin: 'ADMIN',
-};
 
 // ============================================
 // COMPONENT
 // ============================================
-
 const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
-    const { role, isSuperAdmin } = useRole();
-    const { logout, isAuthenticated } = useAuth();
+  const {
+    platformRole,
+    membershipRole,
+    hasOrgRole,
+    isSuperAdmin,
+    isOwner,
+  } = useRole();
+  const { logout, isAuthenticated } = useAuth();
+  const { currentOrg, hasNoMemberships } = useOrg();
+  const { t } = useTranslation();
 
-    const isDrawer = Boolean(onNavigate);
-    const effectiveCollapsed = isDrawer ? false : collapsed;
-    const isGuest = !isAuthenticated;
+  const isGuest = !isAuthenticated;
+  const effectiveCollapsed = isGuest ? false : collapsed;
+  const isDrawer = !!onNavigate;
 
-    const getVisibleItems = () => {
-        return Object.entries(MENU_ITEMS)
-            .filter(([key, item]) => {
-                if (isGuest) return false;
-                if (isSuperAdmin) return true;
-                return item.roles.includes(role);
-            })
-            .map(([key, item]) => ({ key, ...item }));
-    };
+  const handleLogout = () => {
+    logout();
+    if (onNavigate) onNavigate();
+  };
 
-    const visibleItems = getVisibleItems();
+  // ---------------------------------------------------------------
+  // Platform roles are now strictly two-tier:
+  //   PLATFORM_ROLES.SUPER_ADMIN — full platform-wide bypass
+  //   PLATFORM_ROLES.USER        — every other authenticated user
+  //
+  // Nav items declare:
+  //   platformRoles   — which PLATFORM_ROLES see this item
+  //   minOrgRole      — the minimum MEMBERSHIP_ROLE required (if any)
+  //
+  // An item is visible iff:
+  //   • the user's platform role is in platformRoles (or super admin), AND
+  //   • if minOrgRole is set, the user has at least that membership role
+  //     in the CURRENT org (super admins bypass).
+  //
+  // A user with no memberships (Regular User only) sees dashboard,
+  // bookings, membership, and settings — but NOT the tenant management
+  // sections until they create/join an org.
+  // ---------------------------------------------------------------
+  const navItems = [
+    {
+      path: '/app/dashboard',
+      icon: <DashboardIcon />,
+      label: t('nav.dashboard'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      section: 'main',
+    },
+    {
+      path: '/app/events',
+      icon: <EventIcon />,
+      label: t('nav.events'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      section: 'main',
+    },
+    {
+      path: '/app/venues',
+      icon: <VenueIcon />,
+      label: t('nav.venues'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
+      path: '/app/cancellation-policies',
+      icon: <PolicyIcon />,
+      label: t('nav.cancellationPolicies', 'Cancellation policies'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
+      path: '/app/bookings',
+      icon: <TicketIcon />,
+      label: t('nav.bookings'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      section: 'main',
+    },
+    {
+      path: '/app/billing',
+      icon: <BillingIcon />,
+      label: t('nav.billing'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/checkin',
+      icon: <ScannerIcon />,
+      label: t('nav.checkin'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.STAFF,
+      section: 'operations',
+    },
+    {
+      path: '/app/discounts',
+      icon: <DiscountIcon />,
+      label: t('nav.discounts'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
+      path: '/app/analytics',
+      icon: <AnalyticsIcon />,
+      label: t('nav.analytics'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
+      path: '/app/reports',
+      icon: <ReportsIcon />,
+      label: t('nav.reports'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/payment-settings',
+      icon: <PaymentIcon />,
+      label: t('nav.paymentSettings'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/payouts',
+      icon: <PayoutIcon />,
+      label: t('nav.payouts'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/security',
+      icon: <SecurityIcon />,
+      label: t('nav.security', 'Security'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
+      path: '/app/features',
+      icon: <FeatureIcon />,
+      label: t('nav.features', 'Feature Entitlements'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
+      path: '/app/audit-logs',
+      icon: <AuditIcon />,
+      label: t('nav.auditLogs'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
+      path: '/app/users',
+      icon: <PeopleIcon />,
+      label: t('nav.users'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
+      path: '/app/active-sessions',
+      icon: <SessionsIcon />,
+      label: t('nav.activeSessions', 'Active Sessions'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
+      path: '/app/organizations',
+      icon: <BusinessIcon />,
+      label: t('nav.organizations'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN],
+      visibleWithNoMembership: true,
+      section: 'management',
+    },
+    {
+      path: '/app/settings',
+      icon: <SettingsIcon />,
+      label: t('nav.settings'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      section: 'main',
+    },
+  ];
 
-    const groupedItems = visibleItems.reduce((acc, item) => {
-        const section = item.section || 'main';
-        if (!acc[section]) acc[section] = [];
-        acc[section].push(item);
-        return acc;
-    }, {});
+  const canSee = (item) => {
+    // Platform admin bypasses everything.
+    if (isSuperAdmin) return true;
 
-    const handleLogout = () => {
-        if (window.confirm('Are you sure you want to logout?')) {
-            logout();
-        }
-    };
+    const platformOk = item.platformRoles?.includes(platformRole);
+    const orgRoleOk = item.minOrgRole ? hasOrgRole(item.minOrgRole) : false;
+    const altOrgRoleOk = item.alsoVisibleToOrgRole
+      ? hasOrgRole(item.alsoVisibleToOrgRole)
+      : false;
+    const exactRoleOk = item.orgRoles ? item.orgRoles.includes(membershipRole) : false;
+    const noMembershipOk = item.visibleWithNoMembership && hasNoMemberships;
 
-    return (
-        <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
-            <LogoWrap>
-                <LogoLink
-                    to={isGuest ? '/' : '/app/dashboard'}
-                    onClick={() => onNavigate && onNavigate()}
-                >
-                    {/* ✅ FIX: Increased height from 44 to 84 for a larger main logo */}
-                    <Logo
-                        variant="full"
-                        height={84}
-                        hidden={effectiveCollapsed && !isDrawer}
-                    />
-                </LogoLink>
-                {isDrawer && (
-                    <DrawerCloseButton onClick={onNavigate} aria-label="Close menu">
-                        <CloseIcon fontSize="small" />
-                    </DrawerCloseButton>
-                )}
-            </LogoWrap>
+    if (platformOk && !item.minOrgRole && !item.orgRoles) return true;
+    if (exactRoleOk) return true;
+    if (orgRoleOk) return true;
+    if (altOrgRoleOk) return true;
+    if (noMembershipOk) return true;
+    return false;
+  };
 
-            {!isGuest && (
-                <RoleBadge role={role} collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                    <span className="role-dot" />
-                    {role === ROLES.SUPER_ADMIN ? 'Super Admin' :
-                     role === ROLES.ADMIN ? 'Admin' :
-                     role === ROLES.ORGANIZER ? 'Organizer' : 'User'}
-                </RoleBadge>
-            )}
+  const visibleItems = navItems.filter(canSee);
 
-            <NavItems>
-                {Object.entries(groupedItems).map(([section, items]) => (
-                    <NavSection key={section}>
-                        <NavSectionLabel collapsed={effectiveCollapsed} $drawer={isDrawer}>
-                            {SECTION_LABELS[section] || section.toUpperCase()}
-                        </NavSectionLabel>
-                        {items.map((item) => (
-                            <NavItem
-                                key={item.key}
-                                to={item.path}
-                                collapsed={effectiveCollapsed}
-                                $drawer={isDrawer}
-                                activeClassName="active"
-                                onClick={() => {
-                                    if (onNavigate) onNavigate();
-                                }}
-                            >
-                                <span className="icon">{item.icon}</span>
-                                <span className="label">{item.label}</span>
-                                {item.badge && (
-                                    <span className="badge">New</span>
-                                )}
-                            </NavItem>
-                        ))}
-                    </NavSection>
-                ))}
-            </NavItems>
+  const mainItems = visibleItems.filter(item => item.section === 'main');
+  const managementItems = visibleItems.filter(item => item.section === 'management');
+  const operationsItems = visibleItems.filter(item => item.section === 'operations');
+  const financeItems = visibleItems.filter(item => item.section === 'finance');
+  const adminItems = visibleItems.filter(item => item.section === 'admin');
 
-            {!isGuest && (
-                <LogoutSection>
-                    <LogoutButton
-                        onClick={handleLogout}
-                        collapsed={effectiveCollapsed}
-                        $drawer={isDrawer}
-                    >
-                        <span className="icon"><LogoutIcon fontSize="small" /></span>
-                        <span className="label">Logout</span>
-                    </LogoutButton>
-                </LogoutSection>
-            )}
+  // ---------------------------------------------------------------
+  // Two badges:
+  //   1. platform role — only super admins get a "Super Admin" label.
+  //      Regular Users don't need a "Regular User" label; it clutters
+  //      the sidebar.
+  //   2. current-org membership role (only when a membership exists)
+  // ---------------------------------------------------------------
+  const showPlatformBadge = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
+  const platformBadgeKind = showPlatformBadge ? 'platform-super' : null;
 
-            <ToggleButton
-                onClick={onToggle}
-                $drawer={isDrawer}
-                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-                {collapsed ? <ChevronRight fontSize="small" /> : <ChevronLeft fontSize="small" />}
-            </ToggleButton>
-        </SidebarContainer>
-    );
+  const orgBadgeKind = (() => {
+    // ✅ Superusers are platform-wide. Never show them an org role.
+    if (isSuperAdmin) return null;
+    if (isOwner) return 'org-owner';
+    switch (membershipRole) {
+      case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';
+      case MEMBERSHIP_ROLES.ADMIN:  return 'org-admin';
+      case MEMBERSHIP_ROLES.STAFF:  return 'org-staff';
+      case MEMBERSHIP_ROLES.FINANCE: return 'org-finance';
+      case MEMBERSHIP_ROLES.MEMBER: return 'org-member';
+      default: return null;
+    }
+  })();
+
+  return (
+    <SidebarContainer collapsed={effectiveCollapsed} $drawer={isDrawer}>
+      <LogoWrap>
+        <LogoLink
+          to={isGuest ? '/' : '/app/dashboard'}
+          onClick={() => onNavigate && onNavigate()}
+        >
+          <Logo
+            variant="full"
+            height={84}
+            hidden={effectiveCollapsed && !isDrawer}
+          />
+        </LogoLink>
+        {isDrawer && (
+          <DrawerCloseButton
+            onClick={onNavigate}
+            aria-label={t('common.closeMenu')}
+          >
+            <CloseIcon fontSize="small" />
+          </DrawerCloseButton>
+        )}
+      </LogoWrap>
+
+      {!isGuest && showPlatformBadge && (
+        <RoleBadge $kind={platformBadgeKind} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+          <span className="role-label">
+            <span className="role-dot" />
+            {PlatformRoleUtils.getLabel(platformRole)}
+          </span>
+          <span className="role-sub">
+            {t('roles.platformRole', 'platform-wide')}
+          </span>
+        </RoleBadge>
+      )}
+
+      {!isGuest && orgBadgeKind && (
+        <RoleBadge $kind={orgBadgeKind} collapsed={effectiveCollapsed} $drawer={isDrawer}>
+          <span className="role-label">
+            <span className="role-dot" />
+            {MembershipRoleUtils.getLabel(membershipRole)}
+          </span>
+          <span className="role-sub">
+            {currentOrg?.name || t('roles.inCurrentOrg', 'in current organization')}
+          </span>
+        </RoleBadge>
+      )}
+
+      <NavItems>
+        {mainItems.length > 0 && (
+          <NavSection>
+            {mainItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+
+        {managementItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.management')}
+            </SectionLabel>
+            {managementItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+
+        {financeItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.finance', 'Finance')}
+            </SectionLabel>
+            {financeItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+
+        {operationsItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.operations')}
+            </SectionLabel>
+            {operationsItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+
+        {adminItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.admin')}
+            </SectionLabel>
+            {adminItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+      </NavItems>
+
+      {!isGuest && (
+        <LogoutSection>
+          <LogoutButton
+            onClick={handleLogout}
+            collapsed={effectiveCollapsed}
+            $drawer={isDrawer}
+          >
+            <span className="icon">
+              <LogoutIcon fontSize="small" />
+            </span>
+            <span className="label">{t('nav.logout')}</span>
+          </LogoutButton>
+        </LogoutSection>
+      )}
+
+      <ToggleButton
+        onClick={onToggle}
+        $drawer={isDrawer}
+        aria-label={collapsed ? t('common.expandSidebar') : t('common.collapseSidebar')}
+      >
+        {collapsed ? <ChevronRight fontSize="small" /> : <ChevronLeft fontSize="small" />}
+      </ToggleButton>
+    </SidebarContainer>
+  );
 };
 
 export default Sidebar;

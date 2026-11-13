@@ -6,11 +6,20 @@ export const buildEventPayload = (formData, sessions, tiers) => {
     const flow = formData.event_flow || 'ticketed';
     const isFree = flow === 'free_registration';
 
-    // ✅ FIX: Check if any tiers have sold tickets.
-    // If they do, we CANNOT send an empty array to the backend, or it will
-    // attempt to delete the tier and hit the 409 Conflict safety check.
+    // Reserved-seating events are priced by seat category, never by tier.
+    // Presence of `venue_master_id` (or explicit seat_assignments) means
+    // the backend will provision an EventVenuePlan, so tiers must be [].
+    const isReservedSeating =
+        Boolean(formData.has_reserved_seating) ||
+        Boolean(formData.venue_master_id) ||
+        (formData.seat_assignments !== undefined
+            && formData.seat_assignments !== null);
+
+    // Free registrations cannot have priced tiers. But if the event
+    // already has sold tiers (converting from ticketed), we must NOT
+    // send an empty array — that would trigger the 409 guard.
     const hasSoldTiers = (tiers || []).some((t) => (t.quantity_sold || 0) > 0);
-    const shouldDropTiers = isFree && !hasSoldTiers;
+    const shouldDropTiers = (isFree && !hasSoldTiers) || isReservedSeating;
 
     const payload = {
         title: formData.title,
@@ -25,23 +34,47 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         timezone: formData.timezone || 'Asia/Kolkata',
         status: formData.status || EVENT_STATUS.DRAFT,
         is_public: formData.is_public !== undefined ? formData.is_public : true,
+        donations_enabled: Boolean(formData.donations_enabled),
+        ask_course_question: false,
+        privacy_notice_text: formData.privacy_notice_text || '',
+        marketing_opt_in_enabled: Boolean(formData.marketing_opt_in_enabled),
+        public_page_enabled: formData.public_page_enabled !== false,
+        duration_minutes: Number(formData.duration_minutes) || 120,
+        checkin_opens_minutes_before: Number(formData.checkin_opens_minutes_before) || 0,
+        map_url: formData.map_url || '',
+        faqs: formData.faqs || [],
+        title_zh: formData.title_zh || '',
+        short_description_zh: formData.short_description_zh || '',
+        description_zh: formData.description_zh || '',
+        faqs_zh: formData.faqs_zh || [],
+        donation_presets: formData.donation_presets || [],
+        donation_contact_text: '',
+        show_bilingual_content: Boolean(formData.show_bilingual_content),
+        feedback_enabled: Boolean(formData.feedback_enabled),
+        feedback_title: formData.feedback_title || 'Share your feedback',
+        feedback_intro: formData.feedback_intro || '',
+        feedback_questions: formData.feedback_questions || [],
+        highlights: [],
+        age_info: formData.age_info || '',
+        door_time: '',
+        parking_info: formData.parking_info || '',
+        refund_policy: '',
+        accessibility_info: formData.accessibility_info || '',
         ticket_format: formData.ticket_format || 'pdf',
         combine_tickets: formData.combine_tickets || false,
         tickets_per_page: formData.tickets_per_page || 4,
         cancellation_policy_id: formData.cancellation_policy_id || null,
         cancellation_policy_text: formData.cancellation_policy_text || '',
+        cancellation_reason: formData.cancellation_reason || '',
         sessions: (sessions || []).map((s) => ({
-            // ✅ Pass the ID if it exists so the backend knows this is an update.
             ...(s.id ? { id: s.id } : {}),
             start_time: inputToIso(s.start_time),
             end_time: inputToIso(s.end_time),
             capacity: parseInt(s.capacity, 10) || 100,
         })),
-        // For free registrations, only drop tiers if none are sold.
         tiers: shouldDropTiers
             ? []
             : (tiers || []).map((t) => ({
-                // ✅ Pass the ID if it exists for tiers as well.
                 ...(t.id ? { id: t.id } : {}),
                 name: t.name || 'General',
                 price: parseFloat(t.price) || 0,
@@ -50,13 +83,30 @@ export const buildEventPayload = (formData, sessions, tiers) => {
             })),
     };
 
-    // ✅ NEW: admins may explicitly tag/reassign the organizer.
-    // Organizers never send this (the picker is hidden for them), and
-    // even if they did, the backend rejects any value other than
-    // their own ID. Only include the key when a real value is set so
-    // we don't accidentally try to clear the organizer on update.
+    // Multi-tenancy — the event must belong to exactly one organization.
+    // Sent explicitly when the picker was used. If omitted, the backend
+    // infers it for single-org users and rejects with a clear message
+    // when the caller manages >1 org.
+    if (formData.organization_id) {
+        payload.organization_id = formData.organization_id;
+    }
+
+    // Admin-only organizer tagging. Organizers never send this; if they
+    // did, the backend would reject any value other than their own ID.
     if (formData.organizer_id) {
         payload.organizer_id = formData.organizer_id;
+    }
+
+    // Passthrough: seat-map / venue-master fields must be carried through
+    // verbatim — no transformation, no defaults.
+    if (formData.venue_master_id) {
+        payload.venue_master_id = formData.venue_master_id;
+    }
+    if (formData.seat_assignments) {
+        payload.seat_assignments = formData.seat_assignments;
+    }
+    if (formData.category_overrides) {
+        payload.category_overrides = formData.category_overrides;
     }
 
     return payload;

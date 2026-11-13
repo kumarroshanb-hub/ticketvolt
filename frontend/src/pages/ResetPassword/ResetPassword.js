@@ -1,6 +1,7 @@
 // frontend/src/pages/ResetPassword/ResetPassword.js
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -13,6 +14,7 @@ const C = appTheme.colors;
 const F = appTheme.fonts;
 
 const ResetPassword = () => {
+    const { t } = useTranslation();
     const { uid, token } = useParams();
     const navigate = useNavigate();
     
@@ -26,12 +28,12 @@ const ResetPassword = () => {
         setError('');
 
         if (password !== confirmPassword) {
-            setError('Passwords do not match.');
+            setError(t('resetPassword.mismatch'));
             return;
         }
 
         if (password.length < 10) {
-            setError('Password must be at least 10 characters long.');
+            setError(t('resetPassword.tooShort'));
             return;
         }
 
@@ -43,10 +45,10 @@ const ResetPassword = () => {
                 token,
                 password,
             });
-            toast.success('Password reset successfully! You can now log in.');
+            toast.success(t('resetPassword.success'));
             navigate('/login', { replace: true });
         } catch (err) {
-            const msg = err.response?.data?.error || 'Failed to reset password. The link may be expired.';
+            const msg = err.response?.data?.error || t('resetPassword.failed');
             setError(msg);
             toast.error(msg);
         } finally {
@@ -56,6 +58,7 @@ const ResetPassword = () => {
 
     return (
         <Box
+            className="tv-auth-page"
             sx={{
                 display: 'flex', justifyContent: 'center', alignItems: 'center',
                 minHeight: '100vh', minHeight: '100dvh', bgcolor: C.bgDark,
@@ -71,10 +74,10 @@ const ResetPassword = () => {
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
                     <Logo variant="full" height={60} inverse />
                     <Typography variant="h5" sx={{ color: 'white', mt: 3, fontWeight: 700 }}>
-                        Set New Password
+                        {t('resetPassword.title')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.6)', mt: 1, textAlign: 'center' }}>
-                        Please enter your new password below.
+                        {t('resetPassword.subtitle')}
                     </Typography>
                 </Box>
 
@@ -82,7 +85,7 @@ const ResetPassword = () => {
 
                 <form onSubmit={handleSubmit} noValidate>
                     <TextField
-                        fullWidth label="New Password" type="password" value={password}
+                        fullWidth label={t('resetPassword.newPassword')} type="password" value={password}
                         onChange={(e) => setPassword(e.target.value)} required
                         disabled={loading}
                         sx={{
@@ -96,7 +99,7 @@ const ResetPassword = () => {
                         }}
                     />
                     <TextField
-                        fullWidth label="Confirm New Password" type="password" value={confirmPassword}
+                        fullWidth label={t('resetPassword.confirmPassword')} type="password" value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)} required
                         disabled={loading}
                         sx={{
@@ -117,7 +120,7 @@ const ResetPassword = () => {
                             fontWeight: 700,
                         }}
                     >
-                        {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : 'Reset Password'}
+                        {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : t('resetPassword.submit')}
                     </Button>
                 </form>
             </Paper>

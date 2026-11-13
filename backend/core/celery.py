@@ -34,4 +34,9 @@ app.conf.beat_schedule = {
         'task': 'ticket_bookings.tasks.update_sold_out_events',
         'schedule': crontab(minute='*/30'),  # Run every 30 minutes
     },
+
+    'release-expired-payment-holds': {
+    'task': 'ticket_bookings.tasks.release_expired_payment_holds',
+    'schedule': 60.0,   # every minute
+},
 }

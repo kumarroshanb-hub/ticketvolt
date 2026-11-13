@@ -1,32 +1,45 @@
 # backend/ticket_bookings/api/dashboard_api.py
 """
-Dashboard stats.
+Dashboard stats — tenant-aware.
 
-✅ FIX [P15]: past events are excluded from `popular_events` at the
-queryset level. Previously an event whose `end_date` had passed but
-whose stored `status` was still 'active' (cron lag) would show up in
-the "Popular Events" list and count toward `total_tickets_sold` /
-`total_revenue` on the dashboard card, while the Events page showed it
-as completed.
+Scope (Phase 3):
+  • Platform admins see every event / booking in every org.
+  • Org Owners/Admins see their org(s) only.
+  • Everyone else (Regular Users) sees only public events and their own bookings.
 
-✅ FIX [P10]: every revenue sum now uses `managers.canonical_revenue`
-so the dashboard, analytics, and event-list cannot drift.
+FIX: Removed `IsTenantManager` permission. Regular users are now allowed to 
+access the endpoint. The scoping is handled entirely by `services.tenancy` 
+(`visible_events`, `visible_bookings`), which correctly restricts Regular 
+Users to their own bookings and public events.
 
-✅ FIX [P26]: `Event.get_effective_status` is called exactly once per
-event and reused for both the display status and the `is_upcoming` /
-`is_past` flags, so a naive/aware edge case in one code path can no
-longer produce a different answer than the other.
+Preserved invariants (from earlier fixes):
+  ✅ FIX [P15]: past events excluded from `popular_events`.
+  ✅ FIX [P10]: revenue via `managers.canonical_revenue` so this
+                page cannot drift from Analytics / Events list.
+  ✅ FIX [P26]: `Event.get_effective_status` called once per event
+                and reused for both display status and
+                `is_upcoming` / `is_past`.
 """
 import logging
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from ..models import Event, Booking, Ticket, CheckInLog
+from ticket_bookings.views import get_user_role  # noqa: F401
+from ..services.tenancy import (
+    visible_events,
+    visible_bookings,
+    visible_tickets,
+    is_platform_admin,
+    user_org_ids,
+    effective_role_label,
+    user_memberships_payload,
+    filter_organization_param,
+)
 from ..managers import (
     SOLD_BOOKING_STATUSES,
     EXCLUDED_BOOKING_STATUSES,
@@ -39,11 +52,11 @@ from ..managers import (
 logger = logging.getLogger(__name__)
 
 
-# Terminal statuses — never overridden by the effective-status rule.
 _TERMINAL_EVENT_STATUSES = ('cancelled', 'completed')
 
 
 class DashboardStatsView(APIView):
+    # FIXED: Allow all authenticated users. Scoping is handled by the querysets below.
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -51,37 +64,24 @@ class DashboardStatsView(APIView):
             user = request.user
             now = timezone.now()
 
-            is_admin = user.is_staff or user.is_superuser
-            is_organizer = (
-                (hasattr(user, 'profile')
-                 and getattr(user.profile, 'is_organizer', False))
-                or hasattr(user, 'organizer')
+            # ------------------------------------------------------------
+            # 1. Scope — delegated to services.tenancy.
+            #    - Managers see their org's data.
+            #    - Regular users see public events + their own bookings.
+            # ------------------------------------------------------------
+            events_qs = filter_organization_param(
+                visible_events(user),
+                request.query_params.get('organization_id'),
             )
-
-            # ------------------------------------------------------------
-            # 1. Scope.
-            # ------------------------------------------------------------
-            if is_admin:
-                events_qs = Event.objects.all()
-            elif is_organizer:
-                events_qs = Event.objects.filter(organizer=user)
-            else:
-                events_qs = Event.objects.filter(
-                    status__in=['active', 'published'],
-                    is_public=True,
-                )
-
-            bookings_qs = Booking.objects.visible_to(user)
-            tickets_qs = Ticket.objects.filter(
-                booking__in=bookings_qs
-            ).distinct()
+            bookings_qs = visible_bookings(user).filter(event__in=events_qs)
+            tickets_qs = visible_tickets(user).filter(booking__in=bookings_qs)
             checkins_qs = CheckInLog.objects.filter(
                 status='success',
                 event__in=events_qs,
             )
 
             # ------------------------------------------------------------
-            # 2. Headline numbers.
+            # 2. Headline numbers
             # ------------------------------------------------------------
             total_events = events_qs.count()
 
@@ -101,7 +101,6 @@ class DashboardStatsView(APIView):
             total_tickets = tickets_qs.filter(live_ticket_q()).count()
             total_checkins = checkins_qs.count()
 
-            # ✅ FIX [P10]: canonical revenue helper.
             total_revenue = canonical_revenue(bookings_qs)
 
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -110,7 +109,7 @@ class DashboardStatsView(APIView):
             )
 
             # ------------------------------------------------------------
-            # 3. Recent bookings.
+            # 3. Recent bookings
             # ------------------------------------------------------------
             recent = (
                 bookings_qs
@@ -139,13 +138,13 @@ class DashboardStatsView(APIView):
                     ),
                     'event_title': b.event.title if b.event else 'N/A',
                     'event_id': str(b.event.id) if b.event else None,
-                    'ticket_count': b.tickets.count(), # 👈 ADD THIS LINE
+                    'ticket_count': b.tickets.count(),
                 }
                 for b in recent
             ]
 
             # ------------------------------------------------------------
-            # 4. Popular events — ✅ FIX [P15]: exclude past events here.
+            # 4. Popular events — ✅ FIX [P15]: exclude past events.
             # ------------------------------------------------------------
             popular_qs = (
                 events_visible_upcoming(
@@ -178,17 +177,13 @@ class DashboardStatsView(APIView):
             popular_events_data = []
             for event in popular_qs:
                 tiers = list(event.tiers.all())
-
-                # ✅ FIX [P26]: single call, single source of truth.
                 effective_status = event.get_effective_status(now=now)
 
                 popular_events_data.append({
                     'id': str(event.id),
                     'title': event.title,
-
                     'status': effective_status,
                     'stored_status': event.status,
-
                     'start_date': (
                         event.start_date.isoformat()
                         if event.start_date else None
@@ -216,6 +211,15 @@ class DashboardStatsView(APIView):
                     ),
                 })
 
+            # ------------------------------------------------------------
+            # 5. Role info block — 100% accurate 6-tier labels.
+            # ------------------------------------------------------------
+            # We import get_user_role here to avoid circular imports at the top.
+            # This ensures the dashboard label matches the Sidebar/Profile exactly.
+
+            role_label = effective_role_label(user) # Returns: super_admin, owner, admin, staff, member, or user
+            is_manager = bool(user_org_ids(user)) # True for Owner/Admin
+
             return Response({
                 'total_events': total_events,
                 'active_events': active_events,
@@ -229,14 +233,14 @@ class DashboardStatsView(APIView):
                 'recent_bookings': recent_bookings_data,
                 'popular_events': popular_events_data,
                 'role_info': {
-                    'role': (
-                        'admin' if is_admin
-                        else 'organizer' if is_organizer
-                        else 'user'
-                    ),
+                    'role': role_label,
+                    'effective_role': role_label,
                     'is_staff': user.is_staff,
-                    'is_organizer': is_organizer,
-                    'shows_past_events': is_admin or is_organizer,
+                    'is_superuser': user.is_superuser,
+                    'is_manager': is_manager,
+                    'org_ids': [str(o) for o in user_org_ids(user)],
+                    'memberships': user_memberships_payload(user),
+                    'shows_past_events': is_platform_admin(user) or is_manager,
                 },
             })
 

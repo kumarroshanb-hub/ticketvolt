@@ -17,8 +17,10 @@ import {
     Download as DownloadIcon,
     Search as SearchIcon,
     Cancel as CancelIcon,
+    Send as SendIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
@@ -127,6 +129,7 @@ const FooterSummary = styled(Box)`
 const BookingTickets = () => {
     const { bookingId } = useParams();
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const { user } = useAuth();
     const { formatMoney } = useSettings();   // ✅ NEW
     const theme = useTheme();
@@ -150,6 +153,9 @@ const BookingTickets = () => {
     // ---- Cancellation state ----
     const [selectedTicketIds, setSelectedTicketIds] = useState([]);
     const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+    const [transferTicket, setTransferTicket] = useState(null);
+    const [transferEmail, setTransferEmail] = useState('');
+    const [transferring, setTransferring] = useState(false);
     const [cancelReason, setCancelReason] = useState('');
     const [cancelling, setCancelling] = useState(false);
     const [previewData, setPreviewData] = useState(null);
@@ -184,11 +190,11 @@ const BookingTickets = () => {
             setSelectedTicketIds([]);
         } catch (error) {
             console.error('Error loading tickets:', error);
-            toast.error('Failed to load tickets');
+            toast.error(t('booking.loadFailed'));
         } finally {
             setLoading(false);
         }
-    }, [bookingId]);
+    }, [bookingId, t]);
 
     useEffect(() => {
         loadBookingTickets();
@@ -297,19 +303,17 @@ const BookingTickets = () => {
                 refund_amount_added,
             } = result.data;
 
-            const refundText =   // ✅ PATCHED
+            const refundText =
                 refund_amount_added && refund_amount_added > 0
-                    ? ` (${formatMoney(refund_amount_added)} refunded)`
+                    ? ` (${formatMoney(refund_amount_added)} ${t('status.booking.refunded')})`
                     : '';
 
             toast.success(
-                `${cancelled_ticket_ids.length} ticket(s) cancelled${refundText}`,
+                `${t('bookings.ticketsCancelled', { n: cancelled_ticket_ids.length })}${refundText}`,
             );
 
             if (fully_cancelled) {
-                toast.info(
-                    'All tickets cancelled — booking is now marked as cancelled.',
-                );
+                toast.info(t('bookings.allTicketsCancelled'));
             }
 
             setSelectedTicketIds([]);
@@ -321,7 +325,7 @@ const BookingTickets = () => {
         } catch (err) {
             console.error('Cancel tickets error:', err);
             toast.error(
-                err.response?.data?.error || 'Failed to cancel tickets',
+                err.response?.data?.error || t('bookings.cancelTicketsFailed'),
             );
         } finally {
             setCancelling(false);
@@ -341,15 +345,15 @@ const BookingTickets = () => {
 
     const getStatusChip = (status) => {
         const config = {
-            active: { color: 'success', label: 'ACTIVE' },
-            used: { color: 'error', label: 'USED' },
-            cancelled: { color: 'default', label: 'CANCELLED' },
-            expired: { color: 'warning', label: 'EXPIRED' },
-            refunded: { color: 'secondary', label: 'REFUNDED' },
+            active: { color: 'success', label: t('ticket.statusChipActive') },
+            used: { color: 'error', label: t('ticket.statusChipUsed') },
+            cancelled: { color: 'default', label: t('ticket.statusChipCancelled') },
+            expired: { color: 'warning', label: t('ticket.statusChipExpired') },
+            refunded: { color: 'secondary', label: t('ticket.statusChipRefunded') },
         };
         const { color, label } = config[status] || {
             color: 'default',
-            label: status || 'UNKNOWN',
+            label: status || t('status.unknown'),
         };
         return <StatusChip label={label} size="small" color={color} />;
     };
@@ -360,22 +364,22 @@ const BookingTickets = () => {
     const handleExport = () => {
         try {
             const headers = [
-                'Ticket Code',
-                'Attendee Name',
-                'Status',
-                'Check-in Time',
-                'Tier',
-                'Price',
+                t('booking.ticketCode'),
+                t('booking.attendeeName'),
+                t('booking.status'),
+                t('booking.checkInTime'),
+                t('booking.tier'),
+                t('booking.price'),
             ];
-            const rows = filteredTickets.map((t) => [
-                t.unique_code || '',
-                t.attendee_name || 'Guest',
-                t.status || '',
-                t.check_in_time
-                    ? new Date(t.check_in_time).toLocaleString()
+            const rows = filteredTickets.map((ticket) => [
+                ticket.unique_code || '',
+                ticket.attendee_name || t('bookings.guest'),
+                ticket.status || '',
+                ticket.check_in_time
+                    ? new Date(ticket.check_in_time).toLocaleString()
                     : '-',
-                t.tier_name || 'N/A',
-                formatMoney(t.price || 0),   // ✅ PATCHED
+                ticket.tier_name || t('common.nA'),
+                formatMoney(ticket.price || 0),   // ✅ PATCHED
             ]);
 
             const csvContent = [
@@ -397,10 +401,10 @@ const BookingTickets = () => {
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
 
-            toast.success('Tickets exported successfully');
+            toast.success(t('booking.exportedSuccess'));
         } catch (error) {
             console.error('Export error:', error);
-            toast.error('Failed to export tickets');
+            toast.error(t('booking.exportFailed'));
         }
     };
 
@@ -415,7 +419,7 @@ const BookingTickets = () => {
                 <Box sx={{ textAlign: 'center', py: 4 }}>
                     <QrCodeIcon sx={{ fontSize: 60, color: C.textMuted }} />
                     <Typography sx={{ color: C.textMuted }}>
-                        QR Code not available
+                        {t('booking.qrNotAvailable')}
                     </Typography>
                 </Box>
             );
@@ -425,7 +429,7 @@ const BookingTickets = () => {
             return (
                 <img
                     src={qrData}
-                    alt="QR Code"
+                    alt={t('booking.qrCode')}
                     style={{
                         maxWidth: '100%',
                         maxHeight: 300,
@@ -440,7 +444,7 @@ const BookingTickets = () => {
             return (
                 <img
                     src={qrData}
-                    alt="QR Code"
+                    alt={t('booking.qrCode')}
                     style={{
                         maxWidth: '100%',
                         maxHeight: 300,
@@ -455,7 +459,7 @@ const BookingTickets = () => {
             return (
                 <img
                     src={`data:image/png;base64,${qrData}`}
-                    alt="QR Code"
+                    alt={t('booking.qrCode')}
                     style={{
                         maxWidth: '100%',
                         maxHeight: 300,
@@ -489,7 +493,7 @@ const BookingTickets = () => {
             <Box sx={{ textAlign: 'center', py: 4 }}>
                 <QrCodeIcon sx={{ fontSize: 60, color: C.textMuted }} />
                 <Typography sx={{ color: C.textMuted, mt: 2 }}>
-                    QR Code data available
+                    {t('booking.qrDataAvailable')}
                 </Typography>
             </Box>
         );
@@ -511,10 +515,10 @@ const BookingTickets = () => {
         return (
             <Box sx={{ p: 3 }}>
                 <Alert severity="error" sx={{ mb: 2 }}>
-                    Booking not found
+                    {t('booking.bookingNotFound')}
                 </Alert>
                 <Button startIcon={<ArrowBackIcon />} onClick={handleBack}>
-                    Back to Bookings
+                    {t('booking.backToBookings')}
                 </Button>
             </Box>
         );
@@ -538,7 +542,7 @@ const BookingTickets = () => {
                         <ArrowBackIcon />
                     </BackButton>
                     <Box>
-                        <PageTitle>Booking Tickets</PageTitle>
+                        <PageTitle>{t('booking.bookingTickets')}</PageTitle>
                         <PageSubtitle>
                             {booking.booking_reference} - {booking.customer_name}
                         </PageSubtitle>
@@ -551,7 +555,7 @@ const BookingTickets = () => {
                         onClick={loadBookingTickets}
                         size="small"
                     >
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                     <OutlineButton
                         variant="outlined"
@@ -559,7 +563,7 @@ const BookingTickets = () => {
                         onClick={handlePrint}
                         size="small"
                     >
-                        Print
+                        {t('booking.print')}
                     </OutlineButton>
                     <OutlineButton
                         variant="outlined"
@@ -567,7 +571,7 @@ const BookingTickets = () => {
                         onClick={handleExport}
                         size="small"
                     >
-                        Export CSV
+                        {t('booking.exportCsv')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -582,7 +586,7 @@ const BookingTickets = () => {
                                 gutterBottom
                                 variant="caption"
                             >
-                                Customer
+                                {t('booking.customer')}
                             </Typography>
                             <Typography
                                 variant="h6"
@@ -615,19 +619,19 @@ const BookingTickets = () => {
                                 gutterBottom
                                 variant="caption"
                             >
-                                Event
+                                {t('booking.event')}
                             </Typography>
                             <Typography
                                 variant="h6"
                                 sx={{ color: C.textPrimary, wordBreak: 'break-word' }}
                             >
-                                {booking.event_title || booking.event?.title || 'N/A'}
+                                {booking.event_title || booking.event?.title || t('common.nA')}
                             </Typography>
 
                             {/* Subtotal */}
                             <Box sx={{ mt: 1.5, display: 'flex', justifyContent: 'space-between' }}>
                                 <Typography variant="body2" sx={{ color: C.textSecondary }}>
-                                    Subtotal
+                                    {t('booking.subtotal')}
                                 </Typography>
                                 <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                     {formatMoney(subtotal)}   {/* ✅ PATCHED */}
@@ -638,7 +642,7 @@ const BookingTickets = () => {
                             {discountApplied > 0 && (
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
                                     <Typography variant="body2" sx={{ color: C.success, fontWeight: 600 }}>
-                                        Discount
+                                        {t('booking.discount')}
                                         {booking.discount_code ? ` (${booking.discount_code})` : ''}
                                     </Typography>
                                     <Typography variant="body2" sx={{ color: C.success, fontWeight: 600 }}>
@@ -658,7 +662,7 @@ const BookingTickets = () => {
                                 }}
                             >
                                 <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 700 }}>
-                                    Net Paid
+                                    {t('booking.netPaid')}
                                 </Typography>
                                 <Typography variant="body2" sx={{ color: C.primary, fontWeight: 700 }}>
                                     {formatMoney(netPaid)}   {/* ✅ PATCHED */}
@@ -689,32 +693,32 @@ const BookingTickets = () => {
                                 gutterBottom
                                 variant="caption"
                             >
-                                Ticket Statistics
+                                {t('booking.ticketStatistics')}
                             </Typography>
                             <Grid container spacing={1}>
                                 <Grid item xs={3}>
                                     <StatValue color={C.primary}>
                                         {stats.total}
                                     </StatValue>
-                                    <StatLabel>Total</StatLabel>
+                                    <StatLabel>{t('booking.total')}</StatLabel>
                                 </Grid>
                                 <Grid item xs={3}>
                                     <StatValue color={C.success}>
                                         {stats.active}
                                     </StatValue>
-                                    <StatLabel>Active</StatLabel>
+                                    <StatLabel>{t('booking.active')}</StatLabel>
                                 </Grid>
                                 <Grid item xs={3}>
                                     <StatValue color={C.error}>
                                         {stats.used}
                                     </StatValue>
-                                    <StatLabel>Used</StatLabel>
+                                    <StatLabel>{t('booking.used')}</StatLabel>
                                 </Grid>
                                 <Grid item xs={3}>
                                     <StatValue color={C.textLight}>
                                         {stats.cancelled}
                                     </StatValue>
-                                    <StatLabel>Cancelled</StatLabel>
+                                    <StatLabel>{t('booking.cancelled')}</StatLabel>
                                 </Grid>
                             </Grid>
                         </CardContent>
@@ -726,8 +730,8 @@ const BookingTickets = () => {
             <SearchField
                 placeholder={
                     isMobile
-                        ? 'Search tickets...'
-                        : 'Search by ticket code, attendee name, or status...'
+                        ? t('booking.searchByTicketShort')
+                        : t('booking.searchByTicket')
                 }
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -762,7 +766,7 @@ const BookingTickets = () => {
                         variant="body2"
                         sx={{ fontWeight: 600, color: C.errorDark, flex: 1, minWidth: 0 }}
                     >
-                        {selectedTicketIds.length} ticket(s) selected
+                        {t('bookings.ticketsSelectedCount', { count: selectedTicketIds.length })}
                     </Typography>
                     <Button
                         variant="contained"
@@ -772,14 +776,14 @@ const BookingTickets = () => {
                         onClick={handleCancelSelected}
                         sx={{ textTransform: 'none' }}
                     >
-                        Cancel Selected Tickets
+                        {t('booking.cancelSelectedTickets')}
                     </Button>
                     <Button
                         variant="text"
                         size="small"
                         onClick={() => setSelectedTicketIds([])}
                     >
-                        Clear
+                        {t('common.clear')}
                     </Button>
                 </Paper>
             )}
@@ -797,8 +801,8 @@ const BookingTickets = () => {
                     >
                         <Typography sx={{ color: C.textMuted }}>
                             {tickets.length === 0
-                                ? 'No tickets found for this booking'
-                                : 'No matching tickets found'}
+                                ? t('booking.noTicketsFound')
+                                : t('booking.noMatchingTickets')}
                         </Typography>
                     </Paper>
                 ) : (
@@ -888,13 +892,13 @@ const BookingTickets = () => {
                                                     fontWeight: 600,
                                                 }}
                                             >
-                                                Attendee
+                                                {t('booking.attendeeName')}
                                             </Typography>
                                             <Typography
                                                 variant="body2"
                                                 sx={{ color: C.textPrimary, fontWeight: 500 }}
                                             >
-                                                {ticket.attendee_name || 'Guest'}
+                                                {ticket.attendee_name || t('bookings.guest')}
                                             </Typography>
                                         </Box>
                                         <Box
@@ -912,13 +916,13 @@ const BookingTickets = () => {
                                                     fontWeight: 600,
                                                 }}
                                             >
-                                                Tier
+                                                {t('booking.tier')}
                                             </Typography>
                                             <Typography
                                                 variant="body2"
                                                 sx={{ color: C.textPrimary }}
                                             >
-                                                {ticket.tier_name || 'N/A'}
+                                                {ticket.tier_name || t('common.nA')}
                                             </Typography>
                                         </Box>
                                         <Box
@@ -936,7 +940,7 @@ const BookingTickets = () => {
                                                     fontWeight: 600,
                                                 }}
                                             >
-                                                Price
+                                                {t('booking.price')}
                                             </Typography>
                                             <Typography
                                                 variant="body2"
@@ -961,7 +965,7 @@ const BookingTickets = () => {
                                                         fontWeight: 600,
                                                     }}
                                                 >
-                                                    Checked In
+                                                    {t('booking.checkedIn')}
                                                 </Typography>
                                                 <Typography
                                                     variant="caption"
@@ -986,7 +990,7 @@ const BookingTickets = () => {
                                                 textTransform: 'none',
                                             }}
                                         >
-                                            View QR Code
+                                            {t('booking.viewQrCode')}
                                         </Button>
                                     </CardContent>
                                 </Card>
@@ -1024,16 +1028,16 @@ const BookingTickets = () => {
                                     </TableCell>
                                     {[
                                         { label: '#', align: 'left' },
-                                        { label: 'Ticket Code', align: 'left' },
-                                        { label: 'Attendee Name', align: 'left' },
-                                        { label: 'Status', align: 'center' },
-                                        { label: 'Tier', align: 'left' },
-                                        { label: 'Price', align: 'right' },
-                                        { label: 'Check-in Time', align: 'center' },
-                                        { label: 'Actions', align: 'center' },
-                                    ].map((h) => (
+                                        { label: t('booking.ticketCode'), align: 'left' },
+                                        { label: t('booking.attendeeName'), align: 'left' },
+                                        { label: t('booking.status'), align: 'center' },
+                                        { label: t('booking.tier'), align: 'left' },
+                                        { label: t('booking.price'), align: 'right' },
+                                        { label: t('booking.checkInTime'), align: 'center' },
+                                        { label: t('common.actions'), align: 'center' },
+                                    ].map((h, headerIndex) => (
                                         <TableCell
-                                            key={h.label}
+                                            key={headerIndex}
                                             align={h.align}
                                             sx={{
                                                 color: C.textSecondary,
@@ -1052,8 +1056,8 @@ const BookingTickets = () => {
                                         <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
                                             <Typography sx={{ color: C.textMuted }}>
                                                 {tickets.length === 0
-                                                    ? 'No tickets found for this booking'
-                                                    : 'No matching tickets found'}
+                                                    ? t('booking.noTicketsFound')
+                                                    : t('booking.noMatchingTickets')}
                                             </Typography>
                                         </TableCell>
                                     </TableRow>
@@ -1114,13 +1118,13 @@ const BookingTickets = () => {
                                                     </Typography>
                                                 </TableCell>
                                                 <TableCell sx={{ color: C.textPrimary }}>
-                                                    {ticket.attendee_name || 'Guest'}
+                                                    {ticket.attendee_name || t('bookings.guest')}
                                                 </TableCell>
                                                 <TableCell align="center">
                                                     {getStatusChip(ticket.status)}
                                                 </TableCell>
                                                 <TableCell sx={{ color: C.textPrimary }}>
-                                                    {ticket.tier_name || 'N/A'}
+                                                    {ticket.tier_name || t('common.nA')}
                                                 </TableCell>
                                                 <TableCell
                                                     align="right"
@@ -1151,7 +1155,7 @@ const BookingTickets = () => {
                                                         </Tooltip>
                                                     ) : (
                                                         <StatusChip
-                                                            label="Not checked in"
+                                                            label={t('booking.notCheckedIn')}
                                                             size="small"
                                                             variant="outlined"
                                                             sx={{
@@ -1162,7 +1166,7 @@ const BookingTickets = () => {
                                                     )}
                                                 </TableCell>
                                                 <TableCell align="center">
-                                                    <Tooltip title="View QR Code">
+                                                    <Tooltip title={t('booking.viewQrCode')}>
                                                         <IconButton
                                                             size="small"
                                                             sx={{ color: C.primary }}
@@ -1173,6 +1177,13 @@ const BookingTickets = () => {
                                                             <QrCodeIcon />
                                                         </IconButton>
                                                     </Tooltip>
+                                                    {ticket.status === 'active' && (
+                                                        <Tooltip title={t('booking.transferTicket', 'Transfer ticket')}>
+                                                            <IconButton size="small" sx={{ color: C.secondary }} onClick={() => { setTransferTicket(ticket); setTransferEmail(''); }}>
+                                                                <SendIcon />
+                                                            </IconButton>
+                                                        </Tooltip>
+                                                    )}
                                                 </TableCell>
                                             </TableRow>
                                         );
@@ -1188,11 +1199,10 @@ const BookingTickets = () => {
             {filteredTickets.length > 0 && (
                 <FooterSummary>
                     <Typography variant="body2" sx={{ color: C.textMuted }}>
-                        Showing {filteredTickets.length} of {tickets.length} tickets
+                        {t('booking.showingTickets', { shown: filteredTickets.length, total: tickets.length })}
                     </Typography>
                     <Typography variant="body2" sx={{ color: C.textMuted }}>
-                        Total: {stats.total} | Active: {stats.active} | Used:{' '}
-                        {stats.used} | Cancelled: {stats.cancelled}
+                        {t('bookings.footerStats', { total: stats.total, active: stats.active, used: stats.used, cancelled: stats.cancelled })}
                     </Typography>
                 </FooterSummary>
             )}
@@ -1224,7 +1234,7 @@ const BookingTickets = () => {
                             variant="h6"
                             sx={{ color: C.textPrimary, fontWeight: 600 }}
                         >
-                            QR Code
+                            {t('booking.qrCode')}
                         </Typography>
                         {selectedTicket && getStatusChip(selectedTicket.status)}
                     </Box>
@@ -1233,7 +1243,7 @@ const BookingTickets = () => {
                     {selectedTicket && (
                         <Box sx={{ textAlign: 'center', py: 2 }}>
                             <Typography variant="caption" sx={{ color: C.textMuted }}>
-                                Ticket Code
+                                {t('booking.ticketCode')}
                             </Typography>
                             <Typography
                                 variant="h5"
@@ -1268,7 +1278,7 @@ const BookingTickets = () => {
                                             sx={{ fontSize: 60, color: C.textMuted }}
                                         />
                                         <Typography sx={{ color: C.textMuted }}>
-                                            QR Code not available
+                                            {t('booking.qrNotAvailable')}
                                         </Typography>
                                     </Box>
                                 )}
@@ -1280,14 +1290,14 @@ const BookingTickets = () => {
                                         variant="caption"
                                         sx={{ color: C.textMuted }}
                                     >
-                                        Attendee
+                                        {t('booking.attendeeName')}
                                     </Typography>
                                     <Typography
                                         variant="body2"
                                         fontWeight="bold"
                                         sx={{ color: C.textPrimary }}
                                     >
-                                        {selectedTicket.attendee_name || 'Guest'}
+                                        {selectedTicket.attendee_name || t('bookings.guest')}
                                     </Typography>
                                 </Grid>
                                 <Grid item xs={6}>
@@ -1295,7 +1305,7 @@ const BookingTickets = () => {
                                         variant="caption"
                                         sx={{ color: C.textMuted }}
                                     >
-                                        Status
+                                        {t('booking.status')}
                                     </Typography>
                                     <Typography
                                         variant="body2"
@@ -1310,7 +1320,7 @@ const BookingTickets = () => {
                                         variant="caption"
                                         sx={{ color: C.textMuted }}
                                     >
-                                        Tier
+                                        {t('booking.tier')}
                                     </Typography>
                                     <Typography
                                         variant="body2"
@@ -1324,7 +1334,7 @@ const BookingTickets = () => {
                                         variant="caption"
                                         sx={{ color: C.textMuted }}
                                     >
-                                        Price
+                                        {t('booking.price')}
                                     </Typography>
                                     <Typography
                                         variant="body2"
@@ -1339,7 +1349,7 @@ const BookingTickets = () => {
                 </DialogContent>
                 <DialogActions sx={{ p: 2 }}>
                     <OutlineButton onClick={() => setQrDialogOpen(false)}>
-                        Close
+                        {t('common.close')}
                     </OutlineButton>
                     {selectedTicket?.qr_code && (
                         <PrimaryButton
@@ -1352,19 +1362,49 @@ const BookingTickets = () => {
                                     document.body.appendChild(link);
                                     link.click();
                                     document.body.removeChild(link);
-                                    toast.success('QR code downloaded');
+                                    toast.success(t('booking.qrDownloaded'));
                                 } else if (qrData.startsWith('http')) {
                                     window.open(qrData, '_blank');
                                 } else {
                                     toast.info(
-                                        'QR code is embedded and cannot be downloaded directly',
+                                        t('booking.qrCannotDownload'),
                                     );
                                 }
                             }}
                         >
-                            Download QR
+                            {t('booking.downloadQr')}
                         </PrimaryButton>
                     )}
+                </DialogActions>
+            </Dialog>
+
+            <Dialog open={!!transferTicket} onClose={() => setTransferTicket(null)} maxWidth="xs" fullWidth>
+                <DialogTitle>{t('booking.transferTicket', 'Transfer ticket')}</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        fullWidth autoFocus sx={{ mt: 1 }}
+                        label={t('booking.recipientEmail', 'Recipient email')}
+                        value={transferEmail}
+                        onChange={(e) => setTransferEmail(e.target.value)}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setTransferTicket(null)}>{t('common.cancel')}</Button>
+                    <Button
+                        variant="contained" disabled={transferring || !transferEmail.trim()}
+                        onClick={async () => {
+                            setTransferring(true);
+                            try {
+                                await api.post(`/tickets/${transferTicket.id}/transfer/`, { to_email: transferEmail.trim() });
+                                toast.success(t('booking.transferCreated', 'Transfer created. The recipient can accept it.'));
+                                setTransferTicket(null); setTransferEmail('');
+                            } catch (err) {
+                                toast.error(err.response?.data?.error || err.message);
+                            } finally { setTransferring(false); }
+                        }}
+                    >
+                        {t('booking.sendTransfer', 'Send transfer')}
+                    </Button>
                 </DialogActions>
             </Dialog>
 
@@ -1384,15 +1424,12 @@ const BookingTickets = () => {
                 }}
             >
                 <DialogTitle sx={{ color: C.textPrimary, fontWeight: 700 }}>
-                    Cancel {selectedTicketIds.length} Ticket
-                    {selectedTicketIds.length === 1 ? '' : 's'}?
+                    {t('booking.cancelTicketsTitle', { count: selectedTicketIds.length })}
                 </DialogTitle>
 
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2 }}>
-                        This action cannot be undone. The selected tickets will be
-                        marked as cancelled and a refund will be recorded on the
-                        booking.
+                        {t('booking.cancelTicketsWarning')}
                     </Alert>
 
                     {loadingPreview && (
@@ -1406,7 +1443,7 @@ const BookingTickets = () => {
                         >
                             <CircularProgress size={18} />
                             <Typography variant="body2" sx={{ color: C.textSecondary }}>
-                                Calculating refund...
+                                {t('booking.calculatingRefund')}
                             </Typography>
                         </Box>
                     )}
@@ -1431,7 +1468,7 @@ const BookingTickets = () => {
                                     letterSpacing: 0.5,
                                 }}
                             >
-                                Refund preview
+                                {t('booking.refundPreview')}
                                 {previewData.policy_name
                                     ? ` · ${previewData.policy_name}`
                                     : ''}
@@ -1474,7 +1511,7 @@ const BookingTickets = () => {
                                             >
                                                 {row.allowed
                                                     ? row.tier_label
-                                                    : row.reason || 'Not allowed'}
+                                                    : row.reason || t('booking.notAllowed')}
                                             </Typography>
                                         </Box>
                                         <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
@@ -1494,7 +1531,7 @@ const BookingTickets = () => {
                                                     variant="caption"
                                                     sx={{ color: C.error }}
                                                 >
-                                                    −{formatMoney(row.cancellation_fee)} fee   {/* ✅ PATCHED */}
+                                                    −{formatMoney(row.cancellation_fee)} {t('booking.fee')}
                                                 </Typography>
                                             )}
                                         </Box>
@@ -1514,7 +1551,7 @@ const BookingTickets = () => {
                                         variant="body2"
                                         sx={{ fontWeight: 700, color: C.textPrimary }}
                                     >
-                                        Total refund
+                                        {t('booking.totalRefund')}
                                     </Typography>
                                     <Typography
                                         variant="body2"
@@ -1529,8 +1566,8 @@ const BookingTickets = () => {
 
                     <TextField
                         fullWidth
-                        label="Reason (optional)"
-                        placeholder="e.g. Customer request, event rescheduled..."
+                        label={t('booking.reason')}
+                        placeholder={t('booking.reasonPlaceholder')}
                         value={cancelReason}
                         onChange={(e) => setCancelReason(e.target.value)}
                         multiline
@@ -1546,7 +1583,7 @@ const BookingTickets = () => {
                         disabled={cancelling}
                         sx={{ textTransform: 'none' }}
                     >
-                        Keep Tickets
+                        {t('booking.keepTickets')}
                     </Button>
                     <Button
                         variant="contained"
@@ -1562,7 +1599,7 @@ const BookingTickets = () => {
                         }
                         sx={{ textTransform: 'none' }}
                     >
-                        {cancelling ? 'Cancelling...' : 'Cancel Tickets'}
+                        {cancelling ? t('booking.cancelling') : t('bookings.cancelTickets')}
                     </Button>
                 </DialogActions>
             </Dialog>

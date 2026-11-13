@@ -38,6 +38,9 @@ COPY --chown=app:app . .
 COPY --chown=app:app entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# after COPY --chown=app:app . .
+RUN python manage.py compilemessages || true
+
 # ✅ FIX [P38]: drop privileges before exposing the port. The container
 # now runs as `app`, not `root`. Any file the app writes (logs, media,
 # staticfiles) must live in a directory the `app` user owns — which is

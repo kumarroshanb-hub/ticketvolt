@@ -291,7 +291,7 @@ export default function SettingsScreen({ navigation }) {
         <View style={styles.card}>
           <Text style={styles.label}>SERVER ENDPOINT</Text>
           <Text style={styles.hint}>
-            Enter the URL where your TicketVolt backend is running
+            Enter the URL where your TiketVault backend is running
           </Text>
 
           {lastWorkingIp ? (
@@ -547,7 +547,7 @@ export default function SettingsScreen({ navigation }) {
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>⚡ TICKETVOLT v1.0</Text>
+          <Text style={styles.footerText}>⚡ TIKETVAULT v1.0</Text>
           <Text style={styles.footerSubText}>
             Smart IP Auto-Discovery Enabled
           </Text>

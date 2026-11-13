@@ -14,7 +14,7 @@ const normalizeBookings = (data) => {
     return [];
 };
 
-export const useBookings = () => {
+export const useBookings = (params = {}) => {
     const { user } = useAuth();
     const { role } = useRole();
 
@@ -26,7 +26,7 @@ export const useBookings = () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await api.get('/bookings/');
+            const response = await api.get('/bookings/', { params });
             const data = normalizeBookings(response.data);
             setBookings(data);
         } catch (err) {
@@ -40,12 +40,11 @@ export const useBookings = () => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [JSON.stringify(params)]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         loadBookings();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [loadBookings]);
 
     return { bookings, loading, error, loadBookings, user, role };
 };

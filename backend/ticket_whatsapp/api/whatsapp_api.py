@@ -381,7 +381,7 @@ Commands:
 3. /support - Contact support
 4. /help - Show this menu
 
-Thank you for using TicketVolt! 🎫
+Thank you for using TiketVault! 🎫
             """
             WhatsAppService.send_message(phone_number, response)
 
@@ -390,7 +390,7 @@ Thank you for using TicketVolt! 🎫
 📋 *Bookings*
 
 To view your bookings, please visit:
-https://ticketvolt.com/my-bookings
+https://tiketvault.com/my-bookings
 
 Or reply with your booking reference number.
             """

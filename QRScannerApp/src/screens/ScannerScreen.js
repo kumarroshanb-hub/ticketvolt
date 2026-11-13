@@ -10,11 +10,24 @@ import {
     Alert,
     ActivityIndicator,
     Dimensions,
+    Modal,
+    TextInput,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import NetInfo from '@react-native-community/netinfo';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AuthContext } from '../context/AuthContext';
 import { scannerApi } from '../services/api';
+import {
+    getActivePack,
+    getDeviceId,
+    markLocalTicketUsed,
+    pendingSyncCount,
+    recordOfflineCheckin,
+    syncOutbox,
+    validateLocalScan,
+} from '../services/offlineCheckin';
+import { announceCheckin, getLanSeen, getLanStatus } from '../services/lanPeer';
 import { theme } from '../theme';
 
 const C = theme.colors;
@@ -100,16 +113,72 @@ export default function ScannerScreen({ navigation }) {
     const animationInterval = useRef(null);
     const { logout } = useContext(AuthContext);
 
+    const [activePack, setActivePack] = useState(null);
+    const [pending, setPending] = useState(0);
+    const [isOnline, setIsOnline] = useState(true);
+    const [manualVisible, setManualVisible] = useState(false);
+    const [manualCode, setManualCode] = useState('');
+    const [lanPeers, setLanPeers] = useState(0);
+
     useEffect(() => {
         loadStats();
+        loadOfflineState();
         startScanAnimation();
+
+        const lanTimer = setInterval(async () => {
+            const status = await getLanStatus();
+            setLanPeers(status.peers);
+        }, 3000);
+
+        const unsubscribe = NetInfo.addEventListener((state) => {
+            const online = Boolean(state.isConnected);
+            setIsOnline(online);
+            if (online) {
+                // Flush anything captured while offline.
+                syncOutbox()
+                    .then((result) => setPending(result.pending))
+                    .catch(() => {});
+            }
+        });
+
         return () => {
+            if (unsubscribe) unsubscribe();
+            clearInterval(lanTimer);
             if (animationInterval.current) {
                 clearInterval(animationInterval.current);
                 animationInterval.current = null;
             }
         };
     }, []);
+
+    const loadOfflineState = async () => {
+        const [pack, count, net] = await Promise.all([
+            getActivePack(),
+            pendingSyncCount(),
+            NetInfo.fetch(),
+        ]);
+        setActivePack(pack);
+        setPending(count);
+        const online = Boolean(net?.isConnected);
+        setIsOnline(online);
+
+        // Opportunistic sync when the scanner is opened online.
+        if (online && count > 0) {
+            try {
+                const result = await syncOutbox();
+                setPending(result.pending);
+            } catch {
+                // Keep the outbox; the network listener will retry.
+            }
+        }
+    };
+
+    const isNetworkError = (error) => {
+        if (!error) return false;
+        if (error.code === 'ECONNABORTED' || error.code === 'ERR_NETWORK') return true;
+        if (error.message && /network|timeout|failed to fetch/i.test(error.message)) return true;
+        return !error.response;
+    };
 
     const startScanAnimation = () => {
         let direction = 1;
@@ -169,7 +238,61 @@ export default function ScannerScreen({ navigation }) {
             }
 
             setStatusText('🛡️ Validating credentials...');
-            const verifyResponse = await scannerApi.verify(ticketPayload);
+
+            // LAN gossip may already know this ticket was used at another
+            // gate, even while this device still has internet.
+            const lanSeen = await getLanSeen(ticketPayload.code);
+            if (lanSeen) {
+                setStatusText('⚠️ Already Authenticated');
+                Alert.alert(
+                    '⚠️ Already Authenticated',
+                    `This ticket was checked in on another scanner at ${new Date(lanSeen.scanned_at).toLocaleTimeString()}.`,
+                    [{ text: 'OK', onPress: () => setScanned(false) }],
+                );
+                setLoading(false);
+                setTimeout(() => {
+                    setScanned(false);
+                    setStatusText('Initialize Scan Sequence');
+                }, 2000);
+                return;
+            }
+
+            let verifyResponse;
+            try {
+                verifyResponse = await scannerApi.verify(ticketPayload);
+            } catch (verifyError) {
+                if (!isNetworkError(verifyError) || !activePack) {
+                    throw verifyError;
+                }
+
+                // Offline / unreachable server: verify against the signed
+                // manifest and the local checked-in state.
+                const local = await validateLocalScan(activePack, ticketPayload);
+                if (!local.valid) {
+                    const title = local.alreadyCheckedIn
+                        ? '⚠️ Already Authenticated'
+                        : '⛔ Offline Validation Failed';
+                    setStatusText(`❌ ${title.replace(/^[^ ]+ /, '')}`);
+                    Alert.alert(title, local.message, [
+                        { text: 'OK', onPress: () => setScanned(false) },
+                    ]);
+                    setLoading(false);
+                    setTimeout(() => {
+                        setScanned(false);
+                        setStatusText('Initialize Scan Sequence');
+                    }, 2000);
+                    return;
+                }
+
+                setStatusText('📴 Offline — signed manifest verified');
+                verifyResponse = {
+                    data: {
+                        valid: true,
+                        offline: true,
+                        ticket: local.ticket,
+                    },
+                };
+            }
 
             if (verifyResponse.data) {
                 const ticketData = verifyResponse.data;
@@ -248,9 +371,39 @@ export default function ScannerScreen({ navigation }) {
         setLoading(true);
         setStatusText('⚡ Authenticating...');
 
+        // Already known to be offline: do not wait for a server timeout.
+        if (ticketData?.offline && activePack) {
+            try {
+                await recordOfflineCheckin({
+                    pack: activePack,
+                    payload: ticketPayload,
+                    ticket: ticketData?.ticket,
+                });
+                await loadOfflineState();
+                setScanCount((prev) => prev + 1);
+                setStatusText('✅ Checked In (Pending Sync)');
+                Alert.alert(
+                    '✅ Checked In — Pending Sync',
+                    `${ticketData?.ticket?.attendee_name || 'Guest'}\n\nSaved locally. It will sync when the network returns.`,
+                    [{ text: 'OK', onPress: () => setScanned(false) }],
+                );
+            } catch (error) {
+                Alert.alert('Offline check-in failed', error.message);
+            } finally {
+                setLoading(false);
+                setTimeout(() => {
+                    setScanned(false);
+                    setStatusText('Initialize Scan Sequence');
+                }, 2000);
+            }
+            return;
+        }
+
         try {
             const response = await scannerApi.checkin(ticketPayload);
             if (response.data) {
+                await markLocalTicketUsed(activePack, ticketPayload.code);
+                await loadOfflineState();
                 setScanCount((prev) => prev + 1);
                 setStatusText('✅ Authentication Complete!');
                 const isRegistration =
@@ -266,6 +419,33 @@ export default function ScannerScreen({ navigation }) {
             }
         } catch (error) {
             console.error('❌ Check-in failed:', error);
+
+            if (isNetworkError(error) && activePack) {
+                try {
+                    await recordOfflineCheckin({
+                        pack: activePack,
+                        payload: ticketPayload,
+                        ticket: ticketData?.ticket,
+                    });
+                    await loadOfflineState();
+                    setScanCount((prev) => prev + 1);
+                    setStatusText('✅ Checked In (Pending Sync)');
+                    Alert.alert(
+                        '✅ Checked In — Pending Sync',
+                        `${ticketData?.ticket?.attendee_name || 'Guest'}\n\nSaved locally. It will sync when the network returns.`,
+                        [{ text: 'OK', onPress: () => setScanned(false) }],
+                    );
+                    setLoading(false);
+                    setTimeout(() => {
+                        setScanned(false);
+                        setStatusText('Initialize Scan Sequence');
+                    }, 2000);
+                    return;
+                } catch (queueError) {
+                    console.error('Offline queue failed:', queueError);
+                }
+            }
+
             let errorMessage = 'Authentication failed.';
             if (error.response?.data?.detail) errorMessage = error.response.data.detail;
             else if (error.response?.data?.error) errorMessage = error.response.data.error;
@@ -281,6 +461,94 @@ export default function ScannerScreen({ navigation }) {
                 setScanned(false);
                 setStatusText('Initialize Scan Sequence');
             }, 2000);
+        }
+    };
+
+    const handleManualSubmit = async () => {
+        const code = manualCode.trim().toUpperCase();
+        if (!code) return;
+
+        const manifestTicket = activePack?.tickets?.find((t) => t.code === code);
+        if (manifestTicket) {
+            const payload = {
+                v: manifestTicket.v,
+                type: manifestTicket.type,
+                code: manifestTicket.code,
+                sig: manifestTicket.sig,
+            };
+            setManualVisible(false);
+            setManualCode('');
+            setScanned(false);
+            setLoading(false);
+            await handleBarcodeScanned({ type: 'qr', data: JSON.stringify(payload) });
+            return;
+        }
+
+        if (!isOnline) {
+            Alert.alert(
+                'Not in offline pack',
+                'This code is not in the downloaded pack. Connect to the internet or download the correct pack.',
+            );
+            return;
+        }
+
+        const lanSeen = await getLanSeen(code);
+        if (lanSeen) {
+            Alert.alert(
+                'Already checked in',
+                `This ticket was checked in on another scanner at ${new Date(lanSeen.scanned_at).toLocaleTimeString()}.`,
+            );
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const verify = await scannerApi.manualVerify(code);
+            if (verify.data?.valid) {
+                const ticketData = verify.data;
+                Alert.alert(
+                    '✅ Credential Verified',
+                    `Identity: ${ticketData.ticket?.attendee_name || 'N/A'}\nEvent: ${ticketData.ticket?.event || 'N/A'}`,
+                    [
+                        {
+                            text: '✅ Authenticate',
+                            onPress: async () => {
+                                try {
+                                    const deviceId = await getDeviceId();
+                                    await scannerApi.manualCheckin(code, deviceId);
+                                    await markLocalTicketUsed(activePack, code);
+                                    await announceCheckin({
+                                        client_id: `${deviceId}-manual-${code}`,
+                                        code,
+                                        device_id: deviceId,
+                                        scanned_at: new Date().toISOString(),
+                                    });
+                                    await loadOfflineState();
+                                    setScanCount((prev) => prev + 1);
+                                    setManualVisible(false);
+                                    setManualCode('');
+                                    Alert.alert('✅ Check-in Complete', 'Credential authenticated.');
+                                } catch (error) {
+                                    Alert.alert(
+                                        'Check-in failed',
+                                        error.response?.data?.detail || error.message,
+                                    );
+                                }
+                            },
+                        },
+                        { text: 'Cancel', style: 'cancel' },
+                    ]
+                );
+            } else {
+                Alert.alert('Invalid credential', verify.data?.detail || 'Not found.');
+            }
+        } catch (error) {
+            Alert.alert(
+                'Manual check failed',
+                error.response?.data?.detail || error.message || 'Could not verify code.',
+            );
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -331,6 +599,13 @@ export default function ScannerScreen({ navigation }) {
                     <View style={styles.headerRight}>
                         <TouchableOpacity
                             style={styles.iconButton}
+                            onPress={() => navigation.navigate('OfflinePack')}
+                            accessibilityLabel="Offline pack"
+                        >
+                            <Text style={styles.iconText}>⬇️</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.iconButton}
                             onPress={() => navigation.navigate('History')}
                             accessibilityLabel="History"
                         >
@@ -353,7 +628,9 @@ export default function ScannerScreen({ navigation }) {
                     </View>
                 </View>
                 <View style={styles.statsBar}>
-                    <Text style={styles.statsText}>📊 AUTHENTICATIONS: {scanCount}</Text>
+                    <Text style={styles.statsText}>
+                        📊 AUTH: {scanCount} · LAN: {lanPeers}
+                    </Text>
                     <View style={styles.statusDotWrap}>
                         <View style={styles.statusPulse} />
                     </View>
@@ -407,6 +684,14 @@ export default function ScannerScreen({ navigation }) {
             </View>
 
             <TouchableOpacity
+                style={styles.manualButton}
+                onPress={() => setManualVisible(true)}
+                accessibilityLabel="Enter ticket code manually"
+            >
+                <Text style={styles.resetButtonText}>⌨️ ENTER CODE MANUALLY</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
                 style={styles.resetButton}
                 onPress={() => {
                     setScanned(false);
@@ -417,6 +702,45 @@ export default function ScannerScreen({ navigation }) {
             >
                 <Text style={styles.resetButtonText}>⟳ RESET SCANNER</Text>
             </TouchableOpacity>
+
+            <Modal
+                visible={manualVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setManualVisible(false)}
+            >
+                <View style={styles.modalBackdrop}>
+                    <View style={styles.modalCard}>
+                        <Text style={styles.modalTitle}>Manual Check-in</Text>
+                        <Text style={styles.modalHelp}>
+                            Enter the ticket or registration code printed below the QR.
+                        </Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={manualCode}
+                            onChangeText={setManualCode}
+                            autoCapitalize="characters"
+                            autoCorrect={false}
+                            placeholder="TIX… / REG…"
+                            placeholderTextColor={C.textLight}
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalGhost]}
+                                onPress={() => { setManualVisible(false); setManualCode(''); }}
+                            >
+                                <Text style={styles.ghostButtonText}>CANCEL</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalPrimary]}
+                                onPress={handleManualSubmit}
+                            >
+                                <Text style={styles.buttonText}>VALIDATE</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -545,6 +869,66 @@ const styles = StyleSheet.create({
         paddingHorizontal: 30,
         paddingVertical: 12,
     },
+    pendingBadge: {
+        color: C.warning,
+        fontSize: 10,
+        fontFamily: F.familyBold,
+        letterSpacing: 0.5,
+    },
+    manualButton: {
+        position: 'absolute',
+        bottom: 92,
+        alignSelf: 'center',
+        backgroundColor: C.bgDarkCard,
+        borderWidth: 1,
+        borderColor: C.bgDarkBorder,
+        borderRadius: theme.radius.pill,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        zIndex: 12,
+    },
+    modalBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.72)',
+        justifyContent: 'center',
+        padding: 24,
+    },
+    modalCard: {
+        backgroundColor: C.bgDarkCard,
+        borderRadius: theme.radius.lg,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: C.bgDarkBorder,
+    },
+    modalTitle: {
+        color: C.textInverse,
+        fontFamily: F.familyBold,
+        fontSize: 18,
+        marginBottom: 6,
+    },
+    modalHelp: {
+        color: C.textMuted,
+        fontFamily: F.family,
+        fontSize: 12,
+        lineHeight: 18,
+        marginBottom: 14,
+    },
+    modalInput: {
+        backgroundColor: C.bgPrimary,
+        borderWidth: 1,
+        borderColor: C.bgDarkBorder,
+        borderRadius: theme.radius.sm,
+        color: C.textInverse,
+        fontFamily: F.familyMono,
+        fontSize: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        letterSpacing: 1,
+    },
+    modalActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+    modalButton: { flex: 1, paddingVertical: 12, borderRadius: theme.radius.sm, alignItems: 'center' },
+    modalPrimary: { backgroundColor: C.secondary },
+    modalGhost: { borderWidth: 1, borderColor: C.bgDarkBorder },
     resetButtonText: {
         color: C.secondary,
         fontSize: 14,

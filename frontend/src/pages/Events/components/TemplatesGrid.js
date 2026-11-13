@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/TemplatesGrid.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Grid, Box, Button, Alert, Typography, Divider, IconButton, Tooltip } from '@mui/material';
 import { Upload as UploadIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { toast } from 'react-toastify';
@@ -10,9 +11,11 @@ const C = theme.colors;
 
 // ✅ Added onDeleteTemplate to props
 export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload, onDeleteTemplate }) => {
+    const { t } = useTranslation();
+
     const handleCardClick = (typeValue, disabled) => {
         if (disabled) {
-            toast.warning('Please save the event first before adding templates');
+            toast.warning(t('events.templateSaveFirstToast'));
             return;
         }
         onOpenUpload(typeValue);
@@ -21,14 +24,17 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload,
     return (
         <>
             <Grid item xs={12}>
-                <SectionTitle variant="h6">Event Templates</SectionTitle>
+                <SectionTitle variant="h6">{t('events.templatesTitle')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
                 <Typography variant="body2" sx={{ color: C.textSecondary, mb: 2, mt: 1 }}>
-                    Upload templates for different purposes (Announcement, Ticket, Flyer, etc.)
+                    {t('events.templatesHint')}
                 </Typography>
+                <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
+                    {t('events.ticketTemplateSpecs', 'Ticket template: 550 × 138 px (4:1), PNG or JPG, under 5 MB. Keep important text away from the edges.')}
+                </Alert>
                 {!eventId && (
                     <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
-                        💡 Save the event first to enable template uploads.
+                        💡 {t('events.templatesSaveFirst')}
                     </Alert>
                 )}
             </Grid>
@@ -59,10 +65,10 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload,
                                         {type.icon || '📄'}
                                     </Typography>
                                     <Typography variant="subtitle2" sx={{ fontWeight: 600, color: C.textPrimary }}>
-                                        {type.label}
+                                        {t(`templateType.${type.value}`, { defaultValue: type.label })}
                                     </Typography>
                                     <Typography variant="caption" sx={{ color: C.textSecondary, display: 'block' }}>
-                                        {hasTemplates ? `${typeTemplates.length} template(s)` : 'No templates'}
+                                        {hasTemplates ? t('events.templateCount', { count: typeTemplates.length }) : t('events.templateNoTemplates')}
                                         {defaultTemplate && ' ⭐'}
                                     </Typography>
                                 </Box>
@@ -93,7 +99,7 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload,
                                                 >
                                                     {tpl.name} {tpl.is_default && '⭐'}
                                                 </Typography>
-                                                <Tooltip title="Delete Template">
+                                                <Tooltip title={t('eventWizard.deleteTemplate')}>
                                                     <IconButton
                                                         size="small"
                                                         color="error"
@@ -117,7 +123,7 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload,
                                     sx={{ mt: 2 }}
                                     onClick={() => handleCardClick(type.value, isDisabled)}
                                 >
-                                    {hasTemplates ? 'Add More' : 'Upload'}
+                                    {hasTemplates ? t('events.templateAddMore') : t('events.templateUpload')}
                                 </Button>
                             </TemplateCard>
                         );

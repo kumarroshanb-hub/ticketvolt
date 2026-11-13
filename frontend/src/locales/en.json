@@ -223,7 +223,9 @@
         "platformRole": "Platform role",
         "orgRole": "Organization role",
         "manageMembership": "Membership & family",
-        "platformAdminMembershipNote": "Platform Admins operate platform-wide and do not require an organization membership."
+        "platformAdminMembershipNote": "Platform Admins operate platform-wide and do not require an organization membership.",
+        "changePassword": "Change password",
+        "changePasswordHint": "Update the password used to sign in with email."
     },
     "forgotPassword": {
         "title": "Forgot Password",
@@ -1042,7 +1044,7 @@
         "confirmPasswordLabel": "Confirm New Password",
         "confirmPasswordPlaceholder": "Confirm new password",
         "showPasswords": "Show passwords",
-        "updatePassword": "Update Password",
+        "updatePassword": "Update password",
         "notificationsTitle": "Notification Preferences",
         "notificationsSubtitle": "Choose what notifications you receive",
         "emailNotificationsLabel": "Email Notifications",

@@ -192,7 +192,9 @@
         "platformRole": "平台角色",
         "orgRole": "組織角色",
         "manageMembership": "會籍與家庭成員",
-        "platformAdminMembershipNote": "平台管理員管理整個平台，不需要組織會籍。"
+        "platformAdminMembershipNote": "平台管理員管理整個平台，不需要組織會籍。",
+        "changePassword": "更改密碼",
+        "changePasswordHint": "更新用於電郵登入的密碼。"
     },
     "forgotPassword": {
         "title": "忘記密碼",

@@ -11,6 +11,7 @@ import {
     Person as PersonIcon,
     Logout as LogoutIcon,
     WorkspacePremium as MembershipIcon,
+    LockReset as PasswordIcon,
 } from '@mui/icons-material';
 import { theme } from '../../theme/tokens';
 import LanguageSwitcher from '../LanguageSwitcher';
@@ -484,6 +485,17 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                 >
                                     <MembershipIcon />
                                     {t('profile.myMemberships', 'My memberships')}
+                                </DropdownItem>
+
+                                <DropdownItem
+                                    role="menuitem"
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        navigate('/app/change-password');
+                                    }}
+                                >
+                                    <PasswordIcon />
+                                    {t('profile.changePassword', 'Change password')}
                                 </DropdownItem>
 
                                 <DropdownItem

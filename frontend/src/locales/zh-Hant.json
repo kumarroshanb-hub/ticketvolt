@@ -1096,7 +1096,11 @@
         "paymentsEnabled": "已啟用",
         "paymentsDisabled": "已停用",
         "paymentsEnabledAlert": "網上付款目前為啟用狀態，用戶可使用整合的付款閘道購買門票。",
-        "paymentsDisabledAlert": "網上付款已停用，用戶只能預訂免費活動或使用線下付款方式。"
+        "paymentsDisabledAlert": "網上付款已停用，用戶只能預訂免費活動或使用線下付款方式。",
+        "sectionPayments": "付款閘道",
+        "sectionLogin": "登入方式",
+        "sectionRegion": "地區與貨幣",
+        "sectionBranding": "時區與品牌"
     },
     "users": {
         "title": "用戶管理",

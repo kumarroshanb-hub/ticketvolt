@@ -65,16 +65,9 @@ else
 fi
 
 # Optional: create deployment users from DJANGO_* env vars. Never fail startup.
-if [ "${SEED_DEFAULT_USERS:-0}" = "1" ]; then
-    echo "👤 Seeding default users (resetting seeded passwords)..."
+if [ "${SEED_DEFAULT_USERS:-0}" = "1" ] || [ -n "${DJANGO_SUPERADMIN_PASSWORD:-}" ] || [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ] || [ -n "${SUPERADMIN_PASSWORD:-}" ] || [ -n "${SUPER_ADMIN_PASSWORD:-}" ]; then
+    echo "👤 Seeding default users with env passwords..."
     python manage.py seed_default_users --all --reset-passwords || true
-elif [ "${DJANGO_RESET_SEED_PASSWORDS:-0}" = "1" ] || [ -n "${DJANGO_SUPERADMIN_PASSWORD:-}" ] || [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]; then
-    echo "👤 Seeding default users..."
-    if [ "${DJANGO_RESET_SEED_PASSWORDS:-0}" = "1" ]; then
-        python manage.py seed_default_users --all --reset-passwords || true
-    else
-        python manage.py seed_default_users --all || true
-    fi
 fi
 
 exec "$@"

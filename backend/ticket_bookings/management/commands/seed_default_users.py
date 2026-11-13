@@ -11,6 +11,7 @@ No passwords are hardcoded. Missing role passwords are skipped.
 """
 import os
 
+from django.contrib.auth.hashers import identify_hasher
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -32,6 +33,18 @@ ROLES = [
     ('member', 'DJANGO_MEMBER_EMAIL', 'DJANGO_MEMBER_PASSWORD', False, 'member'),
     ('user', 'DJANGO_USER_EMAIL', 'DJANGO_USER_PASSWORD', False, None),
 ]
+
+
+def _needs_password_repair(user):
+    """True for empty, unusable, or plaintext passwords."""
+    encoded = getattr(user, 'password', '') or ''
+    if not encoded or not user.has_usable_password():
+        return True
+    try:
+        identify_hasher(encoded)
+        return False
+    except Exception:
+        return True
 
 
 def _first_env(*names):
@@ -124,24 +137,51 @@ class Command(BaseCommand):
                 ))
                 continue
 
-            user, was_created = User.objects.get_or_create(
-                username=username,
-                defaults={
-                    'email': email,
-                    'is_superuser': platform_admin,
-                    'is_staff': platform_admin,
-                    'is_active': True,
-                },
-            )
+            # Login is by email. If that email already belongs to an older
+            # account with a different username, update that account instead
+            # of creating a second user that login would never select.
+            user = User.objects.filter(email__iexact=email).first()
+            if user is not None and user.username != username:
+                self.stdout.write(self.style.WARNING(
+                    f'↪ {username}: using existing account {user.username} for {email}'
+                ))
+                was_created = False
+            else:
+                user, was_created = User.objects.get_or_create(
+                    username=username,
+                    defaults={
+                        'email': email,
+                        'is_superuser': platform_admin,
+                        'is_staff': platform_admin,
+                        'is_active': True,
+                    },
+                )
             if was_created:
                 user.set_password(password)
+                user.save(update_fields=['password'])
+                user.refresh_from_db()
+                if not user.check_password(password):
+                    raise RuntimeError(
+                        f'Password verification failed after create for {username}'
+                    )
                 created += 1
-                self.stdout.write(self.style.SUCCESS(f'✅ Created {username}'))
+                self.stdout.write(self.style.SUCCESS(f'✅ Created and verified {username}'))
             else:
-                if options.get('reset_passwords'):
+                if options.get('reset_passwords') or _needs_password_repair(user):
+                    was_repair = not options.get('reset_passwords')
                     user.set_password(password)
                     user.save(update_fields=['password'])
-                    self.stdout.write(self.style.SUCCESS(f'🔑 Password reset for {username}'))
+                    user.refresh_from_db()
+                    if not user.check_password(password):
+                        raise RuntimeError(
+                            f'Password verification failed after reset for {username}'
+                        )
+                    if was_repair:
+                        self.stdout.write(self.style.SUCCESS(
+                            f'🔧 Repaired missing/invalid password for {username}'
+                        ))
+                    else:
+                        self.stdout.write(self.style.SUCCESS(f'🔑 Password reset and verified for {username}'))
                 else:
                     self.stdout.write(self.style.WARNING(
                         f'🔒 {username}: password unchanged. Rerun with '

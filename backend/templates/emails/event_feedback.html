@@ -1,0 +1,19 @@
+<!doctype html>
+<html><body style="margin:0;background:#f8f9fa;font-family:Montserrat,Arial,sans-serif;color:#333;">
+  <div style="max-width:620px;margin:0 auto;padding:28px;">
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+      <div style="background:#333;padding:22px 26px;color:#fff;">
+        <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#ff6b6b;">TiketVault</div>
+        <h1 style="margin:6px 0 0;font-size:24px;">{{ event.title }}</h1>
+      </div>
+      <div style="padding:26px;">
+        <h2 style="margin:0 0 12px;font-size:20px;">Share your feedback</h2>
+        <p style="line-height:1.7;color:#555;">Thank you for attending, {{ ticket.attendee_name|default:ticket.booking.customer_name|default:"there" }}. Your feedback helps the organizer improve future events.</p>
+        <p style="margin:24px 0;">
+          <a href="{{ link }}" style="display:inline-block;background:#FF2A2A;color:#fff;text-decoration:none;padding:13px 24px;border-radius:9px;font-weight:700;">Open feedback form</a>
+        </p>
+        <p style="font-size:12px;color:#777;">This link is unique to your attendance and expires in 90 days.</p>
+      </div>
+    </div>
+  </div>
+</body></html>

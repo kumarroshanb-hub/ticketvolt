@@ -14,7 +14,8 @@ const emptyUpload = {
 
 export const useEventTemplates = (eventId) => {
     const [templates, setTemplates] = useState({});
-    const [templateTypes] = useState(() => EventTemplateTypeUtils.getOptions());
+    // Tickets are the only template type managed from the event builder.
+    const [templateTypes] = useState(() => EventTemplateTypeUtils.getOptions().filter((type) => type.value === 'ticket'));
     const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
     const [uploadForm, setUploadForm] = useState(emptyUpload);
     const [uploading, setUploading] = useState(false);

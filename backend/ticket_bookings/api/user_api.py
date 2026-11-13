@@ -134,6 +134,7 @@ class UserViewSet(viewsets.ModelViewSet):
         # independent of OrganizationMembership. This disambiguates the
         # historical overload where role='staff' meant *tenant* STAFF.
         platform_role = self.request.query_params.get('platform_role', None)
+        organization_role = self.request.query_params.get('organization_role', None)
         is_active_param = self.request.query_params.get('is_active', None)
         search = self.request.query_params.get('search', None)
         organization_id = self.request.query_params.get('organization_id', None)
@@ -237,13 +238,34 @@ class UserViewSet(viewsets.ModelViewSet):
             ).exclude(id__in=list(_active_membership_user_ids()))
 
         # ---- Platform-bits axis (separate from tenant `role`) ----
-        if platform_role == 'superuser':
+        if platform_role in ('super_admin', 'superuser'):
             queryset = queryset.filter(is_superuser=True)
-        elif platform_role == 'staff':
-            # Platform Staff = is_staff=True AND NOT superuser (Django-admin only).
+        elif platform_role in ('platform_staff', 'staff'):
+            # Legacy platform-staff bit; the current platform hierarchy only
+            # exposes Platform Admin and Regular User.
             queryset = queryset.filter(is_staff=True, is_superuser=False)
-        elif platform_role == 'none':
+        elif platform_role in ('user', 'none'):
             queryset = queryset.filter(is_staff=False, is_superuser=False)
+
+        # ---- Organization-role axis (valid memberships only) ----
+        if organization_role:
+            now = timezone.now()
+            memberships = OrganizationMembership.objects.filter(
+                is_active=True,
+                removed_at__isnull=True,
+                valid_from__lte=now,
+            ).filter(Q(valid_until__isnull=True) | Q(valid_until__gte=now))
+            if organization_id:
+                memberships = memberships.filter(organization_id=organization_id)
+            if organization_role == 'owner':
+                memberships = memberships.filter(is_owner=True)
+            elif organization_role in ('admin', 'staff', 'member'):
+                memberships = memberships.filter(role=organization_role)
+            else:
+                memberships = memberships.none()
+            queryset = queryset.filter(
+                id__in=memberships.values_list('user_id', flat=True).distinct(),
+            )
 
         return queryset.order_by('-date_joined')
 
@@ -427,7 +449,11 @@ class UserViewSet(viewsets.ModelViewSet):
                 )
 
         # ---- Validate role BEFORE creating the user ----
-        requested_role = request.data.get('role', 'user')
+        requested_role = (
+            request.data.get('requested_role')
+            or request.data.get('role')
+            or 'user'
+        )
         # `platform_staff` is a distinct value from tenant `staff`.
         # NOTE: 'owner' is intentionally NOT a valid role for user creation —
         # ownership is granted only via assign-owner / transfer-ownership.
@@ -532,8 +558,8 @@ class UserViewSet(viewsets.ModelViewSet):
                     )
 
             elif requested_role == 'admin':
-                user.is_staff = True
-                user.save(update_fields=['is_staff'])
+                # Tenant ADMIN is a membership role only. Never set the
+                # platform is_staff bit for a tenant admin.
                 if target_org is not None:
                     OrganizationMembership.objects.get_or_create(
                         organization=target_org,

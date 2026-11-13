@@ -81,7 +81,7 @@ export const OrgProvider = ({ children }) => {
         } finally {
             setLoading(false);
         }
-    }, [isAuthenticated]);
+    }, [isAuthenticated, user?.id, user?.memberships]);
 
     useEffect(() => { load(); }, [load]);
 

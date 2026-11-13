@@ -16,6 +16,7 @@ import {
     PersonAdd as PersonAddIcon,
     Close as CloseIcon,
     Delete as DeleteIcon,
+    Edit as EditIcon,
 } from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
 import { MEMBERSHIP_ROLES } from '../../constants';
@@ -59,10 +60,14 @@ const TeamMembers = () => {
     const { hasOrgRole, isSuperAdmin } = useRole();
     const canRemoveMembers =
         isSuperAdmin || hasOrgRole(MEMBERSHIP_ROLES.OWNER);
+    const canEditRoles = isSuperAdmin || hasOrgRole(MEMBERSHIP_ROLES.OWNER);
 
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [removingId, setRemovingId] = useState(null);
+    const [roleEditMember, setRoleEditMember] = useState(null);
+    const [roleEditValue, setRoleEditValue] = useState(MEMBERSHIP_ROLES.MEMBER);
+    const [savingRole, setSavingRole] = useState(false);
 
     // Invite modal state
     const [openInvite, setOpenInvite] = useState(false);
@@ -143,6 +148,29 @@ const TeamMembers = () => {
             );
         } finally {
             setRemovingId(null);
+        }
+    };
+
+    const openRoleEdit = (member) => {
+        setRoleEditMember(member);
+        setRoleEditValue(member.role);
+    };
+
+    const saveRole = async () => {
+        if (!roleEditMember) return;
+        setSavingRole(true);
+        try {
+            await api.patch(
+                `/organizations/${orgId}/members/${roleEditMember.user_id}/`,
+                { role: roleEditValue },
+            );
+            toast.success(t('team.roleUpdated', 'Role updated.'));
+            setRoleEditMember(null);
+            await fetchMembers();
+        } catch (err) {
+            toast.error(formatApiError(err.response?.data, t('team.roleUpdateFailed', 'Failed to update role.')));
+        } finally {
+            setSavingRole(false);
         }
     };
 
@@ -259,6 +287,16 @@ const TeamMembers = () => {
                                             </Typography>
                                         </TableCell>
                                         <TableCell align="right">
+                                            {canEditRoles && !member.is_owner && member.role !== 'owner' && (
+                                                <IconButton
+                                                    size="small"
+                                                    sx={{ color: C.info, mr: 1 }}
+                                                    onClick={() => openRoleEdit(member)}
+                                                    title={t('team.editRole', 'Edit role')}
+                                                >
+                                                    <EditIcon fontSize="small" />
+                                                </IconButton>
+                                            )}
                                             {canRemoveRow && (
                                                 <IconButton
                                                     size="small"
@@ -311,6 +349,7 @@ const TeamMembers = () => {
                             value={inviteEmail}
                             onChange={(e) => setInviteEmail(e.target.value)}
                             required
+                            helperText={t('team.multiOrgInviteHint', 'They can belong to other organizations too; this invite adds membership here without affecting those.')}
                             sx={{ mb: 2.5, '& .MuiOutlinedInput-root': { bgcolor: C.bgInput } }}
                         />
 
@@ -327,6 +366,7 @@ const TeamMembers = () => {
                         >
                             <MenuItem value={MEMBERSHIP_ROLES.MEMBER}>{t('roles.org_member')}</MenuItem>
                             <MenuItem value={MEMBERSHIP_ROLES.STAFF}>{t('roles.org_staff')}</MenuItem>
+                        <MenuItem value={MEMBERSHIP_ROLES.FINANCE}>{t('roles.org_finance', 'Finance')}</MenuItem>
                             <MenuItem value={MEMBERSHIP_ROLES.ADMIN}>{t('roles.org_admin')}</MenuItem>
                         </TextField>
 
@@ -377,6 +417,27 @@ const TeamMembers = () => {
                         </Button>
                     </DialogActions>
                 </form>
+            </Dialog>
+
+            <Dialog open={!!roleEditMember} onClose={() => setRoleEditMember(null)} maxWidth="xs" fullWidth>
+                <DialogTitle>{t('team.editRole', 'Edit role')}</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        select fullWidth sx={{ mt: 1 }}
+                        label={t('team.role')}
+                        value={roleEditValue}
+                        onChange={(e) => setRoleEditValue(e.target.value)}
+                    >
+                        <MenuItem value={MEMBERSHIP_ROLES.MEMBER}>{t('roles.org_member')}</MenuItem>
+                        <MenuItem value={MEMBERSHIP_ROLES.STAFF}>{t('roles.org_staff')}</MenuItem>
+                        <MenuItem value={MEMBERSHIP_ROLES.FINANCE}>{t('roles.org_finance', 'Finance')}</MenuItem>
+                        <MenuItem value={MEMBERSHIP_ROLES.ADMIN}>{t('roles.org_admin')}</MenuItem>
+                    </TextField>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setRoleEditMember(null)}>{t('common.cancel')}</Button>
+                    <Button variant="contained" onClick={saveRole} disabled={savingRole}>{t('common.save')}</Button>
+                </DialogActions>
             </Dialog>
         </Box>
     );

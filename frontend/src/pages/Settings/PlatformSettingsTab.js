@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, TextField,
     MenuItem, Divider, Alert, CircularProgress, Paper,
-    Stack, InputAdornment, Switch, FormControlLabel
+    Stack, InputAdornment, Switch, FormControlLabel, Checkbox
 } from '@mui/material';
 import {
     Save as SaveIcon,
@@ -31,6 +31,7 @@ const INITIAL_FORM = {
     org_logo_url: '',
     email_from_name: '',
     payments_enabled: false, // Global payment toggle
+    allowed_auth_methods: ['password', 'magic_link', 'otp'],
 };
 
 const PlatformSettingsTab = () => {
@@ -61,6 +62,7 @@ const PlatformSettingsTab = () => {
                 org_logo_url: data.org_logo_url ?? prev.org_logo_url,
                 email_from_name: data.email_from_name ?? prev.email_from_name,
                 payments_enabled: data.payments_enabled ?? prev.payments_enabled,
+                allowed_auth_methods: data.allowed_auth_methods?.length ? data.allowed_auth_methods : prev.allowed_auth_methods,
             }));
             if (data.catalog) {
                 setCatalog({
@@ -140,6 +142,7 @@ const PlatformSettingsTab = () => {
                 org_logo_url: form.org_logo_url,
                 email_from_name: form.email_from_name,
                 payments_enabled: form.payments_enabled,
+                allowed_auth_methods: form.allowed_auth_methods,
             };
 
             const { data } = await api.patch('/settings/', payload);
@@ -295,6 +298,43 @@ const PlatformSettingsTab = () => {
                                     {t('platformSettings.paymentsDisabledAlert')}
                                 </Alert>
                             )}
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Card>
+                        <CardContent>
+                            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+                                {t('platformSettings.authMethodsTitle', 'Login methods')}
+                            </Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                                {t('platformSettings.authMethodsDescription', 'Choose which sign-in methods are available platform-wide. Organizations can further restrict these based on tier.')}
+                            </Typography>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                                {[
+                                    ['password', 'Email + password'],
+                                    ['magic_link', 'Magic link'],
+                                    ['otp', 'OTP code'],
+                                    ['google', 'Google'],
+                                ].map(([method, label]) => (
+                                    <FormControlLabel
+                                        key={method}
+                                        control={
+                                            <Checkbox
+                                                checked={(form.allowed_auth_methods || []).includes(method)}
+                                                disabled={!isSuperAdmin || saving}
+                                                onChange={(e) => {
+                                                    const current = new Set(form.allowed_auth_methods || []);
+                                                    if (e.target.checked) current.add(method); else current.delete(method);
+                                                    setForm((prev) => ({ ...prev, allowed_auth_methods: Array.from(current) }));
+                                                }}
+                                            />
+                                        }
+                                        label={label}
+                                    />
+                                ))}
+                            </Stack>
                         </CardContent>
                     </Card>
                 </Grid>

@@ -10,6 +10,8 @@ import LoginScreen from '../screens/LoginScreen';
 import ScannerScreen from '../screens/ScannerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import HistoryScreen from '../screens/HistoryScreen';
+import OfflinePackScreen from '../screens/OfflinePackScreen';
+import { startLanPeer, stopLanPeer } from '../services/lanPeer';
 
 const C = theme.colors;
 const F = theme.fonts;
@@ -49,6 +51,19 @@ export default function AppNavigator() {
   // ADDED FOR 6-TIER HIERARCHY: if a previously-authorized user has their role
   // downgraded server-side (e.g. removed from an org, demoted from staff),
   // force-logout on next app open so they cannot reach the Scanner screen.
+  // LAN peer sharing lives for the whole authorized session, so it keeps
+  // running while the user is on History / Offline Pack screens too.
+  useEffect(() => {
+    if (isAuthorized) {
+      startLanPeer();
+    } else {
+      stopLanPeer();
+    }
+    return () => {
+      stopLanPeer();
+    };
+  }, [isAuthorized]);
+
   useEffect(() => {
     if (!isLoading && user && !isAuthorized) {
       Alert.alert(
@@ -114,6 +129,12 @@ export default function AppNavigator() {
             name="History"
             component={HistoryScreen}
             options={modalHeader('📋 History')}
+          />
+
+          <Stack.Screen
+            name="OfflinePack"
+            component={OfflinePackScreen}
+            options={modalHeader('⬇️ Offline Pack', { presentation: 'modal' })}
           />
         </>
       )}

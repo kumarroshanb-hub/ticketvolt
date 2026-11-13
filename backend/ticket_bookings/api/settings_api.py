@@ -51,6 +51,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             'org_name', 'org_email', 'org_logo_url', 'email_from_name',
             'updated_at',
             'payments_enabled',  # ✅ ADDED
+            'allowed_auth_methods',
         ]
         read_only_fields = ['currency_name', 'effective_country', 'updated_at']
 

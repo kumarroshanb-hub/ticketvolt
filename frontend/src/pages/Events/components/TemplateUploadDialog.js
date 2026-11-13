@@ -109,7 +109,7 @@ export const TemplateUploadDialog = ({
                                     {t('events.templateClickSelect')}
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: C.textLight }}>
-                                    {t('events.templateFormatHint')}
+                                    {t('events.ticketTemplateSpecs', 'Ticket template: 550 × 138 px (4:1), PNG or JPG, under 5 MB.')}
                                 </Typography>
                             </>
                         )}

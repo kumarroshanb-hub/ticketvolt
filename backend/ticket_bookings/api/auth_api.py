@@ -70,6 +70,7 @@ from ..models_tenancy import (
     snapshot_membership,
 )
 from ..services import auth_emails
+from ..services.auth_policy import auth_config, method_allowed, organization_for_user
 from ..services.tenancy import (
     can_manage_org,
     user_org_ids,
@@ -178,6 +179,23 @@ def _issue_tokens(user):
 # ===========================================================================
 # 1. REQUEST MAGIC LINK (public)
 # ===========================================================================
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def auth_method_config(request):
+    """Public policy lookup for the login page."""
+    from ..models_tenancy import Organization
+    org_id = request.query_params.get('organization_id') or request.query_params.get('org')
+    org = None
+    if org_id:
+        try:
+            org = Organization.objects.filter(id=org_id).first()
+        except (ValueError, TypeError):
+            org = None
+        if org is None:
+            org = Organization.objects.filter(slug=org_id).first()
+    return Response(auth_config(org, organization_id=org_id))
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @throttle_classes([ScopedRateThrottle])
@@ -206,6 +224,14 @@ def request_magic_link(request):
             'success': True,
             'message': 'If an account exists, a login link has been sent.',
         })
+
+    if user is not None:
+        org = organization_for_user(user, request.data.get('organization_id'))
+        if not method_allowed('magic_link', org):
+            return Response(
+                {'error': 'Magic link login is not enabled for your organization.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
     if user is None:
         # Auto-provision (existing code continues...)
@@ -443,6 +469,13 @@ def verify_magic_link(request):
     profile.magic_token_expires = None
     profile.save(update_fields=['magic_token', 'magic_token_expires'])
 
+    org = organization_for_user(profile.user, request.data.get('organization_id'))
+    if not method_allowed('magic_link', org):
+        return Response(
+            {'error': 'Magic link login is not enabled for your organization.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     logger.info('✅ Magic-link login: user=%s', profile.user.username)
     return Response(_issue_tokens(profile.user), status=status.HTTP_200_OK)
 
@@ -526,6 +559,21 @@ def request_otp(request):
             'success': True,
             'message': 'If the address is valid, an OTP has been sent.',
         })
+
+    # Organization policy check for known accounts.
+    otp_user = None
+    if channel == OTPRequest.CHANNEL_EMAIL:
+        otp_user = User.objects.filter(email__iexact=identifier, is_active=True).first()
+    else:
+        otp_profile = UserProfile.objects.filter(Q(phone=identifier) | Q(whatsapp_number=identifier)).select_related('user').first()
+        otp_user = otp_profile.user if otp_profile else None
+    if otp_user is not None:
+        otp_org = organization_for_user(otp_user, request.data.get('organization_id'))
+        if not method_allowed('otp', otp_org):
+            return Response(
+                {'error': 'OTP login is not enabled for your organization.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
     # Rate-limit: max 3 sends per destination per 10-minute window
     window_start = timezone.now() - timedelta(minutes=OTP_REQUEST_WINDOW_MINUTES)
@@ -622,6 +670,13 @@ def verify_otp(request):
 
     if user is None or not user.is_active:
         return Response({'error': 'Account not found or disabled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    org = organization_for_user(user, request.data.get('organization_id'))
+    if not method_allowed('otp', org):
+        return Response(
+            {'error': 'OTP login is not enabled for your organization.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     return Response(_issue_tokens(user), status=status.HTTP_200_OK)
 

@@ -3,8 +3,7 @@
 Organization (tenant) API.
 
 Role rules (6-tier hierarchy):
-  • Any authenticated user may create an org. A NON-superuser who
-    creates an org becomes its OWNER immediately (self-service).
+  • Only a PLATFORM SUPERUSER may create an org.
   • A PLATFORM SUPERUSER creating an org does NOT become its owner and
     does NOT receive an OrganizationMembership. The org is created in
     an "unowned" state (`owner=None`). A superuser assigns the tenant
@@ -79,6 +78,11 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     @transaction.atomic
     def create(self, request, *args, **kwargs):
+        if not is_platform_superuser(request.user):
+            return Response(
+                {'error': 'Only a Platform Admin can create an organization.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return super().create(request, *args, **kwargs)
 
     @transaction.atomic
@@ -142,6 +146,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             'org_email': platform.org_email,
             'org_logo_url': platform.org_logo_url,
             'email_from_name': platform.email_from_name,
+            'email_reply_to': platform.org_email,
+            'brand_primary_color': '#333333',
+            'brand_secondary_color': '#FF2A2A',
         }
         for key in list(seed.keys()):
             if self.request.data.get(key):
@@ -163,6 +170,17 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                 },
             )
 
+        if not org.feature_package:
+            from ..models_features import FeaturePackage
+            default_pkg = FeaturePackage.objects.filter(
+                is_default=True, is_active=True,
+            ).first()
+            if default_pkg:
+                org.feature_package = default_pkg
+                if not org.allowed_auth_methods:
+                    org.allowed_auth_methods = list(default_pkg.allowed_auth_methods or [])
+                org.save(update_fields=['feature_package', 'allowed_auth_methods'])
+
         return org
 
     # ------------------------------------------------------------------
@@ -174,6 +192,8 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 'You do not have permission to edit this organization.'
             )
+        if 'feature_package' in self.request.data and not is_platform_superuser(self.request.user):
+            raise PermissionDenied('Only a Platform Admin can change the feature package.')
         serializer.save()
 
     # ------------------------------------------------------------------
@@ -281,6 +301,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         }
         if owns_org(request.user, org) or is_platform_admin(request.user):
             allowed_roles.add(OrganizationMembership.OrgRole.ADMIN)
+            allowed_roles.add(OrganizationMembership.OrgRole.FINANCE)
 
         if role not in allowed_roles:
             return Response(
@@ -389,9 +410,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def change_member_role(self, request, pk=None, user_id=None):
         org = self.get_object()
-        if not owns_org(request.user, org):
+        if not (owns_org(request.user, org) or is_platform_superuser(request.user)):
             raise PermissionDenied(
-                'Only the organization OWNER can change member roles.'
+                'Only the organization OWNER or a Platform Admin can change member roles.'
             )
 
         try:

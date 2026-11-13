@@ -2,19 +2,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert, CircularProgress, Grid, Box, Typography, TextField,
-    MenuItem, Button, Stepper, Step, StepLabel, Divider, Paper,
-    Chip, FormControl, InputLabel, Select,
+    MenuItem, Button, Divider, Paper,
+    Chip, FormControl, InputLabel, Select, IconButton, Stack,
 } from '@mui/material';
 import {
     Add as AddIcon, Chair as SeatIcon,
     Check as CheckIcon, ArrowBack as ArrowBackIcon, ArrowForward as ArrowForwardIcon,
+    Visibility as PreviewIcon, LocationOn as LocationIcon,
+    CalendarMonth as CalendarIcon,
+    PhoneIphone as PhoneIcon, TabletMac as TabletIcon,
+    LaptopMac as LaptopIcon,
 } from '@mui/icons-material';
 import { useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
+import styled from 'styled-components';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 
 import {
-    PageContainer, PageHeader, PageTitle, PageHeaderLeft, PageHeaderRight,
+    PageContainer, PageHeader, PageTitle, PageHeaderLeft,
     LoadingWrapper, PrimaryButton, OutlineButton,
 } from '../../components/Common';
 
@@ -33,41 +38,320 @@ import {
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
 import { useOrg } from '../../context/OrgContext';
+import { useSettings } from '../../context/SettingsContext';
 import {
-    EVENT_TYPE,
-    EVENT_TYPE_LABELS,
     EVENT_CATEGORY,
     EVENT_CATEGORY_LABELS,
 } from '../../constants';
 
-import { StyledPaper, SectionTitle } from './components/styled';
-import { EventBasicInfo } from './components/EventBasicInfo';
+import { StyledPaper, SectionTitle, StyledTextField } from './components/styled';
 import { OrganizerSelector } from './components/OrganizerSelector';
 import { EventSchedule } from './components/EventSchedule';
 import { EventCancellationPolicy } from './components/EventCancellationPolicy';
 import { EventTicketSettings } from './components/EventTicketSettings';
+import { EventPublicDetails } from './components/EventPublicDetails';
 import { SessionsEditor } from './components/SessionsEditor';
 import { TiersEditor } from './components/TiersEditor';
 import { TemplatesGrid } from './components/TemplatesGrid';
 import { TemplateUploadDialog } from './components/TemplateUploadDialog';
-import { EventFormActions } from './components/EventFormActions';
 
 import { VenueMasterPicker } from './components/VenueMasterPicker';
 import { EventVenuePlanEditor } from './components/EventVenuePlanEditor';
 
 import { theme } from '../../theme/tokens';
+import api from '../../services/api';
 import venueMasterService from '../../services/venueMasterService';
 import eventVenuePlanService from '../../services/eventVenuePlanService';
 
 import { validateDateRange } from '../../utils/dateValidation';
 
 const C = theme.colors;
+const F = theme.fonts;
+
+const BuilderPage = styled.div`
+    width: min(1540px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 20px 0 40px;
+    background: ${C.bgPrimary};
+    min-height: 100vh;
+
+    @media (max-width: 900px) {
+        width: calc(100% - 24px);
+        padding: 12px 0 92px;
+    }
+`;
+
+const BuilderTopbar = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+`;
+
+const BuilderTitle = styled.h1`
+    font-family: ${F.family};
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: ${C.textPrimary};
+    margin: 0;
+`;
+
+const BuilderGrid = styled.div`
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr) 330px;
+    gap: 20px;
+    align-items: start;
+
+    @media (max-width: 1240px) {
+        grid-template-columns: 190px minmax(0, 1fr);
+    }
+
+    @media (max-width: 900px) {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+`;
+
+const StepRail = styled.aside`
+    position: sticky;
+    top: 94px;
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
+    border-radius: 18px;
+    padding: 10px;
+    box-shadow: ${theme.shadows.card};
+
+    @media (max-width: 900px) {
+        position: static;
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding: 8px;
+        border-radius: 14px;
+        scrollbar-width: none;
+        &::-webkit-scrollbar { display: none; }
+    }
+`;
+
+const RailStep = styled.button`
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 10px;
+    border: 0;
+    border-radius: 12px;
+    background: ${(p) => (p.$active ? C.bgPrimary : 'transparent')};
+    text-align: left;
+    color: ${(p) => (p.$active ? C.textPrimary : C.textSecondary)};
+    font-family: ${F.family};
+    cursor: pointer;
+    transition: 0.18s ease;
+
+    &:hover { background: ${C.bgPrimary}; }
+
+    .num {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        font-size: 11px;
+        font-weight: 800;
+        color: ${(p) => (p.$done || p.$active ? C.textInverse : C.textMuted)};
+        background: ${(p) => (p.$done ? C.secondary : p.$active ? C.primary : C.bgInput)};
+    }
+    .copy { min-width: 0; }
+    .copy b { display: block; font-size: 12px; line-height: 1.3; }
+    .copy small { display: block; margin-top: 3px; font-size: 10px; line-height: 1.35; color: ${C.textMuted}; font-weight: 400; }
+
+    @media (max-width: 900px) {
+        min-width: 155px;
+        width: auto;
+        padding: 9px;
+        .copy small { display: none; }
+    }
+`;
+
+const BuilderCenter = styled.div`
+    min-width: 0;
+`;
+
+const ContentHeader = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 4px 12px;
+`;
+
+const ContentTitle = styled.h2`
+    font-family: ${F.family};
+    font-size: 15px;
+    font-weight: 800;
+    color: ${C.textPrimary};
+    margin: 0;
+    letter-spacing: -0.01em;
+`;
+
+const PreviewCard = styled.aside`
+    position: sticky;
+    top: 94px;
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: ${theme.shadows.card};
+
+    @media (max-width: 1240px) {
+        position: static;
+        grid-column: 1 / -1;
+    }
+`;
+
+const PreviewLabel = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 7px;
+    padding: 10px 12px;
+    border-bottom: 1px solid ${C.borderLight};
+    color: ${C.textSecondary};
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+`;
+
+const PreviewDevices = styled.div`
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: ${C.bgPrimary};
+`;
+
+const DeviceButton = styled.button`
+    width: 28px;
+    height: 26px;
+    border: 0;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: ${(p) => (p.$active ? C.bgCard : 'transparent')};
+    color: ${(p) => (p.$active ? C.secondary : C.textMuted)};
+    box-shadow: ${(p) => (p.$active ? '0 1px 4px rgba(0,0,0,.08)' : 'none')};
+    cursor: pointer;
+
+    svg { font-size: 15px; }
+`;
+
+const PreviewStage = styled.div`
+    padding: 12px;
+    background: ${C.bgPrimary};
+`;
+
+const PreviewViewport = styled.div`
+    width: ${(p) => (p.$device === 'mobile' ? '228px' : p.$device === 'tablet' ? '288px' : '100%')};
+    max-width: 100%;
+    margin: 0 auto;
+    background: ${C.bgCard};
+    border: ${(p) => (p.$device === 'mobile' ? `6px solid ${C.primary}` : p.$device === 'tablet' ? `5px solid ${C.primary}` : `1px solid ${C.borderLight}`)};
+    border-radius: ${(p) => (p.$device === 'mobile' ? '24px' : p.$device === 'tablet' ? '18px' : '12px')};
+    overflow: hidden;
+    transition: width .22s ease;
+`;
+
+const PreviewArt = styled.div`
+    height: 160px;
+    background: ${(p) => p.$image
+        ? `url(${p.$image}) center/cover no-repeat`
+        : `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primary} 58%, ${C.secondary} 100%)`};
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding: 14px;
+
+    &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(0,0,0,.35), transparent 60%);
+        pointer-events: none;
+    }
+
+    span {
+        position: relative;
+        z-index: 1;
+        color: #fff;
+        font-family: ${F.family};
+        font-size: 18px;
+        line-height: 1.2;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+`;
+
+const PreviewBody = styled.div`
+    padding: 14px 16px 16px;
+`;
+
+const PreviewMeta = styled.div`
+    color: ${C.textSecondary};
+    font-size: 12px;
+    line-height: 1.55;
+    display: grid;
+    gap: 7px;
+    margin-top: 8px;
+
+    div { display: flex; gap: 6px; align-items: flex-start; }
+    svg { flex: 0 0 auto; color: ${C.textMuted}; margin-top: 1px; }
+`;
+
+const PreviewDivider = styled.div`
+    border-top: 1px dashed ${C.borderHover};
+    margin: 14px 0;
+`;
+
+const PreviewPrice = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+
+    small { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: ${C.textMuted}; font-weight: 800; }
+    b { font-family: ${F.family}; font-size: 20px; color: ${C.textPrimary}; }
+`;
+
+const PreviewCta = styled.div`
+    min-height: 40px;
+    border-radius: 9px;
+    background: ${C.secondary};
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 0 14px;
+`;
 
 const STEP = {
     BASICS: 0,
     VENUE: 1,
     SEATS: 2,
-    DETAILS: 3,
+    TICKETING: 3,
+    DETAILS: 4,
 };
 
 const ROUTE = {
@@ -83,6 +367,7 @@ const CreateEvent = () => {
     const location = useLocation();
     const { id: editEventId } = useParams();
     const isEdit = Boolean(editEventId);
+    const { formatMoney } = useSettings();
 
     const { user } = useAuth();
     // Organizer assignment is a TENANT capability (owner/admin of the
@@ -150,6 +435,8 @@ const CreateEvent = () => {
     const [selectedMaster, setSelectedMaster] = useState(null);
     const [existingPlan, setExistingPlan] = useState(null);
     const [planLoading, setPlanLoading] = useState(false);
+    const [uploadingCover, setUploadingCover] = useState(false);
+    const [previewDevice, setPreviewDevice] = useState('laptop');
     const [masterLoading, setMasterLoading] = useState(false);
 
     // Returning from the venue round-trip must land the user back on the
@@ -161,9 +448,6 @@ const CreateEvent = () => {
     }, [isEdit, hasVenueHandoff]);
 
     const lastFetchedMasterIdRef = useRef(null);
-
-    // Determine if it's single day based on the event_type dropdown
-    const isSingleDay = formData.event_type === 'single';
 
     const chosenVenue = useMemo(() => {
         if (!selectedMaster) return null;
@@ -256,7 +540,8 @@ const CreateEvent = () => {
         if (seatStepRequired) {
             steps.push({ key: STEP.SEATS, label: t('eventWizard.stepSeats') });
         }
-        steps.push({ key: STEP.DETAILS, label: t('eventWizard.stepDetails') });
+        steps.push({ key: STEP.TICKETING, label: t('eventWizard.stepTicketing', 'Tickets & templates') });
+        steps.push({ key: STEP.DETAILS, label: t('eventWizard.stepPublish', 'Publish Event') });
         return steps;
     }, [seatStepRequired, t]);
 
@@ -445,7 +730,7 @@ const CreateEvent = () => {
         return null;
     };
 
-    const handleFinalSubmit = async (e) => {
+    const handleFinalSubmit = async (e, options = {}) => {
         // Dates are editable on the Details step too, so re-validate the
         // range here. Basics validation alone is not sufficient.
         const dateErr = validateDateRange(formData.start_date, formData.end_date, {
@@ -468,13 +753,9 @@ const CreateEvent = () => {
 
         const submitPayload = { ...formData };
 
-        // Safety net: if single day, force end_date to equal start_date
-        if (isSingleDay && submitPayload.start_date) {
-            submitPayload.end_date = submitPayload.start_date;
-        }
-
         if (hasReservedSeating) {
             submitPayload.tiers = [];
+            submitPayload.has_reserved_seating = true;
         }
 
         if (!isEdit) {
@@ -489,8 +770,13 @@ const CreateEvent = () => {
         // Clean up any legacy fields not expected by the backend
         delete submitPayload.is_single_day;
 
-        await submit(e, submitPayload);
+        await submit(e, submitPayload, options);
     };
+
+    const handlePublish = () => handleFinalSubmit(
+        null,
+        isEdit && formData.status === 'published' ? {} : { publish: true },
+    );
 
     // Atomically set multiple fields at once
     const patchForm = (patch) => {
@@ -500,6 +786,25 @@ const CreateEvent = () => {
     const handleCancel = () => {
         if (!isEdit) clearDraft();
         navigate(ROUTE.EVENTS_LIST);
+    };
+
+    const handleCoverUpload = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const body = new FormData();
+        body.append('image', file);
+        body.append('organization_id', formData.organization_id || currentOrgId || '');
+        setUploadingCover(true);
+        try {
+            const res = await api.post('/uploads/event-image/', body);
+            patchForm({ cover_image: res.data.url });
+            toast.success(t('events.imageUploaded', 'Image uploaded.'));
+        } catch (err) {
+            toast.error(err.response?.data?.error || err.message);
+        } finally {
+            setUploadingCover(false);
+            event.target.value = '';
+        }
     };
 
     const renderBasics = () => (
@@ -512,6 +817,28 @@ const CreateEvent = () => {
                 </Typography>
             </Grid>
 
+            {(isPlatformAdmin || organizations.length > 1) && !isEdit && (
+                <Grid item xs={12} sm={6}>
+                    <TextField
+                        select
+                        fullWidth
+                        label={t('events.organizationLabel')}
+                        name="organization_id"
+                        value={formData.organization_id || ''}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            handleChange({ target: { name: 'organization_id', value: val } });
+                            setCurrentOrgId(val);
+                        }}
+                        helperText={t('events.organizationHelper')}
+                    >
+                        {organizations.map((org) => (
+                            <MenuItem key={org.id} value={org.id}>{org.name}</MenuItem>
+                        ))}
+                    </TextField>
+                </Grid>
+            )}
+
             <Grid item xs={12}>
                 <TextField
                     fullWidth
@@ -521,25 +848,6 @@ const CreateEvent = () => {
                     onChange={handleChange}
                     required
                 />
-            </Grid>
-
-            <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                    <InputLabel id="event-type-label">{t('events.eventTypeLabel')}</InputLabel>
-                    <Select
-                        labelId="event-type-label"
-                        name="event_type"
-                        value={formData.event_type || ''}
-                        onChange={handleChange}
-                        label={t('events.eventTypeLabel')}
-                    >
-                        {Object.values(EVENT_TYPE).map((type) => (
-                            <MenuItem key={type} value={type}>
-                                {t(`eventType.${type}`, { defaultValue: EVENT_TYPE_LABELS[type] || type })}
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
             </Grid>
 
             <Grid item xs={12} sm={6}>
@@ -578,62 +886,64 @@ const CreateEvent = () => {
                 </FormControl>
             </Grid>
 
-            <Grid item xs={12} sm={isSingleDay ? 12 : 6}>
-                <TextField
-                    fullWidth
-                    label={t('events.startDateLabel')}
-                    name="start_date"
-                    type="datetime-local"
-                    value={formData.start_date}
-                    onChange={(e) => {
-                        handleChange(e);
-                        if (isSingleDay) {
-                            patchForm({ end_date: e.target.value });
-                        }
-                    }}
-                    InputLabelProps={{ shrink: true }}
-                    required
-                />
-            </Grid>
+            <EventSchedule formData={formData} onChange={handleChange} />
 
-            {!isSingleDay && (
-                <Grid item xs={12} sm={6}>
-                    <TextField
-                        fullWidth
-                        label={t('events.endDateLabel')}
-                        name="end_date"
-                        type="datetime-local"
-                        value={formData.end_date}
+            <Grid item xs={12}>
+                <Typography variant="subtitle2" sx={{ color: C.textPrimary, fontWeight: 700, mb: 1 }}>
+                    {t('events.coverImageLabel', 'Event image')}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {formData.cover_image && (
+                        <Box
+                            component="img"
+                            src={formData.cover_image}
+                            alt={t('events.coverPreview', 'Event cover preview')}
+                            sx={{ width: 150, height: 90, objectFit: 'cover', borderRadius: 2, border: `1px solid ${C.borderLight}` }}
+                        />
+                    )}
+                    <Button variant="outlined" component="label" disabled={uploadingCover}>
+                        {uploadingCover ? t('common.loading') : t('events.uploadImage', 'Upload image')}
+                        <input type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={handleCoverUpload} />
+                    </Button>
+                    <StyledTextField
+                        size="small"
+                        sx={{ minWidth: 240, flex: 1 }}
+                        label={t('events.coverImageUrl', 'Or image URL')}
+                        name="cover_image"
+                        value={formData.cover_image || ''}
                         onChange={handleChange}
-                        InputLabelProps={{ shrink: true }}
-                        required
                     />
-                </Grid>
-            )}
-
-            <Grid item xs={12}>
-                <TextField
-                    fullWidth
-                    label={t('eventWizard.shortDescOptional')}
-                    name="short_description"
-                    value={formData.short_description || ''}
-                    onChange={handleChange}
-                    multiline
-                    rows={2}
-                />
+                </Box>
+                <Typography variant="caption" sx={{ color: C.textMuted, display: 'block', mt: 1 }}>
+                    {t('events.coverImageHelper', 'Recommended 1600 × 900 px (16:9), PNG/JPEG/WebP, up to 10MB. Used on the event page and cards.')}
+                </Typography>
             </Grid>
 
             <Grid item xs={12}>
-                <TextField
+                <StyledTextField
                     fullWidth
-                    label={t('eventWizard.longDescOptional')}
+                    label={t('events.overviewLabel', 'Overview')}
                     name="description"
                     value={formData.description || ''}
                     onChange={handleChange}
                     multiline
-                    rows={4}
+                    minRows={5}
+                    placeholder={t('events.overviewPlaceholder', 'Tell attendees what the event is about, what to expect, and anything they should know.')}
                 />
             </Grid>
+
+            {canAssignOrganizer && (
+                <OrganizerSelector
+                    value={formData.organizer_id}
+                    onChange={(val) => handleChange({ target: { name: 'organizer_id', value: val } })}
+                    organizers={organizers}
+                    loading={loadingOrganizers}
+                    currentUserName={user?.name || user?.username}
+                />
+            )}
+
+            <EventCancellationPolicy formData={formData} onChange={handleChange} policies={policies} />
+            <EventPublicDetails formData={formData} onChange={handleChange} setFormData={setFormData} />
         </Grid>
     );
 
@@ -834,139 +1144,41 @@ const CreateEvent = () => {
         );
     };
 
-    const renderDetails = () => (
+    const renderTicketing = () => (
         <Grid container spacing={3}>
             <Grid item xs={12}>
-                <SectionTitle variant="h6">{t('eventWizard.detailsSection')}</SectionTitle>
+                <SectionTitle variant="h6">{t('eventWizard.ticketingSection', 'Ticketing & ticket templates')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
             </Grid>
 
-            {(isPlatformAdmin || organizations.length > 1) && !isEdit && (
-                <>
-                    <Grid item xs={12} sm={6}>
-                        <TextField
-                            select
-                            fullWidth
-                            label={t('events.organizationLabel')}
-                            name="organization_id"
-                            value={formData.organization_id || ''}
-                            onChange={(e) => {
-                                const val = e.target.value;
-                                // The venue master catalog is shared across
-                                // tenants, so changing the event's org does
-                                // NOT invalidate the selected venue.
-                                handleChange({ target: { name: 'organization_id', value: val } });
-                                setCurrentOrgId(val);
-                            }}
-                            helperText={t('events.organizationHelper')}
-                        >
-                            {organizations.map((org) => (
-                                <MenuItem key={org.id} value={org.id}>{org.name}</MenuItem>
-                            ))}
-                        </TextField>
-                    </Grid>
-                    <Grid item xs={12} sm={6} />
-                </>
-            )}
+            <EventTicketSettings formData={formData} onChange={handleChange} />
 
-            <EventBasicInfo
-                formData={formData}
-                onChange={handleChange}
-                venues={venues}
-                hideVenueField
-                hideIdentityFields
-            />
-
-            {canAssignOrganizer && (
-                <OrganizerSelector
-                    value={formData.organizer_id}
-                    onChange={(val) =>
-                        handleChange({ target: { name: 'organizer_id', value: val } })
-                    }
-                    organizers={organizers}
-                    loading={loadingOrganizers}
-                    currentUserName={user?.name || user?.username}
-                />
-            )}
-
-            <EventSchedule formData={formData} onChange={handleChange} />
-            <EventCancellationPolicy
-                formData={formData}
-                onChange={handleChange}
-                policies={policies}
-            />
-            <EventTicketSettings
-                formData={formData}
-                onChange={handleChange}
-                isFreeRegistration={formData.event_flow === 'free_registration'}
-            />
-
-            {/* Sessions: only rendered when applicable. Required when
-                ticketed, optional otherwise. */}
             {requirements.sessionsApplicable ? (
                 <>
                     {requirements.sessionsRequired && (
-                        <Grid item xs={12}>
-                            <Alert severity="info">
-                                {t('eventWizard.sessionsRequired')}
-                            </Alert>
-                        </Grid>
+                        <Grid item xs={12}><Alert severity="info">{t('eventWizard.sessionsRequired')}</Alert></Grid>
                     )}
-                    <SessionsEditor
-                        sessions={sessions}
-                        onAdd={addSession}
-                        onRemove={removeSession}
-                        onUpdate={updateSession}
-                    />
+                    <SessionsEditor sessions={sessions} onAdd={addSession} onRemove={removeSession} onUpdate={updateSession} />
                 </>
             ) : (
-                <Grid item xs={12}>
-                    <Alert severity="info">
-                        {t('eventWizard.sessionsTicketedOnly')}
-                    </Alert>
-                </Grid>
+                <Grid item xs={12}><Alert severity="info">{t('eventWizard.sessionsTicketedOnly')}</Alert></Grid>
             )}
 
-            {/* Tiers: rendered only when applicable. Required for
-                paid/ticketed GA events; hidden entirely for reserved
-                seating (prices come from the Seats step) and for free
-                registration (auto GA tier). */}
             {requirements.tiersApplicable ? (
                 <>
                     {requirements.tiersRequired && (
-                        <Grid item xs={12}>
-                            <Alert severity="info">
-                                {t('eventWizard.tiersRequired')}
-                            </Alert>
-                        </Grid>
+                        <Grid item xs={12}><Alert severity="info">{t('eventWizard.tiersRequired')}</Alert></Grid>
                     )}
                     <TiersEditor
-                        tiers={tiers}
-                        onAdd={addTier}
-                        onRemove={removeTier}
-                        onUpdate={updateTier}
+                        tiers={tiers} onAdd={addTier} onRemove={removeTier} onUpdate={updateTier}
                         isRegistrationFees={formData.event_flow === 'paid_registration'}
-                        label={
-                            formData.event_flow === 'paid_registration'
-                                ? t('events.tiersTitleFees')
-                                : t('events.tiersTitle')
-                        }
+                        label={formData.event_flow === 'paid_registration' ? t('events.tiersTitleFees') : t('events.tiersTitle')}
                     />
                 </>
             ) : hasReservedSeating ? (
-                <Grid item xs={12}>
-                    <Alert severity="info">
-                        {t('eventWizard.reservedNoTiers')}
-                    </Alert>
-                </Grid>
+                <Grid item xs={12}><Alert severity="info">{t('eventWizard.reservedNoTiers')}</Alert></Grid>
             ) : formData.event_flow === 'free_registration' ? (
-                <Grid item xs={12}>
-                    <Box sx={{ p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}>
-                        <Typography variant="body2" sx={{ color: C.textSecondary }}>
-                            {t('events.freeRegistrationBanner')}
-                        </Typography>
-                    </Box>
-                </Grid>
+                <Grid item xs={12}><Box sx={{ p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}><Typography variant="body2" sx={{ color: C.textSecondary }}>{t('events.freeRegistrationBanner')}</Typography></Box></Grid>
             ) : null}
 
             <TemplatesGrid
@@ -976,14 +1188,79 @@ const CreateEvent = () => {
                 onOpenUpload={templates.openUpload}
                 onDeleteTemplate={templates.deleteTemplate}
             />
-
-            <EventFormActions
-                isEdit={isEdit}
-                submitting={submitting}
-                onCancel={handleCancel}
-            />
         </Grid>
     );
+
+    const renderPublish = () => {
+        const checklist = [
+            [Boolean(formData.title?.trim()), t('eventWizard.checkTitle', 'Event title')],
+            [Boolean(formData.description?.trim()), t('eventWizard.checkOverview', 'Overview')],
+            [Boolean(chosenVenue), t('eventWizard.checkVenue', 'Venue')],
+            [Boolean(formData.start_date && formData.end_date), t('eventWizard.checkDates', 'Date and time')],
+            [(tiers.length > 0) || formData.event_flow === 'free_registration' || hasReservedSeating, t('eventWizard.checkTickets', 'Tickets or seat pricing')],
+        ];
+
+        return (
+            <Grid container spacing={3}>
+                <Grid item xs={12}>
+                    <SectionTitle variant="h6">{t('eventWizard.publishHeading', 'Ready to publish?')}</SectionTitle>
+                    <Divider sx={{ borderColor: C.borderLight }} />
+                    <Typography variant="body2" sx={{ color: C.textSecondary, mt: 1 }}>
+                        {t('eventWizard.publishHint', 'Review the snapshot below. Publishing makes the event visible and freezes its venue plan.')}
+                    </Typography>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', p: 2, bgcolor: C.bgPrimary, borderRadius: 2 }}>
+                        {formData.cover_image && (
+                            <Box component="img" src={formData.cover_image} alt="" sx={{ width: 96, height: 64, objectFit: 'cover', borderRadius: 1.5 }} />
+                        )}
+                        <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="h6" sx={{ fontWeight: 800, color: C.textPrimary }}>
+                                {formData.title || t('eventWizard.eventTitlePlaceholder', 'Event title')}
+                            </Typography>
+                            <Typography variant="body2" sx={{ color: C.textSecondary }}>
+                                {previewDate} · {previewVenue}
+                            </Typography>
+                            <Chip size="small" label={formData.status === 'published' ? t('events.published', 'Published') : t('events.draft', 'Draft')} sx={{ mt: 1 }} />
+                        </Box>
+                    </Box>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
+                        {t('eventWizard.readiness', 'Readiness check')}
+                    </Typography>
+                    <Stack spacing={1}>
+                        {checklist.map(([ok, label]) => (
+                            <Box key={label} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                {ok ? <CheckIcon sx={{ color: C.success, fontSize: 18 }} /> : <Box sx={{ width: 18, height: 18, borderRadius: '50%', border: `1.5px solid ${C.textMuted}` }} />}
+                                <Typography variant="body2" sx={{ color: ok ? C.textPrimary : C.textMuted }}>{label}</Typography>
+                            </Box>
+                        ))}
+                    </Stack>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Alert severity="info">
+                        {t('eventWizard.publishDraftNotice', 'This event is saved as a draft until you publish it. After publishing, status changes such as completed or sold out are handled automatically.')}
+                    </Alert>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <PrimaryButton
+                        onClick={handlePublish}
+                        disabled={submitting}
+                        startIcon={submitting ? <CircularProgress size={18} /> : <CheckIcon />}
+                    >
+                        {isEdit && formData.status === 'published'
+                            ? t('eventWizard.saveChanges')
+                            : t('eventWizard.publishEvent', 'Publish event')}
+                    </PrimaryButton>
+                </Grid>
+            </Grid>
+        );
+    };
 
     if (formLoading || orgLoading) {
         return (
@@ -1023,7 +1300,8 @@ const CreateEvent = () => {
         [STEP.BASICS]: renderBasics,
         [STEP.VENUE]: renderVenueStep,
         [STEP.SEATS]: renderSeatsStep,
-        [STEP.DETAILS]: renderDetails,
+        [STEP.TICKETING]: renderTicketing,
+        [STEP.DETAILS]: renderPublish,
     };
 
     const currentIndex = visibleSteps.findIndex((s) => s.key === activeStep);
@@ -1033,6 +1311,14 @@ const CreateEvent = () => {
     const handleNextClick = () => {
         if (activeStep === STEP.BASICS) {
             const err = canLeaveBasics();
+            if (err) {
+                window.alert(err);
+                return;
+            }
+        }
+
+        if (activeStep === STEP.TICKETING) {
+            const err = canLeaveDetails();
             if (err) {
                 window.alert(err);
                 return;
@@ -1057,74 +1343,202 @@ const CreateEvent = () => {
         nextStep();
     };
 
+    const previewDate = formData.start_date
+        ? new Date(formData.start_date).toLocaleString('en-HK', {
+            weekday: 'short', day: 'numeric', month: 'short',
+            hour: '2-digit', minute: '2-digit',
+        })
+        : t('common.tbd');
+    const previewVenue = chosenVenue?.name || formData.venue_name || t('eventWizard.venueRequired');
+    const previewTierPrices = tiers
+        .map((tier) => Number(tier.price) || 0)
+        .filter((price) => price > 0);
+    const previewSeatPrices = (
+        selectedMaster?._categoryOverrides
+        || existingPlan?.categories
+        || selectedMaster?.snapshot?.category_palette
+        || []
+    )
+        .map((category) => Number(category.price ?? category.default_price) || 0)
+        .filter((price) => price > 0);
+    const previewPrice = previewTierPrices.length
+        ? Math.min(...previewTierPrices)
+        : (previewSeatPrices.length ? Math.min(...previewSeatPrices) : null);
+    const previewHasPrice = previewPrice !== null && previewPrice > 0;
+    const stepDescriptions = {
+        [STEP.BASICS]: t('eventWizard.basicsRailHint', 'Set the essentials and when it happens'),
+        [STEP.VENUE]: t('eventWizard.venueRailHint', 'Choose where the event takes place'),
+        [STEP.SEATS]: t('eventWizard.seatsRailHint', 'Assign seats and categories'),
+        [STEP.TICKETING]: t('eventWizard.ticketingRailHint', 'Set ticket types and templates'),
+        [STEP.DETAILS]: t('eventWizard.publishRailHint', 'Review and publish your event'),
+    };
+
     return (
-        <PageContainer>
-            <PageHeader>
-                <PageHeaderLeft>
-                    <PageTitle>{isEdit ? t('events.editTitle') : t('events.formActionsCreate')}</PageTitle>
-                </PageHeaderLeft>
-                <PageHeaderRight>
-                    <OutlineButton onClick={handleCancel}>
-                        {t('common.cancel')}
-                    </OutlineButton>
-                </PageHeaderRight>
-            </PageHeader>
-
-            <Stepper activeStep={currentIndex} sx={{ mb: 3 }}>
-                {visibleSteps.map((s) => (
-                    <Step key={s.key}>
-                        <StepLabel>{s.label}</StepLabel>
-                    </Step>
-                ))}
-            </Stepper>
-
-            {submitError && <Alert severity="error" sx={{ mb: 2 }}>{submitError}</Alert>}
-
-            <StyledPaper>
-                {isLast ? (
-                    <form onSubmit={handleFinalSubmit}>
-                        {stepContent[activeStep]()}
-                    </form>
-                ) : (
-                    stepContent[activeStep]()
-                )}
-            </StyledPaper>
-
-            <Box
-                sx={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    mt: 3,
-                    gap: 2,
-                    flexWrap: 'wrap',
-                }}
-            >
-                <OutlineButton
-                    onClick={prevStep}
-                    disabled={isFirst}
-                    startIcon={<ArrowBackIcon />}
-                >
-                    {t('common.back')}
-                </OutlineButton>
-
-                {!isLast && (
-                    <PrimaryButton
-                        onClick={handleNextClick}
-                        endIcon={<ArrowForwardIcon />}
+        <BuilderPage>
+            <BuilderTopbar>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+                    <IconButton
+                        onClick={() => navigate(ROUTE.EVENTS_LIST)}
+                        aria-label={t('common.back')}
+                        sx={{ bgcolor: C.bgCard, border: `1px solid ${C.borderLight}`, flex: '0 0 auto' }}
                     >
-                        {t('eventWizard.continue')}
-                    </PrimaryButton>
-                )}
-                {isLast && (
-                    <PrimaryButton
-                        type="submit"
-                        disabled={submitting}
-                        startIcon={submitting ? <CircularProgress size={18} /> : <CheckIcon />}
+                        <ArrowBackIcon />
+                    </IconButton>
+                    <div style={{ minWidth: 0 }}>
+                        <BuilderTitle>
+                            {isEdit ? t('events.editTitle') : t('eventWizard.builderTitle', 'Create your event')}
+                        </BuilderTitle>
+                        <Typography variant="caption" sx={{ color: C.textMuted }}>
+                            {t('eventWizard.builderSubtitle', 'Build the page, add tickets, then publish when ready.')}
+                        </Typography>
+                    </div>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip
+                        size="small"
+                        label={formData.status === 'published' ? t('events.published', 'Published') : t('events.draft', 'Draft')}
+                        sx={{ bgcolor: C.bgInput, color: C.textSecondary, fontWeight: 700 }}
+                    />
+                    <OutlineButton onClick={handleCancel}>{t('common.cancel')}</OutlineButton>
+                </Box>
+            </BuilderTopbar>
+
+            <BuilderGrid>
+                <StepRail aria-label={t('eventWizard.steps', 'Event creation steps')}>
+                    {visibleSteps.map((s, idx) => (
+                        <RailStep
+                            key={s.key}
+                            type="button"
+                            $active={activeStep === s.key}
+                            $done={idx < currentIndex}
+                            onClick={() => {
+                                if (idx <= currentIndex) setActiveStep(s.key);
+                            }}
+                        >
+                            <span className="num">
+                                {idx < currentIndex ? <CheckIcon sx={{ fontSize: 15 }} /> : idx + 1}
+                            </span>
+                            <span className="copy">
+                                <b>{s.label}</b>
+                                <small>{stepDescriptions[s.key]}</small>
+                            </span>
+                        </RailStep>
+                    ))}
+                </StepRail>
+
+                <BuilderCenter>
+                    <ContentHeader>
+                        <ContentTitle>{visibleSteps[currentIndex]?.label}</ContentTitle>
+                        <Typography variant="caption" sx={{ color: C.textMuted }}>
+                            {currentIndex + 1} / {visibleSteps.length}
+                        </Typography>
+                    </ContentHeader>
+
+                    {submitError && <Alert severity="error" sx={{ mb: 2 }}>{submitError}</Alert>}
+
+                    <StyledPaper sx={{ p: { xs: 2, md: 3.5 } }}>
+                        {isLast ? (
+                            <form onSubmit={(e) => { e.preventDefault(); handlePublish(); }}>
+                                {stepContent[activeStep]()}
+                            </form>
+                        ) : (
+                            stepContent[activeStep]()
+                        )}
+                    </StyledPaper>
+
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            mt: 2.5,
+                            gap: 2,
+                            flexWrap: 'wrap',
+                        }}
                     >
-                        {isEdit ? t('eventWizard.saveChanges') : t('events.formActionsCreate')}
-                    </PrimaryButton>
-                )}
-            </Box>
+                        <OutlineButton
+                            onClick={prevStep}
+                            disabled={isFirst}
+                            startIcon={<ArrowBackIcon />}
+                        >
+                            {t('common.back')}
+                        </OutlineButton>
+
+                        {!isLast && (
+                            <PrimaryButton
+                                onClick={handleNextClick}
+                                endIcon={<ArrowForwardIcon />}
+                            >
+                                {t('eventWizard.saveAndContinue', 'Save and continue')}
+                            </PrimaryButton>
+                        )}
+
+                    </Box>
+                </BuilderCenter>
+
+                <PreviewCard aria-label={t('eventWizard.livePreview', 'Live event preview')}>
+                    <PreviewLabel>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                            <PreviewIcon fontSize="small" />
+                            {t('eventWizard.preview', 'Preview')}
+                        </span>
+                        <PreviewDevices>
+                            {[
+                                ['mobile', PhoneIcon, 'Mobile'],
+                                ['tablet', TabletIcon, 'Tablet'],
+                                ['laptop', LaptopIcon, 'Laptop'],
+                            ].map(([device, Icon, label]) => (
+                                <DeviceButton
+                                    key={device}
+                                    type="button"
+                                    $active={previewDevice === device}
+                                    onClick={() => setPreviewDevice(device)}
+                                    aria-label={label}
+                                    title={label}
+                                >
+                                    <Icon />
+                                </DeviceButton>
+                            ))}
+                        </PreviewDevices>
+                    </PreviewLabel>
+                    <PreviewStage>
+                        <PreviewViewport $device={previewDevice}>
+                            <PreviewArt $image={formData.cover_image || undefined}>
+                                <span>{formData.title || t('eventWizard.eventTitlePlaceholder', 'Event title')}</span>
+                            </PreviewArt>
+                            <PreviewBody>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 800, color: C.textPrimary, lineHeight: 1.3 }}>
+                                    {formData.title || t('eventWizard.eventTitlePlaceholder', 'Event title')}
+                                </Typography>
+                                <Typography
+                                    variant="caption"
+                                    sx={{
+                                        color: C.textMuted, display: '-webkit-box', mt: 0.5,
+                                        overflow: 'hidden', WebkitLineClamp: previewDevice === 'mobile' ? 2 : 3,
+                                        WebkitBoxOrient: 'vertical',
+                                    }}
+                                >
+                                    {formData.description || t('eventWizard.shortDescriptionPlaceholder', 'Tell attendees what the event is about.')}
+                                </Typography>
+                                <PreviewMeta>
+                                    <div><CalendarIcon sx={{ fontSize: 15 }} />{previewDate}</div>
+                                    <div><LocationIcon sx={{ fontSize: 15 }} />{previewVenue}</div>
+                                    {chosenVenue?.address && <div>{chosenVenue.address}</div>}
+                                </PreviewMeta>
+                                <PreviewDivider />
+                                <PreviewPrice>
+                                    <div>
+                                        {previewHasPrice && (
+                                            <small>{t('eventWizard.startingFrom', 'From')}</small>
+                                        )}
+                                        <b>{previewHasPrice ? formatMoney(previewPrice) : t('eventWizard.priceTbd', 'Price TBD')}</b>
+                                    </div>
+                                    <PreviewCta>{t('eventWizard.getTickets', 'Get tickets')}</PreviewCta>
+                                </PreviewPrice>
+                            </PreviewBody>
+                        </PreviewViewport>
+                    </PreviewStage>
+                </PreviewCard>
+            </BuilderGrid>
 
             <TemplateUploadDialog
                 open={templates.uploadDialogOpen}
@@ -1136,7 +1550,7 @@ const CreateEvent = () => {
                 onClose={templates.closeUpload}
                 onUpload={templates.uploadTemplate}
             />
-        </PageContainer>
+        </BuilderPage>
     );
 };
 

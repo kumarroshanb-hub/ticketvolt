@@ -89,6 +89,15 @@ class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True)
+    description = models.CharField(max_length=300, blank=True, default='')
+    allowed_auth_methods = models.JSONField(
+        default=list, blank=True,
+        help_text='Login methods permitted for this organization tier.',
+    )
+    organization_type = models.CharField(max_length=40, blank=True, default='')
+    industry = models.CharField(max_length=60, blank=True, default='')
+    year_established = models.PositiveSmallIntegerField(null=True, blank=True)
+    social_links = models.JSONField(default=list, blank=True)
 
     # Per-tenant display config. Mirrors the fields that used to live
     # on SystemSettings; seeded from SystemSettings on create so a new
@@ -103,8 +112,73 @@ class Organization(models.Model):
     org_email = models.EmailField(blank=True, default='')
     org_logo_url = models.URLField(blank=True, default='')
     email_from_name = models.CharField(max_length=120, blank=True, default='')
+    email_reply_to = models.EmailField(blank=True, default='')
+
+    # ---- White-label branding ----
+    brand_primary_color = models.CharField(max_length=7, default='#333333')
+    brand_secondary_color = models.CharField(max_length=7, default='#FF2A2A')
+    brand_favicon_url = models.URLField(blank=True, default='')
+    support_url = models.URLField(blank=True, default='')
+    legal_name = models.CharField(max_length=200, blank=True, default='')
+    legal_name_zh = models.CharField(max_length=200, blank=True, default='')
+    custom_domain = models.CharField(
+        max_length=255, blank=True, null=True, unique=True,
+        help_text='Verified hostname, e.g. tickets.example.com',
+    )
+    domain_verified = models.BooleanField(default=False)
+
+    # ---- Localisation / commerce ----
+    default_language = models.CharField(
+        max_length=10, default='en',
+        choices=(('en', 'English'), ('zh-Hant', 'Traditional Chinese')),
+    )
+    tax_rate = models.DecimalField(
+        max_digits=6, decimal_places=3, default=0,
+        help_text='Percentage, e.g. 5.000 for 5%.',
+    )
+    tax_inclusive = models.BooleanField(default=False)
+    invoice_prefix = models.CharField(max_length=12, default='INV')
+    invoice_next_number = models.PositiveIntegerField(default=1)
+
+    # ---- Marketplace / payouts ----
+    platform_fee_percent = models.DecimalField(
+        max_digits=6, decimal_places=3, default=5,
+        help_text='Platform fee retained from gross sales.',
+    )
+
+    # ---- Tax / donation receipt configuration ----
+    registered_address = models.TextField(blank=True, default='')
+    registered_address_zh = models.TextField(blank=True, default='')
+    org_phone = models.CharField(max_length=40, blank=True, default='')
+    ird_file_number = models.CharField(max_length=60, blank=True, default='')
+    ird_section88 = models.BooleanField(
+        default=False,
+        help_text='Confirmed by the treasurer: entity is a Section 88 charity.',
+    )
+    receipt_signatory_name = models.CharField(max_length=120, blank=True, default='')
+    receipt_signatory_title = models.CharField(max_length=120, blank=True, default='')
+    receipt_prefix = models.CharField(max_length=12, default='DR')
+    receipt_next_number = models.PositiveIntegerField(default=1)
+    tax_receipt_threshold = models.DecimalField(
+        max_digits=10, decimal_places=2, default=100,
+        help_text='Donation amount at/above which the statutory tax wording applies.',
+    )
+    donation_receipt_min_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Minimum donation for which a receipt is issued (0 = any donation).',
+    )
+    auto_email_donation_receipt = models.BooleanField(default=True)
+    receipt_footer_note = models.TextField(blank=True, default='')
+    payout_cycle = models.CharField(
+        max_length=20, default='monthly',
+        choices=(('weekly', 'Weekly'), ('biweekly', 'Bi-weekly'), ('monthly', 'Monthly')),
+    )
 
     is_active = models.BooleanField(default=True)
+    feature_package = models.ForeignKey(
+        'ticket_bookings.FeaturePackage', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='organizations',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -181,6 +255,7 @@ class OrganizationMembership(models.Model):
         OWNER = 'owner', 'Owner'
         ADMIN = 'admin', 'Admin'
         STAFF = 'staff', 'Staff'      # scanner / check-in only
+        FINANCE = 'finance', 'Finance'  # reports, payouts, payment settings
         MEMBER = 'member', 'Member'   # registered attendee with an account
         # NOTE: 'customer' removed in the 6-tier refactor.
         # A person who merely bought a ticket and has no account is a
@@ -193,6 +268,7 @@ class OrganizationMembership(models.Model):
     # it is not a separate role. The legacy 'owner' choice is retained
     # only so old rows can be migrated safely.
     MANAGER_ROLES = (OrgRole.ADMIN,)
+    FINANCE_ROLES = (OrgRole.ADMIN, OrgRole.FINANCE)
     # Roles that can perform operational actions (check-in)
     OPERATOR_ROLES = (OrgRole.ADMIN, OrgRole.STAFF)
 

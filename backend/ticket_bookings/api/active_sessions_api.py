@@ -72,6 +72,14 @@ class ActiveSessionsView(APIView):
         session_cookie_age = getattr(settings, 'SESSION_COOKIE_AGE', 8 * 60 * 60)
 
         now = timezone.now()
+
+        # Housekeeping: remove expired cookie sessions and clear stale JWT
+        # activity records so logged-out/expired users cannot linger forever.
+        Session.objects.filter(expire_date__lte=now).delete()
+        UserProfile.objects.filter(
+            last_active__lt=now - timedelta(hours=12),
+        ).update(last_active=None)
+
         out = []
         unique_user_ids = set()
 
@@ -94,6 +102,7 @@ class ActiveSessionsView(APIView):
             role = effective_role_label(u)
             idle_seconds = int((now - profile.last_active).total_seconds())
 
+            jwt_expires_at = profile.last_active + timedelta(hours=12)
             out.append({
                 'session_key': 'JWT',
                 'user_id': u.id,
@@ -104,8 +113,8 @@ class ActiveSessionsView(APIView):
                 'platform_role': _platform_role_label(u),   # ✅ NEW
                 'is_staff': u.is_staff,
                 'is_superuser': u.is_superuser,
-                'expires_at': None,
-                'seconds_to_expiry': None,
+                'expires_at': jwt_expires_at.isoformat(),
+                'seconds_to_expiry': max(0, int((jwt_expires_at - now).total_seconds())),
                 'last_activity': profile.last_active.isoformat(),
                 'idle_seconds': idle_seconds,
                 'idle': idle_seconds >= idle_threshold_seconds,

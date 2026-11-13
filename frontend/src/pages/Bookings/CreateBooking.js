@@ -4,6 +4,7 @@ import {
     Box, Typography, Paper, Stepper, Step, StepLabel, Button,
     CircularProgress, Alert, Grid, Divider, Card, CardContent,
     TextField, IconButton, Chip, useMediaQuery, useTheme, Stack,
+    Checkbox, FormControlLabel,
 } from '@mui/material';
 import {
     ArrowBack as ArrowBackIcon, ArrowForward as ArrowForwardIcon,
@@ -138,6 +139,10 @@ const CreateBooking = () => {
     const [validatingDiscount, setValidatingDiscount] = useState(false);
     const [submitError, setSubmitError] = useState(null);
     const [donationAmount, setDonationAmount] = useState('');
+    const [donorName, setDonorName] = useState('');
+    const [courseAnswer, setCourseAnswer] = useState('');
+    const [privacyAccepted, setPrivacyAccepted] = useState(false);
+    const [marketingOptIn, setMarketingOptIn] = useState(false);
 
     const hasReservedSeating = selectedEvent?.venue?.has_reserved_seating;
     const [selectedSeats, setSelectedSeats] = useState([]);
@@ -463,7 +468,10 @@ const CreateBooking = () => {
             setTiers(availableTiers);
 
             const isFree = data.event_flow === 'free_registration';
-            if (!isFree) {
+            const isReserved = Boolean(data.venue?.has_reserved_seating);
+            // Reserved-seat events price and allocate seats from the venue
+            // layout, not from ticket tiers. An empty tier list is expected.
+            if (!isFree && !isReserved) {
                 if (availableTiers.length === 0 && data.tiers && data.tiers.length > 0) toast.info(t('booking.wizard.allTicketsSoldOutInfo'));
                 else if (availableTiers.length === 0) toast.info(t('booking.wizard.noTicketsAvailable'));
             }
@@ -483,7 +491,7 @@ const CreateBooking = () => {
         resetDraft(); setSubmitError(null); setSelectedEvent(event); setSelectedSession(null);
         setSlotPreferences([]); setSlotPreferencesInput(''); setTiers([]); setEventDetails(null);
         setDiscountInput(''); setAppliedDiscount(null); setSelectedSeats([]); setReservedAttendees([]);
-        setDonationAmount('');
+        setDonationAmount(''); setDonorName(''); setCourseAnswer(''); setPrivacyAccepted(false); setMarketingOptIn(false);
         setSeatingLayout(null);                 // ✅ reset layout
         loadEventDetails(event.id);
         const hasSessionsPreview = (event.session_count ?? event.sessions?.length ?? 0) > 0;
@@ -552,6 +560,7 @@ const CreateBooking = () => {
             if (!validate()) { toast.error(t('booking.wizard.pleaseFixErrors')); return; }
         } else {
             if (!customer.name?.trim() || !customer.email?.trim() || !customer.phone?.trim()) { toast.error(t('booking.wizard.pleaseFillPrimary')); return; }
+            if (eventDetails?.privacy_notice_text && !privacyAccepted) { toast.error(t('booking.privacyRequired', 'Please accept the privacy notice.')); return; }
             if (freeAttendees.some((a) => !a.name?.trim())) { toast.error(t('booking.wizard.pleaseEnterNameEveryEntry')); return; }
         }
 
@@ -574,6 +583,10 @@ const CreateBooking = () => {
                     total_amount: selectedSeats.reduce((sum, s) => sum + (Number(s.price) || 0), 0)
                         + Math.max(0, Number(donationAmount) || 0),
                     donation_amount: Math.max(0, Number(donationAmount) || 0),
+                    donor_name: donorName || customer.name,
+                    course_answer: courseAnswer,
+                    privacy_accepted: privacyAccepted,
+                    marketing_opt_in: marketingOptIn,
                     metadata: { slot_preferences: slotPreferences, booking_source: isRegularUser ? 'user_portal' : 'admin_portal' }
                 };
                 if (appliedDiscount?.valid && appliedDiscount?.code) payload.discount_code = appliedDiscount.code;
@@ -584,8 +597,12 @@ const CreateBooking = () => {
                     const donation = Math.max(0, Number(donationAmount) || 0);
                     if (donation > 0) {
                         payload.donation_amount = donation;
+                        payload.donor_name = donorName || customer.name;
                         payload.total_amount = (Number(payload.total_amount) || 0) + donation;
                     }
+                    payload.course_answer = courseAnswer;
+                    payload.privacy_accepted = privacyAccepted;
+                    payload.marketing_opt_in = marketingOptIn;
                     if (appliedDiscount?.valid && appliedDiscount?.code) payload.discount_code = appliedDiscount.code;
                 }
             }
@@ -1005,6 +1022,23 @@ const CreateBooking = () => {
                             <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.labelPhone')}:</strong> {customer.phone}</Typography>
                             {customer.whatsapp && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('bookings.labelWhatsApp')}:</strong> {customer.whatsapp}</Typography>}
                             {customer.notes && <Typography variant="body2" sx={{ color: 'text.secondary' }}><strong>{t('booking.notes')}:</strong> {customer.notes}</Typography>}
+                            {eventDetails?.privacy_notice_text && (
+                                <Box sx={{ mt: 2 }}>
+                                    <Typography variant="caption" sx={{ color: C.textSecondary, display: 'block' }}>
+                                        {eventDetails.privacy_notice_text}
+                                    </Typography>
+                                    <FormControlLabel
+                                        control={<Checkbox checked={privacyAccepted} onChange={(e) => setPrivacyAccepted(e.target.checked)} />}
+                                        label={<Typography variant="caption">{t('booking.privacyAccept', 'I accept the privacy notice.')}</Typography>}
+                                    />
+                                </Box>
+                            )}
+                            {eventDetails?.marketing_opt_in_enabled && (
+                                <FormControlLabel
+                                    control={<Checkbox checked={marketingOptIn} onChange={(e) => setMarketingOptIn(e.target.checked)} />}
+                                    label={<Typography variant="caption">{t('booking.marketingOptIn', 'I would like to receive future updates.')}</Typography>}
+                                />
+                            )}
                         </Box>
                     </Paper>
                 </Grid>
@@ -1055,6 +1089,13 @@ const CreateBooking = () => {
                                     <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mb: 1.5 }}>
                                         {t('booking.donationHelper', { currency: eventDetails?.currency_code || 'HKD' })}
                                     </Typography>
+                                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1.5 }}>
+                                        {(eventDetails?.donation_presets || []).map((amount) => (
+                                            <Button key={amount} size="small" variant={Number(donationAmount) === Number(amount) ? 'contained' : 'outlined'} onClick={() => setDonationAmount(String(amount))}>
+                                                {formatMoney(amount)}
+                                            </Button>
+                                        ))}
+                                    </Box>
                                     <TextField
                                         fullWidth
                                         size="small"
@@ -1065,6 +1106,14 @@ const CreateBooking = () => {
                                         inputProps={{ min: 0, step: '0.01' }}
                                         helperText={t('booking.donationTaxHint')}
                                     />
+                                    {donationValue > 0 && (
+                                        <TextField
+                                            fullWidth size="small" sx={{ mt: 1.5 }}
+                                            label={t('booking.donorNameLabel', 'Donor name for receipt')}
+                                            value={donorName || customer.name}
+                                            onChange={(e) => setDonorName(e.target.value)}
+                                        />
+                                    )}
                                 </Box>
                             )}
                             <Divider sx={{ my: 2 }} />

@@ -32,6 +32,7 @@ from ..managers import (
 )
 
 from ..models_tenancy import Organization, OrganizationMembership
+from ..services.translation import translate_event_content
 from ..services.tenancy import (
     can_manage_org,
     can_manage_event_data,
@@ -463,12 +464,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Single-day events always end when they start (same rule the
-        # serializers apply). Create bypasses the serializer, so enforce
-        # it here too.
-        if str(data.get('event_type') or 'single').lower() == 'single':
-            end_date = start_date
-
         # A published/active event must have its venue plan validated and
         # frozen. Creation honours the requested status and performs that
         # freeze inside this transaction (instead of rejecting the request
@@ -511,6 +506,36 @@ class EventViewSet(viewsets.ModelViewSet):
                     cancellation_policy_text=data.get('cancellation_policy_text', '') or '',
                     members_only=bool(data.get('members_only', False)),
                     donations_enabled=bool(data.get('donations_enabled', False)),
+                    cancellation_reason=str(data.get('cancellation_reason') or '').strip(),
+                    ask_course_question=bool(data.get('ask_course_question', False)),
+                    privacy_notice_text=data.get('privacy_notice_text', '') or '',
+                    marketing_opt_in_enabled=bool(data.get('marketing_opt_in_enabled', False)),
+                    public_page_enabled=bool(data.get('public_page_enabled', True)),
+                    duration_minutes=int(data.get('duration_minutes') or 120),
+                    feedback_enabled=bool(data.get('feedback_enabled', False)),
+                    feedback_title=data.get('feedback_title', 'Share your feedback') or 'Share your feedback',
+                    feedback_intro=data.get('feedback_intro', '') or '',
+                    feedback_questions=data.get('feedback_questions') or [],
+                    checkin_opens_minutes_before=int(
+                        data.get('checkin_opens_minutes_before')
+                        if data.get('checkin_opens_minutes_before') is not None
+                        else 30
+                    ),
+                    map_url=data.get('map_url', '') or '',
+                    faqs=data.get('faqs') or [],
+                    title_zh=data.get('title_zh', '') or '',
+                    short_description_zh=data.get('short_description_zh', '') or '',
+                    description_zh=data.get('description_zh', '') or '',
+                    faqs_zh=data.get('faqs_zh') or [],
+                    donation_presets=data.get('donation_presets') or [],
+                    donation_contact_text=data.get('donation_contact_text', '') or '',
+                    show_bilingual_content=bool(data.get('show_bilingual_content', False)),
+                    highlights=data.get('highlights') or [],
+                    age_info=data.get('age_info', '') or '',
+                    door_time=data.get('door_time', '') or '',
+                    parking_info=data.get('parking_info', '') or '',
+                    refund_policy=data.get('refund_policy', '') or '',
+                    accessibility_info=data.get('accessibility_info', '') or '',
                     min_membership_tier_id=data.get('min_membership_tier_id') or None,
                 )
                 venue_plan_payload = None
@@ -539,17 +564,10 @@ class EventViewSet(viewsets.ModelViewSet):
                     # the event pins that exact version and keeps it
                     # intact through EventVenuePlan's PROTECT FK.
 
-                    # Guard: no tiers on reserved-seating venues.
-                    if (
-                        (venue_master.snapshot or {}).get('has_reserved_seating')
-                        and (data.get('tiers') or [])
-                    ):
-                        raise ValidationError({
-                            'tiers': (
-                                'This venue uses reserved seating. Pricing comes from seat '
-                                'categories, not ticket tiers. Send an empty tiers list.'
-                            )
-                        })
+                    # Reserved-seat events are priced from the seat map.
+                    # Ignore any stale tier payload rather than blocking publish.
+                    if (venue_master.snapshot or {}).get('has_reserved_seating'):
+                        data['tiers'] = []
 
                     # If the event has no explicit venue, adopt the master's venue.
                     if not event.venue_id:
@@ -642,6 +660,8 @@ class EventViewSet(viewsets.ModelViewSet):
             )
 
         try:
+            translate_event_content(event)
+            event.refresh_from_db()
             serialized = EventDetailSerializer(
                 event, context={'request': request},
             ).data
@@ -887,10 +907,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Single-day events always end when they start.
-        if str(data.get('event_type') or instance.event_type).lower() == 'single':
-            data['end_date'] = data.get('start_date') or instance.start_date
-
         # Status changes are allowed here; if the event ends up
         # published/active its venue plan is frozen before the response.
         incoming_status = str(data.get('status') or '').strip().lower()
@@ -928,7 +944,14 @@ class EventViewSet(viewsets.ModelViewSet):
             'refundable_until',
             'cancellation_policy_text',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
-            'members_only', 'donations_enabled',
+            'members_only', 'donations_enabled', 'cancellation_reason', 'ask_course_question',
+            'privacy_notice_text', 'marketing_opt_in_enabled',
+            'public_page_enabled', 'duration_minutes', 'checkin_opens_minutes_before', 'map_url', 'faqs',
+            'feedback_enabled', 'feedback_title', 'feedback_intro', 'feedback_questions',
+            'title_zh', 'short_description_zh', 'description_zh', 'faqs_zh',
+            'donation_presets', 'donation_contact_text',
+            'show_bilingual_content', 'highlights', 'age_info',
+            'door_time', 'parking_info', 'refund_policy', 'accessibility_info',
         ]
         for field in fields:
             if field in data:
@@ -939,6 +962,7 @@ class EventViewSet(viewsets.ModelViewSet):
             instance.min_membership_tier_id = raw_tier or None
 
         instance.save()
+        translate_event_content(instance)
 
         if 'sessions' in data and isinstance(data['sessions'], list):
             incoming = data['sessions'] or []
@@ -1191,7 +1215,9 @@ class EventViewSet(viewsets.ModelViewSet):
                     plan.refresh_from_db()
 
                 event.status = 'published'
-                event.save(update_fields=['status', 'updated_at'])
+                event.is_public = True
+                event.public_page_enabled = True
+                event.save(update_fields=['status', 'is_public', 'public_page_enabled', 'updated_at'])
         except EventVenuePlanError as exc:
             return Response(
                 {'error': str(exc), 'code': 'PLAN_NOT_FREEZABLE'},
@@ -1298,6 +1324,12 @@ class EventViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        from ..services import features as feature_service
+        if not event.public_page_enabled or not feature_service.has_feature(
+            event.organization, 'public_event_page',
+        ):
+            return Response({'error': 'Event not found'}, status=404)
+
         if not can_access_event(request.user, event):
             return Response(
                 {'error': 'This event is for members only.'},
@@ -1312,6 +1344,15 @@ class EventViewSet(viewsets.ModelViewSet):
         )
         data = serializer.data
         data['total_tickets_sold'] = active_tickets_count
+
+        if not feature_service.has_feature(event.organization, 'donation_quick_picks'):
+            data['donation_presets'] = []
+            data['donation_contact_text'] = ''
+        if not feature_service.has_feature(event.organization, 'event_bilingual'):
+            data['title_zh'] = ''
+            data['short_description_zh'] = ''
+            data['description_zh'] = ''
+            data['faqs_zh'] = []
 
         data = _apply_effective_status(data, event, now=now)
 

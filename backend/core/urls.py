@@ -8,7 +8,7 @@ from django.http import HttpResponse, HttpResponseForbidden
 from core.i18n_views import set_language_view
 
 from rest_framework_simplejwt.views import TokenRefreshView
-from rest_framework_simplejwt.views import TokenBlacklistView
+from core.auth_views import LogoutView
 from ticket_bookings.views import LoginView, MeView
 
 
@@ -20,7 +20,7 @@ def health_check(request):
 def home(request):
     """Minimal landing page. Does not leak endpoint names or internals."""
     return HttpResponse(
-        "<h1>TicketVolt API</h1>"
+        "<h1>TiketVault API</h1>"
         "<p>Service is running.</p>"
     )
 
@@ -76,7 +76,7 @@ urlpatterns = [
     # Auth — login is public by necessity; refresh + logout operate on
     # tokens the caller already holds.
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('api/auth/logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
+    path('api/auth/logout/', LogoutView.as_view(), name='token_blacklist'),
     path('api/auth/login/', LoginView.as_view(), name='auth_login'),
 
     # ============================================

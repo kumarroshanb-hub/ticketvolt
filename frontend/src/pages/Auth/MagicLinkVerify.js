@@ -70,6 +70,7 @@ const MagicLinkVerify = () => {
 
     return (
         <Box
+            className="tv-auth-page"
             sx={{
                 display: 'flex',
                 justifyContent: 'center',

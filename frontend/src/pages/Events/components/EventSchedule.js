@@ -6,7 +6,6 @@ import {
 } from '@mui/material';
 import { StyledTextField } from './styled';
 import { getTimezoneLabel, getTimezoneGroups } from '../../../config/timezones';
-import { EVENT_STATUS, EVENT_STATUS_LABELS } from '../../../constants';
 import { useSettings } from '../../../context/SettingsContext';
 import { theme } from '../../../theme/tokens';
 
@@ -82,21 +81,6 @@ export const EventSchedule = ({ formData, onChange }) => {
                 </FormControl>
             </Grid>
 
-            <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                    <InputLabel id="status-label">{t('events.statusLabel')}</InputLabel>
-                    <Select
-                        labelId="status-label" name="status"
-                        value={formData.status} onChange={onChange} label={t('events.statusLabel')}
-                    >
-                        {Object.values(EVENT_STATUS).map((s) => (
-                            <MenuItem key={s} value={s}>
-                                {t(`status.event.${s}`, { defaultValue: EVENT_STATUS_LABELS[s] || s })}
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
-            </Grid>
         </>
     );
 };

@@ -7,11 +7,15 @@ from django.conf import settings
 from .base import PaymentProvider, WebhookResult, minor_units, major_units
 
 logger = logging.getLogger(__name__)
-stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 class StripeProvider(PaymentProvider):
     name = 'stripe'
+
+    def __init__(self, secret_key=None, publishable_key=None, webhook_secret=None):
+        self.secret_key = secret_key or settings.STRIPE_SECRET_KEY
+        self.publishable_key = publishable_key or settings.STRIPE_PUBLISHABLE_KEY
+        self.webhook_secret = webhook_secret or settings.STRIPE_WEBHOOK_SECRET
 
     @staticmethod
     def _description_for(payment):
@@ -21,7 +25,7 @@ class StripeProvider(PaymentProvider):
         event = getattr(payment, 'event', None)
         if event is not None and getattr(event, 'title', None):
             return event.title
-        return 'TicketVolt'
+        return 'TiketVault'
 
     def create_order(self, payment) -> dict:
         intent = stripe.PaymentIntent.create(
@@ -33,19 +37,20 @@ class StripeProvider(PaymentProvider):
             },
             receipt_email=getattr(payment, 'customer_email', None) or None,
             automatic_payment_methods={'enabled': True},
+            api_key=self.secret_key,
         )
         return {
             'provider_order_id': intent['id'],
             'client': {
                 'client_secret': intent['client_secret'],
-                'publishable_key': settings.STRIPE_PUBLISHABLE_KEY,
+                'publishable_key': self.publishable_key,
                 'payment_intent_id': intent['id'],
             },
         }
 
     def verify_checkout(self, payment, params: dict) -> bool:
         try:
-            intent = stripe.PaymentIntent.retrieve(payment.provider_order_id)
+            intent = stripe.PaymentIntent.retrieve(payment.provider_order_id, api_key=self.secret_key)
             return intent.status in ('succeeded', 'requires_capture')
         except stripe.error.StripeError:
             logger.exception('Stripe verify_checkout failed')
@@ -56,7 +61,7 @@ class StripeProvider(PaymentProvider):
         sig = headers.get('Stripe-Signature', '')
         try:
             event = stripe.Webhook.construct_event(
-                body, sig, settings.STRIPE_WEBHOOK_SECRET,
+                body, sig, self.webhook_secret,
             )
         except (ValueError, stripe.error.SignatureVerificationError):
             logger.warning('🚫 Stripe webhook signature mismatch')
@@ -86,10 +91,11 @@ class StripeProvider(PaymentProvider):
             amount=minor_units(amount, payment.currency),
             reason=reason or None,
             metadata={'payment_id': str(payment.id)},
+            api_key=self.secret_key,
         )
 
     def fetch_status(self, payment) -> str:
         if not payment.provider_order_id:
             return 'created'
-        intent = stripe.PaymentIntent.retrieve(payment.provider_order_id)
+        intent = stripe.PaymentIntent.retrieve(payment.provider_order_id, api_key=self.secret_key)
         return intent.status

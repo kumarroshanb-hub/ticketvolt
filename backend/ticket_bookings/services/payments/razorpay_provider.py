@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 class RazorpayProvider(PaymentProvider):
     name = 'razorpay'
 
-    def __init__(self):
-        self.client = razorpay.Client(
-            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-        )
+    def __init__(self, key_id=None, key_secret=None, webhook_secret=None):
+        self.key_id = key_id or settings.RAZORPAY_KEY_ID
+        self.key_secret = key_secret or settings.RAZORPAY_KEY_SECRET
+        self.webhook_secret = webhook_secret or settings.RAZORPAY_WEBHOOK_SECRET
+        self.client = razorpay.Client(auth=(self.key_id, self.key_secret))
 
     # ---------- helpers ----------
 
@@ -30,7 +31,7 @@ class RazorpayProvider(PaymentProvider):
         event = getattr(payment, 'event', None)
         if event is not None and getattr(event, 'title', None):
             return event.title
-        return 'TicketVolt'
+        return 'TiketVault'
 
     # ---------- interface ----------
 
@@ -46,7 +47,7 @@ class RazorpayProvider(PaymentProvider):
         return {
             'provider_order_id': order['id'],
             'client': {
-                'key': settings.RAZORPAY_KEY_ID,
+                'key': self.key_id,
                 'order_id': order['id'],
                 'amount': minor_units(payment.amount, payment.currency),
                 'currency': payment.currency.upper(),
@@ -67,7 +68,7 @@ class RazorpayProvider(PaymentProvider):
         if not (order_id and payment_id and signature):
             return False
         expected = hmac.new(
-            settings.RAZORPAY_KEY_SECRET.encode(),
+            self.key_secret.encode(),
             f'{order_id}|{payment_id}'.encode(),
             hashlib.sha256,
         ).hexdigest()
@@ -77,7 +78,7 @@ class RazorpayProvider(PaymentProvider):
         res = WebhookResult(raw={})
         signature = headers.get('X-Razorpay-Signature', '')
         expected = hmac.new(
-            settings.RAZORPAY_WEBHOOK_SECRET.encode(), body, hashlib.sha256,
+            self.webhook_secret.encode(), body, hashlib.sha256,
         ).hexdigest()
         if not hmac.compare_digest(expected, signature):
             logger.warning('🚫 Razorpay webhook signature mismatch')

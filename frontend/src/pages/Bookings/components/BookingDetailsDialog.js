@@ -26,6 +26,7 @@ export const BookingDetailsDialog = ({
     onViewETicket,
     onViewAllTickets,
     onDownloadTaxReceipt,
+    onMarkPatronContacted,
 }) => {
     const { formatMoney } = useSettings();
     const { t } = useTranslation();
@@ -88,6 +89,11 @@ export const BookingDetailsDialog = ({
                                     <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                         <strong>{t('booking.reference')}:</strong> {booking.booking_reference}
                                     </Typography>
+                                    {booking.invoice_number && (
+                                        <Typography variant="body2" sx={{ color: C.textPrimary }}>
+                                            <strong>{t('booking.invoiceNumber', 'Invoice')}:</strong> {booking.invoice_number}
+                                        </Typography>
+                                    )}
                                     <Typography variant="body2" sx={{ color: C.textPrimary }}>
                                         <strong>{t('booking.event')}:</strong>{' '}
                                         {booking.event_title || booking.event?.title || t('common.nA')}
@@ -151,6 +157,11 @@ export const BookingDetailsDialog = ({
                                 onClick={() => onDownloadTaxReceipt(booking)}
                             >
                                 {t('booking.donationTaxReceipt')}
+                            </OutlineButton>
+                        )}
+                        {canManageAllBookings && onMarkPatronContacted && (
+                            <OutlineButton onClick={() => onMarkPatronContacted(booking)}>
+                                {t('booking.markPatronContacted', 'Mark patron contacted')}
                             </OutlineButton>
                         )}
                         {canManageAllBookings && (

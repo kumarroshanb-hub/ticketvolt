@@ -1,4 +1,4 @@
-# ⚡🎫 TicketVolt - Complete Ticketing System
+# ⚡🎫 TiketVault - Complete Ticketing System
 
 ## 🚀 Quick Start
 

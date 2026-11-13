@@ -6,10 +6,29 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#1a1a1a"
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.ticketvolt.qrscanner"
+      "bundleIdentifier": "com.ticketvolt.qrscanner",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "TiKetVault Scanner uses the local Wi-Fi network to share check-ins between scanners at the same event.",
+        "NSBonjourServices": [
+          "_tiketvault._tcp",
+          "_tiketvault._udp"
+        ]
+      }
     },
     "android": {
       "package": "com.ticketvolt.qrscanner",
@@ -17,7 +36,13 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#333333"
       },
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -26,11 +51,6 @@
       "eas": {
         "projectId": "dae149f6-62ea-4054-8daf-d2b86db22b18"
       }
-    },
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#1a1a1a"
     }
   }
 }

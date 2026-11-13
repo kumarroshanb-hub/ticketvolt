@@ -12,6 +12,8 @@ import { GlobalStyle } from './styles/global';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { OrgProvider, useOrg } from './context/OrgContext';
+import { BrandingProvider } from './context/BrandingContext';
+import { FeatureProvider } from './context/FeatureContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { RoleProvider, useRole } from './context/RoleContext';
 
@@ -34,6 +36,13 @@ import BookingTickets from './pages/Bookings/BookingTickets';
 import CreateBooking from './pages/Bookings/CreateBooking';
 import Checkin from './pages/Checkin/Checkin';
 import Analytics from './pages/Analytics/Analytics';
+import Reports from './pages/Reports';
+import PaymentSettings from './pages/PaymentSettings';
+import Payouts from './pages/Payouts';
+import AuditLogs from './pages/AuditLogs';
+import Features from './pages/Features';
+import Security from './pages/Security';
+import AcceptTransfer from './pages/Transfers/AcceptTransfer';
 import Billing from './pages/Billing/Billing';
 import Discounts from './pages/Discounts/Discounts';
 import Settings from './pages/Settings/Settings';
@@ -41,12 +50,15 @@ import Login from './pages/Login/Login';
 import TicketView from './pages/Tickets/TicketView';
 import Unauthorized from './pages/Unauthorized/Unauthorized';
 import Register from './pages/Register/Register';
+import PublicEventPage from './pages/Events/Public/PublicEventPage';
 import Users from './pages/Users/Users';
 import Profile from './pages/Profile';
 import CancellationPolicies from './pages/CancellationPolicies';
 import ActiveSessions from './pages/ActiveSessions';
 import Organizations from './pages/Organizations';
 import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
+import GoogleCallback from './pages/Auth/GoogleCallback';
+import EventFeedback from './pages/Feedback/EventFeedback';
 import TeamMembers from './pages/Organizations/TeamMembers';
 import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor';
 import Membership from './pages/Membership/Membership';
@@ -149,9 +161,9 @@ const RoleBasedRoute = ({ children, allowedRoles }) => {
 // Gates a route on the user's MEMBERSHIP role in the CURRENT organization.
 // Super admins bypass. A user with no memberships is redirected to
 // /app/organizations so they can create or join one.
-const OrgRoleRoute = ({ children, minOrgRole }) => {
+const OrgRoleRoute = ({ children, minOrgRole, orgRoles }) => {
     const { user, loading } = useAuth();
-    const { isSuperAdmin, hasOrgRole } = useRole();
+    const { isSuperAdmin, hasOrgRole, membershipRole } = useRole();
     const { hasNoMemberships } = useOrg();
 
     if (loading) return <LoadingSpinner />;
@@ -160,7 +172,8 @@ const OrgRoleRoute = ({ children, minOrgRole }) => {
     if (hasNoMemberships) {
         return <Navigate to="/app/organizations" replace />;
     }
-    if (hasOrgRole(minOrgRole)) return children;
+    if (orgRoles?.includes(membershipRole)) return children;
+    if (!orgRoles && hasOrgRole(minOrgRole)) return children;
     return <Navigate to="/app/unauthorized" replace />;
 };
 
@@ -202,11 +215,14 @@ const AppRoutes = () => {
 
             <Route path="/" element={<Landing />} />
             <Route path="/gate" element={<GuestOrRegisterGate />} />
+            <Route path="/events/:id" element={<PublicEventPage />} />
 
             <Route
                 path="/login"
                 element={<PublicOnlyRoute><Login /></PublicOnlyRoute>}
             />
+            <Route path="/auth/google/callback" element={<GoogleCallback />} />
+            <Route path="/feedback/:token" element={<EventFeedback />} />
             <Route
                 path="/register"
                 element={<PublicOnlyRoute><Register /></PublicOnlyRoute>}
@@ -301,8 +317,36 @@ const AppRoutes = () => {
                     element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><Analytics /></OrgRoleRoute>}
                 />
                 <Route
+                    path="reports"
+                    element={<OrgRoleRoute orgRoles={[MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE]}><Reports /></OrgRoleRoute>}
+                />
+                <Route
+                    path="payment-settings"
+                    element={<OrgRoleRoute orgRoles={[MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE]}><PaymentSettings /></OrgRoleRoute>}
+                />
+                <Route
+                    path="payouts"
+                    element={<OrgRoleRoute orgRoles={[MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE]}><Payouts /></OrgRoleRoute>}
+                />
+                <Route
+                    path="audit-logs"
+                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.ADMIN}><AuditLogs /></OrgRoleRoute>}
+                />
+                <Route
+                    path="features"
+                    element={<RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}><Features /></RoleBasedRoute>}
+                />
+                <Route
+                    path="security"
+                    element={<RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}><Security /></RoleBasedRoute>}
+                />
+                <Route
+                    path="transfers/:token"
+                    element={<ProtectedRoute><AcceptTransfer /></ProtectedRoute>}
+                />
+                <Route
                     path="billing"
-                    element={<OrgRoleRoute minOrgRole={MEMBERSHIP_ROLES.STAFF}><Billing /></OrgRoleRoute>}
+                    element={<OrgRoleRoute orgRoles={[MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE]}><Billing /></OrgRoleRoute>}
                 />
                 <Route
                     path="cancellation-policies"
@@ -408,6 +452,8 @@ const App = () => {
                 <Router>
                     <AuthProvider>
                         <OrgProvider>
+                            <BrandingProvider>
+                            <FeatureProvider>
                             <SettingsProvider>
                                 <RoleProvider>
                                     <ToastContainer
@@ -430,6 +476,8 @@ const App = () => {
                                     <AppRoutes />
                                 </RoleProvider>
                             </SettingsProvider>
+                            </FeatureProvider>
+                            </BrandingProvider>
                         </OrgProvider>
                     </AuthProvider>
                 </Router>

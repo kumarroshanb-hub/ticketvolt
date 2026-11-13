@@ -178,6 +178,12 @@ export const AuthProvider = ({ children }) => {
         } else {
             console.log('🔓 Logging out...');
         }
+        // Tell the backend before clearing tokens so the profile no longer
+        // appears as an active JWT session on the admin sessions page.
+        const refreshToken = localStorage.getItem('refresh_token') || sessionStorage.getItem('refresh_token');
+        if (refreshToken) {
+            api.post('/auth/logout/', { refresh: refreshToken }).catch(() => {});
+        }
         clearAuthStorage();
         setUserState(null);
         setIsAuthenticated(false);

@@ -17,6 +17,7 @@ import {
     Download as DownloadIcon,
     Search as SearchIcon,
     Cancel as CancelIcon,
+    Send as SendIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -152,6 +153,9 @@ const BookingTickets = () => {
     // ---- Cancellation state ----
     const [selectedTicketIds, setSelectedTicketIds] = useState([]);
     const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+    const [transferTicket, setTransferTicket] = useState(null);
+    const [transferEmail, setTransferEmail] = useState('');
+    const [transferring, setTransferring] = useState(false);
     const [cancelReason, setCancelReason] = useState('');
     const [cancelling, setCancelling] = useState(false);
     const [previewData, setPreviewData] = useState(null);
@@ -1173,6 +1177,13 @@ const BookingTickets = () => {
                                                             <QrCodeIcon />
                                                         </IconButton>
                                                     </Tooltip>
+                                                    {ticket.status === 'active' && (
+                                                        <Tooltip title={t('booking.transferTicket', 'Transfer ticket')}>
+                                                            <IconButton size="small" sx={{ color: C.secondary }} onClick={() => { setTransferTicket(ticket); setTransferEmail(''); }}>
+                                                                <SendIcon />
+                                                            </IconButton>
+                                                        </Tooltip>
+                                                    )}
                                                 </TableCell>
                                             </TableRow>
                                         );
@@ -1364,6 +1375,36 @@ const BookingTickets = () => {
                             {t('booking.downloadQr')}
                         </PrimaryButton>
                     )}
+                </DialogActions>
+            </Dialog>
+
+            <Dialog open={!!transferTicket} onClose={() => setTransferTicket(null)} maxWidth="xs" fullWidth>
+                <DialogTitle>{t('booking.transferTicket', 'Transfer ticket')}</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        fullWidth autoFocus sx={{ mt: 1 }}
+                        label={t('booking.recipientEmail', 'Recipient email')}
+                        value={transferEmail}
+                        onChange={(e) => setTransferEmail(e.target.value)}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setTransferTicket(null)}>{t('common.cancel')}</Button>
+                    <Button
+                        variant="contained" disabled={transferring || !transferEmail.trim()}
+                        onClick={async () => {
+                            setTransferring(true);
+                            try {
+                                await api.post(`/tickets/${transferTicket.id}/transfer/`, { to_email: transferEmail.trim() });
+                                toast.success(t('booking.transferCreated', 'Transfer created. The recipient can accept it.'));
+                                setTransferTicket(null); setTransferEmail('');
+                            } catch (err) {
+                                toast.error(err.response?.data?.error || err.message);
+                            } finally { setTransferring(false); }
+                        }}
+                    >
+                        {t('booking.sendTransfer', 'Send transfer')}
+                    </Button>
                 </DialogActions>
             </Dialog>
 

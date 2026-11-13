@@ -26,7 +26,8 @@ import {
     Email as EmailIcon,
     Sms as SmsIcon,
     ArrowForward as ArrowForwardIcon,
-    CheckCircleOutline as SuccessIcon
+    CheckCircleOutline as SuccessIcon,
+    Google as GoogleIcon,
 } from '@mui/icons-material';
 import { theme as appTheme } from '../../theme/tokens';
 import Logo from '../../components/Logo';
@@ -63,10 +64,13 @@ const Login = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
     // Auth Flow State
-    const [authMethod, setAuthMethod] = useState('magic_link'); // 'magic_link' | 'otp'
+    const [authMethod, setAuthMethod] = useState('password'); // 'password' | 'magic_link' | 'otp'
     const [identifier, setIdentifier] = useState('');
     const [step, setStep] = useState('input'); // 'input' | 'otp' | 'success_magic'
     const [otpCode, setOtpCode] = useState('');
+    const [password, setPassword] = useState('');
+    const [allowedMethods, setAllowedMethods] = useState(['password', 'magic_link', 'otp']);
+    const [authOrgId, setAuthOrgId] = useState(null);
     
     // UI State
     const [error, setError] = useState('');
@@ -93,22 +97,55 @@ const Login = () => {
         }
     }, [cooldown]);
 
+    useEffect(() => {
+        const orgParam = new URLSearchParams(window.location.search).get('org')
+            || new URLSearchParams(window.location.search).get('organization_id');
+        api.get('/auth/config/', { params: orgParam ? { org: orgParam } : {} })
+            .then((res) => {
+                const methods = res.data?.allowed_auth_methods || [];
+                const safeMethods = methods.length ? methods : ['password', 'magic_link', 'otp'];
+                setAllowedMethods(safeMethods);
+                setAuthOrgId(res.data?.organization_id || null);
+                if (!safeMethods.includes(authMethod)) {
+                    setAuthMethod(safeMethods[0]);
+                }
+            })
+            .catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const handleRequest = async (e) => {
         e.preventDefault();
         setError('');
         setIsSubmitting(true);
 
         try {
+            if (authMethod === 'password') {
+                if (!password) {
+                    throw new Error(t('auth.passwordRequired', 'Enter your password.'));
+                }
+                const res = await api.post('/auth/login/', {
+                    email: identifier,
+                    password,
+                    organization_id: authOrgId,
+                });
+                if (res.data?.access && res.data?.refresh && res.data?.user) {
+                    login(res.data.access, res.data.refresh, res.data.user);
+                    navigate(redirectTo, { replace: true });
+                    return;
+                }
+                throw new Error(t('auth.invalidCredentials', 'Invalid email or password.'));
+            }
             if (authMethod === 'magic_link') {
                 if (!identifier.includes('@')) {
                     throw new Error(t('auth.invalidEmailMagicLink'));
                 }
-                await api.post('/auth/request-magic-link/', { email: identifier });
+                await api.post('/auth/request-magic-link/', { email: identifier, organization_id: authOrgId });
                 setStep('success_magic');
             } else {
                 // OTP Flow
                 const channel = identifier.includes('@') ? 'email' : 'whatsapp';
-                await api.post('/auth/request-otp/', { identifier, channel });
+                await api.post('/auth/request-otp/', { identifier, channel, organization_id: authOrgId });
                 setStep('otp');
                 setCooldown(30); // 30 second cooldown
             }
@@ -133,7 +170,8 @@ const Login = () => {
             const res = await api.post('/auth/verify-otp/', {
                 identifier,
                 channel,
-                code: otpCode
+                code: otpCode,
+                organization_id: authOrgId,
             });
             
             // ✅ Log the user in and redirect
@@ -153,7 +191,7 @@ const Login = () => {
         setError('');
         try {
             const channel = identifier.includes('@') ? 'email' : 'whatsapp';
-            await api.post('/auth/request-otp/', { identifier, channel });
+            await api.post('/auth/request-otp/', { identifier, channel, organization_id: authOrgId });
             setCooldown(30);
             toast.success(t('auth.newCodeSent'));
         } catch (err) {
@@ -174,9 +212,17 @@ const Login = () => {
         setStep('input');
     };
 
+    const startGoogleLogin = () => {
+        const base = String(api.defaults.baseURL || '').replace(/\/$/, '');
+        const orgParam = new URLSearchParams(window.location.search).get('org')
+            || new URLSearchParams(window.location.search).get('organization_id');
+        const query = authOrgId || orgParam ? `?org=${encodeURIComponent(authOrgId || orgParam)}` : '';
+        window.location.href = `${base}/auth/google/start/${query}`;
+    };
+
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: C.bgDark }}>
+            <Box className="tv-auth-page" sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: C.bgDark }}>
                 <CircularProgress sx={{ color: C.secondary }} />
             </Box>
         );
@@ -210,7 +256,7 @@ const Login = () => {
     };
 
     return (
-        <Box sx={{
+        <Box className="tv-auth-page" sx={{
             display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh',
             bgcolor: C.bgDark, p: isMobile ? 1.5 : 2, fontFamily: F.family, position: 'relative',
         }}>
@@ -256,39 +302,67 @@ const Login = () => {
                     <form onSubmit={handleRequest} noValidate>
                         <FormControl fullWidth sx={{ mb: 2.5 }}>
                             <InputLabel shrink sx={labelSx}>
-                                {authMethod === 'magic_link' ? t('auth.emailAddress') : t('auth.emailOrMobile')}
+                                {['magic_link', 'password'].includes(authMethod) ? t('auth.emailAddress') : t('auth.emailOrMobile')}
                             </InputLabel>
                             <TextField
                                 fullWidth
-                                type={authMethod === 'magic_link' ? 'email' : 'text'}
+                                type={['magic_link', 'password'].includes(authMethod) ? 'email' : 'text'}
                                 value={identifier}
                                 onChange={(e) => setIdentifier(e.target.value)}
                                 required
-                                placeholder={authMethod === 'magic_link' ? t('auth.emailPlaceholder') : t('auth.emailOrPhonePlaceholder')}
+                                placeholder={['magic_link', 'password'].includes(authMethod) ? t('auth.emailPlaceholder') : t('auth.emailOrPhonePlaceholder')}
                                 sx={fieldSx}
                                 disabled={isSubmitting}
                             />
                         </FormControl>
 
-                        <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-                            <RadioGroup row value={authMethod} onChange={(e) => setAuthMethod(e.target.value)}>
-                                <FormControlLabel 
-                                    value="magic_link" 
-                                    control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
-                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.magicLink')}</Typography>} 
-                                />
-                                <FormControlLabel 
-                                    value="otp" 
-                                    control={<Radio sx={{color: 'rgba(255,255,255,0.5)', '&.Mui-checked': {color: C.secondary}}} />} 
-                                    label={<Typography sx={{color: C.textInverse, fontSize: 14}}>{t('auth.otpCode')}</Typography>} 
-                                />
-                            </RadioGroup>
-                        </FormControl>
+                        {authMethod === 'password' && (
+                            <TextField
+                                fullWidth
+                                type="password"
+                                label={t('auth.password', 'Password')}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                                autoComplete="current-password"
+                                sx={{ ...fieldSx, mb: 2.5 }}
+                                disabled={isSubmitting}
+                            />
+                        )}
 
-                        <Button type="submit" fullWidth variant="contained" disabled={isSubmitting || !identifier}
+                        {allowedMethods.length > 1 && (
+                            <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
+                                <RadioGroup row value={authMethod} onChange={(e) => setAuthMethod(e.target.value)}>
+                                    {allowedMethods.includes('password') && (
+                                        <FormControlLabel value="password" control={<Radio sx={{ color: 'rgba(255,255,255,0.5)', '&.Mui-checked': { color: C.secondary } }} />} label={<Typography sx={{ color: C.textInverse, fontSize: 14 }}>{t('auth.password', 'Password')}</Typography>} />
+                                    )}
+                                    {allowedMethods.includes('magic_link') && (
+                                        <FormControlLabel value="magic_link" control={<Radio sx={{ color: 'rgba(255,255,255,0.5)', '&.Mui-checked': { color: C.secondary } }} />} label={<Typography sx={{ color: C.textInverse, fontSize: 14 }}>{t('auth.magicLink')}</Typography>} />
+                                    )}
+                                    {allowedMethods.includes('otp') && (
+                                        <FormControlLabel value="otp" control={<Radio sx={{ color: 'rgba(255,255,255,0.5)', '&.Mui-checked': { color: C.secondary } }} />} label={<Typography sx={{ color: C.textInverse, fontSize: 14 }}>{t('auth.otpCode')}</Typography>} />
+                                    )}
+                                </RadioGroup>
+                            </FormControl>
+                        )}
+
+                        <Button type="submit" fullWidth variant="contained" disabled={isSubmitting || !identifier || (authMethod === 'password' && !password)}
                             endIcon={!isSubmitting && <ArrowForwardIcon />} sx={primaryBtnSx}>
                             {isSubmitting ? <CircularProgress size={22} sx={{ color: C.textInverse }} /> : t('auth.continue')}
                         </Button>
+
+                        {allowedMethods.includes('google') && (
+                            <Button
+                                fullWidth
+                                variant="outlined"
+                                startIcon={<GoogleIcon />}
+                                onClick={startGoogleLogin}
+                                disabled={isSubmitting}
+                                sx={{ mt: 1.5, minHeight: 48, color: C.textPrimary, borderColor: C.borderLight, bgcolor: C.bgCard, textTransform: 'none', fontWeight: 700 }}
+                            >
+                                {t('auth.continueWithGoogle', 'Continue with Google')}
+                            </Button>
+                        )}
 
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2.5 }}>
                             <Link component={RouterLink} to="/register" sx={{

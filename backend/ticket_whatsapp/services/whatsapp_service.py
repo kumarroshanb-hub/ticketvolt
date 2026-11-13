@@ -475,7 +475,7 @@ Your slot for *{booking.event.title}* has been {status_text.lower()}
 
 Please arrive at the venue on time with your ticket QR code.
 
-Thank you for choosing TicketVolt! 🎉
+Thank you for choosing TiketVault! 🎉
     """
         return cls.send_message(phone_number, message)
 

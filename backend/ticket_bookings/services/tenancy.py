@@ -135,6 +135,11 @@ def user_org_ids(user):
     return list(_org_ids_for(user, OrganizationMembership.MANAGER_ROLES))
 
 
+def user_finance_org_ids(user):
+    """Orgs where user is OWNER/ADMIN or FINANCE (with valid membership)."""
+    return list(_org_ids_for(user, OrganizationMembership.FINANCE_ROLES))
+
+
 def user_operator_org_ids(user):
     """Orgs where user is OWNER, ADMIN, or STAFF (with valid membership)."""
     return list(_org_ids_for(user, OrganizationMembership.OPERATOR_ROLES))
@@ -165,6 +170,16 @@ def has_org_role(user, organization, roles):
         return False
     return _active_membership_filter(user).filter(
         organization=organization, role__in=roles
+    ).exists()
+
+
+def can_view_finance(user, organization):
+    """Owner/Admin and Finance members may access finance workspaces."""
+    if getattr(user, 'is_superuser', False):
+        return True
+    return _active_membership_filter(user).filter(
+        organization=organization,
+        role__in=[OrganizationMembership.OrgRole.ADMIN, OrganizationMembership.OrgRole.FINANCE],
     ).exists()
 
 
@@ -361,6 +376,9 @@ def effective_role_label(user):
 
     if memberships.filter(role=OrganizationMembership.OrgRole.ADMIN).exists():
         return 'admin'
+
+    if memberships.filter(role=OrganizationMembership.OrgRole.FINANCE).exists():
+        return 'finance'
 
     # Scanner-only membership gets its own label.
     if memberships.filter(role=OrganizationMembership.OrgRole.STAFF).exists():

@@ -168,6 +168,7 @@ def provision_venue_plan(
             'country': snapshot.get('country') or '',
             'latitude': snapshot.get('latitude'),
             'longitude': snapshot.get('longitude'),
+            'map_url': snapshot.get('map_url') or '',
             'has_reserved_seating': bool(
                 snapshot.get('has_reserved_seating')
             ),

@@ -135,7 +135,52 @@ def _user_can_own_events(user):
 # ============================================================
 # Event-level capacity helper
 # ============================================================
+def _event_seat_count(obj):
+    """Physical seats for a reserved-seat event, from the frozen plan."""
+    plan = getattr(obj, 'venue_plan', None)
+    snapshot = getattr(plan, 'published_snapshot', None) or {}
+    seats = (snapshot.get('layout') or {}).get('seats') or []
+    if seats:
+        return len(seats)
+    venue = getattr(obj, 'venue', None)
+    layout = getattr(venue, 'layout', None) if venue else None
+    if layout is not None:
+        try:
+            return layout.seats.count()
+        except Exception:
+            pass
+    return 0
+
+
+def _event_available_seats(obj):
+    count = _event_seat_count(obj)
+    if not count:
+        return 0
+    return max(0, count - (obj.total_tickets_sold or 0))
+
+
+def _event_min_seat_price(obj):
+    """Lowest configured seat-category price for a reserved-seat event."""
+    plan = getattr(obj, 'venue_plan', None)
+    snapshot = getattr(plan, 'published_snapshot', None) or {}
+    prices = []
+    for category in snapshot.get('categories') or []:
+        try:
+            price = float(category.get('price') or 0)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            prices.append(price)
+    return min(prices) if prices else None
+
+
 def _event_total_capacity(obj):
+    # Reserved-seat inventory is the physical seat map, NOT session
+    # capacity (a session can be configured at 100 while the room has 21).
+    if getattr(getattr(obj, 'venue', None), 'has_reserved_seating', False):
+        seats = _event_seat_count(obj)
+        if seats:
+            return seats
     sessions = list(obj.sessions.all())
     if sessions:
         return sum(max(0, (s.capacity or 0)) for s in sessions)
@@ -174,6 +219,7 @@ def _event_venue_payload(event):
         'state': pick('state', ''),
         'postal_code': pick('postal_code', ''),
         'country': pick('country', ''),
+        'map_url': pick('map_url', ''),
         'has_reserved_seating': bool(
             pinned.get('has_reserved_seating')
             if 'has_reserved_seating' in pinned
@@ -233,17 +279,47 @@ class OrganizationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organization
         fields = [
-            'id', 'name', 'slug',
+            'id', 'name', 'slug', 'description', 'organization_type', 'industry',
+            'allowed_auth_methods',
+            'year_established', 'social_links',
             'owner_username', 'role', 'is_owner',
             'currency_code', 'currency_symbol', 'currency_locale',
             'country', 'country_code', 'default_timezone',
-            'org_email', 'org_logo_url', 'email_from_name',
+            'org_email', 'org_logo_url', 'email_from_name', 'email_reply_to',
+            'brand_primary_color', 'brand_secondary_color', 'brand_favicon_url',
+            'support_url', 'legal_name', 'legal_name_zh',
+            'registered_address_zh', 'custom_domain', 'domain_verified',
+            'default_language', 'tax_rate', 'tax_inclusive',
+            'invoice_prefix', 'platform_fee_percent', 'payout_cycle', 'feature_package',
+            'registered_address', 'org_phone', 'ird_file_number', 'ird_section88',
+            'receipt_signatory_name', 'receipt_signatory_title',
+            'receipt_prefix', 'tax_receipt_threshold',
+            'donation_receipt_min_amount', 'auto_email_donation_receipt',
+            'receipt_footer_note',
             'is_active', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'slug', 'role', 'is_owner', 'is_active',
+            'id', 'role', 'is_owner', 'is_active', 'domain_verified',
             'created_at', 'updated_at',
         ]
+        extra_kwargs = {
+            'slug': {'required': False, 'allow_blank': True},
+        }
+
+    def validate_slug(self, value):
+        value = (value or '').strip().lower()
+        if not value:
+            return value
+        if len(value) < 3 or len(value) > 40 or not re.match(r'^[a-z0-9]+(?:-[a-z0-9]+)*$', value):
+            raise serializers.ValidationError(
+                'Use 3–40 lowercase letters, numbers and hyphens.'
+            )
+        qs = Organization.objects.filter(slug=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('This slug is already in use.')
+        return value
 
     def get_owner_username(self, obj):
         owner = getattr(obj, 'owner', None)
@@ -291,7 +367,13 @@ class PublicEventSerializer(serializers.ModelSerializer):
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
+    seat_count = serializers.SerializerMethodField()
+    available_seats = serializers.SerializerMethodField()
+    min_seat_price = serializers.SerializerMethodField()
     template_images = serializers.SerializerMethodField()
+    cancellation_policy = serializers.SerializerMethodField()
+    organizer_name = serializers.SerializerMethodField()
+    seat_categories = serializers.SerializerMethodField()
 
     class Meta:
         model = Event
@@ -299,6 +381,13 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
             'members_only', 'min_membership_tier', 'donations_enabled',
+            'ask_course_question', 'privacy_notice_text', 'marketing_opt_in_enabled',
+            'public_page_enabled', 'duration_minutes', 'checkin_opens_minutes_before', 'map_url', 'faqs',
+            'feedback_enabled', 'feedback_title', 'feedback_intro', 'feedback_questions',
+            'title_zh', 'short_description_zh', 'description_zh', 'faqs_zh',
+            'donation_presets', 'donation_contact_text',
+            'show_bilingual_content', 'highlights', 'age_info',
+            'door_time', 'parking_info', 'refund_policy', 'accessibility_info',
             'start_date', 'end_date', 'timezone', 'currency_code',
             'cover_image', 'gallery_images',
             'status', 'is_public',
@@ -306,10 +395,46 @@ class PublicEventSerializer(serializers.ModelSerializer):
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'venue',
             'tier_count', 'session_count', 'total_capacity',
-            'template_images',
+            'seat_count', 'available_seats', 'min_seat_price',
+            'template_images', 'cancellation_policy', 'organizer_name', 'seat_categories',
+            'cancellation_policy_text', 'refundable_until',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
+
+    def get_cancellation_policy(self, obj):
+        policy = obj.cancellation_policy
+        if policy is None:
+            return None
+        return {
+            'id': str(policy.id),
+            'name': policy.name,
+            'description': policy.description,
+        }
+
+    def get_organizer_name(self, obj):
+        user = obj.organizer
+        if user is None:
+            return obj.organization.name if obj.organization else ''
+        full_name = f'{user.first_name or ""} {user.last_name or ""}'.strip()
+        return full_name or user.username or (obj.organization.name if obj.organization else '')
+
+    def get_seat_categories(self, obj):
+        plan = getattr(obj, 'venue_plan', None)
+        snapshot = getattr(plan, 'published_snapshot', None) or {}
+        categories = []
+        for category in snapshot.get('categories') or []:
+            try:
+                price = float(category.get('price') or 0)
+            except (TypeError, ValueError):
+                price = 0
+            categories.append({
+                'id': category.get('id'),
+                'name': category.get('name') or 'Seat',
+                'price': price,
+                'hex_color': category.get('hex_color') or '#333333',
+            })
+        return categories
 
     def get_venue(self, obj):
         return _event_venue_payload(obj)
@@ -322,6 +447,15 @@ class PublicEventSerializer(serializers.ModelSerializer):
 
     def get_total_capacity(self, obj):
         return _event_total_capacity(obj)
+
+    def get_seat_count(self, obj):
+        return _event_seat_count(obj)
+
+    def get_available_seats(self, obj):
+        return _event_available_seats(obj)
+
+    def get_min_seat_price(self, obj):
+        return _event_min_seat_price(obj)
 
     def get_template_images(self, obj):
         images = {}
@@ -452,6 +586,9 @@ class EventSerializer(serializers.ModelSerializer):
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
+    seat_count = serializers.SerializerMethodField()
+    available_seats = serializers.SerializerMethodField()
+    min_seat_price = serializers.SerializerMethodField()
 
     cancellation_policy = CancellationPolicySerializer(read_only=True)
     cancellation_policy_id = serializers.PrimaryKeyRelatedField(
@@ -482,6 +619,13 @@ class EventSerializer(serializers.ModelSerializer):
             'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
             'members_only', 'min_membership_tier', 'donations_enabled',
+            'ask_course_question', 'privacy_notice_text', 'marketing_opt_in_enabled',
+            'public_page_enabled', 'duration_minutes', 'checkin_opens_minutes_before', 'map_url', 'faqs',
+            'feedback_enabled', 'feedback_title', 'feedback_intro', 'feedback_questions',
+            'title_zh', 'short_description_zh', 'description_zh', 'faqs_zh',
+            'donation_presets', 'donation_contact_text',
+            'show_bilingual_content', 'highlights', 'age_info',
+            'door_time', 'parking_info', 'refund_policy', 'accessibility_info',
             'start_date', 'end_date', 'timezone', 'currency_code',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
@@ -489,11 +633,12 @@ class EventSerializer(serializers.ModelSerializer):
             'booking_start_date', 'booking_end_date',
             'min_tickets_per_order', 'max_tickets_per_order',
             'cancellation_policy', 'cancellation_policy_id',
-            'cancellation_policy_text', 'refundable_until',
+            'cancellation_policy_text', 'refundable_until', 'cancellation_reason',
             'total_tickets_sold', 'total_revenue',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'created_at', 'updated_at',
             'tier_count', 'session_count', 'total_capacity',
+            'seat_count', 'available_seats', 'min_seat_price',
         ]
         read_only_fields = [
             'id', 'organizer', 'created_at', 'updated_at',
@@ -511,6 +656,15 @@ class EventSerializer(serializers.ModelSerializer):
 
     def get_total_capacity(self, obj):
         return _event_total_capacity(obj)
+
+    def get_seat_count(self, obj):
+        return _event_seat_count(obj)
+
+    def get_available_seats(self, obj):
+        return _event_available_seats(obj)
+
+    def get_min_seat_price(self, obj):
+        return _event_min_seat_price(obj)
 
     def validate_organizer_id(self, value):
         if value is None:
@@ -554,17 +708,11 @@ class EventSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, attrs):
-        # If the event type is 'single', force the end_date to match start_date
-        event_type = attrs.get('event_type', self.instance.event_type if self.instance else 'single')
         start_date = attrs.get('start_date', self.instance.start_date if self.instance else None)
         end_date = attrs.get('end_date', self.instance.end_date if self.instance else None)
-
-        if event_type == 'single' and start_date:
-            attrs['end_date'] = start_date
-        else:
-            date_err = validate_event_dates(start_date, end_date)
-            if date_err:
-                raise serializers.ValidationError({'end_date': date_err})
+        date_err = validate_event_dates(start_date, end_date)
+        if date_err:
+            raise serializers.ValidationError({'end_date': date_err})
 
         return attrs
 
@@ -576,6 +724,9 @@ class EventDetailSerializer(serializers.ModelSerializer):
     tier_count = serializers.SerializerMethodField()
     session_count = serializers.SerializerMethodField()
     total_capacity = serializers.SerializerMethodField()
+    seat_count = serializers.SerializerMethodField()
+    available_seats = serializers.SerializerMethodField()
+    min_seat_price = serializers.SerializerMethodField()
 
     cancellation_policy = CancellationPolicySerializer(read_only=True)
     cancellation_policy_id = serializers.PrimaryKeyRelatedField(
@@ -606,6 +757,13 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'title', 'description', 'short_description',
             'event_type', 'category', 'event_flow',
             'members_only', 'min_membership_tier', 'donations_enabled',
+            'ask_course_question', 'privacy_notice_text', 'marketing_opt_in_enabled',
+            'public_page_enabled', 'duration_minutes', 'checkin_opens_minutes_before', 'map_url', 'faqs',
+            'feedback_enabled', 'feedback_title', 'feedback_intro', 'feedback_questions',
+            'title_zh', 'short_description_zh', 'description_zh', 'faqs_zh',
+            'donation_presets', 'donation_contact_text',
+            'show_bilingual_content', 'highlights', 'age_info',
+            'door_time', 'parking_info', 'refund_policy', 'accessibility_info',
             'start_date', 'end_date', 'timezone', 'currency_code',
             'venue', 'metadata', 'venue_metadata',
             'cover_image', 'gallery_images',
@@ -613,12 +771,12 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'booking_start_date', 'booking_end_date',
             'min_tickets_per_order', 'max_tickets_per_order',
             'cancellation_policy', 'cancellation_policy_id',
-            'cancellation_policy_text', 'refundable_until',
+            'cancellation_policy_text', 'refundable_until', 'cancellation_reason',
             'total_tickets_sold', 'total_revenue',
             'ticket_format', 'combine_tickets', 'tickets_per_page',
             'created_at', 'updated_at',
             'sessions', 'tiers', 'tier_count', 'session_count',
-            'total_capacity',
+            'total_capacity', 'seat_count', 'available_seats', 'min_seat_price',
         ]
         read_only_fields = [
             'id', 'organizer', 'created_at', 'updated_at',
@@ -667,6 +825,15 @@ class EventDetailSerializer(serializers.ModelSerializer):
     def get_total_capacity(self, obj):
         return _event_total_capacity(obj)
 
+    def get_seat_count(self, obj):
+        return _event_seat_count(obj)
+
+    def get_available_seats(self, obj):
+        return _event_available_seats(obj)
+
+    def get_min_seat_price(self, obj):
+        return _event_min_seat_price(obj)
+
     def validate_event_flow(self, value):
         valid = {c[0] for c in Event.EventFlow.choices}
         if value not in valid:
@@ -693,17 +860,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
                         )
                     })
 
-        # If the event type is 'single', force the end_date to match start_date
-        event_type = attrs.get('event_type', self.instance.event_type if self.instance else 'single')
         start_date = attrs.get('start_date', self.instance.start_date if self.instance else None)
         end_date = attrs.get('end_date', self.instance.end_date if self.instance else None)
-
-        if event_type == 'single' and start_date:
-            attrs['end_date'] = start_date
-        else:
-            date_err = validate_event_dates(start_date, end_date)
-            if date_err:
-                raise serializers.ValidationError({'end_date': date_err})
+        date_err = validate_event_dates(start_date, end_date)
+        if date_err:
+            raise serializers.ValidationError({'end_date': date_err})
 
         return attrs
 
@@ -888,18 +1049,19 @@ class BookingSerializer(serializers.ModelSerializer):
             'id', 'booking_reference', 'customer_name', 'customer_email',
             'customer_phone', 'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'discount_applied', 'discount_code',
-            'donation_amount', 'donation_currency_code',
+            'donation_amount', 'donor_name', 'donation_currency_code',
             'donation_tax_receipt_number', 'donation_tax_receipt_issued_at',
             'donation_tax_eligible',
+            'course_answer', 'privacy_accepted', 'marketing_opt_in',
             'paid_at', 'created_at', 'updated_at', 'notes',
             'event_title', 'event_id', 'event',
             'ticket_count', 'checked_in_count',
             'tickets', 'formatted_date',
-            'metadata', 'refund_amount',
+            'metadata', 'refund_amount', 'invoice_number',
         ]
         read_only_fields = [
             'id', 'booking_reference', 'created_at', 'updated_at',
-            'discount_applied',
+            'discount_applied', 'invoice_number',
             'donation_currency_code',
             'donation_tax_receipt_number',
             'donation_tax_receipt_issued_at',
@@ -1224,14 +1386,20 @@ class BookingSerializer(serializers.ModelSerializer):
             for t in tickets_data:
                 if isinstance(t, dict) and t.get('seat_id'):
                     try:
-                        seat = Seat.objects.select_related('category').get(id=t['seat_id'])
-                        if not seat.category:
-                            raise serializers.ValidationError({
-                                'tickets': f'Seat {seat.seat_number} (Row {seat.row_label}) does not have a category assigned. Please configure seat categories before booking.'
-                            })
+                        seat = Seat.objects.get(id=t['seat_id'])
+                        # The authoritative category for an event is the
+                        # EventVenuePlan assignment, not the legacy
+                        # venue-level Seat.category field. A seat can have
+                        # no legacy category while still being correctly
+                        # priced in the event's published snapshot.
                         if resolve_seat_price(event, t['seat_id']) <= 0:
                             raise serializers.ValidationError({
-                                'tickets': f'Seat {seat.seat_number} (Row {seat.row_label}) has a category with zero price. Please set a valid price for the category.'
+                                'tickets': (
+                                    f'Seat {seat.seat_number} (Row {seat.row_label}) '
+                                    'does not have a priced category assigned for '
+                                    'this event. Please configure event seat '
+                                    'categories before booking.'
+                                )
                             })
                     except Seat.DoesNotExist:
                         raise serializers.ValidationError({
@@ -1299,6 +1467,15 @@ class BookingSerializer(serializers.ModelSerializer):
         validated_data['metadata'] = metadata
 
         booking = super().create(validated_data)
+
+        # Per-tenant sequential invoice number.
+        if not booking.invoice_number:
+            try:
+                from ..services.commercial import next_invoice_number
+                booking.invoice_number = next_invoice_number(event.organization)
+                booking.save(update_fields=['invoice_number'])
+            except Exception:
+                pass
 
         if discount_code and discount_applied and discount_applied > 0:
             try:
@@ -1443,9 +1620,10 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'id', 'booking_reference', 'customer_name', 'customer_email',
             'customer_phone', 'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'discount_applied', 'discount_code',
-            'donation_amount', 'donation_currency_code',
+            'donation_amount', 'donor_name', 'donation_currency_code',
             'donation_tax_receipt_number', 'donation_tax_receipt_issued_at',
             'donation_tax_eligible',
+            'course_answer', 'privacy_accepted', 'marketing_opt_in',
             'paid_at', 'created_at', 'updated_at', 'notes',
             'event', 'tickets', 'ticket_count', 'checked_in_count',
             'formatted_date', 'metadata',
@@ -1554,6 +1732,7 @@ class UserSerializer(serializers.ModelSerializer):
     per-org roles live in `memberships[]`.
     """
     role = serializers.SerializerMethodField()
+    platform_role = serializers.SerializerMethodField()
     effective_role = serializers.SerializerMethodField()
     memberships = serializers.SerializerMethodField()
     organization_memberships = serializers.SerializerMethodField()
@@ -1562,7 +1741,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'effective_role', 'memberships',
+            'role', 'platform_role', 'effective_role', 'memberships',
             'is_active', 'is_staff', 'is_superuser',
             'organization_memberships',
             'date_joined', 'last_login',
@@ -1579,6 +1758,9 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_role(self, obj):
         return effective_role_label(obj)
+
+    def get_platform_role(self, obj):
+        return 'super_admin' if obj.is_superuser else 'user'
 
     def get_effective_role(self, obj):
         return effective_role_label(obj)
@@ -1812,16 +1994,17 @@ class BookingAdminSerializer(serializers.ModelSerializer):
             'whatsapp_number', 'total_amount', 'status',
             'payment_id', 'payment_method', 'notes',
             'discount_applied', 'discount_code', 'net_amount',
-            'donation_amount', 'donation_currency_code',
+            'donation_amount', 'donor_name', 'donation_currency_code',
             'donation_tax_receipt_number', 'donation_tax_receipt_issued_at',
             'donation_tax_eligible',
+            'course_answer', 'privacy_accepted', 'marketing_opt_in',
             'paid_at', 'created_at', 'updated_at',
             'tickets', 'ticket_count', 'checked_in_count',
-            'metadata', 'refund_amount',
+            'metadata', 'refund_amount', 'invoice_number',
         ]
         read_only_fields = [
             'id', 'booking_reference', 'created_at', 'updated_at',
-            'event_title', 'event_id',
+            'invoice_number', 'event_title', 'event_id',
         ]
 
     def get_event_details(self, obj):

@@ -34,6 +34,7 @@ import {
     OutlineButton,
     LoadingWrapper,
 } from '../../components/Common';
+import OrganizationAdminTabs from '../Organizations/OrganizationAdminTabs';
 
 const CSV_TEMPLATE = 'email,name,phone,amount,offline_reference\n';
 
@@ -175,6 +176,8 @@ const BulkUpload = () => {
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
+
+            <OrganizationAdminTabs />
 
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 

@@ -364,6 +364,7 @@ export const MEMBERSHIP_ROLES = {
     OWNER:  'owner',   // full control over ONE organization
     ADMIN:  'admin',   // manage events/venues/bookings within ONE org
     STAFF:  'staff',   // check-in, bookings within ONE org
+    FINANCE: 'finance', // reports, payouts and payment settings
     MEMBER: 'member',  // read-mostly member of ONE org (buyer/attendee)
 };
 
@@ -376,6 +377,7 @@ export const MEMBERSHIP_ROLE_LABELS = {
     [MEMBERSHIP_ROLES.OWNER]:  'Owner',
     [MEMBERSHIP_ROLES.ADMIN]:  'Admin',
     [MEMBERSHIP_ROLES.STAFF]:  'Staff',
+    [MEMBERSHIP_ROLES.FINANCE]: 'Finance',
     [MEMBERSHIP_ROLES.MEMBER]: 'Member',
 };
 
@@ -384,6 +386,7 @@ export const MEMBERSHIP_ROLE_HIERARCHY = {
     [MEMBERSHIP_ROLES.OWNER]:  4,
     [MEMBERSHIP_ROLES.ADMIN]:  3,
     [MEMBERSHIP_ROLES.STAFF]:  2,
+    [MEMBERSHIP_ROLES.FINANCE]: 1.5,
     [MEMBERSHIP_ROLES.MEMBER]: 1,
 };
 

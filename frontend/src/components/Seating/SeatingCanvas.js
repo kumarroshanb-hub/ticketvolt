@@ -33,6 +33,7 @@ const getSeatColor = (seat, isSelected) => {
 
 const getSeatStroke = (seat, isSelected) => {
   if (isSelected) return C.black;
+  if (seat.is_accessible) return C.info;
   if (seat.status === 'booked' || seat.status === 'sold') return C.textLight;
   return BRAND_COLORS.charcoal;
 };
@@ -172,7 +173,7 @@ const SeatingCanvas = forwardRef(({
           cornerRadius: 3,
           fill: getSeatColor(seat, isSelected),
           stroke: getSeatStroke(seat, isSelected),
-          strokeWidth: isSelected ? 2.5 : 1.5,
+          strokeWidth: seat.is_accessible ? 3 : (isSelected ? 2.5 : 1.5),
           shadowColor: isSelected ? C.black : 'transparent',
           shadowBlur: isSelected ? 10 : 0,
           shadowOpacity: 0.5,

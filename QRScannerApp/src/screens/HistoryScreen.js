@@ -10,6 +10,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { scannerApi } from '../services/api';
+import { getOutbox } from '../services/offlineCheckin';
 import { theme } from '../theme';
 
 const C = theme.colors;
@@ -63,6 +64,7 @@ export default function HistoryScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [pendingScans, setPendingScans] = useState([]);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -83,6 +85,7 @@ export default function HistoryScreen({ navigation }) {
       const formatted = historyData.map(mapHistoryRow);
 
       setHistory(formatted);
+      setPendingScans(await getOutbox());
       console.log(`✅ Loaded ${formatted.length} formatted records`);
     } catch (err) {
       console.error('❌ Error loading history:', err);
@@ -194,7 +197,9 @@ export default function HistoryScreen({ navigation }) {
       <View style={styles.header}>
         <Text style={styles.title}>📋 AUTH LOG</Text>
         <View style={styles.headerRow}>
-          <Text style={styles.subtitle}>Records: {history.length}</Text>
+          <Text style={styles.subtitle}>
+            Records: {history.length} · Pending: {pendingScans.length}
+          </Text>
           <View style={styles.statusIndicator}>
             <View style={styles.statusDot} />
             <Text style={styles.statusText}>Live</Text>
@@ -214,6 +219,22 @@ export default function HistoryScreen({ navigation }) {
         }
         showsVerticalScrollIndicator={false}
       >
+        {pendingScans.length > 0 && (
+          <View style={styles.pendingCard}>
+            <Text style={styles.pendingTitle}>⏳ PENDING SYNC ({pendingScans.length})</Text>
+            {pendingScans.slice(0, 10).map((item) => (
+              <View key={item.client_id} style={styles.pendingRow}>
+                <Text style={styles.pendingCode}>{item.payload?.code}</Text>
+                <Text style={styles.pendingMeta}>{item.attendee_name || 'Guest'} · {formatDate(item.scanned_at)}</Text>
+                <Text style={styles.pendingBadge}>PENDING</Text>
+              </View>
+            ))}
+            <TouchableOpacity style={styles.pendingButton} onPress={() => navigation.navigate('OfflinePack')}>
+              <Text style={styles.actionButtonText}>OPEN OFFLINE PACK TO SYNC</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {error ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>⚠️</Text>
@@ -443,6 +464,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.bgDarkBorder,
     backgroundColor: C.bgDarkCard,
+  },
+  pendingCard: {
+    margin: 16,
+    padding: 14,
+    backgroundColor: C.bgDarkCard,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: C.warning,
+  },
+  pendingTitle: {
+    color: C.warning,
+    fontFamily: F.familyBold,
+    fontSize: 13,
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  pendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 5,
+    borderTopWidth: 1,
+    borderTopColor: C.bgDarkBorder,
+  },
+  pendingCode: { color: C.textInverse, fontFamily: F.familyMono, fontSize: 12 },
+  pendingMeta: { color: C.textMuted, fontFamily: F.family, fontSize: 11, flex: 1 },
+  pendingBadge: {
+    color: C.warning,
+    fontFamily: F.familyBold,
+    fontSize: 9,
+    letterSpacing: 0.6,
+  },
+  pendingButton: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: theme.radius.sm,
+    backgroundColor: C.secondary,
+    alignItems: 'center',
   },
   actionButtonText: {
     color: C.textInverse,

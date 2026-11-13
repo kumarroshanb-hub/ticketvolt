@@ -59,6 +59,7 @@ import Organizations from './pages/Organizations';
 import MagicLinkVerify from './pages/Auth/MagicLinkVerify';
 import GoogleCallback from './pages/Auth/GoogleCallback';
 import EventFeedback from './pages/Feedback/EventFeedback';
+import PublicOrganization from './pages/PublicOrganization';
 import TeamMembers from './pages/Organizations/TeamMembers';
 import VenueLayoutEditor from './pages/Venues/VenueLayoutEditor';
 import Membership from './pages/Membership/Membership';
@@ -223,6 +224,7 @@ const AppRoutes = () => {
             />
             <Route path="/auth/google/callback" element={<GoogleCallback />} />
             <Route path="/feedback/:token" element={<EventFeedback />} />
+            <Route path="/org/:slug" element={<PublicOrganization />} />
             <Route
                 path="/register"
                 element={<PublicOnlyRoute><Register /></PublicOnlyRoute>}

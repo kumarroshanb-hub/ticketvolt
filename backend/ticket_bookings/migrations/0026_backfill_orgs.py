@@ -60,7 +60,7 @@ def backfill(apps, schema_editor):
 
         org = Organization.objects.filter(owner_id=user.id).first()
         if org is None:
-            display = (user.get_full_name() or user.username).strip()
+            display = f'{user.first_name or ""} {user.last_name or ""}'.strip() or user.username
             org = Organization.objects.create(
                 name=f'{display} Events',
                 slug=_unique_slug(Organization, user.username),

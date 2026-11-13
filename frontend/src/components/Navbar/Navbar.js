@@ -287,7 +287,7 @@ const PAGE_TITLE_KEYS = {
     '/app/analytics':              'nav.analytics',
     '/app/discounts':              'nav.discounts',
     '/app/users':                  'nav.users',
-    '/app/settings':               'nav.settings',
+    '/app/settings':               'nav.platformSettings',
     '/app/profile':                'nav.profile',
     '/app/membership':             'nav.membership',
     '/app/cancellation-policies':  'nav.cancellationPolicies',

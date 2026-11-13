@@ -396,6 +396,13 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       section: 'admin',
     },
     {
+      path: '/app/settings',
+      icon: <SettingsIcon />,
+      label: t('nav.platformSettings', 'Platform Settings'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
       path: '/app/audit-logs',
       icon: <AuditIcon />,
       label: t('nav.auditLogs'),
@@ -425,13 +432,6 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN],
       visibleWithNoMembership: true,
       section: 'management',
-    },
-    {
-      path: '/app/settings',
-      icon: <SettingsIcon />,
-      label: t('nav.settings'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
-      section: 'main',
     },
   ];
 

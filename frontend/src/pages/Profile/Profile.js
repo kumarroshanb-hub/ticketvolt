@@ -427,8 +427,10 @@ const Profile = () => {
                                 <Box key={org.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
                                     <Typography variant="body2" sx={{ fontWeight: 700 }}>{org.name}</Typography>
                                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                        {t(`roles.org_${org.role}`, { defaultValue: org.role })}
-                                        {org.is_owner ? ' · Owner' : ''}
+                                        {t(`roles.org_${org.role || (org.is_owner ? 'owner' : 'member')}`, {
+                                            defaultValue: org.role || (org.is_owner ? 'Owner' : 'Member'),
+                                        })}
+                                        {org.is_owner && org.role !== 'owner' ? ' · Owner' : ''}
                                     </Typography>
                                 </Box>
                             ))}

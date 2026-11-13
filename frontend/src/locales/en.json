@@ -124,7 +124,8 @@
         "auditLogs": "Audit Logs",
         "features": "Feature Entitlements",
         "mobileNavigation": "Mobile navigation",
-        "security": "Security"
+        "security": "Security",
+        "platformSettings": "Platform Settings"
     },
     "landing": {
         "heroTitleLine1": "Find Your Next",

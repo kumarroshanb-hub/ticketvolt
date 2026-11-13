@@ -164,3 +164,41 @@ class SystemSettingsView(APIView):
                 'fallback': FALLBACK_CURRENCY,
             },
         })
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request):
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError
+        from axes.models import AccessAttempt
+
+        user = request.user
+        current_password = request.data.get('current_password') or ''
+        new_password = request.data.get('new_password') or ''
+
+        if not user.check_password(current_password):
+            return Response(
+                {'detail': 'Current password is incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not new_password:
+            return Response(
+                {'detail': 'A new password is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as exc:
+            return Response(
+                {'detail': ' '.join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        try:
+            AccessAttempt.objects.filter(username=user.username).delete()
+        except Exception:
+            pass
+        return Response({'success': True, 'message': 'Password updated successfully.'})

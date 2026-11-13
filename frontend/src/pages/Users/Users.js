@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
-import { useMediaQuery, useTheme } from '@mui/material';
+import { useMediaQuery, useTheme, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button as MuiButton, Alert, Typography } from '@mui/material';
 import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
 import {
@@ -26,6 +26,7 @@ import {
   Close,
   Save,
   Cancel,
+  VpnKey,
 } from '@mui/icons-material';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -1224,6 +1225,9 @@ const Users = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [passwordUser, setPasswordUser] = useState(null);
+  const [passwordForm, setPasswordForm] = useState({ password: '', confirm: '' });
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [lockStatus, setLockStatus] = useState({});
 
@@ -1600,6 +1604,32 @@ const Users = () => {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!passwordUser) return;
+    if (passwordForm.password.length < 10) {
+      toast.error(t('users.passwordMin', 'Password must be at least 10 characters.'));
+      return;
+    }
+    if (passwordForm.password !== passwordForm.confirm) {
+      toast.error(t('users.passwordMismatch', 'Passwords do not match.'));
+      return;
+    }
+    setResettingPassword(true);
+    try {
+      await api.post(`/users/${passwordUser.id}/reset_password/`, {
+        password: passwordForm.password,
+      });
+      toast.success(t('users.passwordResetSuccess', 'Password reset and account unlocked.'));
+      setPasswordUser(null);
+      setPasswordForm({ password: '', confirm: '' });
+      await loadUsers();
+    } catch (err) {
+      toast.error(err.response?.data?.error || t('users.passwordResetFailed', 'Password reset failed.'));
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
   const handleEditUser = (user) => {
     setSelectedUser(user);
     // Derive the closest platform-role from flags. With STAFF removed from
@@ -1870,6 +1900,13 @@ const Users = () => {
                     <Edit fontSize="small" />
                     {t('users.actionEdit')}
                   </Button>
+                  <Button
+                    className="secondary"
+                    onClick={(e) => { e.stopPropagation(); setPasswordUser(user); setPasswordForm({ password: '', confirm: '' }); }}
+                  >
+                    <VpnKey fontSize="small" />
+                    {t('users.actionResetPassword', 'Reset password')}
+                  </Button>
                   {needsUnlock(user) && (
                     <Button
                       className="success"
@@ -1946,6 +1983,12 @@ const Users = () => {
                       </ActionButton>
                       <ActionButton onClick={(e) => { e.stopPropagation(); handleEditUser(user); }} title={t('users.actionEdit')}>
                         <Edit fontSize="small" />
+                      </ActionButton>
+                      <ActionButton
+                        onClick={(e) => { e.stopPropagation(); setPasswordUser(user); setPasswordForm({ password: '', confirm: '' }); }}
+                        title={t('users.actionResetPassword', 'Reset password')}
+                      >
+                        <VpnKey fontSize="small" />
                       </ActionButton>
                       {needsUnlock(user) && (
                         <ActionButton
@@ -2085,6 +2128,37 @@ const Users = () => {
           isSubmitting={submitting}
         />
       )}
+
+      <Dialog open={Boolean(passwordUser)} onClose={() => !resettingPassword && setPasswordUser(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{t('users.resetPasswordTitle', 'Reset password')}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: C.textSecondary, mb: 2 }}>
+            {t('users.resetPasswordFor', 'Set a new password for')} <strong>{passwordUser?.username}</strong>
+          </Typography>
+          <TextField
+            fullWidth type="password" autoComplete="new-password"
+            label={t('users.newPassword', 'New password')}
+            value={passwordForm.password}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, password: e.target.value }))}
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth type="password" autoComplete="new-password"
+            label={t('users.confirmPassword', 'Confirm password')}
+            value={passwordForm.confirm}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirm: e.target.value }))}
+          />
+          <Alert severity="info" sx={{ mt: 2 }}>
+            {t('users.resetPasswordHint', 'This also clears failed-login lockouts for the account.')}
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <MuiButton onClick={() => setPasswordUser(null)} disabled={resettingPassword}>{t('common.cancel')}</MuiButton>
+          <MuiButton variant="contained" onClick={handleResetPassword} disabled={resettingPassword}>
+            {resettingPassword ? t('common.loading') : t('users.resetPassword', 'Reset password')}
+          </MuiButton>
+        </DialogActions>
+      </Dialog>
     </PageContainer>
   );
 };

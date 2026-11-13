@@ -159,7 +159,6 @@ class Command(BaseCommand):
         # membership. This also cleans up old deployments created before the
         # platform/tenant separation.
         if superadmin_user is not None:
-            from django.contrib.auth.models import User
             owner_user = User.objects.filter(username='owner').first()
             memberships = list(
                 OrganizationMembership.objects.filter(user=superadmin_user)

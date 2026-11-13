@@ -269,9 +269,13 @@ const Message = styled.div`
 const Profile = () => {
     const { user, updateProfile } = useAuth();
     const { platformRole, membershipRole } = useRole();
-    const { currentOrg, organizations } = useOrg();
+    const { currentOrg } = useOrg();
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const isPlatformAdmin = platformRole === PLATFORM_ROLES.SUPER_ADMIN;
+    // Platform admins are platform-wide. `organizations` would include every
+    // visible tenant for them, so only actual membership rows are shown.
+    const memberships = isPlatformAdmin ? [] : (user?.memberships || []);
 
     const [editing, setEditing] = useState(false);
     const [name, setName] = useState(user?.name || user?.username || '');
@@ -408,7 +412,11 @@ const Profile = () => {
 
                 <Box id="memberships" sx={{ mt: 2, mb: 2, scrollMarginTop: '96px' }}>
                     <FieldLabel>{t('profile.myMemberships', 'My memberships')}</FieldLabel>
-                    {organizations.length === 0 ? (
+                    {isPlatformAdmin ? (
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            {t('profile.platformAdminMembershipNote', 'Platform Admins operate platform-wide and do not require an organization membership.')}
+                        </Typography>
+                    ) : memberships.length === 0 ? (
                         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                             {t('profile.noMemberships', 'You are not a member of any organization yet.')}
                         </Typography>
@@ -423,14 +431,11 @@ const Profile = () => {
                             {t('profile.manageMembership', 'Membership & family')}
                         </MuiButton>
                         <Stack spacing={1} sx={{ mt: 1 }}>
-                            {organizations.map((org) => (
-                                <Box key={org.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{org.name}</Typography>
+                            {memberships.map((membership) => (
+                                <Box key={membership.id || membership.organization_id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{membership.organization_name}</Typography>
                                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                        {t(`roles.org_${org.role || (org.is_owner ? 'owner' : 'member')}`, {
-                                            defaultValue: org.role || (org.is_owner ? 'Owner' : 'Member'),
-                                        })}
-                                        {org.is_owner && org.role !== 'owner' ? ' · Owner' : ''}
+                                        {t(`roles.org_${membership.role}`, { defaultValue: membership.role })}
                                     </Typography>
                                 </Box>
                             ))}

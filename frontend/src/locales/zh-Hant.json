@@ -191,7 +191,8 @@
         "editingUnsupported": "不支援編輯個人資料。",
         "platformRole": "平台角色",
         "orgRole": "組織角色",
-        "manageMembership": "會籍與家庭成員"
+        "manageMembership": "會籍與家庭成員",
+        "platformAdminMembershipNote": "平台管理員管理整個平台，不需要組織會籍。"
     },
     "forgotPassword": {
         "title": "忘記密碼",
@@ -1636,7 +1637,9 @@
             "parent": "父母",
             "sibling": "兄弟姊妹",
             "other": "其他"
-        }
+        },
+        "myMemberships": "我的會籍",
+        "addFamilyBeforeReview": "現在加入家庭成員，管理員會在審核線下付款時一併處理。"
     },
     "bulkUpload": {
         "title": "批量新增會員",

@@ -53,6 +53,7 @@ import Register from './pages/Register/Register';
 import PublicEventPage from './pages/Events/Public/PublicEventPage';
 import Users from './pages/Users/Users';
 import Profile from './pages/Profile';
+import ChangePassword from './pages/Profile/ChangePassword';
 import CancellationPolicies from './pages/CancellationPolicies';
 import ActiveSessions from './pages/ActiveSessions';
 import Organizations from './pages/Organizations';
@@ -397,8 +398,9 @@ const AppRoutes = () => {
                 />
 
                 {/* Any authenticated user. */}
-                <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                <Route path="settings" element={<RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}><Settings /></RoleBasedRoute>} />
                 <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                <Route path="change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
                 <Route path="dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                 <Route path="membership" element={<ProtectedRoute><Membership /></ProtectedRoute>} />
                 <Route path="tickets/:ticketId" element={<ProtectedRoute><TicketView /></ProtectedRoute>} />

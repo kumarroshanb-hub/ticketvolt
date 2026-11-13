@@ -430,7 +430,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       path: '/app/settings',
       icon: <SettingsIcon />,
       label: t('nav.settings'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
       section: 'main',
     },
   ];

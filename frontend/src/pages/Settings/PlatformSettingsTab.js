@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, TextField,
     MenuItem, Divider, Alert, CircularProgress, Paper,
-    Stack, InputAdornment, Switch, FormControlLabel, Checkbox, Tabs, Tab
+    Stack, InputAdornment, Switch, FormControlLabel, Checkbox
 } from '@mui/material';
 import {
     Save as SaveIcon,
@@ -34,7 +34,7 @@ const INITIAL_FORM = {
     allowed_auth_methods: ['password', 'magic_link', 'otp'],
 };
 
-const PlatformSettingsTab = () => {
+const PlatformSettingsTab = ({ section = 'payment-gateways' }) => {
     const { t } = useTranslation();
     const { formatMoney, refresh } = useSettings();
     const { isSuperAdmin } = useRole();
@@ -44,7 +44,7 @@ const PlatformSettingsTab = () => {
     const [errors, setErrors] = useState([]);
     const [form, setForm] = useState(INITIAL_FORM);
     const [catalog, setCatalog] = useState({ countries: [], currency_codes: [], fallback: null });
-    const [activeSection, setActiveSection] = useState('payments');
+
 
     const load = async () => {
         setLoading(true);
@@ -255,24 +255,9 @@ const PlatformSettingsTab = () => {
                 </Alert>
             )}
 
-            <Paper sx={{ mb: 3, border: `1px solid ${C.borderLight}`, borderRadius: 2 }}>
-                <Tabs
-                    value={activeSection}
-                    onChange={(_, value) => setActiveSection(value)}
-                    variant="scrollable"
-                    allowScrollButtonsMobile
-                    sx={{ px: 1, '& .MuiTab-root': { textTransform: 'none', fontWeight: 700 } }}
-                >
-                    <Tab value="payments" label={t('platformSettings.sectionPayments', 'Payment Gateways')} />
-                    <Tab value="login" label={t('platformSettings.sectionLogin', 'Login Methods')} />
-                    <Tab value="region" label={t('platformSettings.sectionRegion', 'Region & Currency')} />
-                    <Tab value="branding" label={t('platformSettings.sectionBranding', 'Timezone & Branding')} />
-                </Tabs>
-            </Paper>
-
             <Grid container spacing={3}>
                 {/* Global Payment Gateways Toggle */}
-                <Grid item xs={12} sx={{ display: activeSection === 'payments' ? 'block' : 'none' }}>
+                <Grid item xs={12} sx={{ display: section === 'payment-gateways' ? 'block' : 'none' }}>
                     <Card sx={{ border: '2px solid', borderColor: form.payments_enabled ? 'success.main' : 'divider' }}>
                         <CardContent>
                             <Stack direction="row" spacing={2} alignItems="center">
@@ -318,7 +303,7 @@ const PlatformSettingsTab = () => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sx={{ display: activeSection === 'login' ? 'block' : 'none' }}>
+                <Grid item xs={12} sx={{ display: section === 'login-methods' ? 'block' : 'none' }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
@@ -355,7 +340,7 @@ const PlatformSettingsTab = () => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sx={{ display: activeSection === 'region' ? 'block' : 'none' }}>
+                <Grid item xs={12} sx={{ display: section === 'region-currency' ? 'block' : 'none' }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
@@ -431,7 +416,7 @@ const PlatformSettingsTab = () => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sx={{ display: activeSection === 'branding' ? 'block' : 'none' }}>
+                <Grid item xs={12} sx={{ display: section === 'timezone-branding' ? 'block' : 'none' }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>

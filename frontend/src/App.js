@@ -398,7 +398,8 @@ const AppRoutes = () => {
                 />
 
                 {/* Any authenticated user. */}
-                <Route path="settings" element={<RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}><Settings /></RoleBasedRoute>} />
+                <Route path="settings" element={<Navigate to="/app/settings/payment-gateways" replace />} />
+                <Route path="settings/:section" element={<RoleBasedRoute allowedRoles={[PLATFORM_ROLES.SUPER_ADMIN]}><Settings /></RoleBasedRoute>} />
                 <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
                 <Route path="change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
                 <Route path="dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

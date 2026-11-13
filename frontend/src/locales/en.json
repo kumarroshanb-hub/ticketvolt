@@ -125,7 +125,11 @@
         "features": "Feature Entitlements",
         "mobileNavigation": "Mobile navigation",
         "security": "Security",
-        "platformSettings": "Platform Settings"
+        "platformSettings": "Platform Settings",
+        "paymentGateways": "Payment Gateways",
+        "loginMethods": "Login Methods",
+        "regionCurrency": "Region & Currency",
+        "timezoneBranding": "Timezone & Branding"
     },
     "landing": {
         "heroTitleLine1": "Find Your Next",

@@ -1,25 +1,41 @@
-"""Create the standard deployment users from environment variables.
+"""Create the standard deployment users and their organization roles.
 
-No passwords are hardcoded. Missing role passwords are skipped, so this
-command is safe to run repeatedly and can be enabled per environment.
+Roles in this project are split into two layers:
+
+* Platform: Platform Admin = User.is_superuser; Regular User = neither
+  is_superuser nor is_staff.
+* Organization: Owner / Admin / Finance / Staff / Member, stored on
+  OrganizationMembership. Owner is an Admin membership with is_owner=True.
+
+No passwords are hardcoded. Missing role passwords are skipped.
 """
 import os
 
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from ticket_bookings.models import UserProfile
+from ticket_bookings.models_tenancy import (
+    Organization,
+    OrganizationMembership,
+    OrgRole,
+)
 
 ROLES = [
-    ('superadmin', 'DJANGO_SUPERADMIN_EMAIL', 'DJANGO_SUPERADMIN_PASSWORD', True, True),
-    ('admin', 'DJANGO_ADMIN_EMAIL', 'DJANGO_ADMIN_PASSWORD', False, True),
-    ('organizer', 'DJANGO_ORGANIZER_EMAIL', 'DJANGO_ORGANIZER_PASSWORD', False, False),
-    ('user', 'DJANGO_USER_EMAIL', 'DJANGO_USER_PASSWORD', False, False),
+    # key, email env, password env, platform admin?, org role
+    ('superadmin', 'DJANGO_SUPERADMIN_EMAIL', 'DJANGO_SUPERADMIN_PASSWORD', True, None),
+    ('owner', 'DJANGO_OWNER_EMAIL', 'DJANGO_OWNER_PASSWORD', False, 'owner'),
+    ('admin', 'DJANGO_ADMIN_EMAIL', 'DJANGO_ADMIN_PASSWORD', False, 'admin'),
+    ('finance', 'DJANGO_FINANCE_EMAIL', 'DJANGO_FINANCE_PASSWORD', False, 'finance'),
+    ('staff', 'DJANGO_STAFF_EMAIL', 'DJANGO_STAFF_PASSWORD', False, 'staff'),
+    ('member', 'DJANGO_MEMBER_EMAIL', 'DJANGO_MEMBER_PASSWORD', False, 'member'),
+    ('user', 'DJANGO_USER_EMAIL', 'DJANGO_USER_PASSWORD', False, None),
 ]
 
 
 class Command(BaseCommand):
-    help = 'Create default users from DJANGO_* environment variables.'
+    help = 'Create default platform users and organization memberships from environment variables.'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -27,11 +43,55 @@ class Command(BaseCommand):
             help='Create every role whose email and password env vars are set.',
         )
 
+    def _seed_org(self):
+        name = (os.environ.get('DJANGO_ORG_NAME') or 'Demo Organization').strip()
+        org = Organization.objects.filter(name=name).first()
+        if org is None:
+            org = Organization.objects.create(name=name)
+            self.stdout.write(self.style.SUCCESS(f'✅ Created organization {org.name}'))
+        return org
+
+    def _membership(self, org, user, role):
+        if role is None:
+            return
+        membership = OrganizationMembership.objects.filter(
+            organization=org, user=user,
+        ).first()
+        is_owner = role == 'owner'
+        actual_role = OrgRole.ADMIN if is_owner else role
+        if is_owner and OrganizationMembership.objects.filter(
+            organization=org, is_owner=True, removed_at__isnull=True,
+        ).exclude(user=user).exists():
+            self.stdout.write(self.style.WARNING(
+                f'⚠️ {org.name} already has an owner; {user.username} kept as Admin.'
+            ))
+            is_owner = False
+            actual_role = OrgRole.ADMIN
+        defaults = {
+            'role': actual_role,
+            'is_owner': is_owner,
+            'is_active': True,
+            'valid_from': timezone.now(),
+            'removed_at': None,
+        }
+        if membership is None:
+            OrganizationMembership.objects.create(
+                organization=org, user=user, **defaults,
+            )
+            return
+        membership.role = actual_role
+        membership.is_owner = is_owner
+        membership.is_active = True
+        membership.removed_at = None
+        membership.save(update_fields=['role', 'is_owner', 'is_active', 'removed_at'])
+
     def handle(self, *args, **options):
         created = 0
         updated = 0
         skipped = 0
-        for username, email_key, password_key, is_super, is_staff in ROLES:
+        org = None
+
+        for username, email_key, password_key, platform_admin, org_role in ROLES:
             email = (os.environ.get(email_key) or '').strip()
             password = (os.environ.get(password_key) or '').strip()
             if not email or not password:
@@ -51,8 +111,8 @@ class Command(BaseCommand):
                 username=username,
                 defaults={
                     'email': email,
-                    'is_superuser': is_super,
-                    'is_staff': is_staff,
+                    'is_superuser': platform_admin,
+                    'is_staff': platform_admin,
                     'is_active': True,
                 },
             )
@@ -64,8 +124,8 @@ class Command(BaseCommand):
                 changed = False
                 for field, value in (
                     ('email', email),
-                    ('is_superuser', is_super),
-                    ('is_staff', is_staff),
+                    ('is_superuser', platform_admin),
+                    ('is_staff', platform_admin),
                     ('is_active', True),
                 ):
                     if getattr(user, field) != value:
@@ -75,9 +135,11 @@ class Command(BaseCommand):
                     user.save()
                     updated += 1
                 self.stdout.write(f'• {username}: already exists')
-            UserProfile.objects.get_or_create(
-                user=user, defaults={'email': email},
-            )
+            UserProfile.objects.get_or_create(user=user, defaults={'email': email})
+
+            if org_role is not None:
+                org = org or self._seed_org()
+                self._membership(org, user, org_role)
 
         self.stdout.write(self.style.SUCCESS(
             f'Default users: created={created}, updated={updated}, skipped={skipped}'

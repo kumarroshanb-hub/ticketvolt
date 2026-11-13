@@ -989,7 +989,7 @@
         "title": "設定",
         "subtitle": "管理您的帳戶設定及偏好",
         "tabProfile": "個人資料",
-        "tabSecurity": "安全性",
+        "tabSecurity": "更改密碼",
         "tabNotifications": "通知",
         "tabAppearance": "外觀",
         "tabLanguage": "語言",
@@ -1234,7 +1234,16 @@
         "filterAllOrganizationRoles": "所有組織角色",
         "colPlatformRole": "平台角色",
         "colOrganizationRole": "組織角色",
-        "noOrganizationRole": "沒有組織角色"
+        "noOrganizationRole": "沒有組織角色",
+        "actionResetPassword": "重設密碼",
+        "resetPasswordTitle": "重設密碼",
+        "resetPassword": "重設密碼",
+        "newPassword": "新密碼",
+        "confirmPassword": "確認密碼",
+        "resetPasswordHint": "這亦會清除此帳戶的登入失敗鎖定。",
+        "resetPasswordSuccess": "密碼已重設，帳戶已解鎖。",
+        "passwordMismatch": "密碼不一致。",
+        "passwordMin": "密碼至少需 10 個字元。"
     },
     "activeSessions": {
         "title": "活躍工作階段",

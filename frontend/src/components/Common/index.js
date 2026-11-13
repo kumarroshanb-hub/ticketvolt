@@ -22,3 +22,5 @@ export { default as StatIcon } from './StatIcon';  // ← NEW
 // Export the badge components
 export { default as TicketStatusBadge } from './TicketStatusBadge';
 export { default as BookingStatusBadge } from './BookingStatusBadge';
+
+export { default as OrgFilterSelect } from './OrgFilterSelect';

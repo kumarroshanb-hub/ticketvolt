@@ -13,6 +13,24 @@ export const useAuth = () => {
 };
 
 // ---------------------------------------------------------------------------
+// ROLE SEMANTICS (post-backend-fix)
+// ---------------------------------------------------------------------------
+// `user.role` is the GLOBAL account role and is one of:
+//   'owner'  → organization manager (was 'admin' in older payloads)
+//   'staff'
+//   'member'
+//   'user'   → regular user with no org membership
+//
+// It is NOT the per-org membership role. Per-org roles live on
+// `useOrg().currentOrgRole`, never here.
+//
+// AuthContext is therefore ROLE-AGNOSTIC: it is a pass-through for
+// whatever the backend emits and does not branch on `role`.
+// Tenant role checks must read `useOrg().currentOrgRole`.
+// Platform-admin checks read `user.is_staff` / `user.is_superuser`.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 const IDLE_TIMEOUT_MS =
@@ -22,6 +40,12 @@ const REFRESH_CAP_ENFORCED = true;
 const EXPIRY_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
 
 const IDLE_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+
+// Bump this whenever role semantics (or any persisted user shape) change.
+// On mount, a mismatch invalidates the cached user in both storages so
+// stale pre-fix payloads (e.g. role='admin') can't survive a deploy.
+const AUTH_SCHEMA_VERSION = '2';
+const AUTH_SCHEMA_VERSION_KEY = 'auth_schema_version';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -100,6 +124,24 @@ export const AuthProvider = ({ children }) => {
     }, [isAuthenticated]);
 
     // -----------------------------------------------------------------------
+    // ✅ FIX [AUTH-SCHEMA-VERSION]: invalidate stale cached user on deploy.
+    // Runs BEFORE bootstrap so a pre-fix cached payload (role='admin') can
+    // never be painted. We keep the tokens — bootstrap will re-fetch
+    // /auth/me/ and repopulate `user` from the authoritative source.
+    // -----------------------------------------------------------------------
+    useEffect(() => {
+        try {
+            if (localStorage.getItem(AUTH_SCHEMA_VERSION_KEY) !== AUTH_SCHEMA_VERSION) {
+                localStorage.removeItem('user');
+                sessionStorage.removeItem('user');
+                localStorage.setItem(AUTH_SCHEMA_VERSION_KEY, AUTH_SCHEMA_VERSION);
+            }
+        } catch {
+            // Storage unavailable (private mode / quota) — ignore.
+        }
+    }, []);
+
+    // -----------------------------------------------------------------------
     // Central setters
     // -----------------------------------------------------------------------
 
@@ -135,6 +177,12 @@ export const AuthProvider = ({ children }) => {
             console.warn(`🔓 Logging out (${reason})`);
         } else {
             console.log('🔓 Logging out...');
+        }
+        // Tell the backend before clearing tokens so the profile no longer
+        // appears as an active JWT session on the admin sessions page.
+        const refreshToken = localStorage.getItem('refresh_token') || sessionStorage.getItem('refresh_token');
+        if (refreshToken) {
+            api.post('/auth/logout/', { refresh: refreshToken }).catch(() => {});
         }
         clearAuthStorage();
         setUserState(null);
@@ -316,24 +364,74 @@ export const AuthProvider = ({ children }) => {
     }, [isAuthenticated, logout]);
 
     // -----------------------------------------------------------------------
-    // Login
+    // Login (Supports both Standard and Magic Link flows)
     // -----------------------------------------------------------------------
-    const login = useCallback(async (email, password) => {
-        console.log('🔐 Login function called with:', { email, password: password ? '***' : 'missing' });
-
+    //
+    // NOTE: `userData.role` / `resUserData.role` is the GLOBAL account role
+    // ('owner' | 'staff' | 'member' | 'user'). After the backend fix, a
+    // manager arrives as role='owner' (previously 'admin'). It is NOT the
+    // per-org membership role. Do not branch on it here.
+    // -----------------------------------------------------------------------
+    const login = useCallback(async (emailOrToken, passwordOrRefresh, userData) => {
         try {
-            if (!email || !password) {
+            // ✅ MAGIC LINK FLOW: First argument is the access token string
+            if (typeof emailOrToken === 'string' && emailOrToken.startsWith('ey')) {
+                const token = emailOrToken;
+                const refresh = passwordOrRefresh;
+                const userToStore = {
+                    ...userData,
+                    // Global account role — pass-through. Backend now
+                    // emits 'owner' for managers (was 'admin'). Only
+                    // default when the field is genuinely absent.
+                    role: userData?.role ?? 'user',
+                };
+
+                localStorage.setItem('token', token);
+                localStorage.setItem('refresh_token', refresh || '');
+                sessionStorage.setItem('token', token);
+                sessionStorage.setItem('refresh_token', refresh || '');
+
+                setUser(userToStore);
+                api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+                if (process.env.NODE_ENV === 'development') {
+                    // eslint-disable-next-line no-console
+                    console.log(
+                        '✅ Magic link login successful (global role =',
+                        userToStore.role,
+                        ')'
+                    );
+                }
+                return { success: true, data: { access: token, refresh, user: userToStore } };
+            }
+
+            // ✅ STANDARD LOGIN FLOW
+            if (process.env.NODE_ENV === 'development') {
+                // eslint-disable-next-line no-console
+                console.log('🔐 Standard login called with:', {
+                    email: emailOrToken,
+                    password: passwordOrRefresh ? '***' : 'missing',
+                });
+            }
+
+            if (!emailOrToken || !passwordOrRefresh) {
                 return { success: false, error: 'Email and password are required' };
             }
 
-            const response = await api.post('/auth/login/', { email, password });
+            const response = await api.post('/auth/login/', { 
+                email: emailOrToken, 
+                password: passwordOrRefresh 
+            });
 
             if (response.data && response.data.access) {
-                const { access, refresh, user: userData } = response.data;
+                const { access, refresh, user: resUserData } = response.data;
 
                 const userToStore = {
-                    ...userData,
-                    role: userData?.role || 'user',
+                    ...resUserData,
+                    // Global account role — pass-through. Backend now
+                    // emits 'owner' for managers (was 'admin'). Only
+                    // default when the field is genuinely absent.
+                    role: resUserData?.role ?? 'user',
                 };
 
                 localStorage.setItem('token', access);
@@ -344,7 +442,14 @@ export const AuthProvider = ({ children }) => {
                 setUser(userToStore);
                 api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
 
-                console.log('✅ Login successful');
+                if (process.env.NODE_ENV === 'development') {
+                    // eslint-disable-next-line no-console
+                    console.log(
+                        '✅ Standard login successful (global role =',
+                        userToStore.role,
+                        ')'
+                    );
+                }
                 return { success: true, data: response.data };
             }
 

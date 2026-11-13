@@ -1,5 +1,6 @@
 // frontend/src/pages/Events/components/TiersEditor.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Grid, Box, Button, Divider, IconButton, Typography, Alert } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { StyledTextField, SectionTitle, TierPaper } from './styled';
@@ -12,9 +13,13 @@ export const TiersEditor = ({
     onAdd, 
     onRemove, 
     onUpdate, 
-    label = 'Ticket Tiers',
+    label,
+    isRegistrationFees = false,
     hideActions = false, // ✅ NEW PROP
 }) => {
+    const { t } = useTranslation();
+    const displayLabel = label || t('events.tiersTitle');
+    const fees = isRegistrationFees || label === 'Registration Fees';
     // Lock the inputs if the event is Free Registration (hideActions) AND there are sold tickets.
     const isLocked = hideActions && tiers.some((t) => (t.quantity_sold || 0) > 0);
 
@@ -31,7 +36,7 @@ export const TiersEditor = ({
                         gap: 1,
                     }}
                 >
-                    <SectionTitle variant="h6" sx={{ mb: 0 }}>{label}</SectionTitle>
+                    <SectionTitle variant="h6" sx={{ mb: 0 }}>{displayLabel}</SectionTitle>
                     
                     {/* Only show Add button if not hidden */}
                     {!hideActions && (
@@ -50,7 +55,7 @@ export const TiersEditor = ({
                                 },
                             }}
                         >
-                            Add {label === 'Registration Fees' ? 'Fee' : 'Tier'}
+                            {fees ? t('events.addFee') : t('events.addTier')}
                         </Button>
                     )}
                 </Box>
@@ -61,7 +66,7 @@ export const TiersEditor = ({
             {isLocked && (
                 <Grid item xs={12}>
                     <Alert severity="info" sx={{ mt: 1 }}>
-                        This event has issued tickets. To change or delete these tiers, you must first cancel all associated bookings.
+                        {t('events.tiersLockedHint')}
                     </Alert>
                 </Grid>
             )}
@@ -71,10 +76,12 @@ export const TiersEditor = ({
                     <TierPaper>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Typography variant="subtitle1" sx={{ color: C.textPrimary, fontWeight: 600 }}>
-                                {label === 'Registration Fees' ? 'Fee' : 'Tier'} #{index + 1}
+                                {fees
+                                    ? t('events.feeNumber', { index: index + 1 })
+                                    : t('events.tierNumber', { index: index + 1 })}
                                 {tier.quantity_sold > 0 && (
                                     <Typography component="span" variant="caption" sx={{ ml: 2, color: C.success }}>
-                                        ({tier.quantity_sold} sold)
+                                        ({t('events.tierSoldCount', { count: tier.quantity_sold })})
                                     </Typography>
                                 )}
                             </Typography>
@@ -89,7 +96,7 @@ export const TiersEditor = ({
                         <Grid container spacing={2} sx={{ mt: 1 }}>
                             <Grid item xs={12} sm={4}>
                                 <StyledTextField
-                                    fullWidth label="Name"
+                                    fullWidth label={t('events.tierName')}
                                     value={tier.name}
                                     onChange={(e) => onUpdate(index, 'name', e.target.value)}
                                     size="small"
@@ -98,7 +105,7 @@ export const TiersEditor = ({
                             </Grid>
                             <Grid item xs={12} sm={4}>
                                 <StyledTextField
-                                    fullWidth label="Price (₹)" type="number"
+                                    fullWidth label={t('events.tierPrice')} type="number"
                                     value={tier.price}
                                     onChange={(e) => onUpdate(index, 'price', parseFloat(e.target.value))}
                                     size="small"
@@ -107,7 +114,7 @@ export const TiersEditor = ({
                             </Grid>
                             <Grid item xs={12} sm={4}>
                                 <StyledTextField
-                                    fullWidth label="Quantity" type="number"
+                                    fullWidth label={t('events.tierQuantity')} type="number"
                                     value={tier.quantity_total}
                                     onChange={(e) => onUpdate(index, 'quantity_total', parseInt(e.target.value, 10))}
                                     size="small"

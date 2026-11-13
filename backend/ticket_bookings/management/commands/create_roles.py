@@ -8,6 +8,8 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
 from ticket_bookings.models import UserProfile
+# ADDED FOR 6-TIER HIERARCHY: tenancy models
+from ticket_bookings.models_tenancy import Organization, OrganizationMembership, OrgRole
 
 
 class Command(BaseCommand):
@@ -16,33 +18,50 @@ class Command(BaseCommand):
     # Environment variable names for each role's password.
     ENV_SUPERADMIN_PASSWORD = 'DJANGO_SUPERADMIN_PASSWORD'
     ENV_ADMIN_PASSWORD      = 'DJANGO_ADMIN_PASSWORD'
-    ENV_ORGANIZER_PASSWORD  = 'DJANGO_ORGANIZER_PASSWORD'
+    ENV_ORGANIZER_PASSWORD  = 'DJANGO_ORGANIZER_PASSWORD'  # KEPT: legacy alias for owner
+    ENV_OWNER_PASSWORD      = 'DJANGO_OWNER_PASSWORD'      # ADDED FOR 6-TIER HIERARCHY
+    ENV_STAFF_PASSWORD      = 'DJANGO_STAFF_PASSWORD'      # ADDED FOR 6-TIER HIERARCHY
+    ENV_MEMBER_PASSWORD     = 'DJANGO_MEMBER_PASSWORD'     # ADDED FOR 6-TIER HIERARCHY
     ENV_USER_PASSWORD       = 'DJANGO_USER_PASSWORD'
 
     # ✅ Email addresses from env vars, with sensible non-PII defaults for local dev
     ENV_SUPERADMIN_EMAIL = 'DJANGO_SUPERADMIN_EMAIL'
     ENV_ADMIN_EMAIL      = 'DJANGO_ADMIN_EMAIL'
-    ENV_ORGANIZER_EMAIL  = 'DJANGO_ORGANIZER_EMAIL'
+    ENV_ORGANIZER_EMAIL  = 'DJANGO_ORGANIZER_EMAIL'  # KEPT: legacy alias for owner
+    ENV_OWNER_EMAIL      = 'DJANGO_OWNER_EMAIL'      # ADDED FOR 6-TIER HIERARCHY
+    ENV_STAFF_EMAIL      = 'DJANGO_STAFF_EMAIL'      # ADDED FOR 6-TIER HIERARCHY
+    ENV_MEMBER_EMAIL     = 'DJANGO_MEMBER_EMAIL'     # ADDED FOR 6-TIER HIERARCHY
     ENV_USER_EMAIL       = 'DJANGO_USER_EMAIL'
+
+    # ADDED FOR 6-TIER HIERARCHY: default org name for owner creation
+    DEFAULT_ORG_NAME = 'Demo Organization'
+    ENV_ORG_NAME     = 'DJANGO_ORG_NAME'
 
     MIN_PASSWORD_LENGTH = 10
 
     def add_arguments(self, parser):
         parser.add_argument('--superadmin', action='store_true', help='Create super admin')
         parser.add_argument('--admin', action='store_true', help='Create admin')
-        parser.add_argument('--organizer', action='store_true', help='Create organizer')
+        # UPDATED FOR 6-TIER HIERARCHY: --organizer kept as alias, --owner added
+        parser.add_argument('--organizer', action='store_true', help='Create organizer (alias for --owner)')
+        parser.add_argument('--owner', action='store_true', help='Create organization owner')  # ADDED
+        parser.add_argument('--staff', action='store_true', help='Create staff member')         # ADDED
+        parser.add_argument('--member', action='store_true', help='Create org member')          # ADDED
         parser.add_argument('--user', action='store_true', help='Create regular user')
         parser.add_argument('--all', action='store_true', help='Create all user types')
+        # ADDED FOR 6-TIER HIERARCHY: org name override
+        parser.add_argument('--org-name', type=str, default=None,
+                            help='Organization name for owner (default: Demo Organization)')
 
     def handle(self, *args, **options):
         create_all = options['all']
 
-        if not create_all and not any(
-            options[k] for k in ('superadmin', 'admin', 'organizer', 'user')
-        ):
+        # UPDATED FOR 6-TIER HIERARCHY: expanded role flag check
+        role_flags = ('superadmin', 'admin', 'organizer', 'owner', 'staff', 'member', 'user')
+        if not create_all and not any(options[k] for k in role_flags):
             self.stdout.write(self.style.WARNING(
                 '⚠️  No role flags provided. Use --all or one of: '
-                '--superadmin --admin --organizer --user'
+                '--superadmin --admin --owner --staff --member --user'
             ))
             return
 
@@ -52,8 +71,16 @@ class Command(BaseCommand):
         if create_all or options['admin']:
             self.create_admin()
 
-        if create_all or options['organizer']:
-            self.create_organizer()
+        # UPDATED FOR 6-TIER HIERARCHY: --organizer is now an alias for --owner
+        if create_all or options['organizer'] or options['owner']:
+            self.create_owner(org_name=options.get('org_name'))
+
+        # ADDED FOR 6-TIER HIERARCHY: staff and member creation
+        if create_all or options['staff']:
+            self.create_staff()
+
+        if create_all or options['member']:
+            self.create_member()
 
         if create_all or options['user']:
             self.create_regular_user()
@@ -145,21 +172,32 @@ class Command(BaseCommand):
         user.save(update_fields=['is_staff'])
         self._report_success('Admin', user.username)
 
-    def create_organizer(self):
-        username = 'organizer'
-        if User.objects.filter(username=username).exists():
-            self._report_skip('Organizer', username)
+    # UPDATED FOR 6-TIER HIERARCHY: create_organizer → create_owner
+    # Now creates an Organization and assigns OWNER membership.
+    # The old --organizer flag still works as an alias.
+    def create_owner(self, org_name=None):
+        username = 'owner'
+        # Also check legacy 'organizer' username to avoid duplicates
+        if User.objects.filter(username__in=['owner', 'organizer']).exists():
+            existing = User.objects.filter(username__in=['owner', 'organizer']).first()
+            self._report_skip('Owner', existing.username)
             return
 
-        password = self._get_password(self.ENV_ORGANIZER_PASSWORD, 'organizer')
-        email = self._get_email(self.ENV_ORGANIZER_EMAIL, 'organizer@example.local')
+        # ADDED: resolve password — try new env var first, fall back to legacy
+        try:
+            password = self._get_password(self.ENV_OWNER_PASSWORD, 'owner')
+        except CommandError:
+            password = self._get_password(self.ENV_ORGANIZER_PASSWORD, 'owner')
+
+        email = self._get_email(self.ENV_OWNER_EMAIL,
+                                self._get_email(self.ENV_ORGANIZER_EMAIL, 'owner@example.local'))
 
         user = User.objects.create_user(
             username=username,
             email=email,
             password=password,
-            first_name='Organizer',
-            last_name='User',
+            first_name='Org',
+            last_name='Owner',
         )
 
         UserProfile.objects.get_or_create(
@@ -171,10 +209,147 @@ class Command(BaseCommand):
                 'city': '',
                 'state': '',
                 'country': 'India',
-                'is_organizer': True,
+                'is_organizer': True,  # KEPT: legacy profile flag still used by some views
             },
         )
-        self._report_success('Organizer', user.username)
+
+        # ADDED FOR 6-TIER HIERARCHY: create Organization + OWNER membership
+        resolved_org_name = (
+            org_name
+            or os.environ.get(self.ENV_ORG_NAME, '').strip()
+            or self.DEFAULT_ORG_NAME
+        )
+        slug = resolved_org_name.lower().replace(' ', '-').replace('_', '-')
+
+        org, org_created = Organization.objects.get_or_create(
+            name=resolved_org_name,
+            defaults={'slug': slug},
+        )
+        if org_created:
+            self.stdout.write(self.style.SUCCESS(
+                f'✅ Organization created: {resolved_org_name} ({slug})'
+            ))
+
+        membership, mem_created = OrganizationMembership.objects.get_or_create(
+            user=user,
+            organization=org,
+            defaults={'role': OrgRole.ADMIN, 'is_owner': True},
+        )
+        if mem_created:
+            self.stdout.write(self.style.SUCCESS(
+                f'✅ {email} assigned as OWNER of {resolved_org_name}'
+            ))
+        elif not membership.is_owner or membership.role != OrgRole.ADMIN:
+            membership.role = OrgRole.ADMIN
+            membership.is_owner = True
+            membership.save(update_fields=['role', 'is_owner'])
+            self.stdout.write(self.style.SUCCESS(
+                f'🔄 {email} role updated to OWNER'
+            ))
+
+        self._report_success('Owner', user.username)
+
+    # ADDED FOR 6-TIER HIERARCHY: create_staff
+    def create_staff(self):
+        username = 'staff'
+        if User.objects.filter(username=username).exists():
+            self._report_skip('Staff', username)
+            return
+
+        password = self._get_password(self.ENV_STAFF_PASSWORD, 'staff')
+        email = self._get_email(self.ENV_STAFF_EMAIL, 'staff@example.local')
+
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            first_name='Event',
+            last_name='Staff',
+        )
+
+        UserProfile.objects.get_or_create(
+            user=user,
+            defaults={
+                'email': email,
+                'phone': '',
+                'whatsapp_number': '',
+                'city': '',
+                'state': '',
+                'country': 'India',
+                'is_organizer': False,
+            },
+        )
+
+        # Assign STAFF role to the first available org (or the default demo org)
+        org = Organization.objects.filter(slug__startswith='demo').first() \
+              or Organization.objects.first()
+        if org:
+            OrganizationMembership.objects.get_or_create(
+                user=user,
+                organization=org,
+                defaults={'role': OrgRole.STAFF},
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f'✅ {email} assigned as STAFF of {org.name}'
+            ))
+        else:
+            self.stdout.write(self.style.WARNING(
+                f'⚠️  No organization found. {email} created but has no org membership. '
+                f'Run --owner first to create an organization.'
+            ))
+
+        self._report_success('Staff', user.username)
+
+    # ADDED FOR 6-TIER HIERARCHY: create_member
+    def create_member(self):
+        username = 'member'
+        if User.objects.filter(username=username).exists():
+            self._report_skip('Member', username)
+            return
+
+        password = self._get_password(self.ENV_MEMBER_PASSWORD, 'member')
+        email = self._get_email(self.ENV_MEMBER_EMAIL, 'member@example.local')
+
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            first_name='Org',
+            last_name='Member',
+        )
+
+        UserProfile.objects.get_or_create(
+            user=user,
+            defaults={
+                'email': email,
+                'phone': '',
+                'whatsapp_number': '',
+                'city': '',
+                'state': '',
+                'country': 'India',
+                'is_organizer': False,
+            },
+        )
+
+        # Assign MEMBER role to the first available org
+        org = Organization.objects.filter(slug__startswith='demo').first() \
+              or Organization.objects.first()
+        if org:
+            OrganizationMembership.objects.get_or_create(
+                user=user,
+                organization=org,
+                defaults={'role': OrgRole.MEMBER},
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f'✅ {email} assigned as MEMBER of {org.name}'
+            ))
+        else:
+            self.stdout.write(self.style.WARNING(
+                f'⚠️  No organization found. {email} created but has no org membership. '
+                f'Run --owner first to create an organization.'
+            ))
+
+        self._report_success('Member', user.username)
 
     def create_regular_user(self):
         username = 'user'

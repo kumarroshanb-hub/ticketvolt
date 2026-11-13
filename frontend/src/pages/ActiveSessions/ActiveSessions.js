@@ -22,6 +22,7 @@ import {
     OutlineButton, LoadingWrapper,
 } from '../../components/Common';
 import activeSessionsService from '../../services/activeSessionsService';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import { ROLES, ROLE_LABELS } from '../../constants';
 import { theme } from '../../theme/tokens';
@@ -56,34 +57,37 @@ const StatCard = ({ title, value, icon, color, subtitle }) => (
     </Card>
 );
 
-const formatRelative = (iso) => {
+const formatRelative = (iso, t) => {
     if (!iso) return '—';
     const diff = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+    if (diff < 60) return t('activeSessions.suffixSeconds', { n: diff });
+    if (diff < 3600) return t('activeSessions.suffixMinutes', { n: Math.floor(diff / 60) });
+    if (diff < 86400) return t('activeSessions.suffixHours', { n: Math.floor(diff / 3600) });
+    return t('activeSessions.suffixDays', { n: Math.floor(diff / 86400) });
 };
 
-const formatTimeToExpiry = (seconds) => {
+const formatTimeToExpiry = (seconds, t) => {
     if (seconds == null) return '—';
-    if (seconds <= 0) return 'Expired';
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-    return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+    if (seconds <= 0) return t('activeSessions.expired');
+    if (seconds < 60) return t('activeSessions.expirySeconds', { n: seconds });
+    if (seconds < 3600) return t('activeSessions.expiryMinutes', { n: Math.floor(seconds / 60) });
+    if (seconds < 86400) return t('activeSessions.expiryHours', { h: Math.floor(seconds / 3600), m: Math.floor((seconds % 3600) / 60) });
+    return t('activeSessions.expiryDays', { d: Math.floor(seconds / 86400), h: Math.floor((seconds % 86400) / 3600) });
 };
 
+// NOTE: No STAFF branch — backend `_platform_role_label` emits only
+// super_admin / admin / owner / user. Any unknown role falls through to default.
 const roleChipColor = (role) => {
     switch (role) {
         case ROLES.SUPER_ADMIN: return { bg: `${C.success}1A`, color: C.successDark };
         case ROLES.ADMIN:       return { bg: `${C.info}1A`,    color: C.infoDark };
-        case ROLES.ORGANIZER:   return { bg: `${C.warning}1A`, color: C.warningDark };
+        case ROLES.OWNER:       return { bg: `${C.warning}1A`, color: C.warningDark };
         default:                return { bg: C.bgInput,        color: C.textSecondary };
     }
 };
 
 const ActiveSessions = () => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -111,14 +115,14 @@ const ActiveSessions = () => {
             });
             setData(res);
         } catch (err) {
-            const msg = err.response?.data?.error || err.message || 'Failed to load active sessions';
+            const msg = err.response?.data?.error || err.message || t('activeSessions.loadFailed');
             setError(msg);
             if (!silent) toast.error(msg);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [includeAnonymous, idleMinutes]);
+    }, [includeAnonymous, idleMinutes, t]);
 
     useEffect(() => { load(false); }, [load]);
 
@@ -131,6 +135,14 @@ const ActiveSessions = () => {
 
     const sessions = data?.sessions || [];
     const summary = data?.summary || {};
+
+    const roleKeyByRole = {
+        [ROLES.SUPER_ADMIN]: 'roles.superAdmin',
+        [ROLES.ADMIN]: 'roles.admin',
+        [ROLES.OWNER]: 'roles.owner',
+        [ROLES.USER]: 'roles.user',
+    };
+    const roleLabel = (role) => (roleKeyByRole[role] ? t(roleKeyByRole[role]) : (ROLE_LABELS[role] || role));
 
     const filtered = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -157,10 +169,10 @@ const ActiveSessions = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle>Active Sessions</PageTitle>
+                    <PageTitle>{t('activeSessions.title')}</PageTitle>
                     {!isMobile && (
                         <Typography variant="body2" sx={{ color: C.textSecondary, ml: 2 }}>
-                            Who's logged in right now — check before deploying
+                            {t('activeSessions.subtitle')}
                         </Typography>
                     )}
                 </PageHeaderLeft>
@@ -173,7 +185,7 @@ const ActiveSessions = () => {
                                 size="small"
                             />
                         }
-                        label={<Typography variant="caption">Auto-refresh</Typography>}
+                        label={<Typography variant="caption">{t('activeSessions.autoRefresh')}</Typography>}
                         sx={{ mr: 1 }}
                     />
                     <OutlineButton
@@ -182,7 +194,7 @@ const ActiveSessions = () => {
                         onClick={() => load(false)}
                         disabled={refreshing}
                     >
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -195,15 +207,18 @@ const ActiveSessions = () => {
 
             {data && summary.idle_sessions > 0 && (
                 <Alert severity="warning" icon={<WarningIcon />} sx={{ mb: 2 }}>
-                    <strong>{summary.idle_sessions}</strong> session
-                    {summary.idle_sessions === 1 ? ' is' : 's are'} idle (no activity for
-                    ≥{idleMinutes} min). These are safe to deploy over.
+                    {t('activeSessions.idleAlert', {
+                        count: summary.idle_sessions,
+                        noun: t('activeSessions.idleAlertCount', { count: summary.idle_sessions }),
+                        verb: summary.idle_sessions === 1 ? t('activeSessions.idleIs') : t('activeSessions.idleAre'),
+                        idle: idleMinutes,
+                    })}
                 </Alert>
             )}
 
             {data && summary.total_sessions === 0 && (
                 <Alert severity="success" icon={<CheckCircleIcon />} sx={{ mb: 2 }}>
-                    No active Django Admin sessions. Note: JWT API users are not tracked here.
+                    {t('activeSessions.noSessionsTitle')}
                 </Alert>
             )}
 
@@ -211,38 +226,38 @@ const ActiveSessions = () => {
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Total sessions"
+                        title={t('activeSessions.statTotal')}
                         value={summary.total_sessions ?? 0}
                         icon={<DevicesIcon sx={{ color: C.primary }} />}
                         color={C.primary}
-                        subtitle="Non-expired"
+                        subtitle={t('activeSessions.statTotalSubtitle')}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Unique users"
+                        title={t('activeSessions.statUnique')}
                         value={summary.unique_users ?? 0}
                         icon={<PeopleIcon sx={{ color: C.info }} />}
                         color={C.info}
-                        subtitle="Distinct accounts"
+                        subtitle={t('activeSessions.statUniqueSubtitle')}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Active (not idle)"
+                        title={t('activeSessions.statActive')}
                         value={(summary.authenticated_sessions ?? 0) - (summary.idle_sessions ?? 0)}
                         icon={<CheckCircleIcon sx={{ color: C.success }} />}
                         color={C.success}
-                        subtitle="Recent activity"
+                        subtitle={t('activeSessions.statActiveSubtitle')}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Idle"
+                        title={t('activeSessions.statIdle')}
                         value={summary.idle_sessions ?? 0}
                         icon={<TimerIcon sx={{ color: C.warning }} />}
                         color={C.warning}
-                        subtitle={`≥${idleMinutes} min silent`}
+                        subtitle={t('activeSessions.statIdleSubtitle', { n: idleMinutes })}
                     />
                 </Grid>
             </Grid>
@@ -254,7 +269,7 @@ const ActiveSessions = () => {
                         <TextField
                             fullWidth
                             size="small"
-                            placeholder="Search by name, email, or IP…"
+                            placeholder={t('activeSessions.searchPlaceholder')}
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             InputProps={{
@@ -268,32 +283,32 @@ const ActiveSessions = () => {
                     </Grid>
                     <Grid item xs={6} md={2}>
                         <FormControl fullWidth size="small">
-                            <InputLabel>Role</InputLabel>
+                            <InputLabel>{t('activeSessions.filterRoleLabel')}</InputLabel>
                             <Select
                                 value={roleFilter}
-                                label="Role"
+                                label={t('activeSessions.filterRoleLabel')}
                                 onChange={(e) => setRoleFilter(e.target.value)}
                             >
-                                <MenuItem value="all">All</MenuItem>
-                                <MenuItem value={ROLES.SUPER_ADMIN}>Super Admin</MenuItem>
-                                <MenuItem value={ROLES.ADMIN}>Admin</MenuItem>
-                                <MenuItem value={ROLES.ORGANIZER}>Organizer</MenuItem>
-                                <MenuItem value={ROLES.USER}>User</MenuItem>
+                                <MenuItem value="all">{t('activeSessions.filterRoleAll')}</MenuItem>
+                                <MenuItem value={ROLES.SUPER_ADMIN}>{t('activeSessions.filterRoleSuperAdmin')}</MenuItem>
+                                <MenuItem value={ROLES.ADMIN}>{t('activeSessions.filterRoleAdmin')}</MenuItem>
+                                <MenuItem value={ROLES.OWNER}>{t('activeSessions.filterRoleOrganizer')}</MenuItem>
+                                <MenuItem value={ROLES.USER}>{t('activeSessions.filterRoleUser')}</MenuItem>
                             </Select>
                         </FormControl>
                     </Grid>
                     <Grid item xs={6} md={2}>
                         <FormControl fullWidth size="small">
-                            <InputLabel>Idle threshold</InputLabel>
+                            <InputLabel>{t('activeSessions.filterIdleThreshold')}</InputLabel>
                             <Select
                                 value={idleMinutes}
-                                label="Idle threshold"
-                                onChange={(e) => setIdleMinutes(e.target.value)}
+                                label={t('activeSessions.filterIdleThreshold')}
+                                onChange={(e) => setIdleMinutes(Number(e.target.value))}
                             >
-                                <MenuItem value={10}>10 min</MenuItem>
-                                <MenuItem value={30}>30 min</MenuItem>
-                                <MenuItem value={60}>1 hour</MenuItem>
-                                <MenuItem value={120}>2 hours</MenuItem>
+                                <MenuItem value={10}>{t('activeSessions.filterIdle10')}</MenuItem>
+                                <MenuItem value={30}>{t('activeSessions.filterIdle30')}</MenuItem>
+                                <MenuItem value={60}>{t('activeSessions.filterIdle60')}</MenuItem>
+                                <MenuItem value={120}>{t('activeSessions.filterIdle120')}</MenuItem>
                             </Select>
                         </FormControl>
                     </Grid>
@@ -306,7 +321,7 @@ const ActiveSessions = () => {
                                     onChange={(e) => setIdleOnly(e.target.checked)}
                                 />
                             }
-                            label={<Typography variant="caption">Idle only</Typography>}
+                            label={<Typography variant="caption">{t('activeSessions.filterIdleOnly')}</Typography>}
                         />
                     </Grid>
                     <Grid item xs={6} md={1}>
@@ -318,7 +333,7 @@ const ActiveSessions = () => {
                                     onChange={(e) => setIncludeAnonymous(e.target.checked)}
                                 />
                             }
-                            label={<Typography variant="caption">Anon</Typography>}
+                            label={<Typography variant="caption">{t('activeSessions.filterIncludeAnon')}</Typography>}
                         />
                     </Grid>
                 </Grid>
@@ -329,7 +344,7 @@ const ActiveSessions = () => {
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                     {filtered.length === 0 ? (
                         <Paper sx={{ p: 4, textAlign: 'center', border: `1px solid ${C.borderLight}` }}>
-                            <Typography sx={{ color: C.textMuted }}>No matching sessions</Typography>
+                            <Typography sx={{ color: C.textMuted }}>{t('activeSessions.noMatching')}</Typography>
                         </Paper>
                     ) : filtered.map((s) => (
                         <Card key={s.session_key} sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
@@ -340,7 +355,7 @@ const ActiveSessions = () => {
                                     </Avatar>
                                     <Box sx={{ flex: 1, minWidth: 0 }}>
                                         <Typography variant="subtitle2" sx={{ fontWeight: 600, color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {s.full_name || s.username || 'Anonymous'}
+                                            {s.full_name || s.username || t('activeSessions.anonymous')}
                                         </Typography>
                                         <Typography variant="caption" sx={{ color: C.textMuted, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                             {s.email || '—'}
@@ -348,7 +363,7 @@ const ActiveSessions = () => {
                                     </Box>
                                     <Chip
                                         size="small"
-                                        label={ROLE_LABELS[s.role] || s.role}
+                                        label={roleLabel(s.role)}
                                         sx={{
                                             bgcolor: roleChipColor(s.role).bg,
                                             color: roleChipColor(s.role).color,
@@ -359,19 +374,19 @@ const ActiveSessions = () => {
                                 </Box>
                                 <Divider sx={{ my: 1 }} />
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                    <Typography variant="caption" sx={{ color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Last activity</Typography>
+                                    <Typography variant="caption" sx={{ color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>{t('activeSessions.colLastActivity')}</Typography>
                                     <Typography variant="caption" sx={{ color: s.idle ? C.warning : C.success, fontWeight: 600 }}>
-                                        {s.last_activity ? formatRelative(s.last_activity) : '—'}
+                                        {s.last_activity ? formatRelative(s.last_activity, t) : '—'}
                                     </Typography>
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                    <Typography variant="caption" sx={{ color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Expires in</Typography>
+                                    <Typography variant="caption" sx={{ color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>{t('activeSessions.colExpiresIn')}</Typography>
                                     <Typography variant="caption" sx={{ color: C.textPrimary, fontWeight: 500 }}>
-                                        {formatTimeToExpiry(s.seconds_to_expiry)}
+                                        {formatTimeToExpiry(s.seconds_to_expiry, t)}
                                     </Typography>
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <Typography variant="caption" sx={{ color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>IP</Typography>
+                                    <Typography variant="caption" sx={{ color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>{t('activeSessions.colIp')}</Typography>
                                     <Typography variant="caption" sx={{ fontFamily: F.familyMono, color: C.textPrimary }}>
                                         {s.ip_address || '—'}
                                     </Typography>
@@ -385,20 +400,20 @@ const ActiveSessions = () => {
                     <Table size="small">
                         <TableHead>
                             <TableRow>
-                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>User</TableCell>
-                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Role</TableCell>
-                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Last activity</TableCell>
-                                <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>Idle</TableCell>
-                                <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>Expires in</TableCell>
-                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>IP</TableCell>
-                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Device</TableCell>
+                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colUser')}</TableCell>
+                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colRole')}</TableCell>
+                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colLastActivity')}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colIdle')}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colExpiresIn')}</TableCell>
+                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colIp')}</TableCell>
+                                <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>{t('activeSessions.colDevice')}</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
                             {filtered.length === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
-                                        <Typography sx={{ color: C.textMuted }}>No matching sessions</Typography>
+                                        <Typography sx={{ color: C.textMuted }}>{t('activeSessions.noMatching')}</Typography>
                                     </TableCell>
                                 </TableRow>
                             ) : filtered.map((s) => {
@@ -412,7 +427,7 @@ const ActiveSessions = () => {
                                                 </Avatar>
                                                 <Box sx={{ minWidth: 0 }}>
                                                     <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
-                                                        {s.full_name || s.username || 'Anonymous'}
+                                                        {s.full_name || s.username || t('activeSessions.anonymous')}
                                                     </Typography>
                                                     <Typography variant="caption" sx={{ color: C.textMuted, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
                                                         {s.email || '—'}
@@ -423,7 +438,7 @@ const ActiveSessions = () => {
                                         <TableCell>
                                             <Chip
                                                 size="small"
-                                                label={ROLE_LABELS[s.role] || s.role}
+                                                label={roleLabel(s.role)}
                                                 sx={{
                                                     bgcolor: rc.bg,
                                                     color: rc.color,
@@ -434,7 +449,7 @@ const ActiveSessions = () => {
                                         </TableCell>
                                         <TableCell>
                                             <Typography variant="body2" sx={{ color: s.idle ? C.warning : C.success, fontWeight: 500 }}>
-                                                {s.last_activity ? formatRelative(s.last_activity) : '—'}
+                                                {s.last_activity ? formatRelative(s.last_activity, t) : '—'}
                                             </Typography>
                                         </TableCell>
                                         <TableCell align="right">
@@ -444,7 +459,7 @@ const ActiveSessions = () => {
                                         </TableCell>
                                         <TableCell align="right">
                                             <Typography variant="body2" sx={{ color: C.textPrimary, fontFamily: F.familyMono }}>
-                                                {formatTimeToExpiry(s.seconds_to_expiry)}
+                                                {formatTimeToExpiry(s.seconds_to_expiry, t)}
                                             </Typography>
                                         </TableCell>
                                         <TableCell>
@@ -453,7 +468,7 @@ const ActiveSessions = () => {
                                             </Typography>
                                         </TableCell>
                                         <TableCell>
-                                            <Tooltip title={s.user_agent || 'Unknown'}>
+                                            <Tooltip title={s.user_agent || t('activeSessions.unknown')}>
                                                 <Typography variant="caption" sx={{ color: C.textSecondary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
                                                     {s.user_agent ? s.user_agent.split(' ').slice(0, 3).join(' ') : '—'}
                                                 </Typography>
@@ -468,8 +483,8 @@ const ActiveSessions = () => {
             )}
 
             <Typography variant="caption" sx={{ display: 'block', mt: 2, color: C.textMuted }}>
-                {data?.generated_at && `Last updated: ${new Date(data.generated_at).toLocaleTimeString()}`}
-                {autoRefresh && ' · auto-refreshing every 30s'}
+                {data?.generated_at && t('activeSessions.lastUpdated', { time: new Date(data.generated_at).toLocaleTimeString() })}
+                {autoRefresh && ` ${t('activeSessions.autoRefreshHint')}`}
             </Typography>
         </PageContainer>
     );

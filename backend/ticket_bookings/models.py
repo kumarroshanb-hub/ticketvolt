@@ -12,6 +12,32 @@
 # `Event.get_effective_status()` — not the raw `event.status` field.
 # This guarantees the Dashboard, Events list, and Event Detail always
 # agree, regardless of cron timing.
+#
+# ============================================================================
+# CONVENTION: Tenancy (Phase 1–2)
+# ----------------------------------------------------------------------------
+# Tenant-owned models (Venue, Event, Discount, CancellationPolicy) each
+# carry a NOT NULL `organization` FK. It is the single column that every
+# scoping helper in `services/tenancy.py` filters on. The legacy
+# `organizer` FK is still present on `Event`, `Discount`, and
+# `CancellationPolicy` during the migration, but is NOT used for access
+# control any more — `visible_events()` is.
+# ============================================================================
+# CONVENTION: Capacity accounting
+# ----------------------------------------------------------------------------
+# `Session.booked` and `TicketTier.quantity_sold` count *committed* seats.
+# `Session.reserved` and `TicketTier.quantity_reserved` count seats held
+# by in-flight payments (see `services/inventory_hold.py`). The two
+# must NEVER be combined with a formula that drops the `reserved` term —
+# that is how concurrent checkouts double-sell. Every `remaining_*` and
+# `available_*` method below MUST subtract all three (`total - sold - reserved`).
+# ============================================================================
+# CONVENTION: Ownership / roles
+# ----------------------------------------------------------------------------
+# The source of truth for "who may manage this org/event" is
+# `OrganizationMembership.role` (Phase 1). The legacy `Event.organizer`
+# FK and `UserProfile.is_organizer` flag are DEPRECATED and are NOT read
+# by any access-control code. See A.2 notes below.
 # ============================================================================
 
 import secrets
@@ -19,8 +45,9 @@ import string
 import uuid
 
 from django.contrib.auth.models import User
-from django.db import IntegrityError, models
+from django.db import IntegrityError, models, transaction
 from django.db.models import Sum, Q
+from django.utils import timezone
 
 # ✅ Canonical status definitions + manager
 from .managers import (
@@ -35,6 +62,15 @@ from .managers import (
 # ============================================
 from .constants import TicketStatus, BookingStatus, EventStatus
 
+# --- Tenancy (Phase 1) -----------------------------------------------------
+from .models_tenancy import (  # noqa: E402,F401
+    Organization,
+    OrganizationMembership,
+    OrganizationContact,
+)
+from .models_payments import (  # noqa: E402,F401
+    Payment, PaymentRefund, WebhookEvent, InventoryHold, OrganizationPaymentConfig,
+)
 
 # 36^12 ≈ 4.7e18. Collision probability is negligible, but we retry on the
 # (astronomically rare) IntegrityError anyway — belt and braces.
@@ -58,9 +94,24 @@ class UserProfile(models.Model):
     state = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100, default='India')
     postal_code = models.CharField(max_length=20, blank=True)
+
+    # DEPRECATED (Phase 6): replaced by OrganizationMembership.role.
+    # This flag is retained only so legacy profile queries don't 500 —
+    # it is NOT read by any authorization code. Use `memberships[]`.
+    #
+    # ⚠️  SOURCE OF TRUTH: `OrganizationMembership.role == 'owner'`
+    #     (equivalently `role == OrganizationMembership.Role.OWNER`).
+    #     Do NOT add new reads of `is_organizer`; if you find one in a
+    #     hot path, migrate it to `services/tenancy.can_manage_org()`.
     is_organizer = models.BooleanField(default=False)
+
     # ✅ NEW: Tracks active JWT sessions for the SuperAdmin dashboard
     last_active = models.DateTimeField(null=True, blank=True)
+
+    # ✅ NEW: Passwordless Magic Link Authentication fields
+    magic_token = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    magic_token_expires = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -71,6 +122,14 @@ class UserProfile(models.Model):
 # ============ VENUE ============
 class Venue(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    # ✅ Phase 2: every tenant-owned row carries its organization.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='venues',
+    )
+
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     venue_type = models.CharField(max_length=20, default='indoor')
@@ -87,6 +146,7 @@ class Venue(models.Model):
     contact_phone = models.CharField(max_length=20, blank=True)
     contact_email = models.EmailField(blank=True)
     website_url = models.URLField(blank=True)
+    map_url = models.URLField(blank=True, default='')
     amenities = models.JSONField(default=list)
     rules = models.TextField(blank=True)
     metadata = models.JSONField(default=dict)
@@ -104,6 +164,16 @@ class Venue(models.Model):
     def __str__(self):
         return f"{self.name} ({self.city})"
 
+    @property
+    def current_master(self):
+        # Use the prefetched relation if available; otherwise query.
+        cache = getattr(self, '_prefetched_objects_cache', {})
+        if 'masters' in cache:
+            for m in cache['masters']:
+                if m.is_current:
+                    return m
+            return None
+        return self.masters.filter(is_current=True).first()
 
 # ============================================
 # CANCELLATION POLICY
@@ -121,11 +191,25 @@ class CancellationPolicy(models.Model):
     the engine can evolve without breaking old snapshots.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    # ✅ Phase 2: tenant-owned.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='cancellation_policies',
+    )
+
+    # Legacy FK. Kept during the migration so old imports still work;
+    # access control is by `organization` from here on.
+    #
+    # ⚠️  DEPRECATED for authorization purposes. Do NOT read this field
+    #     in new access-control code; use `organization` +
+    #     `OrganizationMembership.role` via `services/tenancy.py`.
     organizer = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name='cancellation_policies',
-        help_text="Policy owner. Only the owner (or admin) can edit.",
+        help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
     )
 
     name = models.CharField(max_length=120)
@@ -143,7 +227,7 @@ class CancellationPolicy(models.Model):
         default=False,
         help_text=(
             'If true, this policy is preselected when creating a new event '
-            'for this organizer. Only one policy per organizer may be default.'
+            'for this organization. Only one policy per org may be default.'
         ),
     )
 
@@ -153,10 +237,12 @@ class CancellationPolicy(models.Model):
     class Meta:
         ordering = ['-is_default', 'name']
         constraints = [
+            # Scoped per-org default. Replaces the old per-organizer
+            # constraint from migration 0016.
             models.UniqueConstraint(
-                fields=['organizer'],
+                fields=['organization'],
                 condition=models.Q(is_default=True),
-                name='unique_default_policy_per_organizer',
+                name='unique_default_policy_per_organization',
             ),
         ]
 
@@ -170,14 +256,61 @@ class CancellationPolicy(models.Model):
         except Exception as exc:
             raise ValidationError({'rules': str(exc)})
 
+    def save(self, *args, **kwargs):
+        # ✅ FIX: enforce `clean()` on every save. Previously `clean()`
+        # existed but was never invoked, so a policy with malformed
+        # `rules` could be persisted via `.save()`, `.update()`, or the
+        # admin's bulk save. `.update()` bypasses `save()` entirely —
+        # that is why `CancellationPolicySerializer.validate_rules`
+        # also calls `validate_cancellation_rules`, and why the
+        # `cancellation_policy_api` viewset relies on the serializer.
+        # This `save()` guard catches every non-bulk path.
+        if not kwargs.get('raw', False):
+            self.clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f'{self.name} ({self.organizer.username})'
+        return f'{self.name} ({self.organization.slug})'
 
 
 # ============ EVENT ============
 class Event(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
-    organizer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='events')
+
+    # ✅ Phase 2: tenant-owned.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='events',
+    )
+
+    # Legacy FK. Kept during the migration; NOT used for access control.
+    #
+    # ✅ FIX: `on_delete` changed from CASCADE to SET_NULL. Deleting a
+    # user must not silently wipe their tenant's events (and, via
+    # `Booking.event` CASCADE, every booking and ticket). `organization`
+    # is `PROTECT`, so the org survives; events now survive too, and a
+    # Platform Admin who wants to remove the last human owner must
+    # transfer ownership first.
+    #
+    # ⚠️  DEPRECATED for authorization purposes (A.2). The source of
+    #     truth for "who can manage this event" is
+    #     `OrganizationMembership.role` on `self.organization`.
+    #     `visible_events()` (services/tenancy.py) explicitly ignores
+    #     this FK. Do NOT reintroduce reads of `event.organizer` into
+    #     access-control paths. It is retained solely for backwards
+    #     compatibility with legacy data and imports, and may be
+    #     dropped in a future migration once all call sites are
+    #     confirmed clean.
+    organizer = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='events',
+        help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
+    )
+
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     short_description = models.CharField(max_length=500, blank=True)
@@ -225,6 +358,10 @@ class Event(models.Model):
     )
 
     refundable_until = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.TextField(
+        blank=True, default='',
+        help_text='Required when the event is cancelled; shown to staff and customers.',
+    )
     total_tickets_sold = models.IntegerField(default=0)
     total_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -271,6 +408,70 @@ class Event(models.Model):
         ),
     )
 
+    # --- Paid-membership gating -------------------------------------------
+    members_only = models.BooleanField(
+        default=False,
+        help_text=(
+            'When true, only users with an active membership in this '
+            'organization may view or book.'
+        ),
+    )
+    donations_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            'Allow buyers to add an optional donation at checkout. '
+            'Eligible donations can receive an official tax receipt.'
+        ),
+    )
+    ask_course_question = models.BooleanField(
+        default=False,
+        help_text='Ask buyers whether they have completed an Art of Living course.',
+    )
+    public_page_enabled = models.BooleanField(default=True)
+    duration_minutes = models.PositiveIntegerField(default=120)
+    feedback_enabled = models.BooleanField(default=False)
+    feedback_title = models.CharField(max_length=200, blank=True, default='Share your feedback')
+    feedback_intro = models.TextField(blank=True, default='')
+    feedback_questions = models.JSONField(default=list, blank=True)
+
+    checkin_opens_minutes_before = models.PositiveIntegerField(
+        default=30,
+        help_text='How many minutes before the session start attendees may check in.',
+    )
+    map_url = models.URLField(blank=True, default='')
+    faqs = models.JSONField(default=list, blank=True)
+    title_zh = models.CharField(max_length=255, blank=True, default='')
+    short_description_zh = models.CharField(max_length=500, blank=True, default='')
+    description_zh = models.TextField(blank=True, default='')
+    faqs_zh = models.JSONField(default=list, blank=True)
+    donation_presets = models.JSONField(default=list, blank=True)
+    donation_contact_text = models.TextField(blank=True, default='')
+    show_bilingual_content = models.BooleanField(
+        default=False,
+        help_text='Show English and Traditional Chinese content together on the public page.',
+    )
+    highlights = models.JSONField(default=list, blank=True)
+    age_info = models.CharField(max_length=120, blank=True, default='')
+    door_time = models.CharField(max_length=120, blank=True, default='')
+    parking_info = models.TextField(blank=True, default='')
+    refund_policy = models.TextField(blank=True, default='')
+    accessibility_info = models.TextField(blank=True, default='')
+    privacy_notice_text = models.TextField(
+        blank=True, default='',
+        help_text='Optional checkout privacy notice (PDPO).',
+    )
+    marketing_opt_in_enabled = models.BooleanField(default=False)
+    min_membership_tier = models.ForeignKey(
+        'ticket_bookings.MembershipTier',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='events',
+        help_text=(
+            'If set, only members at this tier or higher may view/book '
+            'this event.'
+        ),
+    )
+
     @property
     def is_registration_only(self) -> bool:
         return self.event_flow in (
@@ -283,10 +484,21 @@ class Event(models.Model):
         """Free registrations are the ONLY flow that skips payment."""
         return self.event_flow != Event.EventFlow.FREE_REGISTRATION
 
+    # ✅ FIX (dead code): `requires_tier` was identical to
+    # `requires_payment` (both `!= FREE_REGISTRATION`). One of them was
+    # dead. Per the task note, leave semantics but make the intent
+    # explicit: a tier is required for anything that is *not* a free
+    # registration (ticketed events need tiers; paid registration gets an
+    # auto-created General tier). We keep the property but delegate to
+    # `requires_payment` so the two can never drift again.
     @property
     def requires_tier(self) -> bool:
-        """Registration-only events auto-create a General tier."""
-        return self.event_flow != Event.EventFlow.FREE_REGISTRATION
+        """Registration-only events auto-create a General tier.
+
+        Kept as an alias of `requires_payment` so the two predicates
+        cannot diverge. Prefer `requires_payment` in new code.
+        """
+        return self.requires_payment
 
     def get_active_tickets_count(self):
         return self.tickets.filter(
@@ -343,6 +555,31 @@ class Event(models.Model):
 
         return self.status
 
+    # ✅ FIX: docstring promised "Owners/Admins" but implementation used
+    # `can_operate_org`, which also lets Staff (scanner-only) through.
+    # `can_manage_org` is the Owners/Admins predicate.
+    def user_can_manage(self, user):
+        """Owners/Admins of this event's org. Platform admins always pass.
+
+        A.2 note: This delegates to `services.tenancy.can_manage_org`,
+        which resolves the role via `OrganizationMembership.role` on
+        `self.organization`. The legacy `Event.organizer` FK is
+        intentionally NOT considered — see the class-level comment on
+        `organizer` above.
+        """
+        from .services.tenancy import can_manage_org
+        return can_manage_org(user, self.organization)
+
+    def user_can_edit(self, user):
+        """Only Owners/Admins. Staff (scanner-only) do NOT pass.
+
+        A.2 note: Like `user_can_manage`, this consults
+        `OrganizationMembership.role` via `can_manage_org` and ignores
+        the legacy `Event.organizer` FK.
+        """
+        from .services.tenancy import can_manage_org
+        return can_manage_org(user, self.organization)
+
     def __str__(self):
         return self.title
 
@@ -356,11 +593,17 @@ class Session(models.Model):
     end_time = models.DateTimeField()
     capacity = models.IntegerField()
     booked = models.IntegerField(default=0)
+    reserved = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ✅ FIX: `remaining_capacity` was defined twice; the second
+    # definition silently dropped `- self.reserved`, so capacity checks
+    # overstated availability and double-sold under concurrent
+    # checkouts. The single remaining definition subtracts BOTH
+    # committed and reserved seats.
     def remaining_capacity(self):
-        return max(0, self.capacity - self.booked)
+        return max(0, self.capacity - self.booked - self.reserved)
 
     def check_capacity(self, requested):
         if requested <= 0:
@@ -391,6 +634,7 @@ class TicketTier(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity_total = models.IntegerField()
     quantity_sold = models.IntegerField(default=0)
+    quantity_reserved = models.IntegerField(default=0)   # units currently on payment hold
     ticket_type = models.CharField(max_length=20, default='ga')
     sale_start_date = models.DateTimeField(null=True, blank=True)
     sale_end_date = models.DateTimeField(null=True, blank=True)
@@ -398,11 +642,15 @@ class TicketTier(models.Model):
     max_per_order = models.IntegerField(default=10)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ✅ FIX: `available_tickets` was defined twice; the second definition
+    # dropped `- self.quantity_reserved`, so availability was overstated
+    # and double-sold under concurrent checkouts. The single remaining
+    # definition subtracts total − sold − reserved.
     def available_tickets(self):
-        return max(0, self.quantity_total - self.quantity_sold)
+        return max(0, self.quantity_total - self.quantity_sold - self.quantity_reserved)
 
     def __str__(self):
-        return f"{self.name} - ₹{self.price}"
+        return f"{self.name} - {self.price}"
 
 
 # ============ BOOKING ============
@@ -431,6 +679,23 @@ class Booking(models.Model):
     discount_applied = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount_code = models.CharField(max_length=50, blank=True)
 
+    # ---- Optional donation (checkout) ----
+    donation_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Optional donation added above the ticket price.',
+    )
+    donation_currency_code = models.CharField(
+        max_length=3, blank=True, default='',
+        help_text='Currency snapshot for the donation (e.g. HKD).',
+    )
+    donation_tax_receipt_number = models.CharField(
+        max_length=40, blank=True, null=True, unique=True,
+        help_text='Generated HK tax-donation receipt number.',
+    )
+    donation_tax_receipt_issued_at = models.DateTimeField(
+        null=True, blank=True,
+    )
+
     paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -440,6 +705,22 @@ class Booking(models.Model):
     refund_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=0,
     )
+    invoice_number = models.CharField(
+        max_length=40, blank=True, default='', db_index=True,
+        help_text='Tenant invoice number, allocated from Organization.invoice_next_number.',
+    )
+    course_answer = models.CharField(
+        max_length=10, blank=True, default='',
+        choices=(('yes', 'Yes'), ('no', 'No'), ('', 'Not asked')),
+    )
+    donor_name = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Donor name as it should appear on the tax receipt.',
+    )
+    privacy_accepted = models.BooleanField(default=False)
+    marketing_opt_in = models.BooleanField(default=False)
+    reminder_2d_sent_at = models.DateTimeField(null=True, blank=True)
+    reminder_day_sent_at = models.DateTimeField(null=True, blank=True)
 
     cancellation_policy_snapshot = models.JSONField(
         default=dict,
@@ -452,13 +733,51 @@ class Booking(models.Model):
 
     objects = BookingManager()
 
+    @property
+    def donation_tax_eligible(self):
+        """True when this booking's donation can get an HK tax receipt.
+
+        Rules:
+          • donation strictly above HKD 2,000
+          • currency snapshot is HKD
+          • booking is paid/confirmed/completed (not cancelled/refunded)
+        """
+        if not self.donation_amount or self.donation_amount <= 0:
+            return False
+        if (self.donation_currency_code or '').upper() != 'HKD':
+            return False
+        org = getattr(getattr(self, 'event', None), 'organization', None)
+        minimum = getattr(org, 'donation_receipt_min_amount', 0) or 0
+        if self.donation_amount < minimum:
+            return False
+        return self.status in ('paid', 'confirmed', 'completed')
+
     def save(self, *args, **kwargs):
         if not self.booking_reference:
-            self.booking_reference = _generate_code('BK', 10)
-
-            update_fields = kwargs.get('update_fields')
-            if update_fields is not None:
-                kwargs['update_fields'] = set(update_fields) | {'booking_reference'}
+            # ✅ FIX: retry on the (rare) DB-level IntegrityError, not
+            # just a logical pre-check. Same pattern as Ticket.save().
+            # The old code generated one reference and relied on the
+            # caller catching a collision; under a race two bookings
+            # could pick the same reference and one would 500 with an
+            # unhandled IntegrityError.
+            for _ in range(5):
+                self.booking_reference = _generate_code('BK', 10)
+                try:
+                    with transaction.atomic():
+                        update_fields = kwargs.get('update_fields')
+                        if update_fields is not None:
+                            kwargs['update_fields'] = (
+                                set(update_fields) | {'booking_reference'}
+                            )
+                        super().save(*args, **kwargs)
+                    return
+                except IntegrityError:
+                    # Collision on booking_reference — clear and retry.
+                    self.booking_reference = ''
+                    continue
+            raise IntegrityError(
+                "Could not generate a unique booking reference after 5 attempts."
+            )
 
         super().save(*args, **kwargs)
 
@@ -470,7 +789,33 @@ class Booking(models.Model):
 class Ticket(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='tickets')
-    tier = models.ForeignKey(TicketTier, on_delete=models.CASCADE)
+    # ✅ FIX 1: Make tier optional for reserved seating
+    tier = models.ForeignKey(TicketTier, on_delete=models.SET_NULL, null=True, blank=True)
+    # ✅ FIX 2: Add a direct link to the reserved seat
+    seat = models.ForeignKey(
+        'ticket_bookings.Seat', 
+        on_delete=models.SET_NULL, null=True, blank=True, 
+        related_name='tickets'
+    )
+
+    # ✅ NEW — stamped at issue time for audit. SET_NULL because the
+    # plan is defensively deletable for hard-cleanup scenarios (an
+    # event with zero tickets being purged), and a ticket should survive
+    # that without a ProtectedError cascade blocking a bulk cleanup.
+    # Historical integrity is preserved by the plan's published_snapshot
+    # being immutable, not by PROTECT on this FK.
+    venue_plan = models.ForeignKey(
+        'ticket_bookings.EventVenuePlan',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tickets',
+        help_text=(
+            'The venue plan under which this ticket was sold. '
+            'Stamped at issue time for audit; pricing lookups still read '
+            'from EventVenuePlan.published_snapshot, never from here.'
+        ),
+    )
+
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='tickets')
     session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, blank=True)
     unique_code = models.CharField(max_length=50, unique=True)
@@ -530,19 +875,29 @@ class Ticket(models.Model):
             )
             prefix = 'REG' if is_registration else 'TIX'
 
-            for _ in range(5):
-                candidate = _generate_code(prefix, 12)
-                if not Ticket.objects.filter(unique_code=candidate).exists():
-                    self.unique_code = candidate
-                    break
-            else:
-                raise IntegrityError(
-                    "Could not generate a unique ticket code after 5 attempts."
-                )
-
+            # ✅ FIX: retry on DB-level IntegrityError, not a
+            # `while exists()` pre-check. The old loop could see "not
+            # exists" from two concurrent transactions and both proceed;
+            # one would then fail at the DB with an unhandled
+            # IntegrityError. Wrapping the save in an atomic block and
+            # catching the real IntegrityError closes the race.
             update_fields = kwargs.get('update_fields')
             if update_fields is not None:
                 kwargs['update_fields'] = set(update_fields) | {'unique_code'}
+
+            for _ in range(5):
+                self.unique_code = _generate_code(prefix, 12)
+                try:
+                    with transaction.atomic():
+                        super().save(*args, **kwargs)
+                    return
+                except IntegrityError:
+                    # Collision on unique_code — clear and retry.
+                    self.unique_code = ''
+                    continue
+            raise IntegrityError(
+                "Could not generate a unique ticket code after 5 attempts."
+            )
 
         super().save(*args, **kwargs)
 
@@ -568,16 +923,55 @@ class CheckInLog(models.Model):
     notes = models.TextField(blank=True)
     is_offline = models.BooleanField(default=False)
     synced_at = models.DateTimeField(null=True, blank=True)
+    client_scan_id = models.CharField(
+        max_length=64, blank=True, null=True, unique=True,
+        help_text='Scanner-generated idempotency key for offline sync.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.ticket.unique_code} - {self.scanned_at}"
 
 
+# ============ EVENT FEEDBACK ============
+class EventFeedbackResponse(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='feedback_responses')
+    ticket = models.ForeignKey(
+        Ticket, on_delete=models.CASCADE, related_name='feedback_responses',
+    )
+    attendee_email = models.EmailField(blank=True, default='')
+    answers = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('event', 'ticket')]
+
+    def __str__(self):
+        return f'Feedback {self.event_id} / {self.ticket_id}'
+
+
 # ============ DISCOUNT ============
 class Discount(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
-    organizer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='discounts')
+
+    # ✅ Phase 2: tenant-owned.
+    organization = models.ForeignKey(
+        'ticket_bookings.Organization',
+        on_delete=models.PROTECT,
+        related_name='discounts',
+    )
+
+    # Legacy FK. Kept during the migration; access control is by organization.
+    #
+    # ⚠️  DEPRECATED for authorization purposes (A.2). Do NOT read this
+    #     field in new access-control code; use `organization` +
+    #     `OrganizationMembership.role` via `services/tenancy.py`.
+    organizer = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='discounts',
+        help_text="Legacy owner (pre-tenancy). Use `organization` for access control.",
+    )
+
     code = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=255, blank=True)
     type = models.CharField(max_length=20, default='percentage')
@@ -597,7 +991,7 @@ class Discount(models.Model):
         'ticket_bookings.Event',
         blank=True,
         related_name='applicable_discounts',
-        help_text='If empty, discount applies to all events by this organizer.',
+        help_text='If empty, discount applies to all events in this organization.',
     )
 
     max_uses_per_user = models.IntegerField(
@@ -654,7 +1048,7 @@ class DiscountUsage(models.Model):
     def __str__(self):
         return (
             f'{self.discount.code} → {self.booking.booking_reference} '
-            f'(₹{self.amount_applied})'
+            f'({self.amount_applied})'
         )
 
 
@@ -698,25 +1092,6 @@ class EventTemplate(models.Model):
     Multiple templates can exist per event, one per EventTemplateType.
     The one with `is_default=True` (for the `ticket` type) is the one
     used when generating tickets.
-
-    The `config` JSON drives layout. Its schema:
-
-        {
-          "fields": {
-            "<field_name>": {
-              "x": 0.5,          # fraction of canvas width (or px if >1)
-              "y": 0.2,          # fraction of canvas height (or px if >1)
-              "font_size": 32,   # px
-              "color": "#D69E2E",
-              "align": "center", # center | left | right
-              "enabled": true    # optional; false hides the field
-            },
-            ...
-          },
-          "template_type": "ticket",
-          "orientation": "landscape",
-          "shape": "wide_stub"
-        }
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='templates')
@@ -752,6 +1127,39 @@ class EventTemplate(models.Model):
     def __str__(self):
         return f"{self.event.title} - {self.template_type.name}: {self.name}"
 
+
+class OTPRequest(models.Model):
+    """A single OTP issuance. Hashed, short-lived, attempt-limited."""
+    CHANNEL_EMAIL = 'email'
+    CHANNEL_SMS = 'sms'
+    CHANNEL_WHATSAPP = 'whatsapp'
+    CHANNEL_CHOICES = [
+        (CHANNEL_EMAIL, 'Email'),
+        (CHANNEL_SMS, 'SMS'),
+        (CHANNEL_WHATSAPP, 'WhatsApp'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    destination = models.CharField(max_length=254, db_index=True)  # email or phone
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default=CHANNEL_EMAIL)
+    otp_hash = models.CharField(max_length=128)                    # NEVER plaintext
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['destination', 'created_at'])]
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def attempts_exhausted(self):
+        return self.attempts >= self.max_attempts
+
+
 # ============================================================
 # SYSTEM SETTINGS — deployment-wide configuration (singleton)
 # ============================================================
@@ -759,11 +1167,9 @@ class SystemSettings(models.Model):
     """
     Singleton row holding deployment-wide configuration.
 
-    Only one row may exist. `pk` is forced to 1 on save.
-
-    Readable by any authenticated user (the booking wizard, emails,
-    and ticket PDFs all need `currency_symbol` / `currency_locale`).
-    Writable only by superusers.
+    This is the PLATFORM-WIDE fallback. Per-organization display
+    configuration now lives on `Organization`. `format_money()`
+    prefers the org when available, otherwise falls back here.
     """
     id = models.PositiveSmallIntegerField(primary_key=True, default=1)
 
@@ -778,7 +1184,7 @@ class SystemSettings(models.Model):
     default_timezone = models.CharField(max_length=64, default='Asia/Hong_Kong')
 
     # ---- Organisation / branding ----
-    org_name = models.CharField(max_length=200, blank=True, default='TicketVolt')
+    org_name = models.CharField(max_length=200, blank=True, default='TiketVault')
     org_email = models.EmailField(blank=True, default='')
     org_logo_url = models.URLField(blank=True, default='')
     email_from_name = models.CharField(max_length=120, blank=True, default='')
@@ -790,12 +1196,27 @@ class SystemSettings(models.Model):
         related_name='+',
     )
 
+    allowed_auth_methods = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Platform-wide enabled login methods.',
+    )
+
+    payments_enabled = models.BooleanField(
+        default=False,
+        help_text="Globally enable/disable online payment gateways (Razorpay/Stripe). When off, only offline/free flows are allowed."
+    )
+
     class Meta:
         verbose_name = 'System Settings'
         verbose_name_plural = 'System Settings'
 
     def save(self, *args, **kwargs):
         self.pk = 1
+        # ✅ NOTE: race on first access is handled by `get()`, which uses
+        # `get_or_create(pk=1)`. Concurrent first-writes could still
+        # collide here; `get()` catches the IntegrityError via the
+        # get_or_create contract. No further guard is required.
         super().save(*args, **kwargs)
 
     @classmethod
@@ -805,3 +1226,23 @@ class SystemSettings(models.Model):
 
     def __str__(self):
         return f'SystemSettings({self.currency_code}, {self.country})'
+
+
+from .models_seating import SeatCategory, SeatLayout, Seat, SeatReservation
+# ✅ NEW — importing the plan module registers EventVenuePlan,
+# EventSeatCategory, and (transitively) VenueMaster with Django's app
+# registry. Without this, every FK string that references
+# 'ticket_bookings.EventVenuePlan' fails to resolve and Django admin
+# blows up with "AttributeError: 'str' object has no attribute '_meta'".
+from .models_event_venue import EventVenuePlan, EventSeatCategory  # noqa: F401
+from .models_venue_master import VenueMaster                        # noqa: F401
+
+# Commercial / operations models
+from .models_commercial import (  # noqa: E402,F401
+    TicketTransfer, OrganizerPayout, AuditLog, PatronContact, OAuthLoginTicket,
+)
+
+# Feature entitlements
+from .models_features import (  # noqa: E402,F401
+    FeatureDefinition, FeaturePackage, OrganizationFeature,
+)

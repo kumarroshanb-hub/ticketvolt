@@ -1,461 +1,131 @@
 // frontend/src/pages/Events/PublicEvents.js
-import React, { useState, useEffect } from 'react';
+//
+// Browse page for signed-in customers who are NOT organisation members
+// (and for paid members without an org role). Org members/managers use
+// the workspace Events page instead.
+//
+// Data comes from `/events/public/` plus, for signed-in members/paid
+// members, their own organisation's events via eventService.
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Box, Container, Typography, Grid, Card, CardContent,
-    CardActions, Button, Chip, CircularProgress, Alert,
-    Paper, useMediaQuery, useTheme,
+    Alert, Box, CircularProgress, Grid, Typography,
 } from '@mui/material';
-import {
-    Event as EventIcon,
-    LocationOn,
-    CalendarToday,
-    ShoppingCart,
-    Refresh as RefreshIcon,
-} from '@mui/icons-material';
-import api from '../../services/api';
+import { Refresh as RefreshIcon } from '@mui/icons-material';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
-import { PageContainer, PageTitle, OutlineButton, LoadingWrapper } from '../../components/Common';
-import { useRole } from '../../context/RoleContext';
-import { ROLES } from '../../constants';
-import { theme as appTheme } from '../../theme/tokens';
 
-const C = appTheme.colors;
-const F = appTheme.fonts;
+import eventService from '../../services/eventService';
+import EventCard from '../../components/Common/EventCard';
+import {
+    PageContainer,
+    PageHeader,
+    PageHeaderLeft,
+    PageHeaderRight,
+    PageTitle,
+    PageSubtitle,
+    OutlineButton,
+    LoadingWrapper,
+} from '../../components/Common';
 
 const PublicEvents = () => {
+    const { t } = useTranslation();
     const navigate = useNavigate();
-    const { role } = useRole();
-    const theme = useTheme();
-    const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-
-    const isAdmin = role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
-    const isOrganizer = role === ROLES.ORGANIZER;
-    const canManageEvents = isAdmin || isOrganizer;
-    const isRegularUser = role === ROLES.USER;
-
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+
+    const loadEvents = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await eventService.getPublicEvents();
+            const results = Array.isArray(data)
+                ? data
+                : (data?.results || []);
+            setEvents(
+                results.filter(
+                    (event) => event.status === 'active' || event.status === 'published'
+                )
+            );
+        } catch (err) {
+            const msg =
+                err.response?.data?.detail
+                || err.response?.data?.error
+                || err.message
+                || t('events.loadFailed');
+            setError(msg);
+            toast.error(msg);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
         loadEvents();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const loadEvents = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            let data = [];
-
-            console.log('📅 Loading events for PublicEvents, role:', role);
-
-            if (canManageEvents) {
-                console.log('📅 Admin/Organizer: Loading ALL events from /events/');
-                const response = await api.get('/events/');
-
-                if (Array.isArray(response.data)) {
-                    data = response.data;
-                } else if (response.data && response.data.results) {
-                    data = response.data.results;
-                } else if (response.data && typeof response.data === 'object') {
-                    data = Object.values(response.data).filter(item => item.id && item.title);
-                }
-
-                console.log(`📅 Found ${data.length} events (including drafts)`);
-            } else {
-                console.log('📅 Regular user: Loading events from /events/public/');
-                const response = await api.get('/events/public/');
-                console.log('📅 Public response:', response.data);
-
-                if (response.data && response.data.results) {
-                    data = response.data.results;
-                } else if (Array.isArray(response.data)) {
-                    data = response.data;
-                } else if (response.data && typeof response.data === 'object') {
-                    data = Object.values(response.data).filter(item => item.id && item.title);
-                }
-
-                data = data.filter((e) => {
-                    const status = e.status || 'draft';
-                    return status === 'active' || status === 'published';
-                });
-
-                console.log(`📅 Found ${data.length} active events`);
-
-                if (data.length === 0) {
-                    console.log('📅 No events from public, trying admin endpoint as fallback...');
-                    try {
-                        const fallbackResponse = await api.get('/events/');
-
-                        if (Array.isArray(fallbackResponse.data)) {
-                            data = fallbackResponse.data;
-                        } else if (fallbackResponse.data && fallbackResponse.data.results) {
-                            data = fallbackResponse.data.results;
-                        }
-
-                        data = data.filter((e) => {
-                            const status = e.status || 'draft';
-                            return status === 'active' || status === 'published';
-                        });
-
-                        console.log(`📅 Fallback found ${data.length} active events`);
-                    } catch (fallbackError) {
-                        console.log('📅 Fallback failed:', fallbackError.message);
-                    }
-                }
-            }
-
-            setEvents(data);
-
-            if (data.length === 0) {
-                setError(
-                    canManageEvents
-                        ? 'No events found. Create an event first!'
-                        : 'No active events available for booking. Check back later!'
-                );
-            }
-
-        } catch (error) {
-            console.error('❌ Error loading events:', error);
-
-            let errorMsg = 'Failed to load events. Please try again.';
-            if (error.response?.status === 404) {
-                errorMsg = 'Events endpoint not found. Please check the backend.';
-            } else if (error.response?.status === 401 || error.response?.status === 403) {
-                errorMsg = 'Authentication required. Please log in again.';
-            } else if (error.message) {
-                errorMsg = error.message;
-            }
-
-            setError(errorMsg);
-            toast.error(errorMsg);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleBookNow = (eventId) => {
-        navigate(`/app/bookings/create?event=${eventId}`);
-    };
-
-    const formatDate = (dateString) => {
-        if (!dateString) return 'TBD';
-        try {
-            const date = new Date(dateString);
-            return date.toLocaleDateString('en-US', {
-                month: 'short', day: 'numeric', year: 'numeric',
-            });
-        } catch {
-            return 'TBD';
-        }
-    };
-
-    const formatTime = (dateString) => {
-        if (!dateString) return 'TBD';
-        try {
-            const date = new Date(dateString);
-            return date.toLocaleTimeString('en-US', {
-                hour: '2-digit', minute: '2-digit',
-            });
-        } catch {
-            return 'TBD';
-        }
-    };
-
-    const hasAvailableTickets = (event) => {
-        if (!event.tiers || !Array.isArray(event.tiers) || event.tiers.length === 0) {
-            return false;
-        }
-        return event.tiers.some(tier => {
-            const total = tier.quantity_total || 0;
-            const sold = tier.quantity_sold || 0;
-            return (total - sold) > 0;
-        });
-    };
-
     if (loading) {
         return (
             <LoadingWrapper>
-                <CircularProgress sx={{ color: C.primary }} />
+                <CircularProgress />
             </LoadingWrapper>
         );
     }
 
     return (
         <PageContainer>
-            <Container maxWidth="lg" sx={{ py: { xs: 2, sm: 4 }, px: { xs: 2, sm: 3 } }}>
-                <Box
-                    sx={{
-                        display: 'flex',
-                        flexDirection: isMobile ? 'column' : 'row',
-                        justifyContent: 'space-between',
-                        alignItems: isMobile ? 'stretch' : 'center',
-                        mb: 4,
-                        gap: 2,
-                    }}
-                >
-                    <Box sx={{ minWidth: 0 }}>
-                        <PageTitle variant="h4" sx={{ fontSize: isMobile ? '1.5rem' : '2rem' }}>
-                            {canManageEvents ? 'All Events' : '🎫 Book Tickets'}
+            <PageHeader>
+                <PageHeaderLeft>
+                    <Box>
+                        <PageTitle variant="h4">
+                            {t('events.browseTitle', 'Browse Events')}
                         </PageTitle>
-                        <Typography
-                            sx={{
-                                color: C.textMuted,
-                                fontSize: isMobile ? '0.85rem' : '0.875rem',
-                            }}
-                        >
-                            {canManageEvents
-                                ? 'Manage and book tickets for all events'
-                                : 'Browse and book tickets for upcoming events'}
-                        </Typography>
+                        <PageSubtitle>
+                            {t('events.browseSubtitle', 'Find and book events')}
+                        </PageSubtitle>
                     </Box>
+                </PageHeaderLeft>
+                <PageHeaderRight>
                     <OutlineButton
-                        variant="outlined"
                         startIcon={<RefreshIcon />}
                         onClick={loadEvents}
-                        sx={isMobile ? { width: '100%' } : undefined}
+                        sx={{ textTransform: 'none' }}
                     >
-                        Refresh
+                        {t('common.refresh')}
                     </OutlineButton>
-                </Box>
+                </PageHeaderRight>
+            </PageHeader>
 
-                {error && (
-                    <Alert
-                        severity="info"
-                        sx={{
-                            mb: 3,
-                            bgcolor: 'rgba(59,130,246,0.1)',
-                            color: C.infoLight,
-                            border: `1px solid rgba(59,130,246,0.2)`,
-                        }}
-                    >
-                        {error}
-                        <Button
-                            size="small"
-                            onClick={loadEvents}
-                            sx={{ ml: 2, color: C.infoLight }}
-                        >
-                            Retry
-                        </Button>
-                    </Alert>
-                )}
+            {error && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                    {error}
+                </Alert>
+            )}
 
-                {events.length === 0 && !error ? (
-                    <Paper
-                        sx={{
-                            p: 4,
-                            textAlign: 'center',
-                            bgcolor: C.bgDarkCard,
-                            border: `1px solid ${C.bgDarkBorder}`,
-                            borderRadius: 3,
-                        }}
-                    >
-                        <Typography variant="h6" sx={{ color: C.textMuted }}>
-                            No events available
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: C.textLight, mt: 1 }}>
-                            {canManageEvents
-                                ? 'Create an event first to get started!'
-                                : 'Check back later for upcoming events'}
-                        </Typography>
-                    </Paper>
-                ) : (
-                    <Grid container spacing={isMobile ? 2 : 3}>
-                        {events.map((event) => {
-                            const isActive = event.status === 'active' || event.status === 'published';
-                            const isDraft = event.status === 'draft';
-                            const ticketsAvailable = hasAvailableTickets(event);
-                            const isBookable = canManageEvents || (isActive && ticketsAvailable);
+            {events.length === 0 ? (
+                <Alert severity="info">
+                    {t('events.noPublicEvents', 'No active events available for booking. Check back later!')}
+                </Alert>
+            ) : (
+                <Grid container spacing={3}>
+                    {events.map((event) => (
+                        <Grid item xs={12} sm={6} lg={4} key={event.id}>
+                            <EventCard
+                                event={event}
+                                onSelect={() => navigate(
+                                    `/app/bookings/create?event=${event.id}`
+                                )}
+                            />
+                        </Grid>
+                    ))}
+                </Grid>
+            )}
 
-                            return (
-                                <Grid item xs={12} sm={6} md={4} key={event.id}>
-                                    <Card
-                                        sx={{
-                                            bgcolor: C.bgDarkCard,
-                                            border: isDraft
-                                                ? `1px dashed rgba(255,200,0,0.3)`
-                                                : `1px solid ${C.bgDarkBorder}`,
-                                            borderRadius: 3,
-                                            height: '100%',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            transition: 'all 0.3s ease',
-                                            opacity: isDraft && !canManageEvents ? 0.5 : 1,
-                                            '&:hover': {
-                                                transform: isBookable ? 'translateY(-4px)' : 'none',
-                                                borderColor: isBookable
-                                                    ? `${C.primary}4D`
-                                                    : C.bgDarkBorder,
-                                                boxShadow: isBookable
-                                                    ? `0 0 40px rgba(51, 51, 51, 0.15)`
-                                                    : 'none',
-                                            },
-                                        }}
-                                    >
-                                        <CardContent
-                                            sx={{
-                                                flex: 1,
-                                                p: isMobile ? 1.5 : 2,
-                                                '&:last-child': { pb: isMobile ? 1.5 : 2 },
-                                            }}
-                                        >
-                                            <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
-                                                <Typography
-                                                    variant="h6"
-                                                    sx={{
-                                                        color: C.textInverse,
-                                                        fontWeight: 600,
-                                                        mb: 1,
-                                                        minWidth: 0,
-                                                        display: '-webkit-box',
-                                                        WebkitLineClamp: 2,
-                                                        WebkitBoxOrient: 'vertical',
-                                                        overflow: 'hidden',
-                                                        fontSize: isMobile ? '1rem' : '1.25rem',
-                                                    }}
-                                                >
-                                                    {event.title}
-                                                </Typography>
-                                                <Chip
-                                                    label={isDraft ? 'DRAFT' : (event.status?.toUpperCase() || 'ACTIVE')}
-                                                    size="small"
-                                                    sx={{
-                                                        bgcolor: isDraft
-                                                            ? 'rgba(255,200,0,0.15)'
-                                                            : event.status === 'active'
-                                                                ? `${C.success}26`
-                                                                : `${C.info}26`,
-                                                        color: isDraft
-                                                            ? C.warningLight
-                                                            : event.status === 'active'
-                                                                ? C.success
-                                                                : C.infoLight,
-                                                        border: `1px solid ${C.bgDarkBorder}`,
-                                                        fontSize: '10px',
-                                                        height: '20px',
-                                                        flexShrink: 0,
-                                                    }}
-                                                />
-                                            </Box>
-
-                                            {event.short_description && (
-                                                <Typography
-                                                    variant="body2"
-                                                    sx={{
-                                                        color: C.textMuted,
-                                                        mb: 2,
-                                                        display: '-webkit-box',
-                                                        WebkitLineClamp: 3,
-                                                        WebkitBoxOrient: 'vertical',
-                                                        overflow: 'hidden',
-                                                        fontSize: isMobile ? '0.8rem' : '0.875rem',
-                                                    }}
-                                                >
-                                                    {event.short_description}
-                                                </Typography>
-                                            )}
-
-                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <CalendarToday sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
-                                                    <Typography variant="body2" sx={{ color: C.textMuted }}>
-                                                        {formatDate(event.start_date)}
-                                                    </Typography>
-                                                </Box>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <EventIcon sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
-                                                    <Typography variant="body2" sx={{ color: C.textMuted }}>
-                                                        {formatTime(event.start_date)}
-                                                    </Typography>
-                                                </Box>
-                                                {event.venue && (
-                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                        <LocationOn sx={{ fontSize: 16, color: C.textLight, flexShrink: 0 }} />
-                                                        <Typography
-                                                            variant="body2"
-                                                            sx={{
-                                                                color: C.textMuted,
-                                                                overflow: 'hidden',
-                                                                textOverflow: 'ellipsis',
-                                                            }}
-                                                        >
-                                                            {event.venue.name || event.venue.city || 'TBD'}
-                                                        </Typography>
-                                                    </Box>
-                                                )}
-                                            </Box>
-
-                                            <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
-                                                <Chip
-                                                    label={`${event.total_tickets_sold || 0} sold`}
-                                                    size="small"
-                                                    sx={{
-                                                        bgcolor: 'rgba(255,255,255,0.05)',
-                                                        color: C.textMuted,
-                                                        border: `1px solid ${C.bgDarkBorder}`,
-                                                    }}
-                                                />
-                                                {event.tiers && event.tiers.length > 0 && (
-                                                    <Chip
-                                                        label={`${event.tiers.length} tiers`}
-                                                        size="small"
-                                                        sx={{
-                                                            bgcolor: `${C.primary}26`,
-                                                            color: C.primaryLight,
-                                                            border: `1px solid ${C.bgDarkBorder}`,
-                                                        }}
-                                                    />
-                                                )}
-                                                {!ticketsAvailable && isActive && (
-                                                    <Chip
-                                                        label="Sold Out"
-                                                        size="small"
-                                                        sx={{
-                                                            bgcolor: `${C.error}26`,
-                                                            color: C.error,
-                                                            border: `1px solid ${C.bgDarkBorder}`,
-                                                        }}
-                                                    />
-                                                )}
-                                            </Box>
-                                        </CardContent>
-
-                                        <CardActions sx={{ p: isMobile ? 1.5 : 2, pt: 0, mt: 'auto' }}>
-                                            <Button
-                                                fullWidth
-                                                variant="contained"
-                                                onClick={() => handleBookNow(event.id)}
-                                                disabled={!isBookable}
-                                                startIcon={<ShoppingCart />}
-                                                sx={{
-                                                    minHeight: 44,
-                                                    background: isBookable
-                                                        ? C.primaryGradient
-                                                        : 'rgba(255,255,255,0.05)',
-                                                    '&:hover': {
-                                                        background: isBookable
-                                                            ? `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`
-                                                            : 'rgba(255,255,255,0.05)',
-                                                        transform: isBookable ? 'translateY(-2px)' : 'none',
-                                                    },
-                                                    textTransform: 'none',
-                                                    fontWeight: 600,
-                                                    borderRadius: 2,
-                                                    color: isBookable ? C.textInverse : C.textLight,
-                                                }}
-                                            >
-                                                {isBookable ? 'Book Tickets' : 'Not Available'}
-                                            </Button>
-                                        </CardActions>
-                                    </Card>
-                                </Grid>
-                            );
-                        })}
-                    </Grid>
-                )}
-            </Container>
+            <Typography variant="caption" sx={{ display: 'block', mt: 3, color: 'text.secondary' }}>
+                {t('events.publicBrowseHint', 'Public events are open to everyone. Sign in to your member account to see private events.')}
+            </Typography>
         </PageContainer>
     );
 };

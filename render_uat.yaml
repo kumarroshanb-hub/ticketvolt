@@ -1,0 +1,162 @@
+# TiketVault UAT Environment Blueprint
+# Combined: backend (Docker) + frontend (Static) + redis (Key Value)
+# Project: TiketVault_UAT  |  Environment: UAT
+# All services pinned to branch: TiketVault_UAT
+version: "1"
+projects:
+- name: TiketVault_UAT          # <-- Project name (confirmed)
+  environments:
+  - name: UAT
+    services:
+
+    # ─────────────────────────────────────────────────────────────
+    # 1. REDIS (Key Value)
+    # ─────────────────────────────────────────────────────────────
+    - type: keyvalue
+      name: tiketvault-uat-redis
+      plan: free
+      region: singapore
+      maxmemoryPolicy: allkeys-lru
+      persistenceMode: "off"
+      ipAllowList: []
+
+    # ─────────────────────────────────────────────────────────────
+    # 2. BACKEND (Docker / Django)
+    # ─────────────────────────────────────────────────────────────
+    - type: web
+      name: tiketvault-uat-backend-service
+      runtime: docker
+      repo: https://github.com/kumarroshanb-hub/ticketvolt
+      branch: TiketVault_UAT
+      plan: starter
+      region: singapore
+      dockerContext: .
+      dockerfilePath: Dockerfile
+      rootDir: backend
+      autoDeployTrigger: commit
+      envVars:
+        # ---- Auto-wired from Redis ----
+        - key: REDIS_URL
+          fromService:
+            type: keyvalue
+            name: tiketvault-uat-redis
+            property: connectionString
+
+        # ---- Auto-wired from frontend (CORS / CSRF / URLs) ----
+        - key: FRONTEND_URL
+          fromService:
+            type: web
+            name: tiketvault-uat-frontend-service
+            property: host
+        - key: CORS_ALLOWED_ORIGINS
+          fromService:
+            type: web
+            name: tiketvault-uat-frontend-service
+            property: host
+        - key: CSRF_TRUSTED_ORIGINS
+          fromService:
+            type: web
+            name: tiketvault-uat-frontend-service
+            property: host
+        - key: BASE_URL
+          fromService:
+            type: web
+            name: tiketvault-uat-backend-service
+            property: host
+
+        # ---- UAT-specific non-secret values ----
+        - key: ENVIRONMENT
+          value: uat
+        - key: DEBUG
+          value: "false"
+        - key: CORS_ALLOW_ALL_ORIGINS
+          value: "false"
+        - key: RUN_MIGRATIONS
+          value: "true"
+        - key: RUN_COLLECTSTATIC
+          value: "true"
+        - key: EMAIL_USE_TLS
+          value: "true"
+        - key: SINGLE_SESSION_LOGIN
+          value: "false"
+        - key: JWT_REFRESH_HOURS
+          value: "24"
+        - key: ADMIN_URL
+          value: "secure-admin-uat/"
+        - key: WHATSAPP_ENABLED
+          value: "false"
+        - key: WHATSAPP_TICKET_DELIVERY_ENABLED
+          value: "false"
+
+        # ---- Secrets / external values (fill in dashboard) ----
+        - key: SECRET_KEY
+          sync: false
+        - key: JWT_SIGNING_KEY
+          sync: false
+        - key: TICKET_SIGNING_SECRET
+          sync: false
+        - key: ADMIN_TOKEN
+          sync: false
+        - key: CRON_SECRET_TOKEN
+          sync: false
+        - key: ALLOWED_HOSTS
+          sync: false
+        - key: DB_NAME
+          sync: false
+        - key: DB_USER
+          sync: false
+        - key: DB_PASSWORD
+          sync: false
+        - key: DB_HOST
+          sync: false
+        - key: DB_PORT
+          sync: false
+        - key: DB_SSL_MODE
+          sync: false
+        - key: EMAIL_PROVIDER
+          sync: false
+        - key: EMAIL_HOST
+          sync: false
+        - key: EMAIL_PORT
+          sync: false
+        - key: EMAIL_HOST_USER
+          sync: false
+        - key: EMAIL_HOST_PASSWORD
+          sync: false
+        - key: DEFAULT_FROM_EMAIL
+          sync: false
+        - key: RESEND_API_KEY
+          sync: false
+        - key: TIGRIS_BUCKET_NAME
+          sync: false
+        - key: TIGRIS_ACCESS_KEY_ID
+          sync: false
+        - key: TIGRIS_SECRET_ACCESS_KEY
+          sync: false
+        - key: WHATSAPP_GATEWAY_URL
+          sync: false
+        - key: WHATSAPP_BOT_PASSWORD
+          sync: false
+
+    # ─────────────────────────────────────────────────────────────
+    # 3. FRONTEND (Static Site)
+    # ─────────────────────────────────────────────────────────────
+    - type: web
+      name: tiketvault-uat-frontend-service
+      runtime: static
+      repo: https://github.com/kumarroshanb-hub/ticketvolt
+      branch: TiketVault_UAT
+      rootDir: frontend
+      buildCommand: npm install --legacy-peer-deps; npm run build
+      staticPublishPath: build
+      autoDeployTrigger: commit
+      routes:
+        - type: rewrite
+          source: /*
+          destination: /index.html
+      envVars:
+        - key: REACT_APP_API_URL
+          fromService:
+            type: web
+            name: tiketvault-uat-backend-service
+            property: host

@@ -1,10 +1,10 @@
 // frontend/src/pages/Events/components/EventBasicInfo.js
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     Grid, FormControl, InputLabel, Select, MenuItem, Divider,
 } from '@mui/material';
 import { StyledTextField, SectionTitle } from './styled';
-import { EventFlowSelector } from './EventFlowSelector';
 import {
     EVENT_TYPE,
     EVENT_TYPE_LABELS,
@@ -15,112 +15,124 @@ import { theme } from '../../../theme/tokens';
 
 const C = theme.colors;
 
-export const EventBasicInfo = ({ formData, onChange, venues }) => (
+export const EventBasicInfo = ({
+    formData,
+    onChange,
+    venues,
+    hideVenueField = false,
+    hideIdentityFields = false,   // ← skip Title/Descriptions/Type/Category
+}) => {
+    const { t } = useTranslation();
+
+    return (
     <>
-        <EventFlowSelector
-            value={formData.event_flow || 'ticketed'}
-            onChange={(val) =>
-                onChange({ target: { name: 'event_flow', value: val } })
-            }
-        />
+        {/* NOTE: Registration type (event_flow) is now edited in the Basics
+            step of Create.js. It is intentionally no longer rendered here. */}
 
-        <Grid item xs={12}>
-            <SectionTitle variant="h6">Basic Information</SectionTitle>
-            <Divider sx={{ borderColor: C.borderLight }} />
-        </Grid>
+        {!hideIdentityFields && (
+            <>
+                <Grid item xs={12}>
+                    <SectionTitle variant="h6">{t('events.basicInfoTitle')}</SectionTitle>
+                    <Divider sx={{ borderColor: C.borderLight }} />
+                </Grid>
 
-        <Grid item xs={12}>
-            <StyledTextField
-                fullWidth
-                label="Event Title"
-                name="title"
-                value={formData.title}
-                onChange={onChange}
-                required
-            />
-        </Grid>
+                <Grid item xs={12}>
+                    <StyledTextField
+                        fullWidth
+                        label={t('events.titleLabel')}
+                        name="title"
+                        value={formData.title}
+                        onChange={onChange}
+                        required
+                    />
+                </Grid>
 
-        <Grid item xs={12}>
-            <StyledTextField
-                fullWidth
-                label="Short Description"
-                name="short_description"
-                value={formData.short_description}
-                onChange={onChange}
-                multiline
-                rows={2}
-            />
-        </Grid>
+                <Grid item xs={12}>
+                    <StyledTextField
+                        fullWidth
+                        label={t('events.shortDescLabel')}
+                        name="short_description"
+                        value={formData.short_description}
+                        onChange={onChange}
+                        multiline
+                        rows={2}
+                    />
+                </Grid>
 
-        <Grid item xs={12}>
-            <StyledTextField
-                fullWidth
-                label="Description"
-                name="description"
-                value={formData.description}
-                onChange={onChange}
-                multiline
-                rows={4}
-            />
-        </Grid>
+                <Grid item xs={12}>
+                    <StyledTextField
+                        fullWidth
+                        label={t('events.descLabel')}
+                        name="description"
+                        value={formData.description}
+                        onChange={onChange}
+                        multiline
+                        rows={4}
+                    />
+                </Grid>
 
-        <Grid item xs={12} sm={6}>
-            <FormControl fullWidth>
-                <InputLabel id="event-type-label">Event Type</InputLabel>
-                <Select
-                    labelId="event-type-label"
-                    name="event_type"
-                    value={formData.event_type}
-                    onChange={onChange}
-                    label="Event Type"
-                >
-                    {Object.values(EVENT_TYPE).map((type) => (
-                        <MenuItem key={type} value={type}>
-                            {EVENT_TYPE_LABELS[type] || type}
-                        </MenuItem>
-                    ))}
-                </Select>
-            </FormControl>
-        </Grid>
+                <Grid item xs={12} sm={6}>
+                    <FormControl fullWidth>
+                        <InputLabel id="event-type-label">{t('events.eventTypeLabel')}</InputLabel>
+                        <Select
+                            labelId="event-type-label"
+                            name="event_type"
+                            value={formData.event_type}
+                            onChange={onChange}
+                            label={t('events.eventTypeLabel')}
+                        >
+                            {Object.values(EVENT_TYPE).map((type) => (
+                                <MenuItem key={type} value={type}>
+                                    {t(`eventType.${type}`, { defaultValue: EVENT_TYPE_LABELS[type] || type })}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </Grid>
 
-        <Grid item xs={12} sm={6}>
-            <FormControl fullWidth>
-                <InputLabel id="category-label">Category</InputLabel>
-                <Select
-                    labelId="category-label"
-                    name="category"
-                    value={formData.category}
-                    onChange={onChange}
-                    label="Category"
-                >
-                    {Object.values(EVENT_CATEGORY).map((cat) => (
-                        <MenuItem key={cat} value={cat}>
-                            {EVENT_CATEGORY_LABELS[cat] || cat}
-                        </MenuItem>
-                    ))}
-                </Select>
-            </FormControl>
-        </Grid>
+                <Grid item xs={12} sm={6}>
+                    <FormControl fullWidth>
+                        <InputLabel id="category-label">{t('events.categoryLabel')}</InputLabel>
+                        <Select
+                            labelId="category-label"
+                            name="category"
+                            value={formData.category}
+                            onChange={onChange}
+                            label={t('events.categoryLabel')}
+                        >
+                            {Object.values(EVENT_CATEGORY).map((cat) => (
+                                <MenuItem key={cat} value={cat}>
+                                    {t(`category.${cat}`, { defaultValue: EVENT_CATEGORY_LABELS[cat] || cat })}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </Grid>
+            </>
+        )}
 
-        <Grid item xs={12}>
-            <FormControl fullWidth>
-                <InputLabel id="venue-label">Venue</InputLabel>
-                <Select
-                    labelId="venue-label"
-                    name="venue_id"
-                    value={formData.venue_id}
-                    onChange={onChange}
-                    label="Venue"
-                >
-                    <MenuItem value="">Select Venue</MenuItem>
-                    {venues.map((venue) => (
-                        <MenuItem key={venue.id} value={venue.id}>
-                            {venue.name}
-                            {venue.city ? ` (${venue.city})` : ''}
-                        </MenuItem>
-                    ))}
-                </Select>
-            </FormControl>
-        </Grid>
+        {!hideVenueField && (
+            <Grid item xs={12}>
+                <FormControl fullWidth>
+                    <InputLabel id="venue-label">{t('events.venueLabel')}</InputLabel>
+                    <Select
+                        labelId="venue-label"
+                        name="venue_id"
+                        value={formData.venue_id}
+                        onChange={onChange}
+                        label={t('events.venueLabel')}
+                    >
+                        <MenuItem value="">{t('events.selectVenue')}</MenuItem>
+                        {venues.map((venue) => (
+                            <MenuItem key={venue.id} value={venue.id}>
+                                {venue.name}
+                                {venue.city ? ` (${venue.city})` : ''}
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+            </Grid>
+        )}
     </>
-);
+    );
+};

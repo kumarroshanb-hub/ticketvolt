@@ -1,6 +1,7 @@
 // frontend/src/pages/ForgotPassword/ForgotPassword.js
 import React, { useState } from 'react';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -14,6 +15,7 @@ const C = appTheme.colors;
 const F = appTheme.fonts;
 
 const ForgotPassword = () => {
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const [email, setEmail] = useState('');
     const [loading, setLoading] = useState(false);
@@ -28,9 +30,9 @@ const ForgotPassword = () => {
         try {
             await api.post('/users/forgot_password/', { email });
             setSuccess(true);
-            toast.success('Reset link sent!');
+            toast.success(t('forgotPassword.success'));
         } catch (err) {
-            const msg = err.response?.data?.error || 'Failed to send reset link. Please try again.';
+            const msg = err.response?.data?.error || t('forgotPassword.failed');
             setError(msg);
             toast.error(msg);
         } finally {
@@ -40,6 +42,7 @@ const ForgotPassword = () => {
 
     return (
         <Box
+            className="tv-auth-page"
             sx={{
                 display: 'flex', justifyContent: 'center', alignItems: 'center',
                 minHeight: '100vh', minHeight: '100dvh', bgcolor: C.bgDark,
@@ -51,7 +54,7 @@ const ForgotPassword = () => {
                     component={RouterLink} to="/login" startIcon={<ArrowBackIcon />}
                     sx={{ color: 'rgba(255, 255, 255, 0.6)', textTransform: 'none' }}
                 >
-                    Back to Login
+                    {t('forgotPassword.backToLogin')}
                 </Button>
             </Box>
 
@@ -64,10 +67,10 @@ const ForgotPassword = () => {
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
                     <Logo variant="full" height={60} inverse />
                     <Typography variant="h5" sx={{ color: 'white', mt: 3, fontWeight: 700 }}>
-                        Forgot Password
+                        {t('forgotPassword.title')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.6)', mt: 1, textAlign: 'center' }}>
-                        Enter your email address and we'll send you a link to reset your password.
+                        {t('forgotPassword.subtitle')}
                     </Typography>
                 </Box>
 
@@ -76,19 +79,19 @@ const ForgotPassword = () => {
                 {success ? (
                     <Box textAlign="center">
                         <Alert severity="success" sx={{ mb: 3 }}>
-                            If an account exists with this email, a reset link has been sent. Check your inbox.
+                            {t('forgotPassword.successInline')}
                         </Alert>
                         <Button
                             component={RouterLink} to="/login" variant="outlined" fullWidth
                             sx={{ color: 'white', borderColor: 'rgba(255,255,255,0.3)' }}
                         >
-                            Return to Login
+                            {t('forgotPassword.returnToLogin')}
                         </Button>
                     </Box>
                 ) : (
                     <form onSubmit={handleSubmit} noValidate>
                         <TextField
-                            fullWidth label="Email Address" type="email" value={email}
+                            fullWidth label={t('forgotPassword.emailLabel')} type="email" value={email}
                             onChange={(e) => setEmail(e.target.value)} required
                             autoComplete="email" disabled={loading}
                             sx={{
@@ -109,7 +112,7 @@ const ForgotPassword = () => {
                                 fontWeight: 700,
                             }}
                         >
-                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : 'Send Reset Link'}
+                            {loading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : t('forgotPassword.sendResetLink')}
                         </Button>
                     </form>
                 )}

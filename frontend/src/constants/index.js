@@ -1,4 +1,7 @@
 // frontend/src/constants/index.js
+import { theme } from '../theme/tokens';
+
+const C = theme.colors;
 
 // ============================================
 // TICKET CONSTANTS - MUI Color Names
@@ -99,13 +102,13 @@ export const BOOKING_STATUS_COLORS = {
 };
 
 export const BOOKING_STATUS_DOT_COLORS = {
-    [BOOKING_STATUS.PENDING]: '#f59e0b',
-    [BOOKING_STATUS.PROCESSING]: '#3b82f6',
-    [BOOKING_STATUS.PAID]: '#22c55e',
-    [BOOKING_STATUS.CONFIRMED]: '#8b5cf6',
-    [BOOKING_STATUS.COMPLETED]: '#10b981',
-    [BOOKING_STATUS.CANCELLED]: '#ef4444',
-    [BOOKING_STATUS.REFUNDED]: '#f97316',
+    [BOOKING_STATUS.PENDING]: C.warning,
+    [BOOKING_STATUS.PROCESSING]: C.info,
+    [BOOKING_STATUS.PAID]: C.success,
+    [BOOKING_STATUS.CONFIRMED]: C.secondary,
+    [BOOKING_STATUS.COMPLETED]: C.successDark,
+    [BOOKING_STATUS.CANCELLED]: C.error,
+    [BOOKING_STATUS.REFUNDED]: C.warningDark,
 };
 
 export const BOOKING_TRANSITIONS = {
@@ -129,7 +132,7 @@ export const BookingStatusUtils = {
         return BOOKING_STATUS_COLORS[status] || 'default';
     },
     getDotColor: function(status) {
-        return BOOKING_STATUS_DOT_COLORS[status] || '#6b7280';
+        return BOOKING_STATUS_DOT_COLORS[status] || C.textLight;
     },
     canTransition: function(from, to) {
         var transitions = BOOKING_TRANSITIONS[from] || [];
@@ -246,16 +249,6 @@ export const EVENT_CATEGORY_LABELS = {
     [EVENT_CATEGORY.OTHER]: 'Other',
 };
 
-// ────────────────────────────────────────────────────────────────────
-// EVENT_CATEGORY_ICONS
-// Mirrors backend/ticket_bookings/constants.py::EventCategory.get_icon()
-// and the icon map used by EventCard.
-//
-// Required by:
-//   • frontend/src/pages/Landing/Landing.js (category filter pills)
-//   • frontend/src/components/Common/EventCard.js (category tag)
-//   • any other consumer that renders a category badge
-// ────────────────────────────────────────────────────────────────────
 export const EVENT_CATEGORY_ICONS = {
     [EVENT_CATEGORY.CONCERT]:    '🎵',
     [EVENT_CATEGORY.SPORTS]:     '⚽',
@@ -344,103 +337,150 @@ export const EventTemplateTypeUtils = {
     },
 };
 
-// ============================================
-// ROLES CONSTANTS
-// ============================================
+// ============================================================================
+// ROLES — TWO SEPARATE CONCEPTS
+// ----------------------------------------------------------------------------
+// PLATFORM_ROLES  → stored on User.role. One value per user, globally.
+//                   Controls platform-wide capabilities (access the admin
+//                   app at all, manage all tenants, etc).
+//
+// MEMBERSHIP_ROLES → stored on OrganizationMembership.role. One value per
+//                   (user, organization) pair. Controls what the user can
+//                   do *inside that specific tenant*.
+//
+// A user is NOT "a member" or "an owner". They have a platform role, and
+// separately they hold memberships with per-org roles. A user with zero
+// memberships is still a valid Regular User — they can book events as a
+// customer. A user with memberships in 3 orgs may be owner of one, admin
+// of another, and member of the third; all three are true simultaneously.
+// ============================================================================
 
+export const PLATFORM_ROLES = {
+    SUPER_ADMIN: 'super_admin',  // platform operator — sees every tenant
+    USER:        'user',         // the default for every signup
+};
+
+export const MEMBERSHIP_ROLES = {
+    OWNER:  'owner',   // full control over ONE organization
+    ADMIN:  'admin',   // manage events/venues/bookings within ONE org
+    STAFF:  'staff',   // check-in, bookings within ONE org
+    FINANCE: 'finance', // reports, payouts and payment settings
+    MEMBER: 'member',  // read-mostly member of ONE org (buyer/attendee)
+};
+
+export const PLATFORM_ROLE_LABELS = {
+    [PLATFORM_ROLES.SUPER_ADMIN]: 'Platform Admin',
+    [PLATFORM_ROLES.USER]:        'Regular User',
+};
+
+export const MEMBERSHIP_ROLE_LABELS = {
+    [MEMBERSHIP_ROLES.OWNER]:  'Owner',
+    [MEMBERSHIP_ROLES.ADMIN]:  'Admin',
+    [MEMBERSHIP_ROLES.STAFF]:  'Staff',
+    [MEMBERSHIP_ROLES.FINANCE]: 'Finance',
+    [MEMBERSHIP_ROLES.MEMBER]: 'Member',
+};
+
+// Ranked, for "is at least admin?" checks *within an org*.
+export const MEMBERSHIP_ROLE_HIERARCHY = {
+    [MEMBERSHIP_ROLES.OWNER]:  4,
+    [MEMBERSHIP_ROLES.ADMIN]:  3,
+    [MEMBERSHIP_ROLES.STAFF]:  2,
+    [MEMBERSHIP_ROLES.FINANCE]: 1.5,
+    [MEMBERSHIP_ROLES.MEMBER]: 1,
+};
+
+export const PLATFORM_ROLE_HIERARCHY = {
+    [PLATFORM_ROLES.SUPER_ADMIN]: 2,
+    [PLATFORM_ROLES.USER]:        0,
+};
+
+// ---------------------------------------------------------------------------
+// Backwards-compat alias.
+// ---------------------------------------------------------------------------
+// The legacy code imported `ROLES` and compared against ROLES.OWNER,
+// ROLES.MEMBER, etc. To avoid a 40-file shotgun edit, we keep ROLES as
+// a merged bag so old imports don't crash. NEW code should import
+// PLATFORM_ROLES / MEMBERSHIP_ROLES explicitly.
+//
+// NOTE: ROLES.OWNER and ROLES.MEMBER are MEMBERSHIP roles. Comparing
+// `user.role === ROLES.OWNER` is a bug — the user's platform role is
+// never 'owner'. Use `useRole().hasOrgRole(...)` instead. The helpers
+// below make that migrate direction obvious.
+// ---------------------------------------------------------------------------
 export const ROLES = {
-    SUPER_ADMIN: 'super_admin',
-    ADMIN: 'admin',
-    ORGANIZER: 'organizer',
-    USER: 'user',
+    // Platform roles
+    SUPER_ADMIN: PLATFORM_ROLES.SUPER_ADMIN,
+    USER:        PLATFORM_ROLES.USER,
+    // Membership roles — DO NOT compare against User.role.
+    OWNER:  MEMBERSHIP_ROLES.OWNER,
+    ADMIN:  MEMBERSHIP_ROLES.ADMIN,
+    MEMBER: MEMBERSHIP_ROLES.MEMBER,
 };
 
 export const ROLE_LABELS = {
-    [ROLES.SUPER_ADMIN]: 'Super Admin',
-    [ROLES.ADMIN]: 'Admin',
-    [ROLES.ORGANIZER]: 'Organizer',
-    [ROLES.USER]: 'User',
+    ...PLATFORM_ROLE_LABELS,
+    ...MEMBERSHIP_ROLE_LABELS,
 };
 
 export const ROLE_HIERARCHY = {
-    [ROLES.SUPER_ADMIN]: 4,
-    [ROLES.ADMIN]: 3,
-    [ROLES.ORGANIZER]: 2,
-    [ROLES.USER]: 1,
+    ...PLATFORM_ROLE_HIERARCHY,
+    ...MEMBERSHIP_ROLE_HIERARCHY,
 };
 
-export const ROLE_PERMISSIONS = {
-    [ROLES.SUPER_ADMIN]: {
-        canManageUsers: true,
-        canManageAllEvents: true,
-        canManageAllBookings: true,
-        canManageOrganizers: true,
-        canManageVenues: true,
-        canViewAnalytics: true,
-        canManageSystem: true,
-        canManageDiscounts: true,
-        canAccessScanner: true,
-    },
-    [ROLES.ADMIN]: {
-        canManageUsers: true,
-        canManageAllEvents: true,
-        canManageAllBookings: true,
-        canManageOrganizers: false,
-        canManageVenues: true,
-        canViewAnalytics: true,
-        canManageSystem: false,
-        canManageDiscounts: true,
-        canAccessScanner: true,
-    },
-    [ROLES.ORGANIZER]: {
-        canManageUsers: false,
-        canManageAllEvents: false,
-        canManageAllBookings: false,
-        canManageOrganizers: false,
-        canManageVenues: false,
-        canViewAnalytics: true,
-        canManageSystem: false,
-        canManageDiscounts: true,
-        canAccessScanner: false,
-    },
-    [ROLES.USER]: {
-        canManageUsers: false,
-        canManageAllEvents: false,
-        canManageAllBookings: false,
-        canManageOrganizers: false,
-        canManageVenues: false,
-        canViewAnalytics: false,
-        canManageSystem: false,
-        canManageDiscounts: false,
-        canAccessScanner: false,
-    },
+// ============================================================================
+// PERMISSION HELPERS
+// ----------------------------------------------------------------------------
+// These functions take a PLATFORM role and a MEMBERSHIP role separately.
+// Passing the wrong kind of value in either slot is a bug; the labelled
+// parameters make that visible at the call site.
+// ============================================================================
+
+export const PlatformRoleUtils = {
+    getLabel: (role) => PLATFORM_ROLE_LABELS[role] || 'Regular User',
+    isSuperAdmin: (role) => role === PLATFORM_ROLES.SUPER_ADMIN,
+    isAtLeast: (role, minRole) =>
+        (PLATFORM_ROLE_HIERARCHY[role] || 0) >= (PLATFORM_ROLE_HIERARCHY[minRole] || 0),
+    // Platform admins bypass all org-membership checks.
+    canAccessAdminApp: (role) =>
+        role === PLATFORM_ROLES.SUPER_ADMIN ||
+        role === PLATFORM_ROLES.USER,   // every authenticated user can access /app
 };
 
+export const MembershipRoleUtils = {
+    getLabel: (role) => MEMBERSHIP_ROLE_LABELS[role] || role || '',
+    getLevel: (role) => MEMBERSHIP_ROLE_HIERARCHY[role] || 0,
+    isAtLeast: (role, minRole) =>
+        (MEMBERSHIP_ROLE_HIERARCHY[role] || 0) >= (MEMBERSHIP_ROLE_HIERARCHY[minRole] || 0),
+    canManageOrg: (role) =>
+        role === MEMBERSHIP_ROLES.OWNER || role === MEMBERSHIP_ROLES.ADMIN,
+    canScanTickets: (role) =>
+        role === MEMBERSHIP_ROLES.OWNER ||
+        role === MEMBERSHIP_ROLES.ADMIN ||
+        role === MEMBERSHIP_ROLES.STAFF,
+    canViewAllBookings: (role) =>
+        role === MEMBERSHIP_ROLES.OWNER ||
+        role === MEMBERSHIP_ROLES.ADMIN ||
+        role === MEMBERSHIP_ROLES.STAFF,
+    canDeleteOrg: (role) => role === MEMBERSHIP_ROLES.OWNER,
+};
+
+// ---------------------------------------------------------------------------
+// Legacy `RoleUtils` shim.
+// ---------------------------------------------------------------------------
+// Retained ONLY so files we haven't migrated yet continue to compile.
+// It behaves like the old version but is documented as deprecated. If
+// you're editing a file anyway, replace usages with
+// PlatformRoleUtils / MembershipRoleUtils.
+// ---------------------------------------------------------------------------
 export const RoleUtils = {
-    getLabel: function(role) {
-        return ROLE_LABELS[role] || role;
-    },
-    getLevel: function(role) {
-        return ROLE_HIERARCHY[role] || 0;
-    },
-    hasPermission: function(role, permission) {
-        var perms = ROLE_PERMISSIONS[role];
-        return perms ? perms[permission] || false : false;
-    },
-    isAtLeast: function(role, minRole) {
-        return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[minRole];
-    },
-    getAvailableRoles: function(currentRole) {
-        var currentLevel = ROLE_HIERARCHY[currentRole] || 0;
-        return Object.keys(ROLE_HIERARCHY).filter(function(role) {
-            return ROLE_HIERARCHY[role] <= currentLevel;
-        });
-    },
+    getLabel: (role) => ROLE_LABELS[role] || role,
+    getLevel: (role) => ROLE_HIERARCHY[role] || 0,
+    isAtLeast: (role, minRole) =>
+        (ROLE_HIERARCHY[role] || 0) >= (ROLE_HIERARCHY[minRole] || 0),
+    hasPermission: () => false,          // deprecated, no longer meaningful
+    getAvailableRoles: () => Object.values(MEMBERSHIP_ROLES),
 };
-
-// ============================================
-// DEFAULT EXPORT
-// ============================================
 
 export default {
     TICKET_STATUS,
@@ -470,9 +510,13 @@ export default {
     EVENT_TEMPLATE_TYPE_LABELS,
     EVENT_TEMPLATE_TYPE_ICONS,
     EventTemplateTypeUtils,
-    ROLES,
-    ROLE_LABELS,
-    ROLE_HIERARCHY,
-    ROLE_PERMISSIONS,
-    RoleUtils,
+    PLATFORM_ROLES,
+    MEMBERSHIP_ROLES,
+    PLATFORM_ROLE_LABELS,
+    MEMBERSHIP_ROLE_LABELS,
+    MEMBERSHIP_ROLE_HIERARCHY,
+    PLATFORM_ROLE_HIERARCHY,
+    PlatformRoleUtils,
+    MembershipRoleUtils,
+    ROLES, ROLE_LABELS, ROLE_HIERARCHY, RoleUtils,
 };

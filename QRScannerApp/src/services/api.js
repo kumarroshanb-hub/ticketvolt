@@ -734,6 +734,43 @@ export const scannerApi = {
             return { data: [] };
         }
     },
+
+    getOfflinePack: async (eventId, sessionId = null) => {
+        const params = { event: eventId };
+        if (sessionId) params.session = sessionId;
+        const response = await api.get('/checkin/offline-pack/', {
+            params,
+            timeout: 20000,
+        });
+        return response;
+    },
+
+    offlineSync: async ({ device_id, items }) => {
+        const response = await api.post(
+            '/checkin/offline-sync/',
+            { device_id, items },
+            { timeout: 30000 },
+        );
+        return response;
+    },
+
+    manualVerify: async (code) => {
+        const response = await api.post(
+            '/checkin/manual-verify/',
+            { code },
+            { timeout: 10000 },
+        );
+        return response;
+    },
+
+    manualCheckin: async (code, deviceId) => {
+        const response = await api.post(
+            '/checkin/manual/',
+            { code, device_id: deviceId },
+            { timeout: 10000 },
+        );
+        return response;
+    },
 };
 
 export default api;

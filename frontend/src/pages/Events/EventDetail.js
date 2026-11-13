@@ -14,8 +14,10 @@ import {
     ConfirmationNumber as TicketIcon,
     AccessTime as AccessTimeIcon,
     Person as PersonIcon,
+    RateReview as FeedbackIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import {
@@ -33,38 +35,40 @@ import { theme } from '../../theme/tokens';
 
 const C = theme.colors;
 
-const formatDateTime = (dateString) => {
-    if (!dateString) return 'TBD';
+const formatDateTime = (dateString, fallback = 'TBD') => {
+    if (!dateString) return fallback;
     try {
         return new Date(dateString).toLocaleString('en-US', {
             dateStyle: 'medium',
             timeStyle: 'short',
         });
     } catch {
-        return 'TBD';
+        return fallback;
     }
 };
 
-const formatTime = (dateString) => {
-    if (!dateString) return 'TBD';
+const formatTime = (dateString, fallback = 'TBD') => {
+    if (!dateString) return fallback;
     try {
         return new Date(dateString).toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
         });
     } catch {
-        return 'TBD';
+        return fallback;
     }
 };
 
 const EventDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     const [event, setEvent] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [sendingFeedback, setSendingFeedback] = useState(false);
 
     const loadEvent = async () => {
         setLoading(true);
@@ -73,7 +77,7 @@ const EventDetail = () => {
             setEvent(response.data);
         } catch (error) {
             console.error('Event detail error:', error);
-            toast.error('Failed to load event details');
+            toast.error(t('events.detailLoadingError'));
             navigate('/app/events');
         } finally {
             setLoading(false);
@@ -98,6 +102,18 @@ const EventDetail = () => {
 
     const handleEdit = () => navigate(`/app/events/${id}/edit`);
 
+    const handleSendFeedback = async () => {
+        setSendingFeedback(true);
+        try {
+            const res = await api.post(`/events/${id}/feedback-send/`);
+            toast.success(t('events.feedbackSent', 'Feedback emails sent: {{sent}}', { sent: res.data.sent || 0 }));
+        } catch (err) {
+            toast.error(err.response?.data?.error || err.message);
+        } finally {
+            setSendingFeedback(false);
+        }
+    };
+
     if (loading) {
         return (
             <LoadingWrapper>
@@ -109,9 +125,9 @@ const EventDetail = () => {
     if (!event) {
         return (
             <Box sx={{ p: 3, textAlign: 'center' }}>
-                <Typography sx={{ color: C.textLight }}>Event not found</Typography>
+                <Typography sx={{ color: C.textLight }}>{t('events.detailNotFound')}</Typography>
                 <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/app/events')}>
-                    Back to Events
+                    {t('events.detailBackToEvents')}
                 </Button>
             </Box>
         );
@@ -125,13 +141,13 @@ const EventDetail = () => {
     // ✅ NEW: organize the summary rows so the organizer row can be
     // rendered consistently with the rest.
     const summaryRows = [
-        ['Tickets Sold', event.total_tickets_sold || 0],
-        ['Total Revenue', `₹${(event.total_revenue || 0).toLocaleString()}`],
+        [t('events.detailTicketsSold'), event.total_tickets_sold || 0],
+        [t('events.detailTotalRevenue'), `₹${(event.total_revenue || 0).toLocaleString()}`],
     ];
     const detailRows = [
-        ['Bookings', event.total_bookings || 0],
-        ['Sessions', sessionCount],
-        ['Ticket Tiers', tierCount],
+        [t('events.detailBookings'), event.total_bookings || 0],
+        [t('events.detailSessionsCount'), sessionCount],
+        [t('events.detailTiersCount'), tierCount],
     ];
 
     return (
@@ -146,13 +162,13 @@ const EventDetail = () => {
                             {event.title}
                         </PageTitle>
                         <Typography variant="body2" sx={{ color: C.textSecondary }}>
-                            {event.event_type} • {event.category}
+                            {t(`eventType.${event.event_type}`, { defaultValue: event.event_type })} • {t(`category.${event.category}`, { defaultValue: event.category })}
                         </Typography>
                     </Box>
                 </PageHeaderLeft>
                 <PageHeaderRight>
                     <Chip
-                        label={EVENT_STATUS_LABELS[event.status] || event.status}
+                        label={t(`status.event.${event.status}`, { defaultValue: EVENT_STATUS_LABELS[event.status] || event.status })}
                         color={getEventStatusColor(event.status)}
                         sx={{ fontWeight: 600 }}
                     />
@@ -162,15 +178,25 @@ const EventDetail = () => {
                         onClick={loadEvent}
                         sx={isMobile ? { width: '100%' } : undefined}
                     >
-                        Refresh
+                        {t('events.detailRefresh')}
                     </OutlineButton>
+                    {event.feedback_enabled && (
+                        <OutlineButton
+                            variant="outlined"
+                            startIcon={<FeedbackIcon />}
+                            onClick={handleSendFeedback}
+                            disabled={sendingFeedback}
+                        >
+                            {sendingFeedback ? t('common.loading') : t('events.sendFeedback', 'Email feedback')}
+                        </OutlineButton>
+                    )}
                     <PrimaryButton
                         variant="contained"
                         startIcon={<EditIcon />}
                         onClick={handleEdit}
                         sx={isMobile ? { width: '100%' } : undefined}
                     >
-                        Edit
+                        {t('events.detailEdit')}
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
@@ -180,10 +206,10 @@ const EventDetail = () => {
                     <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}`, mb: 3 }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 2 }}>
-                                Event Details
+                                {t('events.detailTitle')}
                             </Typography>
                             <Typography variant="body2" sx={{ color: C.textPrimary, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                {event.description || 'No description provided'}
+                                {event.description || t('events.detailNoDescription')}
                             </Typography>
                         </CardContent>
                     </Card>
@@ -192,11 +218,19 @@ const EventDetail = () => {
                         <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}`, mb: 3 }}>
                             <CardContent>
                                 <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 2 }}>
-                                    Sessions ({sessionCount})
+                                    {t('events.detailSessions', { count: sessionCount })}
                                 </Typography>
                                 <Stack spacing={1.5}>
                                     {sessions.map((session, index) => {
-                                        const remaining = Math.max(0, (session.capacity || 0) - (session.booked || 0));
+                                        const reserved = Boolean(event.venue?.has_reserved_seating);
+                                        const capacity = reserved
+                                            ? (event.seat_count || event.total_capacity || 0)
+                                            : (session.capacity || 0);
+                                        const remaining = reserved
+                                            ? (typeof event.available_seats === 'number'
+                                                ? event.available_seats
+                                                : Math.max(0, capacity - (event.total_tickets_sold || 0)))
+                                            : Math.max(0, capacity - (session.booked || 0));
                                         const isFull = remaining === 0;
 
                                         return (
@@ -219,19 +253,23 @@ const EventDetail = () => {
                                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                                                         <AccessTimeIcon sx={{ fontSize: 18, color: C.primary, flexShrink: 0 }} />
                                                         <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary }}>
-                                                            Slot #{index + 1} — {formatTime(session.start_time)} to {formatTime(session.end_time)}
+                                                            {t('events.detailSlotLabel', {
+                                                                index: index + 1,
+                                                                start: formatTime(session.start_time, t('common.tbd')),
+                                                                end: formatTime(session.end_time, t('common.tbd')),
+                                                            })}
                                                         </Typography>
                                                     </Box>
                                                     <Chip
                                                         size="small"
-                                                        label={isFull ? 'Full' : `${remaining} / ${session.capacity} available`}
+                                                        label={isFull ? t('events.detailFull') : t('eventWizard.availableOf', { available: remaining, capacity })}
                                                         color={isFull ? 'error' : 'success'}
                                                         variant="outlined"
                                                         sx={{ fontWeight: 600 }}
                                                     />
                                                 </Box>
                                                 <Typography variant="caption" sx={{ color: C.textSecondary, display: 'block', mt: 0.5 }}>
-                                                    {formatDateTime(session.start_time)}
+                                                    {formatDateTime(session.start_time, t('common.tbd'))}
                                                 </Typography>
                                             </Paper>
                                         );
@@ -245,7 +283,7 @@ const EventDetail = () => {
                         <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}`, mb: 3 }}>
                             <CardContent>
                                 <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 2 }}>
-                                    Ticket Tiers ({tierCount})
+                                    {t('events.detailTiers', { count: tierCount })}
                                 </Typography>
                                 <Stack spacing={1.5}>
                                     {tiers.map((tier, index) => {
@@ -281,11 +319,11 @@ const EventDetail = () => {
                                                 </Box>
                                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.5, gap: 1 }}>
                                                     <Typography variant="caption" sx={{ color: C.textSecondary }}>
-                                                        Sold: {tier.quantity_sold || 0} / {tier.quantity_total || 0}
+                                                        {t('events.detailSold', { sold: tier.quantity_sold || 0, total: tier.quantity_total || 0 })}
                                                     </Typography>
                                                     <Chip
                                                         size="small"
-                                                        label={isSoldOut ? 'Sold Out' : `${available} available`}
+                                                        label={isSoldOut ? t('events.detailSoldOut') : t('events.detailAvailable', { count: available })}
                                                         color={isSoldOut ? 'error' : 'success'}
                                                         variant="outlined"
                                                         sx={{ fontWeight: 600 }}
@@ -303,7 +341,7 @@ const EventDetail = () => {
                         <Card sx={{ borderRadius: 2, border: `1px dashed ${C.borderLight}`, mb: 3 }}>
                             <CardContent sx={{ textAlign: 'center', py: 4 }}>
                                 <Typography variant="body2" sx={{ color: C.textLight }}>
-                                    No sessions or ticket tiers configured yet.
+                                    {t('events.detailNoConfig')}
                                 </Typography>
                                 <Button
                                     size="small"
@@ -312,7 +350,7 @@ const EventDetail = () => {
                                     onClick={handleEdit}
                                     sx={{ mt: 1 }}
                                 >
-                                    Configure Now
+                                    {t('events.detailConfigureNow')}
                                 </Button>
                             </CardContent>
                         </Card>
@@ -323,7 +361,7 @@ const EventDetail = () => {
                     <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}`, mb: 3 }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 2 }}>
-                                Summary
+                                {t('events.detailSummary')}
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                 {summaryRows.map(([label, value]) => (
@@ -337,7 +375,7 @@ const EventDetail = () => {
                                 {(event.organizer_username || event.organizer_email) && (
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
                                         <Typography variant="body2" sx={{ color: C.textSecondary }}>
-                                            Organizer
+                                            {t('events.detailOrganizer')}
                                         </Typography>
                                         <Box sx={{ textAlign: 'right', minWidth: 0 }}>
                                             <Typography variant="body2" sx={{ fontWeight: 600, color: C.textPrimary, display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end' }}>
@@ -367,11 +405,11 @@ const EventDetail = () => {
                     <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}`, mb: 3 }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 2 }}>
-                                Schedule
+                                {t('events.detailSchedule')}
                             </Typography>
                             {[
-                                ['Starts', formatDateTime(event.start_date)],
-                                ['Ends', formatDateTime(event.end_date)],
+                                [t('events.detailStarts'), formatDateTime(event.start_date, t('common.tbd'))],
+                                [t('events.detailEnds'), formatDateTime(event.end_date, t('common.tbd'))],
                             ].map(([label, value], i) => (
                                 <Box key={label} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: i === 0 ? 1 : 0 }}>
                                     <CalendarIcon sx={{ fontSize: 16, color: C.textSecondary, mt: 0.3, flexShrink: 0 }} />
@@ -387,7 +425,7 @@ const EventDetail = () => {
                             ))}
                             {event.timezone && (
                                 <Typography variant="caption" sx={{ color: C.textLight, display: 'block', mt: 1.5 }}>
-                                    Timezone: {event.timezone}
+                                    {t('events.detailTimezoneLabel', { tz: event.timezone })}
                                 </Typography>
                             )}
                         </CardContent>
@@ -396,7 +434,7 @@ const EventDetail = () => {
                     <Card sx={{ borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
                         <CardContent>
                             <Typography variant="subtitle2" sx={{ color: C.primary, fontWeight: 600, mb: 2 }}>
-                                Location
+                                {t('events.detailLocation')}
                             </Typography>
                             {event.venue ? (
                                 <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -414,7 +452,7 @@ const EventDetail = () => {
                                 </Box>
                             ) : (
                                 <Typography variant="body2" sx={{ color: C.textLight }}>
-                                    No venue specified
+                                    {t('events.detailNoVenue')}
                                 </Typography>
                             )}
                         </CardContent>

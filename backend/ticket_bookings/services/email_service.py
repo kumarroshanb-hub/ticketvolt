@@ -80,7 +80,7 @@ class EmailTicketService:
             )
 
             story = []
-            story.append(Paragraph("🎫 TicketVolt", title_style))
+            story.append(Paragraph("🎫 TiketVault", title_style))
             story.append(Spacer(1, 10))
             story.append(Paragraph("Event Ticket", header_style))
             story.append(Spacer(1, 20))

@@ -5,26 +5,29 @@ import {
     FormControlLabel, Switch, FormHelperText, Divider, Typography,
     useMediaQuery, useTheme,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { StyledTextField, SectionTitle } from './styled';
 import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
 
+/** Ticket delivery and template settings only. */
 export const EventTicketSettings = ({ formData, onChange }) => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     return (
         <>
             <Grid item xs={12}>
-                <SectionTitle variant="h6">Ticket Settings</SectionTitle>
+                <SectionTitle variant="h6">{t('events.ticketSettingsTitle')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
             </Grid>
 
             <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                     <FormLabel sx={{ color: C.textPrimary, fontWeight: 600, mb: 1 }}>
-                        Ticket Format
+                        {t('events.ticketFormatLabel')}
                     </FormLabel>
                     <RadioGroup
                         row={!isMobile}
@@ -32,45 +35,30 @@ export const EventTicketSettings = ({ formData, onChange }) => {
                         value={formData.ticket_format || 'pdf'}
                         onChange={onChange}
                     >
-                        <FormControlLabel value="pdf" control={<Radio />} label={<Typography variant="body2">📄 PDF</Typography>} />
-                        <FormControlLabel value="png" control={<Radio />} label={<Typography variant="body2">🖼️ PNG</Typography>} />
-                        <FormControlLabel value="both" control={<Radio />} label={<Typography variant="body2">📄➕🖼️ Both</Typography>} />
+                        <FormControlLabel value="pdf" control={<Radio />} label={<Typography variant="body2">📄 {t('events.ticketFormatPdf')}</Typography>} />
+                        <FormControlLabel value="png" control={<Radio />} label={<Typography variant="body2">🖼️ {t('events.ticketFormatPng')}</Typography>} />
+                        <FormControlLabel value="both" control={<Radio />} label={<Typography variant="body2">📄➕🖼️ {t('events.ticketFormatBoth')}</Typography>} />
                     </RadioGroup>
-                    <FormHelperText>Choose the format for ticket delivery to customers</FormHelperText>
+                    <FormHelperText>{t('events.ticketFormatHelper')}</FormHelperText>
                 </FormControl>
             </Grid>
 
             <Grid item xs={12} md={6}>
                 <FormControlLabel
-                    control={
-                        <Switch
-                            checked={formData.combine_tickets || false}
-                            onChange={onChange}
-                            name="combine_tickets"
-                            sx={{
-                                '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
-                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
-                                    backgroundColor: C.primary,
-                                },
-                            }}
-                        />
-                    }
-                    label="Combine tickets into single file"
-                    sx={{ color: C.textSecondary }}
+                    control={<Switch checked={formData.combine_tickets || false} onChange={onChange} name="combine_tickets" />}
+                    label={t('events.combineTicketsLabel')}
                 />
-                <FormHelperText>
-                    Combine all tickets into one file instead of individual files
-                </FormHelperText>
+                <FormHelperText>{t('events.combineTicketsHelper')}</FormHelperText>
             </Grid>
 
             <Grid item xs={12} md={6}>
                 <StyledTextField
-                    fullWidth label="Tickets Per Page"
+                    fullWidth label={t('events.ticketsPerPageLabel')}
                     name="tickets_per_page" type="number"
                     value={formData.tickets_per_page || 4}
                     onChange={onChange}
                     InputProps={{ inputProps: { min: 1, max: 10 } }}
-                    helperText="Number of tickets to show per page (for combined tickets)"
+                    helperText={t('events.ticketsPerPageHelper')}
                     disabled={!formData.combine_tickets}
                 />
             </Grid>

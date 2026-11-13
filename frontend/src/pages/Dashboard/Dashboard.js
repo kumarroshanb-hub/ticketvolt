@@ -1,9 +1,9 @@
 // frontend/src/pages/Dashboard/Dashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Paper,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-    CircularProgress, useMediaQuery, useTheme, Divider,
+    CircularProgress, useMediaQuery, useTheme, Divider, Button,
 } from '@mui/material';
 import {
     Event as EventIcon,
@@ -11,10 +11,14 @@ import {
     ConfirmationNumber as TicketIcon,
     AttachMoney as MoneyIcon,
     Refresh as RefreshIcon,
+    Business as BusinessIcon,
+    ArrowForward as ArrowForwardIcon,
 } from '@mui/icons-material';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { useRole } from '../../context/RoleContext';
-import { useSettings } from '../../context/SettingsContext';   // ✅ NEW
+import { useSettings } from '../../context/SettingsContext';
+import { useOrg } from '../../context/OrgContext';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -25,16 +29,19 @@ import {
 } from '../../components/Common';
 
 import EventCard from '../../components/Common/EventCard';
-import { BOOKING_STATUS, ROLES } from '../../constants';
+import { BOOKING_STATUS, MEMBERSHIP_ROLES } from '../../constants';
 
 import { theme as appTheme } from '../../theme/tokens';
+
+// ✅ Platform Filter Imports
+import usePlatformFilter from '../../hooks/usePlatformFilter';
+import { OrgFilterSelect } from '../../components/Common';
 
 const C = appTheme.colors;
 const F = appTheme.fonts;
 
 // ============================================
 // MONEY HELPERS (pure numeric only — no currency symbol here)
-// Formatting now comes from SettingsContext via `useSettings().formatMoney`.
 // ============================================
 const getNetAmount = (booking) => {
     if (!booking) return 0;
@@ -173,6 +180,7 @@ const StatCard = ({ title, value, icon, color, subtitle }) => {
 // MOBILE BOOKING CARD
 // ============================================
 const MobileBookingCard = ({ booking, onClick }) => {
+    const { t } = useTranslation();
     const isCompleted = booking.status === BOOKING_STATUS.COMPLETED;
 
     return (
@@ -226,10 +234,10 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             letterSpacing: 0.5,
                         }}
                     >
-                        Customer
+                        {t('booking.customer')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: C.textPrimary, fontWeight: 500 }}>
-                        {booking.customer_name || 'N/A'}
+                        {booking.customer_name || t('common.nA')}
                     </Typography>
                 </Box>
 
@@ -244,7 +252,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             letterSpacing: 0.5,
                         }}
                     >
-                        Event
+                        {t('booking.event')}
                     </Typography>
                     <Typography
                         variant="body2"
@@ -256,7 +264,7 @@ const MobileBookingCard = ({ booking, onClick }) => {
                             whiteSpace: 'nowrap',
                         }}
                     >
-                        {booking.event_title || 'N/A'}
+                        {booking.event_title || t('common.nA')}
                     </Typography>
                 </Box>
 
@@ -271,13 +279,15 @@ const MobileBookingCard = ({ booking, onClick }) => {
                 >
                     <AmountDisplay booking={booking} align="left" size="h6" />
                     <Typography variant="caption" sx={{ color: C.textSecondary, fontWeight: 600 }}>
-                        {booking.ticket_count || 0} ticket{(booking.ticket_count || 0) !== 1 ? 's' : ''}
+                        {t('booking.ticketCount', {
+                            count: booking.ticket_count || 0,
+                        })}
                     </Typography>
                 </Box>
 
                 {isCompleted && (
                     <Typography variant="caption" sx={{ color: C.success, display: 'block', mt: 1, fontWeight: 600 }}>
-                        ✅ All tickets used
+                        ✅ {t('booking.allTicketsUsed')}
                     </Typography>
                 )}
             </CardContent>
@@ -286,24 +296,101 @@ const MobileBookingCard = ({ booking, onClick }) => {
 };
 
 // ============================================
+// ORGANIZATION BANNER
+// ============================================
+const NeedsOrganizationBanner = () => {
+    const { t } = useTranslation();
+    const navigate = useNavigate();
+
+    return (
+        <Paper
+            elevation={0}
+            sx={{
+                mb: 3,
+                p: { xs: 2, sm: 2.5 },
+                borderRadius: 2,
+                border: `1px solid ${C.primary}40`,
+                backgroundColor: `${C.primary}08`,
+                display: 'flex',
+                flexDirection: { xs: 'column', sm: 'row' },
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                gap: { xs: 1.5, sm: 2 },
+            }}
+        >
+            <Box
+                sx={{
+                    backgroundColor: `${C.primary}15`,
+                    borderRadius: '50%',
+                    p: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                }}
+            >
+                <BusinessIcon sx={{ color: C.primary }} />
+            </Box>
+
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography
+                    variant="subtitle1"
+                    sx={{ fontWeight: 700, color: C.textPrimary, lineHeight: 1.3 }}
+                >
+                    {t('dashboard.needsOrganizationTitle')}
+                </Typography>
+                <Typography
+                    variant="body2"
+                    sx={{ color: C.textSecondary, mt: 0.25 }}
+                >
+                    {t('dashboard.needsOrganizationBody')}
+                </Typography>
+            </Box>
+
+            <Button
+                variant="contained"
+                size="small"
+                endIcon={<ArrowForwardIcon />}
+                onClick={() => navigate('/app/organizations')}
+                sx={{
+                    flexShrink: 0,
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    alignSelf: { xs: 'stretch', sm: 'auto' },
+                }}
+            >
+                {t('dashboard.needsOrganizationCta')}
+            </Button>
+        </Paper>
+    );
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 const Dashboard = () => {
     const { user } = useAuth();
-    const { role } = useRole();
-    const { formatMoney } = useSettings();   // ✅ currency-aware formatter
+    const { hasOrgRole } = useRole();
+    const { formatMoney } = useSettings();
+    const { needsOrganization } = useOrg();
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-    // Admins, superadmins, and organizers see "View Details" on popular
-    // events; regular users see the booking CTA that routes them into the wizard.
-    const canManageEvents =
-        role === ROLES.ADMIN ||
-        role === ROLES.SUPER_ADMIN ||
-        role === ROLES.ORGANIZER;
+    // ✅ 1. Initialize Platform Filter Hook
+    const {
+        params: orgParams,
+        isPlatformAdmin,
+        orgFilter,
+        setOrgFilter,
+        organizations,
+    } = usePlatformFilter();
+
+    const canManageEvents = hasOrgRole(MEMBERSHIP_ROLES.ADMIN);
 
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [stats, setStats] = useState({
         total_events: 0,
         active_events: 0,
@@ -318,22 +405,33 @@ const Dashboard = () => {
         popular_events: [],
     });
 
-    const loadDashboard = async () => {
-        setLoading(true);
+    // ✅ 2. Serialize orgParams so object identity changes don't refetch endlessly
+    const orgParamsKey = useMemo(() => JSON.stringify(orgParams || {}), [orgParams]);
+
+    const loadDashboard = useCallback(async ({ silent = false } = {}) => {
+        if (silent) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
         try {
-            const response = await api.get('/dashboard/stats/');
+            // ✅ 3. Merge orgParams (Super Admin sees all if empty, or filtered if selected)
+            const response = await api.get('/dashboard/stats/', { params: orgParams });
             console.log('📊 Dashboard stats:', response.data);
             setStats(response.data);
         } catch (error) {
             console.error('Dashboard error:', error);
-            toast.error('Failed to load dashboard stats');
+            toast.error(t('dashboard.loadFailed'));
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
         }
-        setLoading(false);
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgParamsKey, t]);
 
     useEffect(() => {
         loadDashboard();
-    }, []);
+    }, [loadDashboard]);
 
     if (loading) {
         return (
@@ -350,7 +448,7 @@ const Dashboard = () => {
         <PageContainer>
             <PageHeader>
                 <PageHeaderLeft>
-                    <PageTitle variant="h4">Dashboard</PageTitle>
+                    <PageTitle variant="h4">{t('dashboard.title')}</PageTitle>
                     <Typography
                         variant="body2"
                         sx={{
@@ -360,51 +458,73 @@ const Dashboard = () => {
                             width: isMobile ? '100%' : 'auto',
                         }}
                     >
-                        Welcome back, {user?.name || 'Admin'}!
+                        {t('dashboard.welcome', { name: user?.name || t('roles.admin') })}
                     </Typography>
                 </PageHeaderLeft>
                 <PageHeaderRight>
-                    <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadDashboard}>
-                        Refresh
+                    {/* ✅ 4. Render the Organization Filter Dropdown */}
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
+                    <OutlineButton
+                        variant="outlined"
+                        startIcon={refreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
+                        onClick={() => loadDashboard({ silent: true })}
+                        disabled={refreshing}
+                    >
+                        {t('common.refresh')}
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
 
+            {needsOrganization && canManageEvents && <NeedsOrganizationBanner />}
+
             <Grid container spacing={isMobile ? 1.5 : 2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Total Events"
+                        title={t('dashboard.statTotalEvents')}
                         value={stats.total_events || 0}
                         icon={<EventIcon sx={{ color: C.primary, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.primary}
-                        subtitle={`${stats.active_events || 0} active`}
+                        subtitle={t('dashboard.statTotalEventsSubtitle', {
+                            count: stats.active_events || 0,
+                        })}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Total Bookings"
+                        title={t('dashboard.statTotalBookings')}
                         value={stats.total_bookings || 0}
                         icon={<PeopleIcon sx={{ color: C.success, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.success}
-                        subtitle={`${stats.pending_bookings || 0} pending`}
+                        subtitle={t('dashboard.statTotalBookingsSubtitle', {
+                            count: stats.pending_bookings || 0,
+                        })}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Tickets"
+                        title={t('dashboard.statTickets')}
                         value={stats.total_tickets || 0}
                         icon={<TicketIcon sx={{ color: C.secondary, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.secondary}
-                        subtitle={`${stats.used_tickets || 0} used`}
+                        subtitle={t('dashboard.statTicketsSubtitle', {
+                            count: stats.used_tickets || 0,
+                        })}
                     />
                 </Grid>
                 <Grid item xs={6} sm={6} md={3}>
                     <StatCard
-                        title="Revenue"
+                        title={t('dashboard.statRevenue')}
                         value={formatMoney(stats.total_revenue || 0)}
                         icon={<MoneyIcon sx={{ color: C.warning, fontSize: isMobile ? 20 : 24 }} />}
                         color={C.warning}
-                        subtitle={`Today: ${formatMoney(stats.today_revenue || 0)}`}
+                        subtitle={t('dashboard.statRevenueSubtitle', {
+                            amount: formatMoney(stats.today_revenue || 0),
+                        })}
                     />
                 </Grid>
             </Grid>
@@ -419,7 +539,7 @@ const Dashboard = () => {
                         fontSize: isMobile ? '1rem' : '1.25rem',
                     }}
                 >
-                    Recent Bookings
+                    {t('dashboard.recentBookings')}
                 </Typography>
 
                 {isMobile ? (
@@ -435,7 +555,9 @@ const Dashboard = () => {
                         </Box>
                     ) : (
                         <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, border: `1px solid ${C.borderLight}` }}>
-                            <Typography sx={{ color: C.textLight }}>No recent bookings</Typography>
+                            <Typography sx={{ color: C.textLight }}>
+                                {t('dashboard.noRecentBookings')}
+                            </Typography>
                         </Paper>
                     )
                 ) : (
@@ -443,12 +565,24 @@ const Dashboard = () => {
                         <Table>
                             <TableHead>
                                 <TableRow>
-                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Reference</TableCell>
-                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Customer</TableCell>
-                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>Event</TableCell>
-                                    <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>Amount</TableCell>
-                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>Status</TableCell>
-                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>Date</TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.reference')}
+                                    </TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.customer')}
+                                    </TableCell>
+                                    <TableCell sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.event')}
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.amount')}
+                                    </TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.status')}
+                                    </TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 600, color: C.textSecondary }}>
+                                        {t('booking.date')}
+                                    </TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -470,7 +604,7 @@ const Dashboard = () => {
                                                     {booking.booking_reference}
                                                     {isCompleted && (
                                                         <Typography variant="caption" sx={{ color: C.success, display: 'block' }}>
-                                                            ✅ All tickets used
+                                                            ✅ {t('booking.allTicketsUsed')}
                                                         </Typography>
                                                     )}
                                                 </TableCell>
@@ -491,7 +625,7 @@ const Dashboard = () => {
                                 ) : (
                                     <TableRow>
                                         <TableCell colSpan={6} align="center" sx={{ py: 4, color: C.textLight }}>
-                                            No recent bookings
+                                            {t('dashboard.noRecentBookings')}
                                         </TableCell>
                                     </TableRow>
                                 )}
@@ -501,12 +635,6 @@ const Dashboard = () => {
                 )}
             </Box>
 
-            {/* ==================================================
-                POPULAR EVENTS
-                Role-aware CTA + routing.
-                - Admin / Organizer → "View Details" → /app/events/:id
-                - Regular User      → "Book Tickets" / "Register" → wizard
-               ================================================== */}
             <Box>
                 <Typography
                     variant="h6"
@@ -517,7 +645,7 @@ const Dashboard = () => {
                         fontSize: isMobile ? '1rem' : '1.25rem',
                     }}
                 >
-                    Popular Events
+                    {t('dashboard.popularEvents')}
                 </Typography>
                 <Grid container spacing={isMobile ? 1.5 : 2}>
                     {popularEvents.length > 0 ? (
@@ -537,7 +665,7 @@ const Dashboard = () => {
                     ) : (
                         <Grid item xs={12}>
                             <Box sx={{ textAlign: 'center', py: 4, color: C.textLight }}>
-                                No events found
+                                {t('dashboard.noEvents')}
                             </Box>
                         </Grid>
                     )}

@@ -1,5 +1,6 @@
 // frontend/src/services/api.js
 import axios from 'axios';
+import { getCurrentLanguage } from '../i18n';                         // ✅ NEW
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
 
@@ -28,21 +29,78 @@ const api = axios.create({
 // ============================================================
 
 const PUBLIC_ENDPOINTS = [
+    // Public catalog / bootstrap
     '/events/public/',
+    '/settings/public/',
+    '/i18n/setlang/',
+
+    // Auth entry points that MUST work with a stale token in storage
     '/auth/login/',
     '/auth/refresh/',
     '/auth/register/',
     '/auth/forgot-password/',
     '/auth/confirm-password-reset/',
     '/auth/verify-email/',
-    '/settings/public/',
+    '/auth/config/',
+    '/auth/google/exchange/',
+    '/feedback/',
+
+    // ✅ FIX [MAGIC-LINK-401] / [OTP-401]:
+    // These are AllowAny on the backend, but a stale token in
+    // localStorage would cause JWTAuthentication to 401 before the
+    // view runs. The magic-link / OTP flows are *recovery* flows —
+    // they must work even (especially) when the current token is bad.
+    '/auth/request-magic-link/',
+    '/auth/verify-magic-link/',
+    '/auth/request-otp/',
+    '/auth/verify-otp/',
 ];
 
-const isPublicEndpoint = (url) => {
+// ============================================================
+// ✅ FIX [GUEST-CREATE-401]:
+// Some endpoints are AllowAny only for *specific HTTP methods*.
+//   POST /bookings/              → guest checkout allowed
+//   POST /bookings/validate_discount/ → guest discount preview
+// We cannot mark the whole path public (GET /bookings/ must
+// authenticate), so we key on method + path.
+//
+// IMPORTANT: we only treat these as "public" when there is NO
+// valid token in storage. If a logged-in user calls
+// POST /bookings/ we still want their Authorization header so the
+// backend attributes the booking to them. `hasToken` gates it.
+// ============================================================
+const PUBLIC_METHOD_ENDPOINTS = [
+    { method: 'post', path: '/bookings/validate_discount/' },
+    { method: 'post', path: '/bookings/' },
+    { method: 'post', path: '/membership/checkout/' },       // guest? keep safe
+];
+
+const hasToken = () =>
+    Boolean(localStorage.getItem('token') || sessionStorage.getItem('token'));
+
+const isPublicEndpoint = (url, method) => {
     if (!url) return false;
     // Pre-signed S3/GCS URLs must never carry our bearer token.
     if (url.startsWith('http://') || url.startsWith('https://')) return true;
-    return PUBLIC_ENDPOINTS.some((p) => url.includes(p));
+
+    // Absolute path match against the static list (string includes).
+    if (PUBLIC_ENDPOINTS.some((p) => url.includes(p))) return true;
+
+    // ✅ FIX [GUEST-CREATE-401]: method-scoped public endpoints.
+    // Only bypass auth when the user is actually anonymous.
+    if (!hasToken() && method) {
+        const m = method.toLowerCase();
+        const bare = url.split('?')[0];
+        if (
+            PUBLIC_METHOD_ENDPOINTS.some(
+                (e) => e.method === m && bare.includes(e.path)
+            )
+        ) {
+            return true;
+        }
+    }
+
+    return false;
 };
 
 // ============================================================
@@ -50,10 +108,59 @@ const isPublicEndpoint = (url) => {
 // ============================================================
 api.interceptors.request.use(
     (config) => {
-        if (!isPublicEndpoint(config.url)) {
-            const token = localStorage.getItem('token');
+        // ✅ FIX [FORM-DATA-CONTENT-TYPE]:
+        // The axios instance defaults to application/json. For FormData
+        // uploads that header must be removed so the browser/XHR adds
+        // `multipart/form-data; boundary=...`. Without this, Django can
+        // receive the body but `request.FILES` stays empty — which looks
+        // like "the file was silently ignored".
+        if (
+            typeof FormData !== 'undefined'
+            && config.data instanceof FormData
+        ) {
+            if (config.headers && typeof config.headers.delete === 'function') {
+                config.headers.delete('Content-Type');
+            } else if (config.headers) {
+                delete config.headers['Content-Type'];
+                delete config.headers['content-type'];
+            }
+        }
+
+        // ✅ NEW: send the current language so DRF returns translated
+        // validation messages, and Django admin/emails follow suit.
+        // Handles both AxiosHeaders instances (axios ≥1.0) and plain
+        // objects (older axios / test mocks).
+        try {
+            const lang = getCurrentLanguage();
+            if (config.headers && typeof config.headers.set === 'function') {
+                config.headers.set('Accept-Language', lang);
+            } else {
+                config.headers = config.headers || {};
+                config.headers['Accept-Language'] = lang;
+            }
+        } catch {
+            /* i18n not initialised yet — ignore */
+        }
+
+        // ✅ FIX [AUTH-401-ON-PUBLIC]: now method-aware.
+        const method = (config.method || 'get').toLowerCase();
+        if (!isPublicEndpoint(config.url, method)) {
+            const token =
+                localStorage.getItem('token') || sessionStorage.getItem('token');
             if (token) {
-                config.headers.Authorization = `Bearer ${token}`;
+                if (config.headers && typeof config.headers.set === 'function') {
+                    config.headers.set('Authorization', `Bearer ${token}`);
+                } else {
+                    config.headers = config.headers || {};
+                    config.headers.Authorization = `Bearer ${token}`;
+                }
+            }
+        } else {
+            // ✅ Defensive: ensure a stale default header doesn't leak.
+            if (config.headers && typeof config.headers.delete === 'function') {
+                config.headers.delete('Authorization');
+            } else if (config.headers) {
+                delete config.headers.Authorization;
             }
         }
         return config;
@@ -164,7 +271,8 @@ api.interceptors.response.use(
         const isRefresh = originalRequest.url?.includes('/auth/refresh/');
         const skipAuthRedirect = originalRequest.skipAuthRedirect === true;
         // ✅ Public endpoints never trigger the refresh/redirect flow.
-        const isPublic = isPublicEndpoint(originalRequest.url);
+        const reqMethod = (originalRequest.method || 'get').toLowerCase();
+        const isPublic = isPublicEndpoint(originalRequest.url, reqMethod);
 
         if (
             error.response?.status !== 401 ||
@@ -200,7 +308,9 @@ api.interceptors.response.use(
 
                     const response = await axios.post(
                         `${API_URL}/auth/refresh/`,
-                        { refresh: refreshToken }
+                        { refresh: refreshToken },
+                        // ✅ NEW: send language on the raw refresh call too.
+                        { headers: { 'Accept-Language': getCurrentLanguage() } }
                     );
 
                     const { access, refresh: rotatedRefresh } =
@@ -231,8 +341,13 @@ api.interceptors.response.use(
 
         try {
             const access = await refreshPromise;
-            originalRequest.headers = originalRequest.headers || {};
-            originalRequest.headers.Authorization = `Bearer ${access}`;
+            // ✅ CHANGED: use .set() when available (axios ≥1.0).
+            if (originalRequest.headers && typeof originalRequest.headers.set === 'function') {
+                originalRequest.headers.set('Authorization', `Bearer ${access}`);
+            } else {
+                originalRequest.headers = originalRequest.headers || {};
+                originalRequest.headers.Authorization = `Bearer ${access}`;
+            }
             return api(originalRequest);
         } catch (refreshError) {
             console.error(

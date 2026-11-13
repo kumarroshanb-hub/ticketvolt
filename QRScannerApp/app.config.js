@@ -46,8 +46,17 @@ export default ({ config }) => ({
         showDemoCreds: showDemoCreds && !IS_PRODUCTION_BUILD,
         demoAdminEmail: process.env.DEMO_ADMIN_EMAIL,
         demoAdminPassword: process.env.DEMO_ADMIN_PASSWORD,
+        
+        // Legacy fallbacks kept for backward compatibility
         demoOrganizerEmail: process.env.DEMO_ORGANIZER_EMAIL,
         demoOrganizerPassword: process.env.DEMO_ORGANIZER_PASSWORD,
+        
+        // ✅ ADDED FOR 6-TIER HIERARCHY
+        demoOwnerEmail: process.env.DEMO_OWNER_EMAIL,
+        demoOwnerPassword: process.env.DEMO_OWNER_PASSWORD,
+        demoStaffEmail: process.env.DEMO_STAFF_EMAIL,
+        demoStaffPassword: process.env.DEMO_STAFF_PASSWORD,
+        
         demoUserEmail: process.env.DEMO_USER_EMAIL,
         demoUserPassword: process.env.DEMO_USER_PASSWORD,
     },

@@ -3,14 +3,21 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, TextField,
     MenuItem, Divider, Alert, CircularProgress, Paper,
-    Stack, InputAdornment,
+    Stack, InputAdornment, Switch, FormControlLabel, Checkbox
 } from '@mui/material';
-import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import {
+    Save as SaveIcon,
+    Refresh as RefreshIcon,
+    Payment as PaymentIcon
+} from '@mui/icons-material';
 import { toast } from 'react-toastify';
+import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { useSettings } from '../../context/SettingsContext';
-import { useAuth } from '../../context/AuthContext';
-import { ROLES } from '../../constants';
+import { useRole } from '../../context/RoleContext';
+import { theme } from '../../theme/tokens';
+
+const C = theme.colors;
 
 const INITIAL_FORM = {
     currency_code: 'HKD',
@@ -23,12 +30,14 @@ const INITIAL_FORM = {
     org_email: '',
     org_logo_url: '',
     email_from_name: '',
+    payments_enabled: false, // Global payment toggle
+    allowed_auth_methods: ['password', 'magic_link', 'otp'],
 };
 
 const PlatformSettingsTab = () => {
+    const { t } = useTranslation();
     const { formatMoney, refresh } = useSettings();
-    const { user } = useAuth();
-    const isSuperAdmin = user?.role === ROLES.SUPER_ADMIN;
+    const { isSuperAdmin } = useRole();
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -52,6 +61,8 @@ const PlatformSettingsTab = () => {
                 org_email: data.org_email ?? prev.org_email,
                 org_logo_url: data.org_logo_url ?? prev.org_logo_url,
                 email_from_name: data.email_from_name ?? prev.email_from_name,
+                payments_enabled: data.payments_enabled ?? prev.payments_enabled,
+                allowed_auth_methods: data.allowed_auth_methods?.length ? data.allowed_auth_methods : prev.allowed_auth_methods,
             }));
             if (data.catalog) {
                 setCatalog({
@@ -62,13 +73,13 @@ const PlatformSettingsTab = () => {
             }
         } catch (err) {
             console.error('Failed to load platform settings', err);
-            toast.error(err.response?.data?.detail || 'Failed to load settings');
+            toast.error(err.response?.data?.detail || t('platformSettings.loadFailed'));
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => { load(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const countryOptions = useMemo(() => {
         return (catalog.countries || []).map((c) => ({
@@ -91,7 +102,8 @@ const PlatformSettingsTab = () => {
     }, [catalog.currency_codes]);
 
     const handleChange = (field) => (e) => {
-        const value = e.target.value;
+        // Handle Switch (boolean) vs TextField (string)
+        const value = field === 'payments_enabled' ? e.target.checked : e.target.value;
         setForm((prev) => ({ ...prev, [field]: value }));
 
         if (field === 'country') {
@@ -113,7 +125,7 @@ const PlatformSettingsTab = () => {
     const handleSubmit = async (e) => {
         e?.preventDefault?.();
         if (!isSuperAdmin) {
-            toast.error('Only a super admin can change platform settings.');
+            toast.error(t('platformSettings.nonAdminToast'));
             return;
         }
         setSaving(true);
@@ -129,12 +141,14 @@ const PlatformSettingsTab = () => {
                 org_email: form.org_email,
                 org_logo_url: form.org_logo_url,
                 email_from_name: form.email_from_name,
+                payments_enabled: form.payments_enabled,
+                allowed_auth_methods: form.allowed_auth_methods,
             };
-            
+
             const { data } = await api.patch('/settings/', payload);
-            toast.success('Platform settings saved');
-            
-            // ✅ Force global context refresh so ALL pages re-render with new currency
+            toast.success(t('platformSettings.saved'));
+
+            // Force global context refresh so ALL pages re-render with new currency
             if (typeof refresh === 'function') {
                 await refresh();
             }
@@ -154,7 +168,7 @@ const PlatformSettingsTab = () => {
                     ? Object.entries(d).flatMap(([k, v]) =>
                           Array.isArray(v) ? v.map((m) => `${k}: ${m}`) : [`${k}: ${v}`]
                       )
-                    : ['Failed to save settings'];
+                    : [t('platformSettings.saveFailed')];
             setErrors(msgs);
             toast.error(msgs[0]);
         } finally {
@@ -174,7 +188,7 @@ const PlatformSettingsTab = () => {
         <Box>
             {!isSuperAdmin && (
                 <Alert severity="info" sx={{ mb: 2 }}>
-                    Platform settings are managed by a super admin. You can view them but not modify them.
+                    {t('platformSettings.nonAdminNotice')}
                 </Alert>
             )}
 
@@ -187,10 +201,10 @@ const PlatformSettingsTab = () => {
             >
                 <Box>
                     <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                        Platform Settings
+                        {t('platformSettings.title')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                        Currency, region, and branding defaults. Applies to every user.
+                        {t('platformSettings.subtitle')}
                     </Typography>
                 </Box>
                 <Stack direction="row" spacing={1}>
@@ -200,14 +214,14 @@ const PlatformSettingsTab = () => {
                         onClick={load}
                         disabled={saving}
                         sx={{
-                            px: 2, py: 1, border: '1px solid #e2e8f0', borderRadius: 2,
-                            background: '#fff', cursor: 'pointer', display: 'flex',
+                            px: 2, py: 1, border: `1px solid ${C.borderLight}`, borderRadius: 2,
+                            background: C.white, cursor: 'pointer', display: 'flex',
                             alignItems: 'center', gap: 1, fontSize: 14,
-                            '&:hover': { borderColor: '#94a3b8' },
+                            '&:hover': { borderColor: C.textLight },
                             '&:disabled': { opacity: 0.6, cursor: 'not-allowed' },
                         }}
                     >
-                        <RefreshIcon fontSize="small" /> Reload
+                        <RefreshIcon fontSize="small" /> {t('platformSettings.reload')}
                     </Box>
                     <Box
                         component="button"
@@ -216,8 +230,8 @@ const PlatformSettingsTab = () => {
                         disabled={saving || !isSuperAdmin}
                         sx={{
                             px: 2, py: 1, border: 'none', borderRadius: 2,
-                            background: 'linear-gradient(135deg,#0f172a 0%,#334155 100%)',
-                            color: '#fff',
+                            background: `linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primaryLight} 100%)`,
+                            color: C.textInverse,
                             cursor: saving || !isSuperAdmin ? 'not-allowed' : 'pointer',
                             display: 'flex', alignItems: 'center', gap: 1,
                             fontSize: 14, fontWeight: 600,
@@ -225,9 +239,9 @@ const PlatformSettingsTab = () => {
                         }}
                     >
                         {saving
-                            ? <CircularProgress size={16} sx={{ color: '#fff' }} />
+                            ? <CircularProgress size={16} sx={{ color: C.textInverse }} />
                             : <SaveIcon fontSize="small" />}
-                        {saving ? 'Saving…' : 'Save Settings'}
+                        {saving ? t('platformSettings.saving') : t('platformSettings.save')}
                     </Box>
                 </Stack>
             </Stack>
@@ -241,19 +255,103 @@ const PlatformSettingsTab = () => {
             )}
 
             <Grid container spacing={3}>
+                {/* Global Payment Gateways Toggle */}
+                <Grid item xs={12}>
+                    <Card sx={{ border: '2px solid', borderColor: form.payments_enabled ? 'success.main' : 'divider' }}>
+                        <CardContent>
+                            <Stack direction="row" spacing={2} alignItems="center">
+                                <PaymentIcon sx={{ color: form.payments_enabled ? 'success.main' : 'text.secondary', fontSize: 36 }} />
+                                <Box sx={{ flex: 1 }}>
+                                    <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                                        {t('platformSettings.paymentsTitle')}
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                        {t('platformSettings.paymentsDescription')}
+                                    </Typography>
+                                </Box>
+                                <FormControlLabel
+                                    control={
+                                        <Switch
+                                            checked={Boolean(form.payments_enabled)}
+                                            onChange={handleChange('payments_enabled')}
+                                            color="success"
+                                            disabled={!isSuperAdmin || saving}
+                                            size="large"
+                                        />
+                                    }
+                                    label={
+                                        <Typography variant="body1" sx={{ fontWeight: 700, color: form.payments_enabled ? 'success.main' : 'text.secondary' }}>
+                                            {form.payments_enabled ? t('platformSettings.paymentsEnabled') : t('platformSettings.paymentsDisabled')}
+                                        </Typography>
+                                    }
+                                    labelPlacement="start"
+                                    sx={{ ml: 0, mr: 0 }}
+                                />
+                            </Stack>
+                            {form.payments_enabled && (
+                                <Alert severity="success" sx={{ mt: 2 }}>
+                                    {t('platformSettings.paymentsEnabledAlert')}
+                                </Alert>
+                            )}
+                            {!form.payments_enabled && (
+                                <Alert severity="warning" sx={{ mt: 2 }}>
+                                    {t('platformSettings.paymentsDisabledAlert')}
+                                </Alert>
+                            )}
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Card>
+                        <CardContent>
+                            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+                                {t('platformSettings.authMethodsTitle', 'Login methods')}
+                            </Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                                {t('platformSettings.authMethodsDescription', 'Choose which sign-in methods are available platform-wide. Organizations can further restrict these based on tier.')}
+                            </Typography>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                                {[
+                                    ['password', 'Email + password'],
+                                    ['magic_link', 'Magic link'],
+                                    ['otp', 'OTP code'],
+                                    ['google', 'Google'],
+                                ].map(([method, label]) => (
+                                    <FormControlLabel
+                                        key={method}
+                                        control={
+                                            <Checkbox
+                                                checked={(form.allowed_auth_methods || []).includes(method)}
+                                                disabled={!isSuperAdmin || saving}
+                                                onChange={(e) => {
+                                                    const current = new Set(form.allowed_auth_methods || []);
+                                                    if (e.target.checked) current.add(method); else current.delete(method);
+                                                    setForm((prev) => ({ ...prev, allowed_auth_methods: Array.from(current) }));
+                                                }}
+                                            />
+                                        }
+                                        label={label}
+                                    />
+                                ))}
+                            </Stack>
+                        </CardContent>
+                    </Card>
+                </Grid>
+
                 <Grid item xs={12} md={6}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                                Region &amp; Currency
+                                {t('platformSettings.regionCurrencyTitle')}
                             </Typography>
 
                             <TextField
-                                select fullWidth label="Country"
+                                select fullWidth label={t('platformSettings.countryLabel')}
                                 value={form.country || ''}
                                 onChange={handleChange('country')}
                                 disabled={!isSuperAdmin}
-                                helperText="Changing the country auto-syncs currency and timezone."
+                                helperText={t('platformSettings.countryHelper')}
                                 sx={{ mb: 2 }}
                             >
                                 {countryOptions.map((c) => (
@@ -264,7 +362,7 @@ const PlatformSettingsTab = () => {
                             </TextField>
 
                             <TextField
-                                select fullWidth label="Currency"
+                                select fullWidth label={t('platformSettings.currencyLabel')}
                                 value={form.currency_code || ''}
                                 onChange={handleChange('currency_code')}
                                 disabled={!isSuperAdmin}
@@ -280,7 +378,7 @@ const PlatformSettingsTab = () => {
                             <Grid container spacing={2}>
                                 <Grid item xs={6}>
                                     <TextField
-                                        fullWidth label="Symbol"
+                                        fullWidth label={t('platformSettings.symbolLabel')}
                                         value={form.currency_symbol}
                                         onChange={handleChange('currency_symbol')}
                                         disabled={!isSuperAdmin}
@@ -293,24 +391,24 @@ const PlatformSettingsTab = () => {
                                 </Grid>
                                 <Grid item xs={6}>
                                     <TextField
-                                        fullWidth label="Locale"
+                                        fullWidth label={t('platformSettings.localeLabel')}
                                         value={form.currency_locale}
                                         onChange={handleChange('currency_locale')}
                                         disabled={!isSuperAdmin}
-                                        helperText="e.g. en-HK"
+                                        helperText={t('platformSettings.localeHelper')}
                                     />
                                 </Grid>
                             </Grid>
 
                             <Paper variant="outlined" sx={{ p: 2, mt: 2, bgcolor: 'background.default' }}>
                                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                    Preview
+                                    {t('platformSettings.previewLabel')}
                                 </Typography>
                                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
                                     {formatMoney(1234.5)}
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                    How a price renders on events, tickets and refunds.
+                                    {t('platformSettings.previewHint')}
                                 </Typography>
                             </Paper>
                         </CardContent>
@@ -321,61 +419,61 @@ const PlatformSettingsTab = () => {
                     <Card>
                         <CardContent>
                             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                                Timezone &amp; Branding
+                                {t('platformSettings.timezoneBrandingTitle')}
                             </Typography>
 
                             <TextField
-                                fullWidth label="Default timezone"
+                                fullWidth label={t('platformSettings.defaultTimezoneLabel')}
                                 value={form.default_timezone}
                                 onChange={handleChange('default_timezone')}
                                 disabled={!isSuperAdmin}
-                                helperText="IANA timezone, e.g. Asia/Hong_Kong"
+                                helperText={t('platformSettings.defaultTimezoneHelper')}
                                 sx={{ mb: 2 }}
                             />
                             <TextField
-                                fullWidth label="Organisation name"
+                                fullWidth label={t('platformSettings.orgNameLabel')}
                                 value={form.org_name}
                                 onChange={handleChange('org_name')}
                                 disabled={!isSuperAdmin}
                                 sx={{ mb: 2 }}
                             />
                             <TextField
-                                fullWidth label="Organisation email" type="email"
+                                fullWidth label={t('platformSettings.orgEmailLabel')} type="email"
                                 value={form.org_email}
                                 onChange={handleChange('org_email')}
                                 disabled={!isSuperAdmin}
                                 sx={{ mb: 2 }}
                             />
                             <TextField
-                                fullWidth label="Email 'from' name"
+                                fullWidth label={t('platformSettings.emailFromNameLabel')}
                                 value={form.email_from_name}
                                 onChange={handleChange('email_from_name')}
                                 disabled={!isSuperAdmin}
-                                helperText="Displayed as the sender name on outgoing emails."
+                                helperText={t('platformSettings.emailFromNameHelper')}
                                 sx={{ mb: 2 }}
                             />
                             <TextField
-                                fullWidth label="Logo URL"
+                                fullWidth label={t('platformSettings.logoUrlLabel')}
                                 value={form.org_logo_url}
                                 onChange={handleChange('org_logo_url')}
                                 disabled={!isSuperAdmin}
-                                helperText="Used in emails and PDFs. Must be a public URL."
+                                helperText={t('platformSettings.logoUrlHelper')}
                             />
 
                             {form.org_logo_url && (
                                 <>
                                     <Divider sx={{ my: 2 }} />
                                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                        Logo preview
+                                        {t('platformSettings.logoPreviewLabel')}
                                     </Typography>
                                     <Box
                                         component="img"
                                         src={form.org_logo_url}
-                                        alt="Organisation logo"
+                                        alt={t('platformSettings.logoAlt')}
                                         sx={{
                                             display: 'block', maxHeight: 64, maxWidth: 200,
-                                            mt: 1, borderRadius: 1, border: '1px solid #e2e8f0',
-                                            p: 1, bgcolor: '#fff',
+                                            mt: 1, borderRadius: 1, border: `1px solid ${C.borderLight}`,
+                                            p: 1, bgcolor: C.textInverse,
                                         }}
                                         onError={(e) => { e.currentTarget.style.display = 'none'; }}
                                     />

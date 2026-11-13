@@ -156,3 +156,114 @@ def flush_expired_tokens():
     except Exception as exc:
         logger.exception('flushexpiredtokens failed: %s', exc)
         return {'status': 'error', 'detail': str(exc)}
+
+@shared_task
+def release_expired_payment_holds():
+    from .services import inventory_hold
+    released = inventory_hold.release_expired_holds()
+    if released:
+        logger.info('Released %d expired payment holds', released)
+
+
+@shared_task
+def reconcile_payment(payment_id):
+    """Sync a stuck payment against the gateway's authoritative status."""
+    from .models_payments import Payment, PaymentStatus
+    from .services.payments import get_provider
+    from .services.payment_fulfillment import fulfill_payment, fail_payment
+
+    payment = Payment.objects.get(pk=payment_id)
+    if payment.status in (PaymentStatus.PAID, PaymentStatus.REFUNDED):
+        return
+    provider = get_provider(payment.gateway, organization=payment.organization)
+    gw_status = provider.fetch_status(payment)
+
+    if gw_status in ('captured', 'succeeded'):
+        fulfill_payment(payment.id)
+    elif gw_status in ('failed', 'canceled'):
+        fail_payment(payment.id)
+
+
+@shared_task
+def send_donation_receipts():
+    """Issue and email donation receipts for paid bookings.
+
+    Runs independently of the payment gateway so direct/offline bookings
+    are covered too. The receipt number is allocated once.
+    """
+    from ticket_bookings.models import Booking
+    from ticket_bookings.services.booking_emails import send_billing_receipt
+    from ticket_bookings.managers import SOLD_BOOKING_STATUSES
+
+    sent = 0
+    skipped = 0
+    qs = Booking.objects.filter(
+        status__in=SOLD_BOOKING_STATUSES,
+        donation_amount__gt=0,
+        donation_tax_receipt_number__isnull=True,
+    ).select_related('event__organization')[:500]
+    for booking in qs:
+        org = booking.event.organization
+        if not org.auto_email_donation_receipt or not booking.donation_tax_eligible:
+            skipped += 1
+            continue
+        result = send_billing_receipt(booking, attach_tax_receipt=True)
+        if result.get('success'):
+            sent += 1
+        else:
+            skipped += 1
+    return {'sent': sent, 'skipped': skipped}
+
+
+@shared_task
+def send_event_reminders():
+    """Send 2-day and morning-of reminders for paid bookings."""
+    from datetime import timedelta
+    from django.conf import settings
+    from django.core.mail import EmailMultiAlternatives
+    from ticket_bookings.models import Event, Booking
+    from ticket_bookings.managers import SOLD_BOOKING_STATUSES
+
+    now = timezone.now()
+    today = timezone.localdate()
+    targets = {
+        'reminder_2d_sent_at': today + timedelta(days=2),
+        'reminder_day_sent_at': today,
+    }
+    sent = 0
+    for field, target_date in targets.items():
+        events = Event.objects.filter(
+            start_date__date=target_date,
+            status__in=('active', 'published'),
+        )
+        for event in events:
+            bookings = Booking.objects.filter(
+                event=event,
+                status__in=SOLD_BOOKING_STATUSES,
+                **{f'{field}__isnull': True},
+            ).exclude(customer_email='')
+            for booking in bookings:
+                when = 'tomorrow' if field == 'reminder_2d_sent_at' else 'today'
+                subject = f'Reminder: {event.title} is {when}'
+                venue = getattr(event.venue, 'name', '') if event.venue else ''
+                body = (
+                    f'Hello {booking.customer_name},\n\n'
+                    f'This is a reminder that {event.title} is {when}.\n'
+                    f'Start: {event.start_date:%d %b %Y %H:%M}\n'
+                    f'Venue: {venue}\n\n'
+                    f'Booking reference: {booking.booking_reference}\n'
+                    f'Please have your QR ticket ready at the door.\n'
+                )
+                try:
+                    EmailMultiAlternatives(
+                        subject=subject,
+                        body=body,
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        to=[booking.customer_email],
+                    ).send(fail_silently=True)
+                    setattr(booking, field, now)
+                    booking.save(update_fields=[field])
+                    sent += 1
+                except Exception:
+                    logger.exception('Reminder failed for booking %s', booking.booking_reference)
+    return {'sent': sent}

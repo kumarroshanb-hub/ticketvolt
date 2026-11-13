@@ -5,16 +5,17 @@ import {
     CircularProgress, useMediaQuery, useTheme,
 } from '@mui/material';
 import { BulkActionsBar, PrimaryButton, OutlineButton } from '../../../components/Common';
+import { useTranslation } from 'react-i18next';
 import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
 
 const BULK_OPTIONS = [
-    { value: 'mark_payment_received',              label: '💰 Mark Payment Received' },
-    { value: 'confirm_payment_and_issue_tickets',  label: '💰 Confirm Payment & Issue Tickets' },
-    { value: 'issue_tickets',                      label: '🎫 Issue Tickets' },
-    { value: 'regenerate_ticket_qr',               label: '🔄 Regenerate QR Codes' },
-    { value: 'cancel_booking',                     label: '❌ Cancel Bookings' },
+    { value: 'mark_payment_received',              labelKey: 'booking.actionMarkPayment' },
+    { value: 'confirm_payment_and_issue_tickets',  labelKey: 'booking.actionConfirmPayment' },
+    { value: 'issue_tickets',                      labelKey: 'booking.actionIssueTickets' },
+    { value: 'regenerate_ticket_qr',               labelKey: 'booking.actionRegenerateQr' },
+    { value: 'cancel_booking',                     labelKey: 'booking.actionCancelBookings' },
 ];
 
 export const BookingsBulkBar = ({
@@ -25,6 +26,7 @@ export const BookingsBulkBar = ({
     onClear,
     loading,
 }) => {
+    const { t } = useTranslation();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -32,14 +34,14 @@ export const BookingsBulkBar = ({
         <BulkActionsBar>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', width: '100%' }}>
                 <Typography variant="body2" fontWeight="bold" sx={{ color: C.textPrimary }}>
-                    {selectedCount} booking(s) selected
+                    {t('booking.selectedCount', { count: selectedCount })}
                 </Typography>
                 <FormControl size="small" sx={{ minWidth: 200, flex: isMobile ? 1 : 'unset' }}>
-                    <InputLabel sx={{ color: C.textSecondary }}>Bulk Action</InputLabel>
+                    <InputLabel sx={{ color: C.textSecondary }}>{t('bookings.bulkActionLabel')}</InputLabel>
                     <Select
                         value={bulkAction}
                         onChange={(e) => onBulkActionChange(e.target.value)}
-                        label="Bulk Action"
+                        label={t('bookings.bulkActionLabel')}
                         sx={{
                             color: C.textPrimary,
                             '& .MuiOutlinedInput-notchedOutline': { borderColor: C.borderLight },
@@ -48,7 +50,7 @@ export const BookingsBulkBar = ({
                     >
                         {BULK_OPTIONS.map((opt) => (
                             <MenuItem key={opt.value} value={opt.value}>
-                                {opt.label}
+                                {t(opt.labelKey)}
                             </MenuItem>
                         ))}
                     </Select>
@@ -59,7 +61,7 @@ export const BookingsBulkBar = ({
                     disabled={!bulkAction || loading}
                     sx={isMobile ? { flex: 1 } : undefined}
                 >
-                    {loading ? <CircularProgress size={24} /> : 'Apply'}
+                    {loading ? <CircularProgress size={24} /> : t('common.apply')}
                 </PrimaryButton>
                 <OutlineButton
                     variant="outlined"
@@ -75,7 +77,7 @@ export const BookingsBulkBar = ({
                         },
                     }}
                 >
-                    Clear
+                    {t('common.clear')}
                 </OutlineButton>
             </Box>
         </BulkActionsBar>

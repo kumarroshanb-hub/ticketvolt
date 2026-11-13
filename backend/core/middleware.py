@@ -43,3 +43,72 @@ class ActivityTrackingMiddleware(MiddlewareMixin):
                     last_active__isnull=True,
                 ).update(last_active=now)
         return response
+
+class TenantDomainMiddleware:
+    """Resolve a verified custom hostname to its tenant.
+
+    Sets ``request.organization`` when the request host matches a verified
+    Organization.custom_domain. The rest of the stack can use this for
+    host-based public pages and future per-domain routing.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        request.organization = None
+        host = request.get_host().split(':')[0].lower()
+        if host and host not in ('localhost', '127.0.0.1', 'testserver'):
+            try:
+                from ticket_bookings.models import Organization
+                request.organization = Organization.objects.filter(
+                    custom_domain__iexact=host,
+                    domain_verified=True,
+                    is_active=True,
+                ).first()
+            except Exception:
+                request.organization = None
+        return self.get_response(request)
+
+
+class AuditLogMiddleware:
+    """Record mutating API requests for the tenant audit trail."""
+
+    SKIP_PREFIXES = ('/api/auth/', '/api/payments/webhook/', '/api/platform/stripe-webhook/')
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        try:
+            if (
+                request.method in ('POST', 'PUT', 'PATCH', 'DELETE')
+                and request.path.startswith('/api/')
+                and not any(request.path.startswith(p) for p in self.SKIP_PREFIXES)
+                and getattr(request, 'user', None)
+                and request.user.is_authenticated
+            ):
+                from ticket_bookings.models import AuditLog
+                org = getattr(request, 'organization', None)
+                if org is None:
+                    from ticket_bookings.models import Organization
+                    from ticket_bookings.services import tenancy
+                    for candidate in Organization.objects.filter(
+                        id__in=tenancy.user_org_ids(request.user),
+                    ):
+                        if tenancy.can_manage_org(request.user, candidate):
+                            org = candidate
+                            break
+                AuditLog.objects.create(
+                    organization=org,
+                    actor=request.user,
+                    action=f'{request.method} {request.path}',
+                    method=request.method,
+                    path=request.path[:500],
+                    status_code=getattr(response, 'status_code', None),
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                )
+        except Exception:
+            pass
+        return response

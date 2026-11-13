@@ -224,17 +224,10 @@ const switchSx = {
 // The 5 user-facing tabs are always present.
 // The Platform tab is appended only for superadmins.
 const getSettingsTabs = (canManagePlatform, t) => {
-    const tabs = [
-        { id: 'profile', label: t('settings.tabProfile'), icon: <PersonIcon /> },
-        { id: 'security', label: t('settings.tabSecurity'), icon: <SecurityIcon /> },
-        { id: 'notifications', label: t('settings.tabNotifications'), icon: <NotificationsIcon /> },
-        { id: 'appearance', label: t('settings.tabAppearance'), icon: <PaletteIcon /> },
-        { id: 'language', label: t('settings.tabLanguage'), icon: <LanguageIcon /> },
+    if (!canManagePlatform) return [];
+    return [
+        { id: 'platform', label: t('settings.tabPlatform'), icon: <SettingsIcon /> },
     ];
-    if (canManagePlatform) {
-        tabs.push({ id: 'platform', label: t('settings.tabPlatform'), icon: <SettingsIcon /> });
-    }
-    return tabs;
 };
 
 // ============================================
@@ -251,7 +244,7 @@ const Settings = () => {
     const { isSuperAdmin } = useRole();
     const canManagePlatform = Boolean(isSuperAdmin);
 
-    const [activeTab, setActiveTab] = useState('profile');
+    const [activeTab, setActiveTab] = useState('platform');
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [success, setSuccess] = useState('');
@@ -275,7 +268,7 @@ const Settings = () => {
     // Defensive: if the user's role changes (or a non-admin lands here with
     // a stale activeTab='platform' value), fall back to 'profile'.
     useEffect(() => {
-        if (activeTab === 'platform' && !canManagePlatform) {
+        if (!canManagePlatform && activeTab === 'platform') {
             setActiveTab('profile');
         }
     }, [activeTab, canManagePlatform]);

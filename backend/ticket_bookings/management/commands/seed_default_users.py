@@ -42,6 +42,10 @@ class Command(BaseCommand):
             '--all', action='store_true',
             help='Create every role whose email and password env vars are set.',
         )
+        parser.add_argument(
+            '--reset-passwords', action='store_true',
+            help='Reset passwords for existing seeded users to the configured env values.',
+        )
 
     def _seed_org(self):
         name = (os.environ.get('DJANGO_ORG_NAME') or 'Demo Organization').strip()
@@ -90,6 +94,7 @@ class Command(BaseCommand):
         updated = 0
         skipped = 0
         org = None
+        superadmin_user = None
 
         for username, email_key, password_key, platform_admin, org_role in ROLES:
             email = (os.environ.get(email_key) or '').strip()
@@ -121,6 +126,10 @@ class Command(BaseCommand):
                 created += 1
                 self.stdout.write(self.style.SUCCESS(f'✅ Created {username}'))
             else:
+                if options.get('reset_passwords'):
+                    user.set_password(password)
+                    user.save(update_fields=['password'])
+                    self.stdout.write(self.style.SUCCESS(f'🔑 Password reset for {username}'))
                 changed = False
                 for field, value in (
                     ('email', email),
@@ -137,9 +146,58 @@ class Command(BaseCommand):
                 self.stdout.write(f'• {username}: already exists')
             UserProfile.objects.get_or_create(user=user, defaults={'email': email})
 
+            if platform_admin:
+                superadmin_user = user
+
             if org_role is not None:
                 org = org or self._seed_org()
                 self._membership(org, user, org_role)
+
+        # Platform Admins are platform-wide and must not hold organization
+        # memberships. If an existing owner membership is found, transfer the
+        # owner seat to the seeded 'owner' user before removing the superuser
+        # membership. This also cleans up old deployments created before the
+        # platform/tenant separation.
+        if superadmin_user is not None:
+            from django.contrib.auth.models import User
+            owner_user = User.objects.filter(username='owner').first()
+            memberships = list(
+                OrganizationMembership.objects.filter(user=superadmin_user)
+                .select_related('organization')
+            )
+            for membership in memberships:
+                if membership.is_owner and owner_user is not None:
+                    # Demote the superuser first so the one-live-owner
+                    # constraint never sees two owners at once.
+                    membership.is_owner = False
+                    membership.save(update_fields=['is_owner'])
+                    owner_membership = OrganizationMembership.objects.filter(
+                        organization=membership.organization, user=owner_user,
+                    ).first()
+                    if owner_membership is None:
+                        OrganizationMembership.objects.create(
+                            organization=membership.organization,
+                            user=owner_user,
+                            role=OrgRole.ADMIN,
+                            is_owner=True,
+                            is_active=True,
+                            valid_from=timezone.now(),
+                        )
+                    else:
+                        owner_membership.role = OrgRole.ADMIN
+                        owner_membership.is_owner = True
+                        owner_membership.is_active = True
+                        owner_membership.removed_at = None
+                        owner_membership.save(update_fields=[
+                            'role', 'is_owner', 'is_active', 'removed_at',
+                        ])
+                    self.stdout.write(self.style.SUCCESS(
+                        f'🔁 Transferred {membership.organization.name} ownership to owner'
+                    ))
+                membership.delete()
+                self.stdout.write(self.style.SUCCESS(
+                    '🧹 Removed superuser organization membership'
+                ))
 
         self.stdout.write(self.style.SUCCESS(
             f'Default users: created={created}, updated={updated}, skipped={skipped}'

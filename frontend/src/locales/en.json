@@ -222,7 +222,8 @@
         "editingUnsupported": "Profile editing is not supported.",
         "platformRole": "Platform role",
         "orgRole": "Organization role",
-        "manageMembership": "Membership & family"
+        "manageMembership": "Membership & family",
+        "platformAdminMembershipNote": "Platform Admins operate platform-wide and do not require an organization membership."
     },
     "forgotPassword": {
         "title": "Forgot Password",
@@ -1636,7 +1637,9 @@
             "parent": "Parent",
             "sibling": "Sibling",
             "other": "Other"
-        }
+        },
+        "myMemberships": "My memberships",
+        "addFamilyBeforeReview": "Add family members now; the admin will review them with your offline payment."
     },
     "bulkUpload": {
         "title": "Bulk Add Members",

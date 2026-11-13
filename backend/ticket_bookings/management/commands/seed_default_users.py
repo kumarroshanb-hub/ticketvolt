@@ -34,6 +34,14 @@ ROLES = [
 ]
 
 
+def _first_env(*names):
+    for name in names:
+        value = (os.environ.get(name) or '').strip()
+        if value:
+            return value
+    return ''
+
+
 class Command(BaseCommand):
     help = 'Create default platform users and organization memberships from environment variables.'
 
@@ -97,8 +105,12 @@ class Command(BaseCommand):
         superadmin_user = None
 
         for username, email_key, password_key, platform_admin, org_role in ROLES:
-            email = (os.environ.get(email_key) or '').strip()
-            password = (os.environ.get(password_key) or '').strip()
+            if username == 'superadmin':
+                email = _first_env('DJANGO_SUPERADMIN_EMAIL', 'DJANGO_SUPERUSER_EMAIL', 'SUPERADMIN_EMAIL', 'SUPER_ADMIN_EMAIL')
+                password = _first_env('DJANGO_SUPERADMIN_PASSWORD', 'DJANGO_SUPERUSER_PASSWORD', 'SUPERADMIN_PASSWORD', 'SUPER_ADMIN_PASSWORD')
+            else:
+                email = (os.environ.get(email_key) or '').strip()
+                password = (os.environ.get(password_key) or '').strip()
             if not email or not password:
                 skipped += 1
                 self.stdout.write(self.style.WARNING(
@@ -130,6 +142,11 @@ class Command(BaseCommand):
                     user.set_password(password)
                     user.save(update_fields=['password'])
                     self.stdout.write(self.style.SUCCESS(f'🔑 Password reset for {username}'))
+                else:
+                    self.stdout.write(self.style.WARNING(
+                        f'🔒 {username}: password unchanged. Rerun with '
+                        '--reset-passwords to apply the env password.'
+                    ))
                 changed = False
                 for field, value in (
                     ('email', email),

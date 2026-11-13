@@ -142,6 +142,7 @@ const CreateVenue = () => {
         capacity: '',
         contact_phone: '',
         contact_email: '',
+        map_url: '',
         has_reserved_seating: false,
         is_active: true,
         organization_id: '',
@@ -199,6 +200,7 @@ const CreateVenue = () => {
                 capacity: data.capacity || '',
                 contact_phone: data.contact_phone || '',
                 contact_email: data.contact_email || '',
+                map_url: data.map_url || '',
                 has_reserved_seating: data.has_reserved_seating || false,
                 is_active: data.is_active !== undefined ? data.is_active : true,
                 organization_id: data.organization || currentOrgId || '',
@@ -524,6 +526,18 @@ const CreateVenue = () => {
                                 inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
                                 value={formData.capacity}
                                 onChange={handleChange}
+                            />
+                        </Grid>
+
+                        <Grid item xs={12}>
+                            <StyledTextField
+                                fullWidth
+                                label={t('venues.mapUrlLabel', 'Map link')}
+                                name="map_url"
+                                value={formData.map_url || ''}
+                                onChange={handleChange}
+                                placeholder="https://maps.google.com/..."
+                                helperText={t('venues.mapUrlHelper', 'Google Maps or any public map link for this venue.')}
                             />
                         </Grid>
 

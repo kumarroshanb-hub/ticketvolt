@@ -10,6 +10,7 @@ import {
     KeyboardArrowDown as KeyboardArrowDownIcon,
     Person as PersonIcon,
     Logout as LogoutIcon,
+    WorkspacePremium as MembershipIcon,
 } from '@mui/icons-material';
 import { theme } from '../../theme/tokens';
 import LanguageSwitcher from '../LanguageSwitcher';
@@ -290,6 +291,12 @@ const PAGE_TITLE_KEYS = {
     '/app/membership':             'nav.membership',
     '/app/cancellation-policies':  'nav.cancellationPolicies',
     '/app/active-sessions':        'nav.activeSessions',
+    '/app/payment-settings':      'nav.paymentSettings',
+    '/app/payouts':               'nav.payouts',
+    '/app/audit-logs':            'nav.auditLogs',
+    '/app/features':              'nav.features',
+    '/app/reports':               'nav.reports',
+    '/app/organizations':         'nav.organizations',
 };
 
 const getPageTitleKeyFromPath = (pathname, isGuest) => {
@@ -466,6 +473,17 @@ const Navbar = ({ onMenuToggle, isMobile = false }) => {
                                 <DropdownItem role="menuitem" onClick={handleGoToProfile}>
                                     <PersonIcon />
                                     {t('nav.profile')}
+                                </DropdownItem>
+
+                                <DropdownItem
+                                    role="menuitem"
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        navigate('/app/profile#memberships');
+                                    }}
+                                >
+                                    <MembershipIcon />
+                                    {t('profile.myMemberships', 'My memberships')}
                                 </DropdownItem>
 
                                 <DropdownItem

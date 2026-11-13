@@ -35,6 +35,7 @@ def build_venue_snapshot(venue) -> dict:
         'contact_phone': venue.contact_phone,
         'contact_email': venue.contact_email,
         'website_url': venue.website_url,
+        'map_url': getattr(venue, 'map_url', '') or '',
         'amenities': venue.amenities,
         'rules': venue.rules,
         'is_active': venue.is_active,

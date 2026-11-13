@@ -14,7 +14,6 @@ import {
 import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';                      // ✅ NEW
-import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
 import eventService from '../../services/eventService';
@@ -277,7 +276,25 @@ const TierItem = styled.div`
 
 const StyledActions = styled(CardActions)`
     && {
-        padding: 0 22px 22px 22px;
+        padding: 18px 22px 22px 22px;
+        position: relative;
+        border-top: 1px dashed ${C.borderHover};
+
+        &::before,
+        &::after {
+            content: "";
+            position: absolute;
+            top: -8px;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: ${C.bgPrimary};
+            border: 1px solid ${C.borderLight};
+            z-index: 2;
+        }
+
+        &::before { left: -8px; }
+        &::after { right: -8px; }
     }
 `;
 
@@ -500,7 +517,13 @@ const EventCard = ({
     const sessions = event.sessions || [];
 
     let availableSlots = 0;
-    if (sessions.length > 0) {
+    if (event.venue?.has_reserved_seating) {
+        // Reserved-seat events are limited by the physical seat map,
+        // never by a session capacity configured independently.
+        availableSlots = typeof event.available_seats === 'number'
+            ? event.available_seats
+            : Math.max(0, (event.total_capacity || 0) - (event.total_tickets_sold || 0));
+    } else if (sessions.length > 0) {
         availableSlots = sessions.reduce(
             (sum, session) => sum + Math.max(0, (session.capacity || 0) - (session.booked || 0)),
             0
@@ -517,7 +540,9 @@ const EventCard = ({
     const prices = tiers
         .map((tier) => parseFloat(tier.price))
         .filter((p) => !isNaN(p) && p > 0);
-    const minPrice = prices.length ? Math.min(...prices) : null;
+    const minPrice = prices.length
+        ? Math.min(...prices)
+        : (Number(event.min_seat_price) > 0 ? Number(event.min_seat_price) : null);
     const lowStock = availableSlots > 0 && availableSlots <= 10;
 
     const flow = resolveFlow(event);
@@ -576,22 +601,41 @@ const EventCard = ({
             sx={selected ? { border: `2px solid ${C.primary}` } : {}}
         >
             {showImage ? (
-                <CardImageBanner>
-                    <img
-                        src={announcementImage}
-                        alt={event.title}
-                        onError={() => {
-                            console.error('❌ Image failed to load:', announcementImage);
-                            setImageFailed(true);
-                        }}
-                    />
-                </CardImageBanner>
+                <a
+                    href={`/events/${event.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'block', height: '100%' }}
+                    aria-label={event.title}
+                >
+                    <CardImageBanner>
+                        <img
+                            src={announcementImage}
+                            alt={event.title}
+                            onError={() => {
+                                console.error('❌ Image failed to load:', announcementImage);
+                                setImageFailed(true);
+                            }}
+                        />
+                    </CardImageBanner>
+                </a>
             ) : (
                 <TopAccent $isSoldOut={isActuallySoldOut} />
             )}
             <CardBody>
                 <TitleRow>
-                    <EventTitle>{event.title}</EventTitle>
+                    <EventTitle
+                        component="a"
+                        href={`/events/${event.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={{
+                            textDecoration: 'none',
+                            '&:hover': { textDecoration: 'underline', color: C.secondary },
+                        }}
+                    >
+                        {event.title}
+                    </EventTitle>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end', flexShrink: 0 }}>
                         <CategoryTag>
                             {getCategoryIcon(event.category)} {event.category || t('eventCard.event')}
@@ -735,6 +779,14 @@ const EventCard = ({
             </CardBody>
 
             <StyledActions>
+                <Button
+                    size="small"
+                    startIcon={<VisibilityIcon />}
+                    onClick={() => navigate(`/events/${event.id}`)}
+                    sx={{ textTransform: 'none', mr: 1 }}
+                >
+                    {t('eventCard.details', 'Details')}
+                </Button>
                 <BookButton
                     variant="contained"
                     onClick={handleCtaClick}

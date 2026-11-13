@@ -9,6 +9,12 @@ import {
   Place as VenueIcon,
   ConfirmationNumber as TicketIcon,
   Analytics as AnalyticsIcon,
+  Assessment as ReportsIcon,
+  CreditCard as PaymentIcon,
+  AccountBalance as PayoutIcon,
+  ReceiptLong as AuditIcon,
+  ToggleOn as FeatureIcon,
+  Security as SecurityIcon,
   Discount as DiscountIcon,
   Settings as SettingsIcon,
   ChevronLeft,
@@ -18,12 +24,13 @@ import {
   Close as CloseIcon,
   Logout as LogoutIcon,
   Business as BusinessIcon,
-  WorkspacePremium as MembershipIcon,
+  Policy as PolicyIcon,
   Devices as SessionsIcon,
   AccountBalanceWallet as BillingIcon,
 } from '@mui/icons-material';
 import { useRole } from '../../context/RoleContext';
 import { useAuth } from '../../context/AuthContext';
+import { useOrg } from '../../context/OrgContext';
 import {
   PLATFORM_ROLES,
   MEMBERSHIP_ROLES,
@@ -82,6 +89,7 @@ const RoleBadge = styled.div`
       case 'org-owner':      return C.warningDark;
       case 'org-admin':      return C.infoDark;
       case 'org-staff':      return C.secondaryDark;
+      case 'org-finance':    return C.successDark;
       case 'org-member':     return C.primaryDark;
       default:               return C.textSecondary;
     }
@@ -249,6 +257,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     isOwner,
   } = useRole();
   const { logout, isAuthenticated } = useAuth();
+  const { currentOrg, hasNoMemberships } = useOrg();
   const { t } = useTranslation();
 
   const isGuest = !isAuthenticated;
@@ -302,16 +311,17 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       section: 'management',
     },
     {
+      path: '/app/cancellation-policies',
+      icon: <PolicyIcon />,
+      label: t('nav.cancellationPolicies', 'Cancellation policies'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
       path: '/app/bookings',
       icon: <TicketIcon />,
       label: t('nav.bookings'),
-      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
-      section: 'main',
-    },
-    {
-      path: '/app/membership',
-      icon: <MembershipIcon />,
-      label: t('nav.membership', 'Membership'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
       section: 'main',
     },
@@ -320,8 +330,8 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       icon: <BillingIcon />,
       label: t('nav.billing'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
-      minOrgRole: MEMBERSHIP_ROLES.STAFF,
-      section: 'operations',
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
     },
     {
       path: '/app/checkin',
@@ -348,6 +358,52 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       section: 'management',
     },
     {
+      path: '/app/reports',
+      icon: <ReportsIcon />,
+      label: t('nav.reports'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/payment-settings',
+      icon: <PaymentIcon />,
+      label: t('nav.paymentSettings'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/payouts',
+      icon: <PayoutIcon />,
+      label: t('nav.payouts'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN, MEMBERSHIP_ROLES.FINANCE],
+      section: 'finance',
+    },
+    {
+      path: '/app/security',
+      icon: <SecurityIcon />,
+      label: t('nav.security', 'Security'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
+      path: '/app/features',
+      icon: <FeatureIcon />,
+      label: t('nav.features', 'Feature Entitlements'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN],
+      section: 'admin',
+    },
+    {
+      path: '/app/audit-logs',
+      icon: <AuditIcon />,
+      label: t('nav.auditLogs'),
+      platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
+      minOrgRole: MEMBERSHIP_ROLES.ADMIN,
+      section: 'management',
+    },
+    {
       path: '/app/users',
       icon: <PeopleIcon />,
       label: t('nav.users'),
@@ -366,8 +422,8 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       icon: <BusinessIcon />,
       label: t('nav.organizations'),
       platformRoles: [PLATFORM_ROLES.SUPER_ADMIN, PLATFORM_ROLES.USER],
-      // every authenticated user can land here — it's where they CREATE
-      // a first org or accept an invite. Individual actions are gated inside.
+      orgRoles: [MEMBERSHIP_ROLES.OWNER, MEMBERSHIP_ROLES.ADMIN],
+      visibleWithNoMembership: true,
       section: 'management',
     },
     {
@@ -388,12 +444,14 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
     const altOrgRoleOk = item.alsoVisibleToOrgRole
       ? hasOrgRole(item.alsoVisibleToOrgRole)
       : false;
+    const exactRoleOk = item.orgRoles ? item.orgRoles.includes(membershipRole) : false;
+    const noMembershipOk = item.visibleWithNoMembership && hasNoMemberships;
 
-    // Visible if either (a) platform role permits and no org gate,
-    // or (b) the current-org membership role satisfies the gate.
-    if (platformOk && !item.minOrgRole) return true;
+    if (platformOk && !item.minOrgRole && !item.orgRoles) return true;
+    if (exactRoleOk) return true;
     if (orgRoleOk) return true;
     if (altOrgRoleOk) return true;
+    if (noMembershipOk) return true;
     return false;
   };
 
@@ -402,6 +460,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
   const mainItems = visibleItems.filter(item => item.section === 'main');
   const managementItems = visibleItems.filter(item => item.section === 'management');
   const operationsItems = visibleItems.filter(item => item.section === 'operations');
+  const financeItems = visibleItems.filter(item => item.section === 'finance');
   const adminItems = visibleItems.filter(item => item.section === 'admin');
 
   // ---------------------------------------------------------------
@@ -422,6 +481,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
       case MEMBERSHIP_ROLES.OWNER:  return 'org-owner';
       case MEMBERSHIP_ROLES.ADMIN:  return 'org-admin';
       case MEMBERSHIP_ROLES.STAFF:  return 'org-staff';
+      case MEMBERSHIP_ROLES.FINANCE: return 'org-finance';
       case MEMBERSHIP_ROLES.MEMBER: return 'org-member';
       default: return null;
     }
@@ -469,7 +529,7 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
             {MembershipRoleUtils.getLabel(membershipRole)}
           </span>
           <span className="role-sub">
-            {t('roles.inCurrentOrg', 'in current organization')}
+            {currentOrg?.name || t('roles.inCurrentOrg', 'in current organization')}
           </span>
         </RoleBadge>
       )}
@@ -496,6 +556,24 @@ const Sidebar = ({ collapsed = false, onToggle, onNavigate }) => {
               {t('sections.management')}
             </SectionLabel>
             {managementItems.map(item => (
+              <NavItem
+                key={item.path}
+                to={item.path}
+                onClick={() => onNavigate && onNavigate()}
+              >
+                <span className="icon">{item.icon}</span>
+                <span className="label">{item.label}</span>
+              </NavItem>
+            ))}
+          </NavSection>
+        )}
+
+        {financeItems.length > 0 && (
+          <NavSection marginTop="16px">
+            <SectionLabel collapsed={effectiveCollapsed}>
+              {t('sections.finance', 'Finance')}
+            </SectionLabel>
+            {financeItems.map(item => (
               <NavItem
                 key={item.path}
                 to={item.path}

@@ -61,9 +61,9 @@ const HeroWrapper = styled.section`
     padding: 100px 0 120px 0;
 
     background:
-        radial-gradient(circle at 20% 20%, rgba(255, 42, 42, 0.15) 0%, transparent 45%),
-        radial-gradient(circle at 80% 80%, rgba(51, 51, 51, 0.4) 0%, transparent 55%),
-        linear-gradient(135deg, ${C.primaryDark} 0%, ${C.primary} 55%, ${C.bgDark} 100%);
+        radial-gradient(circle at 90% 10%, rgba(255, 42, 42, 0.09) 0%, transparent 36%),
+        radial-gradient(circle at 8% 92%, rgba(51, 51, 51, 0.05) 0%, transparent 38%),
+        linear-gradient(180deg, ${C.bgCard} 0%, ${C.bgPrimary} 100%);
 
     &::before {
         content: '';
@@ -72,10 +72,10 @@ const HeroWrapper = styled.section`
         background-image:
             repeating-linear-gradient(
                 45deg,
-                rgba(255, 255, 255, 0.015) 0px,
-                rgba(255, 255, 255, 0.015) 1px,
+                rgba(51, 51, 51, 0.018) 0px,
+                rgba(51, 51, 51, 0.018) 1px,
                 transparent 1px,
-                transparent 6px
+                transparent 7px
             );
         pointer-events: none;
         z-index: 0;
@@ -118,9 +118,9 @@ const HeroBadge = styled.div`
     gap: 8px;
     padding: 6px 14px;
     border-radius: 999px;
-    background: rgba(255, 42, 42, 0.12);
-    border: 1px solid rgba(255, 42, 42, 0.35);
-    color: ${C.secondaryLight};
+    background: rgba(255, 42, 42, 0.08);
+    border: 1px solid rgba(255, 42, 42, 0.22);
+    color: ${C.secondaryDark};
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.4px;
@@ -143,22 +143,19 @@ const HeroTitle = styled.h1`
     font-weight: 800;
     letter-spacing: -0.03em;
     line-height: 1.05;
-    color: ${C.textInverse};
+    color: ${C.textPrimary};
     margin: 0 0 20px 0;
     animation: ${fadeUp} 0.7s 0.05s ease both;
 
     .highlight {
-        background: linear-gradient(135deg, ${C.secondary} 0%, ${C.secondaryLight} 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
+        color: ${C.secondary};
     }
 `;
 
 const HeroSubtitle = styled.p`
     font-family: ${F.family};
     font-size: clamp(1rem, 1.5vw, 1.25rem);
-    color: rgba(255, 255, 255, 0.72);
+    color: ${C.textSecondary};
     max-width: 700px;
     margin: 0 auto 32px auto;
     line-height: 1.6;
@@ -179,9 +176,9 @@ const HeroStats = styled.div`
     gap: 40px;
     padding: 16px 40px;
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(8px);
+    background: ${C.bgCard};
+    border: 1px solid ${C.borderLight};
+    box-shadow: ${theme.shadows.card};
 
     @media (max-width: 600px) {
         gap: 20px;
@@ -200,14 +197,14 @@ const HeroStat = styled.div`
     .value {
         font-size: 24px;
         font-weight: 800;
-        color: ${C.textInverse};
+        color: ${C.textPrimary};
         line-height: 1;
         font-family: ${F.family};
     }
 
     .label {
         font-size: 12px;
-        color: rgba(255, 255, 255, 0.55);
+        color: ${C.textMuted};
         text-transform: uppercase;
         letter-spacing: 0.6px;
         font-weight: 600;
@@ -223,7 +220,7 @@ const HeroStat = styled.div`
 const HeroStatDivider = styled.div`
     width: 1px;
     height: 36px;
-    background: rgba(255, 255, 255, 0.12);
+    background: ${C.borderLight};
 
     @media (max-width: 600px) { height: 28px; }
 `;
@@ -264,9 +261,9 @@ const PrimaryHeroButton = styled(Button)`
 
 const GhostHeroButton = styled(Button)`
     && {
-        background: rgba(255, 255, 255, 0.06);
-        color: ${C.textInverse};
-        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: ${C.bgCard};
+        color: ${C.textPrimary};
+        border: 1px solid ${C.borderLight};
         text-transform: none;
         font-weight: 600;
         padding: 16px 32px;
@@ -275,8 +272,8 @@ const GhostHeroButton = styled(Button)`
         transition: all 0.25s ease;
 
         &:hover {
-            background: rgba(255, 255, 255, 0.12);
-            border-color: rgba(255, 255, 255, 0.35);
+            background: ${C.bgPrimary};
+            border-color: ${C.primary};
         }
     }
 `;
@@ -335,7 +332,7 @@ const SearchField = styled(TextField)`
 const RefreshBtn = styled(Button)`
     && {
         background: ${C.primary};
-        color: ${C.textInverse};
+        color: ${C.white} !important;
         text-transform: none;
         font-weight: 700;
         border-radius: 14px;
@@ -343,6 +340,10 @@ const RefreshBtn = styled(Button)`
         min-height: 56px;
         font-size: 15px;
         flex-shrink: 0;
+
+        & .MuiButton-startIcon,
+        & .MuiButton-label,
+        & .MuiSvgIcon-root { color: ${C.white} !important; opacity: 1; }
 
         &:hover { background: ${C.primaryDark}; }
 
@@ -496,8 +497,9 @@ const SkeletonBar = styled.div`
 `;
 
 const Footer = styled.footer`
-    background: ${C.primaryDark};
-    color: rgba(255, 255, 255, 0.65);
+    background: ${C.bgCard};
+    color: ${C.textSecondary};
+    border-top: 1px solid ${C.borderLight};
     padding: 48px 0 32px 0;
     margin-top: 40px;
     font-family: ${F.family};
@@ -509,12 +511,12 @@ const Footer = styled.footer`
         flex-wrap: wrap;
         gap: 24px;
         padding-top: 24px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        border-top: 1px solid ${C.borderLight};
     }
 
     .copy {
         font-size: 14px;
-        color: rgba(255, 255, 255, 0.45);
+        color: ${C.textMuted};
     }
 
     .links {
@@ -522,7 +524,7 @@ const Footer = styled.footer`
         gap: 24px;
 
         a {
-            color: rgba(255, 255, 255, 0.55);
+            color: ${C.textSecondary};
             text-decoration: none;
             font-size: 14px;
             transition: color 0.2s ease;
@@ -697,7 +699,7 @@ const Landing = () => {
                     zIndex: 50,
                 }}
             >
-                <LanguageSwitcher variant="dark" />
+                <LanguageSwitcher variant="light" />
             </Box>
 
             <HeroWrapper>

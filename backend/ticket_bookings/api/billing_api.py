@@ -67,9 +67,10 @@ def _require_billing_access(user):
         return
     if not user or not user.is_authenticated:
         raise PermissionDenied('Authentication required.')
-    if not user_operator_org_ids(user):
+    from ticket_bookings.services.tenancy import user_finance_org_ids
+    if not user_finance_org_ids(user):
         raise PermissionDenied(
-            'Only organization Admins or Staff can access billing.'
+            'Only organization Admins or Finance users can access billing.'
         )
 
 

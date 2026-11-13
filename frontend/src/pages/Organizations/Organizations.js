@@ -5,7 +5,8 @@ import {
     Box, Grid, Card, CardContent, Typography, Paper, Button,
     Dialog, DialogTitle, DialogContent, DialogActions, DialogContentText,
     TextField, Alert, CircularProgress, Chip, Stack,
-    Autocomplete, Divider, IconButton, Menu, MenuItem, Tooltip,
+    FormControlLabel, Switch, Checkbox,
+    Autocomplete, Divider, IconButton, Menu, MenuItem, Tooltip, InputAdornment,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -19,28 +20,81 @@ import {
     Close as CloseIcon,
     People as PeopleIcon,
     AdminPanelSettings as AssignOwnerIcon,
+    UploadFile as UploadFileIcon,
+    CheckCircle as CheckCircleIcon,
+    ErrorOutline as ErrorOutlineIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
 import api from '../../services/api';
 import { useOrg } from '../../context/OrgContext';
+import OrganizationAdminTabs from './OrganizationAdminTabs';
 import { useAuth } from '../../context/AuthContext';
+import { useRole } from '../../context/RoleContext';
+import { MEMBERSHIP_ROLES } from '../../constants';
 import {
     PageContainer, PageHeader, PageTitle, PageSubtitle,
     PageHeaderLeft, PageHeaderRight, PrimaryButton, OutlineButton,
     LoadingWrapper,
 } from '../../components/Common';
 
-const EMPTY_FORM = { name: '' };
+const EMPTY_FORM = {
+    name: '',
+    slug: '',
+    description: '',
+    legal_name: '',
+    organization_type: '',
+    industry: '',
+    year_established: '',
+    org_email: '',
+    org_phone: '',
+    social_links: [],
+    logoFile: null,
+};
 
 const EMPTY_EDIT_FORM = {
     name: '',
+    allowed_auth_methods: ['password', 'magic_link', 'otp'],
     org_email: '',
     org_logo_url: '',
     email_from_name: '',
+    email_reply_to: '',
+    brand_primary_color: '#333333',
+    brand_secondary_color: '#FF2A2A',
+    brand_favicon_url: '',
+    support_url: '',
+    legal_name: '',
+    legal_name_zh: '',
+    custom_domain: '',
+    registered_address: '',
+    registered_address_zh: '',
+    org_phone: '',
+    ird_file_number: '',
+    ird_section88: false,
+    receipt_signatory_name: '',
+    receipt_signatory_title: '',
+    receipt_prefix: 'DR',
+    tax_receipt_threshold: 100,
+    donation_receipt_min_amount: 0,
+    auto_email_donation_receipt: true,
+    receipt_footer_note: '',
+    default_language: 'en',
+    tax_rate: 0,
+    tax_inclusive: false,
+    invoice_prefix: 'INV',
+    platform_fee_percent: 5,
+    payout_cycle: 'monthly',
     currency_code: '',
     default_timezone: '',
 };
+
+const makeSlug = (value) => (value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 40);
 
 const STAGE_FORM = 'form';
 const STAGE_CONFIRM = 'confirm';
@@ -110,6 +164,7 @@ const Organizations = () => {
     const { t } = useTranslation();
     const { organizations, loading, refresh, isPlatformAdmin } = useOrg();
     const { user: currentUser } = useAuth();
+    const { hasOrgRole } = useRole();
     const navigate = useNavigate();
 
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -119,6 +174,7 @@ const Organizations = () => {
     const [potentialOwners, setPotentialOwners] = useState([]);
     const [ownersLoading, setOwnersLoading] = useState(false);
     const [selectedOwner, setSelectedOwner] = useState(null);
+    const [slugStatus, setSlugStatus] = useState(null);
 
     // Org CRUD + ownership transfer
     const [menuAnchor, setMenuAnchor] = useState(null);
@@ -221,8 +277,23 @@ const Organizations = () => {
         return () => { cancelled = true; };
     }, [isPlatformAdmin, dialogOpen, currentUser, t]);
 
+    useEffect(() => {
+        const slug = (formData.slug || '').trim().toLowerCase();
+        if (!slug || slug.length < 3) {
+            setSlugStatus(null);
+            return undefined;
+        }
+        const timer = setTimeout(() => {
+            api.get('/organizations/slug-available/', { params: { slug } })
+                .then((res) => setSlugStatus(res.data))
+                .catch(() => setSlugStatus(null));
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [formData.slug]);
+
     const resetDialog = () => {
         setFormData(EMPTY_FORM);
+        setSlugStatus(null);
         setSelectedOwner(null);
         setPotentialOwners([]);
         setStage(STAGE_FORM);
@@ -257,9 +328,36 @@ const Organizations = () => {
         setSelectedOrg(org);
         setEditForm({
             name: org.name || '',
+            allowed_auth_methods: org.allowed_auth_methods || ['password', 'magic_link', 'otp'],
             org_email: org.org_email || '',
             org_logo_url: org.org_logo_url || '',
             email_from_name: org.email_from_name || '',
+            email_reply_to: org.email_reply_to || '',
+            brand_primary_color: org.brand_primary_color || '#333333',
+            brand_secondary_color: org.brand_secondary_color || '#FF2A2A',
+            brand_favicon_url: org.brand_favicon_url || '',
+            support_url: org.support_url || '',
+            legal_name: org.legal_name || '',
+            legal_name_zh: org.legal_name_zh || '',
+            custom_domain: org.custom_domain || '',
+            registered_address: org.registered_address || '',
+            registered_address_zh: org.registered_address_zh || '',
+            org_phone: org.org_phone || '',
+            ird_file_number: org.ird_file_number || '',
+            ird_section88: !!org.ird_section88,
+            receipt_signatory_name: org.receipt_signatory_name || '',
+            receipt_signatory_title: org.receipt_signatory_title || '',
+            receipt_prefix: org.receipt_prefix || 'DR',
+            tax_receipt_threshold: org.tax_receipt_threshold ?? 100,
+            donation_receipt_min_amount: org.donation_receipt_min_amount ?? 0,
+            auto_email_donation_receipt: org.auto_email_donation_receipt !== false,
+            receipt_footer_note: org.receipt_footer_note || '',
+            default_language: org.default_language || 'en',
+            tax_rate: org.tax_rate ?? 0,
+            tax_inclusive: !!org.tax_inclusive,
+            invoice_prefix: org.invoice_prefix || 'INV',
+            platform_fee_percent: org.platform_fee_percent ?? 5,
+            payout_cycle: org.payout_cycle || 'monthly',
             currency_code: org.currency_code || '',
             default_timezone: org.default_timezone || '',
         });
@@ -284,9 +382,36 @@ const Organizations = () => {
         try {
             const payload = {
                 name: editForm.name.trim(),
+                allowed_auth_methods: editForm.allowed_auth_methods,
                 org_email: editForm.org_email.trim(),
                 org_logo_url: editForm.org_logo_url.trim(),
                 email_from_name: editForm.email_from_name.trim(),
+                email_reply_to: editForm.email_reply_to.trim(),
+                brand_primary_color: editForm.brand_primary_color,
+                brand_secondary_color: editForm.brand_secondary_color,
+                brand_favicon_url: editForm.brand_favicon_url.trim(),
+                support_url: editForm.support_url.trim(),
+                legal_name: editForm.legal_name.trim(),
+                legal_name_zh: editForm.legal_name_zh.trim(),
+                registered_address: editForm.registered_address.trim(),
+                registered_address_zh: editForm.registered_address_zh.trim(),
+                org_phone: editForm.org_phone.trim(),
+                ird_file_number: editForm.ird_file_number.trim(),
+                ird_section88: editForm.ird_section88,
+                receipt_signatory_name: editForm.receipt_signatory_name.trim(),
+                receipt_signatory_title: editForm.receipt_signatory_title.trim(),
+                receipt_prefix: editForm.receipt_prefix,
+                tax_receipt_threshold: editForm.tax_receipt_threshold,
+                donation_receipt_min_amount: editForm.donation_receipt_min_amount,
+                auto_email_donation_receipt: editForm.auto_email_donation_receipt,
+                receipt_footer_note: editForm.receipt_footer_note.trim(),
+                custom_domain: editForm.custom_domain.trim() || null,
+                default_language: editForm.default_language,
+                tax_rate: editForm.tax_rate,
+                tax_inclusive: editForm.tax_inclusive,
+                invoice_prefix: editForm.invoice_prefix,
+                platform_fee_percent: editForm.platform_fee_percent,
+                payout_cycle: editForm.payout_cycle,
                 currency_code: editForm.currency_code.trim(),
                 default_timezone: editForm.default_timezone.trim(),
             };
@@ -522,8 +647,16 @@ const Organizations = () => {
     // Create — stage 1
     // -----------------------------------------------------------------------
     const handleRequestCreate = () => {
-        if (!formData.name.trim()) {
+        if (!formData.name.trim() || formData.name.trim().length < 2) {
             toast.error(t('organizations.nameRequired'));
+            return;
+        }
+        if (formData.slug && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(formData.slug)) {
+            toast.error(t('organizations.slugInvalid', 'Use lowercase letters, numbers and hyphens.'));
+            return;
+        }
+        if (formData.slug && slugStatus && slugStatus.available === false) {
+            toast.error(t('organizations.slugTaken', 'That organization URL is already taken.'));
             return;
         }
         if (
@@ -544,7 +677,15 @@ const Organizations = () => {
     const handleConfirmCreate = async () => {
         setCreating(true);
         try {
-            const payload = { name: formData.name.trim() };
+            const { logoFile, ...orgFields } = formData;
+            const payload = {
+                ...orgFields,
+                name: orgFields.name.trim(),
+                slug: (orgFields.slug || '').trim().toLowerCase(),
+                description: (orgFields.description || '').trim(),
+                social_links: (orgFields.social_links || []).filter((link) => link.platform && link.url),
+            };
+            payload.year_established = payload.year_established ? Number(payload.year_established) : null;
 
             if (isPlatformAdmin && selectedOwner) {
                 if (currentUser && selectedOwner.id === currentUser.id) {
@@ -558,6 +699,16 @@ const Organizations = () => {
 
             const response = await api.post('/organizations/', payload);
             const created = response.data || {};
+            if (logoFile && created.id) {
+                try {
+                    const fd = new FormData();
+                    fd.append('logo', logoFile);
+                    fd.append('organization_id', created.id);
+                    await api.post('/uploads/organization-logo/', fd);
+                } catch (uploadErr) {
+                    toast.warning(uploadErr.response?.data?.error || 'Organization created, but the logo could not be uploaded.');
+                }
+            }
 
             // Prefer the server-reported owner. If the backend assigned the
             // owner we requested but the serializer hasn't caught up, fall
@@ -616,15 +767,19 @@ const Organizations = () => {
                     <OutlineButton startIcon={<RefreshIcon />} onClick={refresh}>
                         {t('common.refresh')}
                     </OutlineButton>
-                    <PrimaryButton
-                        variant="contained"
-                        startIcon={<AddIcon />}
-                        onClick={handleOpen}
-                    >
-                        {t('organizations.newOrganization')}
-                    </PrimaryButton>
+                    {isPlatformAdmin && (
+                        <PrimaryButton
+                            variant="contained"
+                            startIcon={<AddIcon />}
+                            onClick={handleOpen}
+                        >
+                            {t('organizations.newOrganization')}
+                        </PrimaryButton>
+                    )}
                 </PageHeaderRight>
             </PageHeader>
+
+            {(isPlatformAdmin || hasOrgRole(MEMBERSHIP_ROLES.ADMIN)) && <OrganizationAdminTabs />}
 
             {isPlatformAdmin && (
                 <Alert severity="info" sx={{ mb: 2 }}>
@@ -638,13 +793,19 @@ const Organizations = () => {
                     <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
                         {t('organizations.noOrganizationsHint')}
                     </Typography>
-                    <PrimaryButton
-                        variant="contained"
-                        startIcon={<AddIcon />}
-                        onClick={handleOpen}
-                    >
-                        {t('organizations.createFirst')}
-                    </PrimaryButton>
+                    {isPlatformAdmin ? (
+                        <PrimaryButton
+                            variant="contained"
+                            startIcon={<AddIcon />}
+                            onClick={handleOpen}
+                        >
+                            {t('organizations.createFirst')}
+                        </PrimaryButton>
+                    ) : (
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            {t('organizations.contactAdmin', 'Contact your platform administrator to be added to an organization.')}
+                        </Typography>
+                    )}
                 </Paper>
             ) : (
                 <Grid container spacing={2}>
@@ -809,10 +970,194 @@ const Organizations = () => {
                                 autoFocus
                                 label={t('organizations.organizationName')}
                                 value={formData.name}
-                                onChange={(e) => setFormData({ name: e.target.value })}
+                                onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value, slug: prev.slug || makeSlug(e.target.value) }))}
                                 sx={{ mt: 1, mb: 2 }}
                                 disabled={creating}
                             />
+
+                            <Grid container spacing={2} sx={{ mb: 2 }}>
+                                <Grid item xs={12}>
+                                    <TextField
+                                        fullWidth
+                                        label={t('organizations.legalOrganizationName', 'Legal organization name')}
+                                        value={formData.legal_name}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, legal_name: e.target.value }))}
+                                        helperText={t('organizations.legalNameHint', 'Used on invoices and receipts. Defaults to the display name.')}
+                                        disabled={creating}
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        label={t('organizations.slugLabel', 'Organization URL')}
+                                        value={formData.slug}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, slug: makeSlug(e.target.value) }))}
+                                        disabled={creating}
+                                        InputProps={{
+                                            startAdornment: <InputAdornment position="start">app.com/org/</InputAdornment>,
+                                            endAdornment: formData.slug ? (
+                                                <InputAdornment position="end">
+                                                    {slugStatus?.available ? <CheckCircleIcon color="success" fontSize="small" /> : <ErrorOutlineIcon color="warning" fontSize="small" />}
+                                                </InputAdornment>
+                                            ) : null,
+                                        }}
+                                        helperText={slugStatus ? (slugStatus.available ? t('organizations.slugAvailable', 'Available') : t('organizations.slugTaken', 'Already taken')) : t('organizations.slugHelper', '3–40 lowercase letters, numbers and hyphens.')}
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        select
+                                        fullWidth
+                                        required
+                                        label={t('organizations.orgType', 'Organization type')}
+                                        value={formData.organization_type}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, organization_type: e.target.value }))}
+                                        disabled={creating}
+                                    >
+                                        {['Company', 'Non-profit', 'Educational', 'Government', 'Sole proprietor', 'Agency'].map((option) => (
+                                            <MenuItem key={option} value={option}>{option}</MenuItem>
+                                        ))}
+                                    </TextField>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        select
+                                        fullWidth
+                                        required
+                                        label={t('organizations.industry', 'Industry / category')}
+                                        value={formData.industry}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, industry: e.target.value }))}
+                                        disabled={creating}
+                                    >
+                                        {['Music', 'Tech', 'Sports', 'Education', 'Arts', 'Community', 'Other'].map((option) => (
+                                            <MenuItem key={option} value={option}>{option}</MenuItem>
+                                        ))}
+                                    </TextField>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        type="number"
+                                        label={t('organizations.yearEstablished', 'Year established')}
+                                        value={formData.year_established}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, year_established: e.target.value }))}
+                                        inputProps={{ min: 1800, max: new Date().getFullYear() }}
+                                        disabled={creating}
+                                    />
+                                </Grid>
+                                <Grid item xs={12}>
+                                    <TextField
+                                        fullWidth
+                                        multiline
+                                        minRows={2}
+                                        label={t('organizations.shortDescription', 'Short description')}
+                                        value={formData.description}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value.slice(0, 300) }))}
+                                        helperText={`${formData.description.length}/300 · ${t('organizations.shortDescriptionHint', 'Shown publicly on your organization page.')}`}
+                                        disabled={creating}
+                                    />
+                                </Grid>
+                                <Grid item xs={12}>
+                                    <Box
+                                        sx={{
+                                            border: '2px dashed', borderColor: 'divider', borderRadius: 2,
+                                            p: 2, display: 'flex', alignItems: 'center', gap: 2,
+                                            bgcolor: 'background.paper',
+                                        }}
+                                    >
+                                        {formData.logoFile ? (
+                                            <Box component="img" src={URL.createObjectURL(formData.logoFile)} alt="Logo preview" sx={{ width: 64, height: 64, objectFit: 'contain', borderRadius: 1 }} />
+                                        ) : (
+                                            <UploadFileIcon sx={{ fontSize: 36, color: 'text.secondary' }} />
+                                        )}
+                                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                                {formData.logoFile ? formData.logoFile.name : t('organizations.logoUpload', 'Upload organization logo')}
+                                            </Typography>
+                                            <Typography variant="caption" color="text.secondary">
+                                                {t('organizations.logoHint', 'PNG, JPG or SVG · max 2 MB · minimum 200×200px')}
+                                            </Typography>
+                                        </Box>
+                                        <Button component="label" variant="outlined" size="small" disabled={creating}>
+                                            {t('common.browse', 'Browse')}
+                                            <input
+                                                hidden
+                                                type="file"
+                                                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (!file) return;
+                                                    if (file.size > 2 * 1024 * 1024) {
+                                                        toast.error(t('organizations.logoSize', 'Logo must be 2 MB or smaller.'));
+                                                        return;
+                                                    }
+                                                    setFormData((prev) => ({ ...prev, logoFile: file }));
+                                                }}
+                                            />
+                                        </Button>
+                                    </Box>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        required
+                                        type="email"
+                                        label={t('organizations.publicEmail', 'Public contact email')}
+                                        value={formData.org_email}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, org_email: e.target.value }))}
+                                        disabled={creating}
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        label={t('organizations.publicPhone', 'Public contact phone')}
+                                        value={formData.org_phone}
+                                        onChange={(e) => setFormData((prev) => ({ ...prev, org_phone: e.target.value }))}
+                                        placeholder="+852..."
+                                        disabled={creating}
+                                    />
+                                </Grid>
+                                <Grid item xs={12}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('organizations.socialLinks', 'Social links')}</Typography>
+                                    {(formData.social_links || []).map((link, index) => (
+                                        <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
+                                            <Grid item xs={4}>
+                                                <TextField
+                                                    select fullWidth size="small"
+                                                    value={link.platform}
+                                                    onChange={(e) => {
+                                                        const links = [...formData.social_links];
+                                                        links[index] = { ...links[index], platform: e.target.value };
+                                                        setFormData((prev) => ({ ...prev, social_links: links }));
+                                                    }}
+                                                >
+                                                    {['X', 'Instagram', 'Facebook', 'LinkedIn', 'YouTube'].map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+                                                </TextField>
+                                            </Grid>
+                                            <Grid item xs={7}>
+                                                <TextField
+                                                    fullWidth size="small" placeholder="https://..."
+                                                    value={link.url}
+                                                    onChange={(e) => {
+                                                        const links = [...formData.social_links];
+                                                        links[index] = { ...links[index], url: e.target.value };
+                                                        setFormData((prev) => ({ ...prev, social_links: links }));
+                                                    }}
+                                                />
+                                            </Grid>
+                                            <Grid item xs={1}>
+                                                <IconButton size="small" color="error" onClick={() => setFormData((prev) => ({ ...prev, social_links: prev.social_links.filter((_, i) => i !== index) }))}>
+                                                    <DeleteIcon fontSize="small" />
+                                                </IconButton>
+                                            </Grid>
+                                        </Grid>
+                                    ))}
+                                    <Button size="small" startIcon={<AddIcon />} onClick={() => setFormData((prev) => ({ ...prev, social_links: [...(prev.social_links || []), { platform: 'X', url: '' }] }))} disabled={(formData.social_links || []).length >= 5}>
+                                        {t('organizations.addSocialLink', 'Add social link')}
+                                    </Button>
+                                </Grid>
+                            </Grid>
 
                             {isPlatformAdmin && (
                                 <Autocomplete
@@ -1021,6 +1366,86 @@ const Organizations = () => {
                         sx={{ mb: 2 }}
                         disabled={saving}
                     />
+                    <TextField
+                        fullWidth
+                        label={t('organizations.replyTo', 'Reply-to email')}
+                        value={editForm.email_reply_to}
+                        onChange={(e) => setEditForm({ ...editForm, email_reply_to: e.target.value })}
+                        sx={{ mb: 2 }}
+                        disabled={saving}
+                    />
+                    <Grid container spacing={2} sx={{ mb: 2 }}>
+                        <Grid item xs={12} sm={6}>
+                            <TextField fullWidth type="color" label={t('organizations.primaryColor', 'Primary colour')} value={editForm.brand_primary_color} onChange={(e) => setEditForm({ ...editForm, brand_primary_color: e.target.value })} disabled={saving} />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField fullWidth type="color" label={t('organizations.secondaryColor', 'Accent colour')} value={editForm.brand_secondary_color} onChange={(e) => setEditForm({ ...editForm, brand_secondary_color: e.target.value })} disabled={saving} />
+                        </Grid>
+                    </Grid>
+                    <TextField fullWidth label={t('organizations.faviconUrl', 'Favicon URL')} value={editForm.brand_favicon_url} onChange={(e) => setEditForm({ ...editForm, brand_favicon_url: e.target.value })} sx={{ mb: 2 }} disabled={saving} />
+                    <TextField fullWidth label={t('organizations.supportUrl', 'Support URL')} value={editForm.support_url} onChange={(e) => setEditForm({ ...editForm, support_url: e.target.value })} sx={{ mb: 2 }} disabled={saving} />
+                    <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>{t('organizations.authMethods', 'Allowed login methods')}</Typography>
+                    <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+                        {[['password', 'Password'], ['magic_link', 'Magic link'], ['otp', 'OTP'], ['google', 'Google']].map(([method, label]) => (
+                            <FormControlLabel
+                                key={method}
+                                control={
+                                    <Checkbox
+                                        checked={(editForm.allowed_auth_methods || []).includes(method)}
+                                        disabled={saving}
+                                        onChange={(e) => {
+                                            const current = new Set(editForm.allowed_auth_methods || []);
+                                            if (e.target.checked) current.add(method); else current.delete(method);
+                                            setEditForm((prev) => ({ ...prev, allowed_auth_methods: Array.from(current) }));
+                                        }}
+                                    />
+                                }
+                                label={label}
+                            />
+                        ))}
+                    </Stack>
+
+                    <TextField fullWidth label={t('organizations.legalName', 'Legal name')} value={editForm.legal_name} onChange={(e) => setEditForm({ ...editForm, legal_name: e.target.value })} sx={{ mb: 2 }} disabled={saving} />
+                    <TextField fullWidth label={t('organizations.customDomain', 'Custom domain')} helperText={t('organizations.customDomainHint', 'DNS verification is required before the domain becomes active.')} value={editForm.custom_domain} onChange={(e) => setEditForm({ ...editForm, custom_domain: e.target.value })} sx={{ mb: 2 }} disabled={saving} />
+                    <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>{t('organizations.taxReceiptSection', 'Tax receipt configuration')}</Typography>
+                    <Grid container spacing={2} sx={{ mb: 2 }}>
+                        <Grid item xs={12} sm={6}><TextField fullWidth label={t('organizations.legalNameZh', 'Registered name (Chinese)')} value={editForm.legal_name_zh} onChange={(e) => setEditForm({ ...editForm, legal_name_zh: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={6}><TextField fullWidth label={t('organizations.orgPhone', 'Telephone')} value={editForm.org_phone} onChange={(e) => setEditForm({ ...editForm, org_phone: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12}><TextField fullWidth multiline minRows={2} label={t('organizations.registeredAddress', 'Registered address')} value={editForm.registered_address} onChange={(e) => setEditForm({ ...editForm, registered_address: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12}><TextField fullWidth multiline minRows={2} label={t('organizations.registeredAddressZh', 'Registered address (Chinese)')} value={editForm.registered_address_zh} onChange={(e) => setEditForm({ ...editForm, registered_address_zh: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={6}><TextField fullWidth label={t('organizations.irdFile', 'IRD file number')} value={editForm.ird_file_number} onChange={(e) => setEditForm({ ...editForm, ird_file_number: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={6}><TextField fullWidth type="number" label={t('organizations.receiptThreshold', 'Tax wording threshold (HKD)')} value={editForm.tax_receipt_threshold} onChange={(e) => setEditForm({ ...editForm, tax_receipt_threshold: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={6}><TextField fullWidth label={t('organizations.receiptSignatory', 'Authorised signatory')} value={editForm.receipt_signatory_name} onChange={(e) => setEditForm({ ...editForm, receipt_signatory_name: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={6}><TextField fullWidth label={t('organizations.receiptSignatoryTitle', 'Signatory title')} value={editForm.receipt_signatory_title} onChange={(e) => setEditForm({ ...editForm, receipt_signatory_title: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={4}><TextField fullWidth label={t('organizations.receiptPrefix', 'Receipt prefix')} value={editForm.receipt_prefix} onChange={(e) => setEditForm({ ...editForm, receipt_prefix: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={4}><TextField fullWidth type="number" label={t('organizations.receiptMin', 'Receipt minimum (HKD)')} value={editForm.donation_receipt_min_amount} onChange={(e) => setEditForm({ ...editForm, donation_receipt_min_amount: e.target.value })} disabled={saving} /></Grid>
+                        <Grid item xs={12} sm={4}><TextField fullWidth multiline minRows={1} label={t('organizations.receiptFooter', 'Receipt footer')} value={editForm.receipt_footer_note} onChange={(e) => setEditForm({ ...editForm, receipt_footer_note: e.target.value })} disabled={saving} /></Grid>
+                    </Grid>
+                    <FormControlLabel
+                        control={<Switch checked={editForm.ird_section88} onChange={(e) => setEditForm({ ...editForm, ird_section88: e.target.checked })} />}
+                        label={t('organizations.irdSection88', 'Confirmed Section 88 tax-exempt charity')}
+                    />
+                    <FormControlLabel
+                        control={<Switch checked={editForm.auto_email_donation_receipt} onChange={(e) => setEditForm({ ...editForm, auto_email_donation_receipt: e.target.checked })} />}
+                        label={t('organizations.autoEmailReceipt', 'Automatically email donation receipts')}
+                    />
+                    <Grid container spacing={2} sx={{ mb: 2 }}>
+                        <Grid item xs={12} sm={6}>
+                            <TextField select fullWidth label={t('organizations.defaultLanguage', 'Default language')} value={editForm.default_language} onChange={(e) => setEditForm({ ...editForm, default_language: e.target.value })} disabled={saving}>
+                                <MenuItem value="en">English</MenuItem>
+                                <MenuItem value="zh-Hant">繁體中文</MenuItem>
+                            </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField fullWidth type="number" label={t('organizations.taxRate', 'Tax rate (%)')} value={editForm.tax_rate} onChange={(e) => setEditForm({ ...editForm, tax_rate: e.target.value })} disabled={saving} />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField fullWidth label={t('organizations.invoicePrefix', 'Invoice prefix')} value={editForm.invoice_prefix} onChange={(e) => setEditForm({ ...editForm, invoice_prefix: e.target.value })} disabled={saving} />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField fullWidth type="number" label={t('organizations.platformFee', 'Platform fee (%)')} value={editForm.platform_fee_percent} onChange={(e) => setEditForm({ ...editForm, platform_fee_percent: e.target.value })} disabled={saving} />
+                        </Grid>
+                    </Grid>
                     <Grid container spacing={2}>
                         <Grid item xs={12} sm={6}>
                             <TextField

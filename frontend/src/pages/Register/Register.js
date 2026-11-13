@@ -151,7 +151,7 @@ const Register = () => {
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: C.bgDark }}>
+            <Box className="tv-auth-page" sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: C.bgDark }}>
                 <CircularProgress sx={{ color: C.secondary }} />
             </Box>
         );
@@ -185,7 +185,7 @@ const Register = () => {
     };
 
     return (
-        <Box sx={{
+        <Box className="tv-auth-page" sx={{
             display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh',
             bgcolor: C.bgDark, p: isMobile ? 1.5 : 2, fontFamily: F.family, position: 'relative',
         }}>

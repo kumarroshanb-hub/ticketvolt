@@ -109,3 +109,37 @@ class InventoryHold(models.Model):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
     created_at = models.DateTimeField(auto_now_add=True)
     released_at = models.DateTimeField(null=True, blank=True)
+
+class OrganizationPaymentConfig(models.Model):
+    """Per-tenant gateway credentials.
+
+    Secrets are encrypted at rest by the service layer; this model only
+    stores ciphertext. One active configuration per tenant.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.OneToOneField(
+        'ticket_bookings.Organization', on_delete=models.CASCADE,
+        related_name='payment_config',
+    )
+    gateway = models.CharField(
+        max_length=16, choices=PaymentGateway.choices,
+        default=PaymentGateway.RAZORPAY,
+    )
+    mode = models.CharField(
+        max_length=10,
+        choices=(('test', 'Test'), ('live', 'Live')),
+        default='test',
+    )
+    key_id = models.CharField(max_length=191, blank=True, default='')
+    key_secret_encrypted = models.TextField(blank=True, default='')
+    webhook_secret_encrypted = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Organization payment configuration'
+
+    def __str__(self):
+        return f'{self.organization} · {self.gateway} ({self.mode})'

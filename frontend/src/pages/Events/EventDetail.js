@@ -14,6 +14,7 @@ import {
     ConfirmationNumber as TicketIcon,
     AccessTime as AccessTimeIcon,
     Person as PersonIcon,
+    RateReview as FeedbackIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -67,6 +68,7 @@ const EventDetail = () => {
 
     const [event, setEvent] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [sendingFeedback, setSendingFeedback] = useState(false);
 
     const loadEvent = async () => {
         setLoading(true);
@@ -99,6 +101,18 @@ const EventDetail = () => {
     };
 
     const handleEdit = () => navigate(`/app/events/${id}/edit`);
+
+    const handleSendFeedback = async () => {
+        setSendingFeedback(true);
+        try {
+            const res = await api.post(`/events/${id}/feedback-send/`);
+            toast.success(t('events.feedbackSent', 'Feedback emails sent: {{sent}}', { sent: res.data.sent || 0 }));
+        } catch (err) {
+            toast.error(err.response?.data?.error || err.message);
+        } finally {
+            setSendingFeedback(false);
+        }
+    };
 
     if (loading) {
         return (
@@ -166,6 +180,16 @@ const EventDetail = () => {
                     >
                         {t('events.detailRefresh')}
                     </OutlineButton>
+                    {event.feedback_enabled && (
+                        <OutlineButton
+                            variant="outlined"
+                            startIcon={<FeedbackIcon />}
+                            onClick={handleSendFeedback}
+                            disabled={sendingFeedback}
+                        >
+                            {sendingFeedback ? t('common.loading') : t('events.sendFeedback', 'Email feedback')}
+                        </OutlineButton>
+                    )}
                     <PrimaryButton
                         variant="contained"
                         startIcon={<EditIcon />}
@@ -198,7 +222,15 @@ const EventDetail = () => {
                                 </Typography>
                                 <Stack spacing={1.5}>
                                     {sessions.map((session, index) => {
-                                        const remaining = Math.max(0, (session.capacity || 0) - (session.booked || 0));
+                                        const reserved = Boolean(event.venue?.has_reserved_seating);
+                                        const capacity = reserved
+                                            ? (event.seat_count || event.total_capacity || 0)
+                                            : (session.capacity || 0);
+                                        const remaining = reserved
+                                            ? (typeof event.available_seats === 'number'
+                                                ? event.available_seats
+                                                : Math.max(0, capacity - (event.total_tickets_sold || 0)))
+                                            : Math.max(0, capacity - (session.booked || 0));
                                         const isFull = remaining === 0;
 
                                         return (
@@ -230,7 +262,7 @@ const EventDetail = () => {
                                                     </Box>
                                                     <Chip
                                                         size="small"
-                                                        label={isFull ? t('events.detailFull') : t('eventWizard.availableOf', { available: remaining, capacity: session.capacity })}
+                                                        label={isFull ? t('events.detailFull') : t('eventWizard.availableOf', { available: remaining, capacity })}
                                                         color={isFull ? 'error' : 'success'}
                                                         variant="outlined"
                                                         sx={{ fontWeight: 600 }}

@@ -490,8 +490,11 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
         if m.user_id != request.user.id and not is_platform_admin(request.user):
             raise PermissionDenied('You do not have permission to modify this membership.')
 
-        if not m.is_active():
-            return Response({'error': 'Membership is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+        if m.status not in (Membership.Status.ACTIVE, Membership.Status.PENDING_OFFLINE):
+            return Response(
+                {'error': 'Family members can only be added to an active or pending-offline membership.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         m.cancelled_at = timezone.now()
         m.cancelled_reason = (request.data.get('reason') or '')[:255]
@@ -509,8 +512,11 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
         if m.user_id != request.user.id and not is_platform_admin(request.user):
             raise PermissionDenied('You do not have permission to modify this membership.')
 
-        if not m.is_active():
-            return Response({'error': 'Membership is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+        if m.status not in (Membership.Status.ACTIVE, Membership.Status.PENDING_OFFLINE):
+            return Response(
+                {'error': 'Family members can only be added to an active or pending-offline membership.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not m.has_seat_available():
             return Response(
                 {

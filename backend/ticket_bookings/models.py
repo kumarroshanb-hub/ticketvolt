@@ -68,7 +68,9 @@ from .models_tenancy import (  # noqa: E402,F401
     OrganizationMembership,
     OrganizationContact,
 )
-from .models_payments import Payment, PaymentRefund, WebhookEvent, InventoryHold  # noqa: E402,F401
+from .models_payments import (  # noqa: E402,F401
+    Payment, PaymentRefund, WebhookEvent, InventoryHold, OrganizationPaymentConfig,
+)
 
 # 36^12 ≈ 4.7e18. Collision probability is negligible, but we retry on the
 # (astronomically rare) IntegrityError anyway — belt and braces.
@@ -144,6 +146,7 @@ class Venue(models.Model):
     contact_phone = models.CharField(max_length=20, blank=True)
     contact_email = models.EmailField(blank=True)
     website_url = models.URLField(blank=True)
+    map_url = models.URLField(blank=True, default='')
     amenities = models.JSONField(default=list)
     rules = models.TextField(blank=True)
     metadata = models.JSONField(default=dict)
@@ -355,6 +358,10 @@ class Event(models.Model):
     )
 
     refundable_until = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.TextField(
+        blank=True, default='',
+        help_text='Required when the event is cancelled; shown to staff and customers.',
+    )
     total_tickets_sold = models.IntegerField(default=0)
     total_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -413,9 +420,47 @@ class Event(models.Model):
         default=False,
         help_text=(
             'Allow buyers to add an optional donation at checkout. '
-            'Donations above HKD 2,000 qualify for a tax receipt.'
+            'Eligible donations can receive an official tax receipt.'
         ),
     )
+    ask_course_question = models.BooleanField(
+        default=False,
+        help_text='Ask buyers whether they have completed an Art of Living course.',
+    )
+    public_page_enabled = models.BooleanField(default=True)
+    duration_minutes = models.PositiveIntegerField(default=120)
+    feedback_enabled = models.BooleanField(default=False)
+    feedback_title = models.CharField(max_length=200, blank=True, default='Share your feedback')
+    feedback_intro = models.TextField(blank=True, default='')
+    feedback_questions = models.JSONField(default=list, blank=True)
+
+    checkin_opens_minutes_before = models.PositiveIntegerField(
+        default=30,
+        help_text='How many minutes before the session start attendees may check in.',
+    )
+    map_url = models.URLField(blank=True, default='')
+    faqs = models.JSONField(default=list, blank=True)
+    title_zh = models.CharField(max_length=255, blank=True, default='')
+    short_description_zh = models.CharField(max_length=500, blank=True, default='')
+    description_zh = models.TextField(blank=True, default='')
+    faqs_zh = models.JSONField(default=list, blank=True)
+    donation_presets = models.JSONField(default=list, blank=True)
+    donation_contact_text = models.TextField(blank=True, default='')
+    show_bilingual_content = models.BooleanField(
+        default=False,
+        help_text='Show English and Traditional Chinese content together on the public page.',
+    )
+    highlights = models.JSONField(default=list, blank=True)
+    age_info = models.CharField(max_length=120, blank=True, default='')
+    door_time = models.CharField(max_length=120, blank=True, default='')
+    parking_info = models.TextField(blank=True, default='')
+    refund_policy = models.TextField(blank=True, default='')
+    accessibility_info = models.TextField(blank=True, default='')
+    privacy_notice_text = models.TextField(
+        blank=True, default='',
+        help_text='Optional checkout privacy notice (PDPO).',
+    )
+    marketing_opt_in_enabled = models.BooleanField(default=False)
     min_membership_tier = models.ForeignKey(
         'ticket_bookings.MembershipTier',
         null=True, blank=True,
@@ -660,6 +705,22 @@ class Booking(models.Model):
     refund_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=0,
     )
+    invoice_number = models.CharField(
+        max_length=40, blank=True, default='', db_index=True,
+        help_text='Tenant invoice number, allocated from Organization.invoice_next_number.',
+    )
+    course_answer = models.CharField(
+        max_length=10, blank=True, default='',
+        choices=(('yes', 'Yes'), ('no', 'No'), ('', 'Not asked')),
+    )
+    donor_name = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Donor name as it should appear on the tax receipt.',
+    )
+    privacy_accepted = models.BooleanField(default=False)
+    marketing_opt_in = models.BooleanField(default=False)
+    reminder_2d_sent_at = models.DateTimeField(null=True, blank=True)
+    reminder_day_sent_at = models.DateTimeField(null=True, blank=True)
 
     cancellation_policy_snapshot = models.JSONField(
         default=dict,
@@ -685,7 +746,9 @@ class Booking(models.Model):
             return False
         if (self.donation_currency_code or '').upper() != 'HKD':
             return False
-        if self.donation_amount <= 2000:
+        org = getattr(getattr(self, 'event', None), 'organization', None)
+        minimum = getattr(org, 'donation_receipt_min_amount', 0) or 0
+        if self.donation_amount < minimum:
             return False
         return self.status in ('paid', 'confirmed', 'completed')
 
@@ -860,10 +923,32 @@ class CheckInLog(models.Model):
     notes = models.TextField(blank=True)
     is_offline = models.BooleanField(default=False)
     synced_at = models.DateTimeField(null=True, blank=True)
+    client_scan_id = models.CharField(
+        max_length=64, blank=True, null=True, unique=True,
+        help_text='Scanner-generated idempotency key for offline sync.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.ticket.unique_code} - {self.scanned_at}"
+
+
+# ============ EVENT FEEDBACK ============
+class EventFeedbackResponse(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='feedback_responses')
+    ticket = models.ForeignKey(
+        Ticket, on_delete=models.CASCADE, related_name='feedback_responses',
+    )
+    attendee_email = models.EmailField(blank=True, default='')
+    answers = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('event', 'ticket')]
+
+    def __str__(self):
+        return f'Feedback {self.event_id} / {self.ticket_id}'
 
 
 # ============ DISCOUNT ============
@@ -1099,7 +1184,7 @@ class SystemSettings(models.Model):
     default_timezone = models.CharField(max_length=64, default='Asia/Hong_Kong')
 
     # ---- Organisation / branding ----
-    org_name = models.CharField(max_length=200, blank=True, default='TicketVolt')
+    org_name = models.CharField(max_length=200, blank=True, default='TiketVault')
     org_email = models.EmailField(blank=True, default='')
     org_logo_url = models.URLField(blank=True, default='')
     email_from_name = models.CharField(max_length=120, blank=True, default='')
@@ -1109,6 +1194,12 @@ class SystemSettings(models.Model):
     updated_by = models.ForeignKey(
         User, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='+',
+    )
+
+    allowed_auth_methods = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Platform-wide enabled login methods.',
     )
 
     payments_enabled = models.BooleanField(
@@ -1145,3 +1236,13 @@ from .models_seating import SeatCategory, SeatLayout, Seat, SeatReservation
 # blows up with "AttributeError: 'str' object has no attribute '_meta'".
 from .models_event_venue import EventVenuePlan, EventSeatCategory  # noqa: F401
 from .models_venue_master import VenueMaster                        # noqa: F401
+
+# Commercial / operations models
+from .models_commercial import (  # noqa: E402,F401
+    TicketTransfer, OrganizerPayout, AuditLog, PatronContact, OAuthLoginTicket,
+)
+
+# Feature entitlements
+from .models_features import (  # noqa: E402,F401
+    FeatureDefinition, FeaturePackage, OrganizationFeature,
+)

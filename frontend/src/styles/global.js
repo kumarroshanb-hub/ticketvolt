@@ -70,6 +70,13 @@ export const GlobalStyle = createGlobalStyle`
        ============================================================ */
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
+    html {
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+        color-scheme: light;
+        scroll-behavior: smooth;
+    }
+
     html, body {
         font-family: var(--tv-font);
         background: ${props => props.theme.colors.bgPrimary};
@@ -77,6 +84,51 @@ export const GlobalStyle = createGlobalStyle`
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
         overflow-x: hidden;
+        min-height: 100vh;
+        min-height: 100dvh;
+        text-rendering: optimizeLegibility;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    #root { min-height: 100vh; min-height: 100dvh; isolation: isolate; }
+
+    h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
+    p { text-wrap: pretty; }
+
+    /* ============================================================
+       CROSS-BROWSER FORM CONTROLS
+       Safari/iOS renders these differently to Chrome unless normalized.
+       ============================================================ */
+    input, textarea, select, button {
+        font-family: var(--tv-font);
+        color: inherit;
+        touch-action: manipulation;
+    }
+    select {
+        -webkit-appearance: none;
+        appearance: none;
+        background-image: linear-gradient(45deg, transparent 50%, #777 50%),
+                          linear-gradient(135deg, #777 50%, transparent 50%);
+        background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+        background-size: 5px 5px, 5px 5px;
+        background-repeat: no-repeat;
+        padding-right: 30px !important;
+    }
+    input[type="date"], input[type="datetime-local"], input[type="time"] {
+        min-height: 44px;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+    input[type="date"]::-webkit-date-and-time-value,
+    input[type="datetime-local"]::-webkit-date-and-time-value,
+    input[type="time"]::-webkit-date-and-time-value { text-align: left; }
+    input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; }
+    textarea { resize: vertical; }
+    ::placeholder { color: ${props => props.theme.colors.textMuted}; opacity: 1; }
+    :-ms-input-placeholder { color: ${props => props.theme.colors.textMuted}; }
+
+    @media (max-width: 900px) {
+        input, select, textarea { font-size: 16px !important; }
     }
 
     /* ============================================================
@@ -225,6 +277,142 @@ export const GlobalStyle = createGlobalStyle`
     .cursor-pointer     { cursor: pointer; }
     .cursor-not-allowed { cursor: not-allowed; }
     .disabled           { opacity: 0.5; pointer-events: none; }
+
+    /* ============================================================
+       AUTH PAGES — VAULT CLEAN LIGHT SHELL
+       Login/Register/Reset/Magic-link share these pages. Their legacy
+       dark surfaces are overridden centrally so every auth route matches
+       the public brand without duplicating page CSS.
+       ============================================================ */
+    .tv-auth-page {
+        background:
+            radial-gradient(circle at 88% 8%, rgba(255, 42, 42, 0.07), transparent 36%),
+            var(--tv-bg-primary) !important;
+        color: var(--tv-text-primary) !important;
+    }
+    .tv-auth-page .MuiPaper-root {
+        background: var(--tv-bg-card) !important;
+        border-color: var(--tv-border-light) !important;
+        box-shadow: 0 18px 50px rgba(51, 51, 51, 0.08) !important;
+    }
+    .tv-auth-page .MuiTypography-root,
+    .tv-auth-page .MuiFormLabel-root,
+    .tv-auth-page .MuiInputLabel-root,
+    .tv-auth-page .MuiFormControlLabel-label,
+    .tv-auth-page .MuiLink-root {
+        color: var(--tv-text-primary) !important;
+    }
+    .tv-auth-page .MuiTypography-root.MuiTypography-body2,
+    .tv-auth-page .MuiFormHelperText-root,
+    .tv-auth-page .MuiTypography-caption {
+        color: var(--tv-text-secondary) !important;
+    }
+    .tv-auth-page .MuiButton-root .MuiTypography-root,
+    .tv-auth-page .MuiButton-contained .MuiSvgIcon-root {
+        color: inherit !important;
+    }
+    .tv-auth-page .MuiButton-text {
+        color: var(--tv-text-secondary) !important;
+    }
+    .tv-auth-page .MuiButton-containedPrimary,
+    .tv-auth-page .MuiButton-containedSecondary {
+        background: var(--tv-secondary) !important;
+        color: #fff !important;
+    }
+    .tv-auth-page .MuiButton-containedPrimary .MuiButton-label,
+    .tv-auth-page .MuiButton-containedPrimary .MuiSvgIcon-root,
+    .tv-auth-page .MuiButton-containedSecondary .MuiButton-label,
+    .tv-auth-page .MuiButton-containedSecondary .MuiSvgIcon-root {
+        color: #fff !important;
+        opacity: 1;
+    }
+    .tv-auth-page .MuiButton-outlined {
+        color: var(--tv-text-primary) !important;
+        border-color: var(--tv-border-light) !important;
+    }
+    .tv-auth-page .MuiOutlinedInput-root {
+        background: var(--tv-bg-card) !important;
+        color: var(--tv-text-primary) !important;
+    }
+    .tv-auth-page .MuiOutlinedInput-root fieldset {
+        border-color: var(--tv-border-light) !important;
+    }
+    .tv-auth-page .MuiOutlinedInput-root:hover fieldset {
+        border-color: var(--tv-primary-light) !important;
+    }
+    .tv-auth-page .MuiOutlinedInput-root.Mui-focused fieldset {
+        border-color: var(--tv-secondary) !important;
+    }
+    .tv-auth-page .MuiInputBase-input::placeholder {
+        color: var(--tv-text-muted) !important;
+        opacity: 1;
+    }
+    .tv-auth-page .MuiSvgIcon-root,
+    .tv-auth-page .MuiRadio-root,
+    .tv-auth-page .MuiCheckbox-root {
+        color: var(--tv-primary) !important;
+    }
+    .tv-auth-page .MuiRadio-root.Mui-checked,
+    .tv-auth-page .MuiCheckbox-root.Mui-checked {
+        color: var(--tv-secondary) !important;
+    }
+    .tv-auth-page .MuiDivider-root {
+        border-color: var(--tv-border-light) !important;
+    }
+    .tv-auth-page .MuiCircularProgress-root {
+        color: var(--tv-secondary) !important;
+    }
+    .tv-auth-page img {
+        filter: none;
+    }
+
+    /* ============================================================
+       TICKET-STUB MOTIF
+       ============================================================ */
+    .tv-ticket-stub {
+        position: relative;
+        border: 1px solid ${props => props.theme.colors.borderLight};
+        border-radius: ${props => props.theme.borderRadius.lg};
+        background: ${props => props.theme.colors.bgCard};
+    }
+    .tv-ticket-stub::before,
+    .tv-ticket-stub::after {
+        content: "";
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: ${props => props.theme.colors.bgPrimary};
+        border: 1px solid ${props => props.theme.colors.borderLight};
+        top: 68%;
+        z-index: 2;
+        pointer-events: none;
+    }
+    .tv-ticket-stub::before { left: -12px; }
+    .tv-ticket-stub::after { right: -12px; }
+    .tv-ticket-divider {
+        border: 0;
+        border-top: 1px dashed ${props => props.theme.colors.borderHover};
+        margin: 16px 0;
+    }
+
+    /* ============================================================
+       TENANT BRANDING OVERRIDES
+       BrandingContext injects --tv-primary / --tv-secondary at runtime.
+       These cover MUI primitives that still use the static palette.
+       ============================================================ */
+    .MuiButton-containedPrimary { background-color: var(--tv-primary) !important; color: var(--tv-text-inverse) !important; }
+    .MuiButton-containedSecondary { background-color: var(--tv-secondary) !important; color: #fff !important; }
+    .MuiButton-containedPrimary .MuiButton-label,
+    .MuiButton-containedPrimary .MuiSvgIcon-root,
+    .MuiButton-containedSecondary .MuiButton-label,
+    .MuiButton-containedSecondary .MuiSvgIcon-root { color: inherit !important; opacity: 1; }
+    .MuiButton-textPrimary,
+    .MuiTab-root.Mui-selected,
+    .MuiLink-root,
+    .MuiFormLabel-root.Mui-focused { color: var(--tv-primary) !important; }
+    .MuiButton-containedSecondary { background-color: var(--tv-secondary) !important; }
+    .MuiTabs-indicator { background-color: var(--tv-primary) !important; }
 `;
 
 export default GlobalStyle;

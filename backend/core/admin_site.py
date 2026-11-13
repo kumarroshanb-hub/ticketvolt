@@ -11,8 +11,8 @@ from django.http import HttpResponseForbidden
 
 
 class SuperuserOnlyAdminSite(AdminSite):
-    site_header = 'TicketVolt Platform Admin'
-    site_title = 'TicketVolt'
+    site_header = 'TiketVault Platform Admin'
+    site_title = 'TiketVault'
     index_title = 'Platform administration'
 
     def has_permission(self, request):

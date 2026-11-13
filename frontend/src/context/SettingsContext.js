@@ -4,6 +4,7 @@ import React, {
 } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../services/api';
+import { useOrg } from './OrgContext';
 
 const SettingsContext = createContext(null);
 
@@ -15,10 +16,10 @@ const DEFAULTS = {
     country: 'Hong Kong',
     country_code: 'HK',
     default_timezone: 'Asia/Hong_Kong',
-    org_name: 'TicketVolt',
+    org_name: 'TiketVault',
     org_email: '',
     org_logo_url: '',
-    email_from_name: 'TicketVolt',
+    email_from_name: 'TiketVault',
 };
 
 // ✅ FIX [SETTINGS-401-LANDING]:
@@ -47,6 +48,7 @@ export const SettingsProvider = ({ children }) => {
     });
     const [loading, setLoading] = useState(true);
     const location = useLocation();
+    const { currentOrg } = useOrg() || {};
 
     const loadSettings = useCallback(async (silent = false) => {
         // ✅ FIX [SETTINGS-401-LANDING]:
@@ -83,6 +85,22 @@ export const SettingsProvider = ({ children }) => {
             if (!silent) setLoading(false);
         }
     }, []);
+
+    // Tenant currency/timezone override the platform display settings.
+    useEffect(() => {
+        if (!currentOrg) return;
+        setSettingsState((prev) => ({
+            ...prev,
+            currency_code: currentOrg.currency_code || prev.currency_code,
+            currency_symbol: currentOrg.currency_symbol || prev.currency_symbol,
+            currency_locale: currentOrg.currency_locale || prev.currency_locale,
+            default_timezone: currentOrg.default_timezone || prev.default_timezone,
+            org_name: currentOrg.name || prev.org_name,
+            org_email: currentOrg.org_email || prev.org_email,
+            org_logo_url: currentOrg.org_logo_url || prev.org_logo_url,
+            email_from_name: currentOrg.email_from_name || prev.email_from_name,
+        }));
+    }, [currentOrg]);
 
     // Initial load
     useEffect(() => {

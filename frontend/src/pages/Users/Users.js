@@ -780,6 +780,7 @@ const PLATFORM_ROLE_OPTIONS = [
 const ORG_ROLE_OPTIONS = [
   { value: MEMBERSHIP_ROLES.MEMBER },
   { value: MEMBERSHIP_ROLES.STAFF },
+  { value: MEMBERSHIP_ROLES.FINANCE },
   { value: MEMBERSHIP_ROLES.ADMIN },
 ];
 
@@ -806,7 +807,7 @@ const UserFormModal = ({
 
   // In edit mode, the role selectors are read-only — the backend silently
   // drops `role` changes and 403s on some platforms. Show a note and disable.
-  const roleEditable = !isEdit;
+  const roleEditable = !isEdit || isSuperuser;
 
   return (
     <ModalOverlay onClick={onClose}>
@@ -944,8 +945,8 @@ const UserFormModal = ({
                 </FormGroup>
               )}
 
-              {/* Platform role — only superusers can change. Hidden on edit. */}
-              {!isEdit && isSuperuser && (
+              {/* Platform role — only superusers can change. */}
+              {isSuperuser && (
                 <FormGroup>
                   <FormLabel>{t('users.platformRoleLabel')}</FormLabel>
                   <FormSelect
@@ -977,13 +978,13 @@ const UserFormModal = ({
               )}
 
               {/* Org role — shown when an org is selected and the target isn't platform staff. */}
-              {!isEdit && (showOrgPicker || !isSuperuser) && (
+              {(showOrgPicker || !isSuperuser || isEdit) && (
                 <FormGroup>
                   <FormLabel>{t('users.organizationRoleLabel')}</FormLabel>
                   <FormSelect
                     value={formData.orgRole || MEMBERSHIP_ROLES.MEMBER}
                     onChange={(e) => setFormData(prev => ({ ...prev, orgRole: e.target.value }))}
-                    disabled={isSuperuser && formData.platformRole && formData.platformRole !== PLATFORM_ROLES.USER}
+                    disabled={!roleEditable || (isSuperuser && formData.platformRole && formData.platformRole !== PLATFORM_ROLES.USER)}
                   >
                     {ORG_ROLE_OPTIONS.map(o => (
                       <option key={o.value} value={o.value}>
@@ -1000,7 +1001,7 @@ const UserFormModal = ({
                 </FormGroup>
               )}
 
-              {isEdit && (
+              {isEdit && !isSuperuser && (
                 <div style={{ gridColumn: '1 / -1', padding: '12px', borderRadius: 8, background: `${C.info}1A`, border: `1px solid ${C.info}4D` }}>
                   <p style={{ margin: 0, fontSize: '13px', color: C.infoDark, fontFamily: F.family }}>
                     ℹ️ {t('users.rolesReadOnly')}
@@ -1209,7 +1210,8 @@ const Users = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
+  const [platformRoleFilter, setPlatformRoleFilter] = useState('all');
+  const [organizationRoleFilter, setOrganizationRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -1301,7 +1303,8 @@ const Users = () => {
         page,
         page_size: PAGE_SIZE,
         search: search || undefined,
-        role: roleFilter !== 'all' ? roleFilter : undefined,
+        platform_role: platformRoleFilter !== 'all' ? platformRoleFilter : undefined,
+        organization_role: organizationRoleFilter !== 'all' ? organizationRoleFilter : undefined,
         is_active: statusFilter !== 'all' ? statusFilter === 'active' : undefined,
         ...orgParams,
       };
@@ -1315,8 +1318,8 @@ const Users = () => {
         total: count,
         active: pageUsers.filter((u) => u.is_active).length,
         // 'organizer' is a deprecated legacy alias for tenant OWNER.
-        owners: pageUsers.filter((u) => u.role === 'owner' || u.role === 'organizer').length,
-        admins: pageUsers.filter((u) => ['admin', 'super_admin'].includes(u.role)).length,
+        owners: pageUsers.filter((u) => (u.memberships || []).some((m) => m.is_owner)).length,
+        admins: pageUsers.filter((u) => (u.memberships || []).some((m) => m.role === 'admin' && !m.is_owner)).length,
       });
     } catch (err) {
       console.error('Error loading users:', err);
@@ -1325,7 +1328,7 @@ const Users = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, search, roleFilter, statusFilter, PAGE_SIZE, orgParams, t]);
+  }, [page, search, platformRoleFilter, organizationRoleFilter, statusFilter, PAGE_SIZE, orgParams, t]);
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
@@ -1501,6 +1504,23 @@ const Users = () => {
     setSubmitting(true);
     try {
       await api.patch(`/users/${selectedUser.id}/`, payload);
+
+      // Role changes are written through the dedicated role endpoint.
+      if (isSuperuser) {
+        const memberships = selectedUser.memberships || selectedUser.organization_memberships || [];
+        const isTargetOwner = memberships.some((m) => m.is_owner);
+        if (!isTargetOwner) {
+          if (formData.platformRole === PLATFORM_ROLES.SUPER_ADMIN) {
+            await api.post(`/users/${selectedUser.id}/update_role/`, { role: 'super_admin' });
+          } else if (formData.organization_id && formData.orgRole) {
+            await api.post(`/users/${selectedUser.id}/update_role/`, {
+              role: formData.orgRole,
+              organization_id: formData.organization_id,
+            });
+          }
+        }
+      }
+
       toast.success(t('users.updatedSuccess'));
       setShowEditModal(false);
       setSelectedUser(null);
@@ -1591,6 +1611,9 @@ const Users = () => {
       platformRole = PLATFORM_ROLES.SUPER_ADMIN;
     }
 
+    const primaryMembership = (user.memberships || user.organization_memberships || [])
+      .find((m) => m.is_currently_valid !== false) || (user.memberships || [])[0] || null;
+
     setFormData({
       email: user.email || '',
       first_name: user.first_name || '',
@@ -1602,9 +1625,9 @@ const Users = () => {
       country: normaliseCountryName(user.profile?.country) || platformCountry,
       // `role` from the API is an effective label — map it to platformRole if it matches.
       platformRole,
-      orgRole: MEMBERSHIP_ROLES.MEMBER, // not used in edit
+      orgRole: primaryMembership?.role || MEMBERSHIP_ROLES.MEMBER,
       is_active: user.is_active !== false,
-      organization_id: user.organization_id || null,
+      organization_id: primaryMembership?.organization_id || user.organization_id || null,
     });
     setShowEditModal(true);
   };
@@ -1619,6 +1642,19 @@ const Users = () => {
       {getInitials(user.first_name ? `${user.first_name} ${user.last_name}` : user.username)}
     </UserAvatar>
   );
+
+  const getPlatformRoleKey = (user) => user.platform_role || (user.is_superuser ? PLATFORM_ROLES.SUPER_ADMIN : PLATFORM_ROLES.USER);
+
+  const getOrgRoleKey = (user) => {
+    const memberships = user.memberships || user.organization_memberships || [];
+    const valid = memberships.filter((m) => m.is_currently_valid !== false && !m.removed_at);
+    if (!valid.length) return null;
+    if (orgFilter) {
+      return valid.find((m) => String(m.organization_id) === String(orgFilter))?.role || null;
+    }
+    const priority = ['owner', 'admin', 'staff', 'member'];
+    return priority.find((role) => valid.some((m) => m.role === role)) || valid[0].role;
+  };
 
   const renderRoleBadge = (role) => (
     <RoleBadge className={role}>
@@ -1724,19 +1760,28 @@ const Users = () => {
             />
           </SearchWrapper>
           <Select
-            value={roleFilter}
+            value={platformRoleFilter}
             onChange={(e) => {
-              setRoleFilter(e.target.value);
+              setPlatformRoleFilter(e.target.value);
               setPage(1);
             }}
           >
-            <option value="all">{t('users.filterAllRoles')}</option>
+            <option value="all">{t('users.filterAllPlatformRoles', 'All Platform Roles')}</option>
             <option value="super_admin">{t('users.roleSuperAdmin')}</option>
-            <option value="admin">{t('users.roleTenantAdmin')}</option>
+            <option value="user">{t('users.roleUser')}</option>
+          </Select>
+          <Select
+            value={organizationRoleFilter}
+            onChange={(e) => {
+              setOrganizationRoleFilter(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="all">{t('users.filterAllOrganizationRoles', 'All Organization Roles')}</option>
             <option value="owner">{t('roles.owner')}</option>
+            <option value="admin">{t('roles.admin')}</option>
             <option value="staff">{t('roles.staff')}</option>
             <option value="member">{t('roles.member')}</option>
-            <option value="user">{t('users.roleUser')}</option>
           </Select>
           <Select
             value={statusFilter}
@@ -1794,8 +1839,16 @@ const Users = () => {
                     <span className="field-value">{user.email}</span>
                   </div>
                   <div>
-                    <span className="field-label">{t('users.colRole')}</span>
-                    <span className="field-value">{renderRoleBadge(user.role)}</span>
+                    <span className="field-label">{t('users.colPlatformRole', 'Platform Role')}</span>
+                    <span className="field-value">{renderRoleBadge(getPlatformRoleKey(user))}</span>
+                  </div>
+                  <div>
+                    <span className="field-label">{t('users.colOrganizationRole', 'Organization Role')}</span>
+                    <span className="field-value">
+                      {getOrgRoleKey(user)
+                        ? renderRoleBadge(getOrgRoleKey(user))
+                        : t('users.noOrganizationRole', 'No organisation role')}
+                    </span>
                   </div>
                   <div>
                     <span className="field-label">{t('users.colJoined')}</span>
@@ -1855,7 +1908,8 @@ const Users = () => {
               <tr>
                 <TableHeaderCell>{t('users.colUser')}</TableHeaderCell>
                 <TableHeaderCell>{t('users.colEmail')}</TableHeaderCell>
-                <TableHeaderCell>{t('users.colRole')}</TableHeaderCell>
+                <TableHeaderCell>{t('users.colPlatformRole', 'Platform Role')}</TableHeaderCell>
+                <TableHeaderCell>{t('users.colOrganizationRole', 'Organization Role')}</TableHeaderCell>
                 <TableHeaderCell>{t('users.colStatus')}</TableHeaderCell>
                 <TableHeaderCell>{t('users.colJoined')}</TableHeaderCell>
                 <TableHeaderCell align="right">{t('users.colActions')}</TableHeaderCell>
@@ -1874,7 +1928,12 @@ const Users = () => {
                     </UserCell>
                   </TableCell>
                   <TableCell>{user.email}</TableCell>
-                  <TableCell>{renderRoleBadge(user.role)}</TableCell>
+                  <TableCell>{renderRoleBadge(getPlatformRoleKey(user))}</TableCell>
+                  <TableCell>
+                    {getOrgRoleKey(user)
+                      ? renderRoleBadge(getOrgRoleKey(user))
+                      : t('users.noOrganizationRole', 'No organisation role')}
+                  </TableCell>
                   <TableCell>
                     {renderStatusBadge(user.is_active !== false)}
                     {renderLockBadge(user.id)}

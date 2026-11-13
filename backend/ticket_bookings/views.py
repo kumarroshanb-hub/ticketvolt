@@ -69,6 +69,7 @@ from axes.helpers import get_client_ip_address
 
 from .constants import BookingStatus, TicketStatus
 from .models import Event, Ticket, CheckInLog, UserProfile
+from .services.qr_payload import build_ticket_qr_payload
 from .models_tenancy import OrganizationMembership
 from .services.booking_status import reconcile_completed_booking
 from .services.tenancy import (
@@ -119,7 +120,9 @@ _SINGLE_SESSION = os.environ.get('SINGLE_SESSION_LOGIN', 'False') == 'True'
 # Booking statuses whose SeatReservation rows are still authoritative.
 # A reservation attached to a cancelled/refunded booking is stale and
 # must not make the seat appear unavailable.
-_LIVE_SEAT_RESERVATION_STATUSES = ('paid', 'confirmed', 'completed')
+_LIVE_SEAT_RESERVATION_STATUSES = (
+    'pending', 'processing', 'paid', 'confirmed', 'completed',
+)
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +374,11 @@ def _validate_checkin_window(ticket, now=None):
     if session.start_time is None or session.end_time is None:
         return True, None
 
-    window_start = session.start_time - CHECKIN_EARLY_GRACE
+    event = getattr(ticket, 'event', None) or getattr(session, 'event', None)
+    early_minutes = getattr(event, 'checkin_opens_minutes_before', 30)
+    if early_minutes is None:
+        early_minutes = 30
+    window_start = session.start_time - timedelta(minutes=max(0, int(early_minutes)))
     window_end = session.end_time + CHECKIN_LATE_GRACE
 
     if now < window_start:
@@ -572,7 +579,22 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        from .services.auth_policy import method_allowed, organization_for_user
+
+        if not method_allowed('password', None):
+            return Response(
+                {'detail': 'Password login is currently disabled.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         user_obj = _get_user_by_email(email)
+        if user_obj is not None:
+            org = organization_for_user(user_obj, request.data.get('organization_id'))
+            if not method_allowed('password', org):
+                return Response(
+                    {'detail': 'Password login is not enabled for your organization.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         user = None
 
         if user_obj is not None:
@@ -800,6 +822,370 @@ def _extract_bare_code(raw_code: str) -> str:
     return raw_code
 
 
+# ===========================================================================
+# Offline check-in: manifest pack + idempotent sync
+# ===========================================================================
+
+def _parse_client_scan_time(value):
+    """Best-effort parse of the scanner's ISO timestamp."""
+    if not value:
+        return timezone.now()
+    try:
+        from django.utils.dateparse import parse_datetime
+        parsed = parse_datetime(str(value))
+        if parsed is None:
+            return timezone.now()
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        # A device clock far in the future is not authoritative.
+        if parsed > timezone.now() + timedelta(minutes=5):
+            return timezone.now()
+        return parsed
+    except Exception:
+        return timezone.now()
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def checkin_offline_pack(request):
+    """Download a signed ticket manifest for offline verification.
+
+    The manifest contains the exact QR envelope (`v/type/code/sig`) for
+    every ticket, so the device can compare a scanned payload against a
+    trusted, pre-downloaded copy without needing the signing secret.
+    """
+    event_id = request.query_params.get('event')
+    if not event_id:
+        return Response(
+            {'detail': 'event query parameter is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        event_uuid = _uuid.UUID(str(event_id))
+    except (ValueError, TypeError, AttributeError):
+        return Response(
+            {'detail': 'Invalid event id.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    event = (
+        Event.objects
+        .select_related('organization')
+        .filter(id=event_uuid)
+        .first()
+    )
+    if event is None or not _user_can_manage_event(request.user, event):
+        return Response(
+            {'detail': 'Event not found.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    session_id = request.query_params.get('session')
+    tickets_qs = (
+        Ticket.objects
+        .filter(event=event)
+        .select_related('session', 'tier', 'seat')
+        .order_by('unique_code')
+    )
+    if session_id:
+        try:
+            session_uuid = _uuid.UUID(str(session_id))
+        except (ValueError, TypeError, AttributeError):
+            return Response(
+                {'detail': 'Invalid session id.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        tickets_qs = tickets_qs.filter(session_id=session_uuid)
+
+    now = timezone.now()
+    entries = []
+    for ticket in tickets_qs:
+        signed = build_ticket_qr_payload(ticket)
+        entries.append({
+            'ticket_id': str(ticket.id),
+            'code': ticket.unique_code,
+            'type': signed['type'],
+            'v': signed['v'],
+            'sig': signed['sig'],
+            'status': ticket.status,
+            'is_checked_in': ticket.status == TicketStatus.USED,
+            'checked_in_at': (
+                ticket.check_in_time.isoformat() if ticket.check_in_time else None
+            ),
+            'attendee_name': ticket.attendee_name or '',
+            'attendee_email': ticket.attendee_email or '',
+            'tier': ticket.tier.name if ticket.tier else None,
+            'seat': (
+                f'{ticket.seat.row_label}-{ticket.seat.seat_number}'
+                if ticket.seat else None
+            ),
+            'session_id': str(ticket.session_id) if ticket.session_id else None,
+            'session_start': (
+                ticket.session.start_time.isoformat()
+                if ticket.session and ticket.session.start_time else None
+            ),
+            'session_end': (
+                ticket.session.end_time.isoformat()
+                if ticket.session and ticket.session.end_time else None
+            ),
+        })
+
+    manifest_id = hashlib.sha256(
+        json.dumps(entries, separators=(',', ':'), sort_keys=True).encode('utf-8')
+    ).hexdigest()
+
+    # Shared secret for LAN peer sockets. It is deterministic per event
+    # and only returned to authenticated scanner operators, so a random
+    # device on the same Wi-Fi cannot inject fake check-ins.
+    lan_secret = (
+        getattr(settings, 'TICKET_SIGNING_SECRET', '')
+        or os.environ.get('TICKET_SIGNING_SECRET', '')
+    )
+    lan_token = hmac.new(
+        lan_secret.encode('utf-8'),
+        f'lan:{event.id}'.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()[:32] if lan_secret else ''
+
+    return Response({
+        'version': 1,
+        'manifest_id': manifest_id,
+        'lan_token': lan_token,
+        'generated_at': now.isoformat(),
+        'server_time': now.isoformat(),
+        'event': {
+            'id': str(event.id),
+            'title': event.title,
+            'start_date': (
+                event.start_date.isoformat() if event.start_date else None
+            ),
+            'end_date': event.end_date.isoformat() if event.end_date else None,
+            'timezone': event.timezone,
+            'organization': event.organization.name,
+        },
+        'ticket_count': len(entries),
+        'tickets': entries,
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def checkin_offline_sync(request):
+    """Idempotently apply a scanner outbox batch.
+
+    First successful scan is authoritative. Retries with the same
+    `client_id` are idempotent. A scan for a ticket already checked in
+    by another device is recorded as a duplicate for review and does not
+    fail the batch.
+    """
+    items = request.data.get('items')
+    if not isinstance(items, list) or not items:
+        return Response(
+            {'detail': 'items must be a non-empty list.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(items) > 200:
+        return Response(
+            {'detail': 'Maximum 200 offline scans per batch.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    device_id = (request.data.get('device_id') or 'unknown')[:255]
+    results = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            results.append({
+                'client_id': None,
+                'status': 'rejected',
+                'code': 'INVALID_ITEM',
+                'message': 'Each item must be an object.',
+            })
+            continue
+
+        raw_client_id = str(item.get('client_id') or '').strip()[:64]
+        payload_source = item.get('payload')
+        if not isinstance(payload_source, dict):
+            payload_source = {
+                key: item.get(key) for key in ('v', 'type', 'code', 'sig')
+                if key in item
+            }
+        payload, reason = _validate_ticket_payload(payload_source)
+        code = (payload or {}).get('code') or ''
+
+        if payload is None:
+            results.append({
+                'client_id': raw_client_id or None,
+                'status': 'rejected',
+                'code': 'INVALID_PAYLOAD',
+                'message': reason or 'Invalid QR payload.',
+            })
+            continue
+
+        ok, sig_err = verify_ticket_signature_or_503(payload)
+        if not ok:
+            results.append({
+                'client_id': raw_client_id or None,
+                'status': 'rejected',
+                'code': 'SIGNATURE_MISMATCH',
+                'message': (
+                    'Server cannot verify signatures.'
+                    if sig_err == 'misconfigured'
+                    else 'Signature mismatch.'
+                ),
+            })
+            continue
+
+        client_id = raw_client_id
+        if not client_id:
+            client_id = hashlib.sha256(
+                f'{device_id}:{code}:{item.get("scanned_at") or ""}'.encode('utf-8')
+            ).hexdigest()[:64]
+
+        # Idempotent retry: this exact scan was already accepted.
+        prior = CheckInLog.objects.filter(client_scan_id=client_id).first()
+        if prior is not None:
+            results.append({
+                'client_id': client_id,
+                'status': 'idempotent',
+                'code': code,
+                'message': 'Already synced.',
+                'authoritative_scan': prior.scanned_at.isoformat(),
+            })
+            continue
+
+        scanned_at = _parse_client_scan_time(item.get('scanned_at'))
+
+        try:
+            with transaction.atomic():
+                ticket = (
+                    Ticket.objects
+                    .select_for_update(of=('self',))
+                    .select_related('event', 'event__organization', 'session', 'booking')
+                    .filter(unique_code=code)
+                    .first()
+                )
+                if ticket is None or not _user_can_manage_event(
+                    request.user, ticket.event,
+                ):
+                    results.append({
+                        'client_id': client_id,
+                        'status': 'not_found',
+                        'code': code,
+                        'message': 'Ticket not found.',
+                    })
+                    continue
+
+                if ticket.status in (
+                    TicketStatus.REFUNDED,
+                    TicketStatus.CANCELLED,
+                    TicketStatus.EXPIRED,
+                ):
+                    results.append({
+                        'client_id': client_id,
+                        'status': 'rejected',
+                        'code': f'TICKET_{ticket.status.upper()}',
+                        'message': (
+                            f'Ticket has been {ticket.status} and is no longer valid.'
+                        ),
+                    })
+                    continue
+
+                existing = CheckInLog.objects.filter(
+                    ticket=ticket, status='success',
+                ).order_by('scanned_at').first()
+                if ticket.status == TicketStatus.USED or existing is not None:
+                    authoritative = existing or CheckInLog.objects.filter(
+                        ticket=ticket, status='success',
+                    ).order_by('scanned_at').first()
+                    CheckInLog.objects.create(
+                        ticket=ticket,
+                        event=ticket.event,
+                        session=ticket.session,
+                        scanner_user=request.user,
+                        scanner_device_id=device_id,
+                        status='duplicate',
+                        is_offline=True,
+                        synced_at=timezone.now(),
+                        client_scan_id=client_id,
+                        notes=(
+                            'Offline scan rejected as duplicate; first scan is '
+                            'authoritative.'
+                        ),
+                    )
+                    results.append({
+                        'client_id': client_id,
+                        'status': 'duplicate',
+                        'code': code,
+                        'message': 'Ticket was already checked in. Logged for review.',
+                        'authoritative_scan': (
+                            authoritative.scanned_at.isoformat()
+                            if authoritative else None
+                        ),
+                    })
+                    continue
+
+                log = CheckInLog.objects.create(
+                    ticket=ticket,
+                    event=ticket.event,
+                    session=ticket.session,
+                    scanner_user=request.user,
+                    scanner_device_id=device_id,
+                    scanner_ip=get_client_ip_address(
+                        getattr(request, '_request', request)
+                    ),
+                    status='success',
+                    is_offline=True,
+                    synced_at=timezone.now(),
+                    client_scan_id=client_id,
+                    notes='Synced from scanner offline outbox.',
+                )
+                # scanned_at is auto_now_add; set the captured offline time.
+                CheckInLog.objects.filter(pk=log.pk).update(scanned_at=scanned_at)
+                log.refresh_from_db(fields=['scanned_at'])
+
+                ticket.status = TicketStatus.USED
+                ticket.check_in_time = scanned_at
+                ticket.save(update_fields=['status', 'check_in_time'])
+
+                booking_completed = False
+                if ticket.booking:
+                    booking_completed = reconcile_completed_booking(ticket.booking)
+
+                results.append({
+                    'client_id': client_id,
+                    'status': 'success',
+                    'code': code,
+                    'message': 'Offline check-in synced.',
+                    'scanned_at': log.scanned_at.isoformat(),
+                    'booking_completed': booking_completed,
+                })
+        except Exception:
+            logger.exception('Offline sync failed for ticket %s', code)
+            results.append({
+                'client_id': client_id,
+                'status': 'error',
+                'code': code,
+                'message': 'Could not sync this scan; it will be retried.',
+                'retryable': True,
+            })
+
+    return Response({
+        'results': results,
+        'total': len(results),
+        'successful': sum(
+            1 for r in results if r['status'] in ('success', 'idempotent')
+        ),
+        'duplicates': sum(1 for r in results if r['status'] == 'duplicate'),
+        'failed': sum(
+            1 for r in results
+            if r['status'] not in ('success', 'idempotent', 'duplicate')
+        ),
+        'server_time': timezone.now().isoformat(),
+    }, status=status.HTTP_200_OK)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def checkin_manual_verify(request):
@@ -1009,6 +1395,8 @@ def run_scheduled_tasks(request):
         update_completed_events,
         update_sold_out_events,
         flush_expired_tokens,
+        send_donation_receipts,
+        send_event_reminders,
     )
 
     try:
@@ -1024,11 +1412,25 @@ def run_scheduled_tasks(request):
                 'detail': str(flush_exc),
             }
 
+        try:
+            receipt_result = send_donation_receipts()
+        except Exception as receipt_exc:
+            logger.exception('Donation receipt task failed inside cron run')
+            receipt_result = {'status': 'error', 'detail': str(receipt_exc)}
+
+        try:
+            reminder_result = send_event_reminders()
+        except Exception as reminder_exc:
+            logger.exception('Reminder task failed inside cron run')
+            reminder_result = {'status': 'error', 'detail': str(reminder_exc)}
+
         return JsonResponse({
             'ok': True,
             'completed': completed_result,
             'sold_out': sold_out_result,
             'token_flush': token_flush_result,
+            'donation_receipts': receipt_result,
+            'reminders': reminder_result,
         })
     except Exception:
         logger.exception('Cron task run failed')
@@ -1111,7 +1513,11 @@ class EventSeatMapViewSet(viewsets.ViewSet):
 
         reservations_qs = SeatReservation.objects.filter(event=event)
         if session_id:
-            reservations_qs = reservations_qs.filter(session_id=session_id)
+            # A reservation created without a session applies to the whole
+            # event; include it alongside session-specific reservations.
+            reservations_qs = reservations_qs.filter(
+                Q(session_id=session_id) | Q(session_id__isnull=True)
+            )
         now = timezone.now()
         reservations_qs = reservations_qs.filter(
             Q(booking__status__in=_LIVE_SEAT_RESERVATION_STATUSES)
@@ -1133,6 +1539,7 @@ class EventSeatMapViewSet(viewsets.ViewSet):
                 'category_color': cat['hex_color'] if cat else '#94a3b8',
                 'price': float(cat['price']) if cat else 0.0,
                 'status': reservation_map.get(seat['id'], 'available'),
+                'is_accessible': bool(seat.get('is_accessible', False)),
             })
 
         return Response({

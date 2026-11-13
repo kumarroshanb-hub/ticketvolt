@@ -58,6 +58,7 @@ const ResetPassword = () => {
 
     return (
         <Box
+            className="tv-auth-page"
             sx={{
                 display: 'flex', justifyContent: 'center', alignItems: 'center',
                 minHeight: '100vh', minHeight: '100dvh', bgcolor: C.bgDark,

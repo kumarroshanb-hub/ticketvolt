@@ -96,7 +96,7 @@ def create_checkout(request):
     # Currency must match the tenant's configured currency
     currency = event.organization.currency_code
 
-    provider = get_provider(gateway_name)
+    provider = get_provider(gateway_name, organization=event.organization)
 
     with transaction.atomic():
         payment = Payment.objects.create(
@@ -158,7 +158,7 @@ def verify_checkout(request):
     if payment.status == PaymentStatus.PAID and payment.booking_id:
         return Response({'status': 'paid', 'booking_reference': payment.booking.booking_reference})
 
-    provider = get_provider(payment.gateway)
+    provider = get_provider(payment.gateway, organization=payment.organization)
     if not provider.verify_checkout(payment, params):
         return Response({'error': 'Payment verification failed.'}, status=400)
 
@@ -191,12 +191,12 @@ def checkout_status(request, payment_id):
 # ---------------------------------------------------------------------------
 # 4. WEBHOOKS (signature-verified + idempotent)
 # ---------------------------------------------------------------------------
-def _process_webhook(provider_name, body, headers):
+def _process_webhook(provider_name, body, headers, organization=None):
     from ..models_payments import WebhookEvent
     from ..models_membership import MembershipPayment
     from ..services import membership_fulfillment
 
-    provider = get_provider(provider_name)
+    provider = get_provider(provider_name, organization=organization)
     result = provider.parse_webhook(body, headers)
     if not result.valid:
         return Response({'error': 'Invalid signature.'}, status=400)
@@ -306,7 +306,7 @@ def refund_payment(request, payment_id):
     if amount <= 0 or amount > remaining:
         return Response({'error': f'Invalid refund amount (max {remaining}).'}, status=400)
 
-    provider = get_provider(payment.gateway)
+    provider = get_provider(payment.gateway, organization=payment.organization)
     try:
         provider_refund = provider.refund(payment, amount, request.data.get('reason', ''))
     except Exception:
@@ -349,3 +349,16 @@ def refund_payment(request, payment_id):
         logger.exception('Ticket cancellation/email on refund failed for booking=%s', payment.booking_id)
 
     return Response({'status': payment.status, 'refunded': str(payment.amount_refunded)})
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def organization_webhook(request, org_id, gateway):
+    """Tenant-specific webhook, verified with that tenant's secret."""
+    from ..models import Organization
+
+    org = Organization.objects.filter(pk=org_id).first()
+    if org is None:
+        return Response({'error': 'Organization not found.'}, status=404)
+    if gateway not in dict(PaymentGateway.choices):
+        return Response({'error': 'Unsupported gateway.'}, status=400)
+    return _process_webhook(gateway, request.body, request.headers, organization=org)

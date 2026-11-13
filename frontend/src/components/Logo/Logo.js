@@ -29,8 +29,9 @@ import React from 'react';
 import styled from 'styled-components';
 
 // Asset imports — Webpack/Vite will bundle these.
-import logoFull from '../../assets/logo/ticketvolt-logo.png';
-import logoMark from '../../assets/logo/ticketvolt-logomark.png';
+import logoFull from '../../assets/logo/ticketvolt-logo-transparent.png';
+import logoMark from '../../assets/logo/ticketvolt-logomark-transparent.png';
+import { useBranding } from '../../context/BrandingContext';
 
 // ============================================================
 // STYLED WRAPPERS
@@ -71,18 +72,21 @@ export const FullLogo = ({
     height = 56,
     hidden = false,
     inverse = false, // eslint-disable-line no-unused-vars
-    alt = 'TiKetVault',
+    alt,
     className = '',
-}) => (
-    <LogoImg
-        src={logoFull}
-        alt={alt}
-        $height={height}
-        $hidden={hidden}
-        className={className}
-        draggable={false}
-    />
-);
+}) => {
+    const branding = useBranding();
+    return (
+        <LogoImg
+            src={branding.logoUrl || logoFull}
+            alt={alt || branding.name}
+            $height={height}
+            $hidden={hidden}
+            className={className}
+            draggable={false}
+        />
+    );
+};
 
 /**
  * Compact logomark — icon-only ticket badge.
@@ -93,17 +97,20 @@ export const FullLogo = ({
 export const CompactLogo = ({
     height = 60,
     inverse = false, // eslint-disable-line no-unused-vars
-    alt = 'TiKetVault',
+    alt,
     className = '',
-}) => (
-    <LogoImg
-        src={logoMark}
-        alt={alt}
-        $height={height}
-        className={className}
-        draggable={false}
-    />
-);
+}) => {
+    const branding = useBranding();
+    return (
+        <LogoImg
+            src={branding.logoUrl || logoMark}
+            alt={alt || branding.name}
+            $height={height}
+            className={className}
+            draggable={false}
+        />
+    );
+};
 
 // ============================================================
 // DEFAULT EXPORT — the most common case

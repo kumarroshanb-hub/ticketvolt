@@ -29,6 +29,9 @@ export const TemplatesGrid = ({ eventId, templates, templateTypes, onOpenUpload,
                 <Typography variant="body2" sx={{ color: C.textSecondary, mb: 2, mt: 1 }}>
                     {t('events.templatesHint')}
                 </Typography>
+                <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
+                    {t('events.ticketTemplateSpecs', 'Ticket template: 550 × 138 px (4:1), PNG or JPG, under 5 MB. Keep important text away from the edges.')}
+                </Alert>
                 {!eventId && (
                     <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
                         💡 {t('events.templatesSaveFirst')}

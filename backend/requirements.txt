@@ -35,3 +35,4 @@ razorpay>=1.4.1
 stripe>=9.0.0
 channels==4.0.0
 channels-redis==4.1.0
+requests==2.32.3

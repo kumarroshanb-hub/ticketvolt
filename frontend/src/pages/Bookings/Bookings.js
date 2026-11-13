@@ -102,6 +102,15 @@ const Bookings = () => {
 
     const handleBookTickets = useCallback(() => navigate('/app/bookings/create'), [navigate]);
 
+    const handleMarkPatronContacted = useCallback(async (booking) => {
+        try {
+            await api.post(`/bookings/${booking.id}/patron-contact/`, {});
+            toast.success(t('booking.patronContacted', 'Patron contact recorded.'));
+        } catch (err) {
+            toast.error(err.response?.data?.error || err.message);
+        }
+    }, [t]);
+
     const handleDownloadTaxReceipt = useCallback(async (booking) => {
         try {
             const res = await api.get(
@@ -266,6 +275,7 @@ const Bookings = () => {
                     handleViewTickets(id);
                 }}
                 onDownloadTaxReceipt={handleDownloadTaxReceipt}
+                onMarkPatronContacted={handleMarkPatronContacted}
             />
 
             <Dialog

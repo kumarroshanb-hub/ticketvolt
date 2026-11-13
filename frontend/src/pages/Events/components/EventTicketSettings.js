@@ -11,6 +11,7 @@ import { theme as appTheme } from '../../../theme/tokens';
 
 const C = appTheme.colors;
 
+/** Ticket delivery and template settings only. */
 export const EventTicketSettings = ({ formData, onChange }) => {
     const { t } = useTranslation();
     const theme = useTheme();
@@ -18,57 +19,6 @@ export const EventTicketSettings = ({ formData, onChange }) => {
 
     return (
         <>
-            <Grid item xs={12}>
-                <SectionTitle variant="h6">{t('events.visibility')}</SectionTitle>
-                <Divider sx={{ borderColor: C.borderLight }} />
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-                <FormControlLabel
-                    control={
-                        <Switch
-                            checked={formData.is_public !== false}
-                            onChange={onChange}
-                            name="is_public"
-                            sx={{
-                                '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
-                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
-                                    backgroundColor: C.primary,
-                                },
-                            }}
-                        />
-                    }
-                    label={t('events.publicEvent')}
-                    sx={{ color: C.textSecondary }}
-                />
-                <FormHelperText>
-                    {t('events.publicEventHelper')}
-                </FormHelperText>
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-                <FormControlLabel
-                    control={
-                        <Switch
-                            checked={formData.donations_enabled === true}
-                            onChange={onChange}
-                            name="donations_enabled"
-                            sx={{
-                                '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
-                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
-                                    backgroundColor: C.primary,
-                                },
-                            }}
-                        />
-                    }
-                    label={t('events.donationsEnabled')}
-                    sx={{ color: C.textSecondary }}
-                />
-                <FormHelperText>
-                    {t('events.donationsHelper')}
-                </FormHelperText>
-            </Grid>
-
             <Grid item xs={12}>
                 <SectionTitle variant="h6">{t('events.ticketSettingsTitle')}</SectionTitle>
                 <Divider sx={{ borderColor: C.borderLight }} />
@@ -95,25 +45,10 @@ export const EventTicketSettings = ({ formData, onChange }) => {
 
             <Grid item xs={12} md={6}>
                 <FormControlLabel
-                    control={
-                        <Switch
-                            checked={formData.combine_tickets || false}
-                            onChange={onChange}
-                            name="combine_tickets"
-                            sx={{
-                                '& .MuiSwitch-switchBase.Mui-checked': { color: C.primary },
-                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
-                                    backgroundColor: C.primary,
-                                },
-                            }}
-                        />
-                    }
+                    control={<Switch checked={formData.combine_tickets || false} onChange={onChange} name="combine_tickets" />}
                     label={t('events.combineTicketsLabel')}
-                    sx={{ color: C.textSecondary }}
                 />
-                <FormHelperText>
-                    {t('events.combineTicketsHelper')}
-                </FormHelperText>
+                <FormHelperText>{t('events.combineTicketsHelper')}</FormHelperText>
             </Grid>
 
             <Grid item xs={12} md={6}>

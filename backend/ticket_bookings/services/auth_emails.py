@@ -75,13 +75,13 @@ def _send(*, template: str, subject: str, context: dict,
 def send_magic_link_email(user, link: str) -> dict:
     return _send(
         template='emails/auth_link.html',
-        subject='Your TicketVolt Login Link',
+        subject='Your TiketVault Login Link',
         context={
             'user': user,
             'link': link,
             'heading': 'Your secure login link',
             'message': (
-                'Click the button below to sign in to TicketVolt. '
+                'Click the button below to sign in to TiketVault. '
                 f'This link expires in {MAGIC_LINK_MINUTES} minutes '
                 'and can be used once.'
             ),
@@ -129,7 +129,7 @@ def send_organization_invite_email(invite, link: str) -> dict:
 def send_welcome_email(user) -> dict:
     return _send(
         template='emails/welcome.html',
-        subject=f'Welcome to TicketVolt, {user.first_name or user.username}!',
+        subject=f'Welcome to TiketVault, {user.first_name or user.username}!',
         context={
             'user': user,
             'login_url': f'{settings.FRONTEND_URL}/login',
@@ -141,7 +141,7 @@ def send_welcome_email(user) -> dict:
 def send_otp_email(user, code: str, expiry_minutes: int = 5) -> dict:
     return _send(
         template='emails/otp_code.html',
-        subject='Your TicketVolt Verification Code',
+        subject='Your TiketVault Verification Code',
         context={'user': user, 'code': code, 'expiry_minutes': expiry_minutes},
         recipient=user.email,
         label='otp_code',

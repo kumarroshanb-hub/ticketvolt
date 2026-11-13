@@ -41,6 +41,9 @@ const PUBLIC_ENDPOINTS = [
     '/auth/forgot-password/',
     '/auth/confirm-password-reset/',
     '/auth/verify-email/',
+    '/auth/config/',
+    '/auth/google/exchange/',
+    '/feedback/',
 
     // ✅ FIX [MAGIC-LINK-401] / [OTP-401]:
     // These are AllowAny on the backend, but a stale token in

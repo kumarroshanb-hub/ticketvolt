@@ -39,6 +39,7 @@ class Seat(models.Model):
     x_coord = models.FloatField()
     y_coord = models.FloatField()
     is_active = models.BooleanField(default=True)
+    is_accessible = models.BooleanField(default=False)
 
 class SeatReservation(models.Model):
     """Tracks real-time availability of a seat for an Event/Session."""

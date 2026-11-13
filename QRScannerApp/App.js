@@ -58,9 +58,11 @@ export default function App() {
             setNetworkStatus(netInfo);
             console.log('📶 Initial network:', netInfo);
 
+            // Offline mode is supported: do NOT block the app when the
+            // network is down. The scanner can operate from a downloaded
+            // offline pack and sync its outbox later.
             if (!netInfo.isConnected) {
-                setError('No internet connection. Please check your network.');
-                return;
+                console.log('📴 Offline mode — scanner will use the offline pack');
             }
 
             if (netInfo.type === 'cellular') {

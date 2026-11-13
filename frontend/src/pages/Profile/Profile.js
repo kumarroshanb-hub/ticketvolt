@@ -17,6 +17,7 @@ import {
     ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { Box, Button as MuiButton, Stack, Typography } from '@mui/material';
 
 import { theme } from '../../theme/tokens';
 
@@ -268,7 +269,7 @@ const Message = styled.div`
 const Profile = () => {
     const { user, updateProfile } = useAuth();
     const { platformRole, membershipRole } = useRole();
-    const { currentOrg } = useOrg();
+    const { currentOrg, organizations } = useOrg();
     const { t } = useTranslation();
     const navigate = useNavigate();
 
@@ -404,6 +405,37 @@ const Profile = () => {
                         </FieldBody>
                     </Field>
                 )}
+
+                <Box id="memberships" sx={{ mt: 2, mb: 2, scrollMarginTop: '96px' }}>
+                    <FieldLabel>{t('profile.myMemberships', 'My memberships')}</FieldLabel>
+                    {organizations.length === 0 ? (
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            {t('profile.noMemberships', 'You are not a member of any organization yet.')}
+                        </Typography>
+                    ) : (
+                        <>
+                        <MuiButton
+                            size="small"
+                            variant="outlined"
+                            onClick={() => navigate('/app/membership')}
+                            sx={{ mt: 1, mb: 1.5, textTransform: 'none' }}
+                        >
+                            {t('profile.manageMembership', 'Membership & family')}
+                        </MuiButton>
+                        <Stack spacing={1} sx={{ mt: 1 }}>
+                            {organizations.map((org) => (
+                                <Box key={org.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{org.name}</Typography>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                        {t(`roles.org_${org.role}`, { defaultValue: org.role })}
+                                        {org.is_owner ? ' · Owner' : ''}
+                                    </Typography>
+                                </Box>
+                            ))}
+                        </Stack>
+                        </>
+                    )}
+                </Box>
 
                 {message && (
                     <Message $error={message.error}>{message.text}</Message>

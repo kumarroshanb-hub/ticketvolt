@@ -10,6 +10,7 @@ export const buildEventPayload = (formData, sessions, tiers) => {
     // Presence of `venue_master_id` (or explicit seat_assignments) means
     // the backend will provision an EventVenuePlan, so tiers must be [].
     const isReservedSeating =
+        Boolean(formData.has_reserved_seating) ||
         Boolean(formData.venue_master_id) ||
         (formData.seat_assignments !== undefined
             && formData.seat_assignments !== null);
@@ -34,11 +35,37 @@ export const buildEventPayload = (formData, sessions, tiers) => {
         status: formData.status || EVENT_STATUS.DRAFT,
         is_public: formData.is_public !== undefined ? formData.is_public : true,
         donations_enabled: Boolean(formData.donations_enabled),
+        ask_course_question: false,
+        privacy_notice_text: formData.privacy_notice_text || '',
+        marketing_opt_in_enabled: Boolean(formData.marketing_opt_in_enabled),
+        public_page_enabled: formData.public_page_enabled !== false,
+        duration_minutes: Number(formData.duration_minutes) || 120,
+        checkin_opens_minutes_before: Number(formData.checkin_opens_minutes_before) || 0,
+        map_url: formData.map_url || '',
+        faqs: formData.faqs || [],
+        title_zh: formData.title_zh || '',
+        short_description_zh: formData.short_description_zh || '',
+        description_zh: formData.description_zh || '',
+        faqs_zh: formData.faqs_zh || [],
+        donation_presets: formData.donation_presets || [],
+        donation_contact_text: '',
+        show_bilingual_content: Boolean(formData.show_bilingual_content),
+        feedback_enabled: Boolean(formData.feedback_enabled),
+        feedback_title: formData.feedback_title || 'Share your feedback',
+        feedback_intro: formData.feedback_intro || '',
+        feedback_questions: formData.feedback_questions || [],
+        highlights: [],
+        age_info: formData.age_info || '',
+        door_time: '',
+        parking_info: formData.parking_info || '',
+        refund_policy: '',
+        accessibility_info: formData.accessibility_info || '',
         ticket_format: formData.ticket_format || 'pdf',
         combine_tickets: formData.combine_tickets || false,
         tickets_per_page: formData.tickets_per_page || 4,
         cancellation_policy_id: formData.cancellation_policy_id || null,
         cancellation_policy_text: formData.cancellation_policy_text || '',
+        cancellation_reason: formData.cancellation_reason || '',
         sessions: (sessions || []).map((s) => ({
             ...(s.id ? { id: s.id } : {}),
             start_time: inputToIso(s.start_time),

@@ -20,7 +20,7 @@ export const useEventSubmit = ({
     const [error, setError] = useState('');
 
     const submit = useCallback(
-        async (e, payloadOverride) => {
+        async (e, payloadOverride, options = {}) => {
             if (e && typeof e.preventDefault === 'function') {
                 e.preventDefault();
             }
@@ -38,6 +38,13 @@ export const useEventSubmit = ({
 
                 if (id) {
                     await api.put(`/events/${id}/`, payload);
+                    if (options.publish) {
+                        await api.post(`/events/${id}/publish/`);
+                        toast.success('Event published successfully!');
+                        onSuccess?.();
+                        navigate('/app/events');
+                        return;
+                    }
                     toast.success('Event updated successfully!');
                     onSuccess?.();
                     navigate('/app/events');
@@ -66,6 +73,13 @@ export const useEventSubmit = ({
                         return;
                     }
 
+                    if (options.publish) {
+                        await api.post(`/events/${response.data.id}/publish/`);
+                        toast.success('Event published successfully!');
+                        onSuccess?.();
+                        navigate('/app/events');
+                        return;
+                    }
                     toast.success('Event created successfully!');
                     // ✅ Clear the draft now that the create succeeded, so a
                     // subsequent "Create Event" starts from a blank form.

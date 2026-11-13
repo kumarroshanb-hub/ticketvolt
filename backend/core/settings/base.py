@@ -243,6 +243,8 @@ MIDDLEWARE = [
     'axes.middleware.AxesMiddleware',             # Must be last
     # ✅ Track JWT user activity for Active Sessions dashboard
     'core.middleware.ActivityTrackingMiddleware',
+    'core.middleware.TenantDomainMiddleware',
+    'core.middleware.AuditLogMiddleware',
 ]
 
 # Axes must be first in the authentication backends list.
@@ -458,6 +460,13 @@ EMAIL_TIMEOUT = 30
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
+# Google OAuth
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+GOOGLE_REDIRECT_URI = os.environ.get(
+    'GOOGLE_REDIRECT_URI', f'{BASE_URL}/api/auth/google/callback/'
+)
+
 _ADMIN_URL_RAW = os.environ.get('ADMIN_URL', 'admin/').strip('/')
 ADMIN_URL = _ADMIN_URL_RAW + '/'
 
@@ -492,6 +501,11 @@ PAYMENTS = {
 }
 
 # Razorpay
+# Optional envelope/KMS encryption for tenant payment credentials.
+KMS_PROVIDER = os.environ.get('KMS_PROVIDER', '')
+KMS_KEY_ID = os.environ.get('KMS_KEY_ID', '')
+AWS_REGION = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', ''))
+
 RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', '')
 RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
 RAZORPAY_WEBHOOK_SECRET = os.environ.get('RAZORPAY_WEBHOOK_SECRET', '')

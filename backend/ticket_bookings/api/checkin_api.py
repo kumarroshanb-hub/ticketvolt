@@ -41,7 +41,11 @@ def _validate_checkin_window(ticket, now=None):
         return True, None
 
     session = ticket.session
-    window_start = session.start_time - CHECKIN_EARLY_GRACE
+    event = getattr(ticket, 'event', None) or getattr(session, 'event', None)
+    early_minutes = getattr(event, 'checkin_opens_minutes_before', 30)
+    if early_minutes is None:
+        early_minutes = 30
+    window_start = session.start_time - timedelta(minutes=max(0, int(early_minutes)))
     window_end = session.end_time + CHECKIN_LATE_GRACE
 
     if now < window_start:
@@ -836,9 +840,12 @@ class CheckInViewSet(viewsets.ViewSet):
 
             query = CheckInLog.objects.all()
 
+            org_id = request.query_params.get('organization_id')
             if not is_platform_admin(user):
                 org_ids = user_operator_org_ids(user)
                 query = query.filter(event__organization_id__in=org_ids)
+            elif org_id:
+                query = query.filter(event__organization_id=org_id)
 
             if event_id:
                 # Only filter by event if it's visible to this user. If not,

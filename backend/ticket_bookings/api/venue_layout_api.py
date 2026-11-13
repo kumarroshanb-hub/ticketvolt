@@ -58,6 +58,7 @@ def _seat_payload(seat, status_value='available'):
         'category_color': seat.category.hex_color if seat.category else '#4CAF50',
         'price': float(seat.category.price) if seat.category else 0.00,
         'status': status_value,
+        'is_accessible': bool(seat.is_accessible),
     }
 
 
@@ -390,3 +391,19 @@ def get_venue_layout(request, venue_id):
         'background_image': layout.background_image,
         'seats': seats_data,
     })
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def set_seat_accessible(request, seat_id):
+    from ..models_seating import Seat
+    from ..services.tenancy import can_manage_org
+
+    seat = Seat.objects.select_related('layout__venue').filter(pk=seat_id).first()
+    if seat is None:
+        return Response({'error': 'Seat not found.'}, status=404)
+    venue = seat.layout.venue
+    if not (request.user.is_superuser or can_manage_org(request.user, venue.organization)):
+        return Response({'error': 'Permission denied.'}, status=403)
+    seat.is_accessible = bool(request.data.get('is_accessible', True))
+    seat.save(update_fields=['is_accessible'])
+    return Response({'id': str(seat.id), 'is_accessible': seat.is_accessible})

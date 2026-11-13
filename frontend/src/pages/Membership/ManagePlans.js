@@ -29,6 +29,7 @@ import {
     PageHeaderLeft, PageHeaderRight, PrimaryButton, OutlineButton,
     LoadingWrapper,
 } from '../../components/Common';
+import OrganizationAdminTabs from '../Organizations/OrganizationAdminTabs';
 import { theme as appTheme } from '../../theme/tokens';
 import { ROLES } from '../../constants';
 
@@ -312,6 +313,8 @@ const ManagePlans = () => {
                     </PrimaryButton>
                 </PageHeaderRight>
             </PageHeader>
+
+            <OrganizationAdminTabs />
 
             {tiers.length === 0 ? (
                 <Alert severity="info">

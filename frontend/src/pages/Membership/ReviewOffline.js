@@ -25,6 +25,7 @@ import {
     PageHeaderLeft, PageHeaderRight, PrimaryButton, OutlineButton,
     LoadingWrapper,
 } from '../../components/Common';
+import OrganizationAdminTabs from '../Organizations/OrganizationAdminTabs';
 import { theme as appTheme } from '../../theme/tokens';
 
 const C = appTheme.colors;
@@ -223,6 +224,8 @@ const ReviewOffline = () => {
                     </OutlineButton>
                 </PageHeaderRight>
             </PageHeader>
+
+            <OrganizationAdminTabs />
 
             {pendingCount === 0 ? (
                 <Alert severity="success" icon={<CheckIcon />}>

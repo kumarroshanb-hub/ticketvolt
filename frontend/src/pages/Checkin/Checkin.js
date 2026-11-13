@@ -65,7 +65,9 @@ import {
     PageHeaderRight,
     OutlineButton,
     LoadingWrapper,
+    OrgFilterSelect,
 } from '../../components/Common';
+import usePlatformFilter from '../../hooks/usePlatformFilter';
 
 import { theme } from '../../theme/tokens';
 
@@ -282,6 +284,7 @@ const VerificationResult = ({ result, onCheckIn, onReset, checkingIn }) => {
 // MAIN COMPONENT
 // ============================================
 const Checkin = () => {
+    const { params, isPlatformAdmin, orgFilter, setOrgFilter, organizations } = usePlatformFilter();
     const { t } = useTranslation();
     const { user } = useAuth();
     const theme = useTheme();
@@ -301,7 +304,7 @@ const Checkin = () => {
         setLoading(true);
         try {
             const historyResponse = await api.get('/checkin/history/', {
-                params: { limit: 100 },
+                params: { ...params, limit: 100 },
             });
 
             const raw = historyResponse.data;
@@ -319,7 +322,7 @@ const Checkin = () => {
         } finally {
             setLoading(false);
         }
-    }, [t]);
+    }, [t, params]);
 
     useEffect(() => {
         loadData();
@@ -600,6 +603,12 @@ const Checkin = () => {
                     )}
                 </PageHeaderLeft>
                 <PageHeaderRight>
+                    <OrgFilterSelect
+                        isPlatformAdmin={isPlatformAdmin}
+                        organizations={organizations}
+                        orgFilter={orgFilter}
+                        setOrgFilter={setOrgFilter}
+                    />
                     <OutlineButton variant="outlined" startIcon={<RefreshIcon />} onClick={loadData}>
                         {t('common.refresh')}
                     </OutlineButton>

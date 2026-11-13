@@ -63,6 +63,11 @@ def can_manage_org(user, org):
     return tenancy.can_manage_org(user, org)
 
 
+def can_view_finance(user, org):
+    """Finance workspaces: Owner, Admin, or Finance role."""
+    return tenancy.can_view_finance(user, org)
+
+
 def can_operate_org(user, org):
     """Operational tasks e.g. scanning tickets (Owner + Admin + Staff)."""
     return tenancy.can_operate_org(user, org)
@@ -88,6 +93,10 @@ def user_org_ids(user):
 def user_manager_org_ids(user):
     """Org IDs where the user is Owner or Admin (valid membership)."""
     return tenancy.user_org_ids(user)
+
+
+def user_finance_org_ids(user):
+    return tenancy.user_finance_org_ids(user)
 
 
 def user_operator_org_ids(user):
@@ -182,6 +191,25 @@ class IsOrgOperator(BasePermission):
 
 
 # --- Collection-level org permissions (list/create endpoints) --------------
+
+class IsAnyOrgFinance(BasePermission):
+    """True if the user is Owner/Admin/Finance of at least one org."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if is_platform_admin(user):
+            return True
+        from ticket_bookings.models_tenancy import OrganizationMembership
+        from ticket_bookings.services.tenancy import _active_membership_filter
+        return _active_membership_filter(user).filter(
+            role__in=[
+                OrganizationMembership.OrgRole.ADMIN,
+                OrganizationMembership.OrgRole.FINANCE,
+            ],
+        ).exists()
+
 
 class IsAnyOrgManager(BasePermission):
     """

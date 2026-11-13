@@ -15,7 +15,7 @@ def seed_default_settings(apps, schema_editor):
             'country': 'Hong Kong',
             'country_code': 'HK',
             'default_timezone': 'Asia/Hong_Kong',
-            'org_name': 'TicketVolt',
+            'org_name': 'TiketVault',
         },
     )
 

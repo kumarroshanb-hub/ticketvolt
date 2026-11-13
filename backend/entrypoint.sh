@@ -64,4 +64,10 @@ else
     echo "⏭️  Skipping migrate (RUN_MIGRATIONS=${RUN_MIGRATIONS:-0})"
 fi
 
+# Optional: create deployment users from DJANGO_* env vars. Never fail startup.
+if [ "${SEED_DEFAULT_USERS:-0}" = "1" ]; then
+    echo "👤 Seeding default users..."
+    python manage.py seed_default_users --all || true
+fi
+
 exec "$@"

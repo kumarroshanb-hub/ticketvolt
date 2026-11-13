@@ -96,6 +96,12 @@ const makeSlug = (value) => (value || '')
     .replace(/-+/g, '-')
     .slice(0, 40);
 
+const getPublicAppOrigin = () => {
+    const configured = process.env.REACT_APP_PUBLIC_APP_URL;
+    const origin = configured || (typeof window !== 'undefined' ? window.location.origin : '');
+    return String(origin || '').replace(/\/$/, '');
+};
+
 const STAGE_FORM = 'form';
 const STAGE_CONFIRM = 'confirm';
 
@@ -994,14 +1000,14 @@ const Organizations = () => {
                                         onChange={(e) => setFormData((prev) => ({ ...prev, slug: makeSlug(e.target.value) }))}
                                         disabled={creating}
                                         InputProps={{
-                                            startAdornment: <InputAdornment position="start">app.com/org/</InputAdornment>,
+                                            startAdornment: <InputAdornment position="start">/org/</InputAdornment>,
                                             endAdornment: formData.slug ? (
                                                 <InputAdornment position="end">
                                                     {slugStatus?.available ? <CheckCircleIcon color="success" fontSize="small" /> : <ErrorOutlineIcon color="warning" fontSize="small" />}
                                                 </InputAdornment>
                                             ) : null,
                                         }}
-                                        helperText={slugStatus ? (slugStatus.available ? t('organizations.slugAvailable', 'Available') : t('organizations.slugTaken', 'Already taken')) : t('organizations.slugHelper', '3–40 lowercase letters, numbers and hyphens.')}
+                                        helperText={slugStatus ? (slugStatus.available ? t('organizations.slugAvailable', 'Available') : t('organizations.slugTaken', 'Already taken')) : `${getPublicAppOrigin()}/org/${formData.slug || 'your-org'} · ${t('organizations.slugHelper', '3–40 lowercase letters, numbers and hyphens.')}`}
                                     />
                                 </Grid>
                                 <Grid item xs={12} sm={6}>

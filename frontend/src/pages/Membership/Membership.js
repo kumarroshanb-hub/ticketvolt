@@ -422,23 +422,23 @@ const Membership = () => {
 
             {/* Active memberships */}
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                {t('membership.myActiveMemberships')}
+                {t('membership.myMemberships', 'My memberships')}
             </Typography>
 
-            {shownMemberships.filter((m) => m.is_active).length === 0 ? (
+            {shownMemberships.filter((m) => m.is_active || m.status === 'pending_offline').length === 0 ? (
                 <Alert severity="info" sx={{ mb: 4 }}>
                     {t('membership.noActiveMembership')}
                 </Alert>
             ) : (
                 <Grid container spacing={isMobile ? 2 : 3} sx={{ mb: 4 }}>
-                    {shownMemberships.filter((m) => m.is_active).map((m) => {
+                    {shownMemberships.filter((m) => m.is_active || m.status === 'pending_offline').map((m) => {
                         const org = organizations.find((o) => o.id === m.organization);
                         const depCount = m.dependents?.length || 0;
                         return (
                             <Grid item xs={12} md={6} key={m.id}>
                                 <Card sx={{
                                     borderRadius: 2,
-                                    border: `2px solid ${C.success}`,
+                                    border: `2px solid ${m.is_active ? C.success : C.warning}`,
                                     height: '100%',
                                 }}>
                                     <CardContent>
@@ -509,9 +509,16 @@ const Membership = () => {
                                         <Divider sx={{ my: 2 }} />
 
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                                                {t('membership.familyMembers', { count: depCount })}
-                                            </Typography>
+                                            <Box>
+                                                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                                                    {t('membership.familyMembers', { count: depCount })}
+                                                </Typography>
+                                                {m.status === 'pending_offline' && (
+                                                    <Typography variant="caption" sx={{ color: C.warningDark }}>
+                                                        {t('membership.addFamilyBeforeReview', 'Add family members now; the admin will review them with your offline payment.')}
+                                                    </Typography>
+                                                )}
+                                            </Box>
                                             <Button
                                                 size="small"
                                                 startIcon={<PersonAddIcon />}

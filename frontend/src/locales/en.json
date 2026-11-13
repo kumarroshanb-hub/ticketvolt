@@ -1127,7 +1127,11 @@
         "paymentsEnabled": "ENABLED",
         "paymentsDisabled": "DISABLED",
         "paymentsEnabledAlert": "Online payments are currently active. Users can purchase tickets using integrated gateways.",
-        "paymentsDisabledAlert": "Online payments are disabled. Users can only book free events or use offline payment methods."
+        "paymentsDisabledAlert": "Online payments are disabled. Users can only book free events or use offline payment methods.",
+        "sectionPayments": "Payment Gateways",
+        "sectionLogin": "Login Methods",
+        "sectionRegion": "Region & Currency",
+        "sectionBranding": "Timezone & Branding"
     },
     "users": {
         "title": "User Management",

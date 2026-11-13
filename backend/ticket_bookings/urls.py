@@ -18,7 +18,7 @@ from .api.settings_api import SystemSettingsView
 from .api.organization_api import OrganizationViewSet
 from .api.payment_config_api import OrganizationPaymentConfigView
 from .api.domain_api import VerifyOrganizationDomainView
-from .api.upload_api import EventImageUploadView, OrganizationLogoUploadView, OrganizationSlugAvailabilityView
+from .api.upload_api import EventImageUploadView, OrganizationLogoUploadView, OrganizationSlugAvailabilityView, PublicOrganizationView
 from .api.security_api import SecurityStatusView
 from .api.features_api import (
     FeatureDefinitionViewSet, FeaturePackageViewSet,
@@ -209,6 +209,7 @@ urlpatterns = [
     path('uploads/event-image/', EventImageUploadView.as_view(), name='event-image-upload'),
     path('uploads/organization-logo/', OrganizationLogoUploadView.as_view(), name='organization-logo-upload'),
     path('organizations/slug-available/', OrganizationSlugAvailabilityView.as_view(), name='organization-slug-available'),
+    path('organizations/public/<slug:slug>/', PublicOrganizationView.as_view(), name='public-organization'),
     path('organizations/payment-config/', OrganizationPaymentConfigView.as_view(), name='organization-payment-config'),
     path('organizations/<uuid:org_id>/verify-domain/', VerifyOrganizationDomainView.as_view(), name='organization-verify-domain'),
     # ============ ROUTER ============

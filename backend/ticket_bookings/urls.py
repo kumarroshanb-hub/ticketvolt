@@ -14,7 +14,7 @@ from .api.qr_api import QRCodeDownloadView, QRCodeImageView
 from .api.template_api import TemplateTypeViewSet, EventTemplateViewSet
 from .api.user_api import UserViewSet
 from .api.cancellation_policy_api import CancellationPolicyViewSet
-from .api.settings_api import SystemSettingsView
+from .api.settings_api import SystemSettingsView, ChangePasswordView
 from .api.organization_api import OrganizationViewSet
 from .api.payment_config_api import OrganizationPaymentConfigView
 from .api.domain_api import VerifyOrganizationDomainView
@@ -229,6 +229,7 @@ urlpatterns = [
     path('billing/transactions/', BillingTransactionsView.as_view(), name='billing_transactions'),
     path('billing/send-email/', BillingSendEmailView.as_view(), name='billing_send_email'),
     path('settings/', SystemSettingsView.as_view(), name='system-settings'),
+    path('settings/password/', ChangePasswordView.as_view(), name='change-password'),
 
     # ============ QR ============
     path('qr/download/<uuid:ticket_id>/', QRCodeDownloadView.as_view(), name='qr-download'),

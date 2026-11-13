@@ -1020,7 +1020,7 @@
         "title": "Settings",
         "subtitle": "Manage your account settings and preferences",
         "tabProfile": "Profile",
-        "tabSecurity": "Security",
+        "tabSecurity": "Change Password",
         "tabNotifications": "Notifications",
         "tabAppearance": "Appearance",
         "tabLanguage": "Language",
@@ -1265,7 +1265,16 @@
         "filterAllOrganizationRoles": "All Organization Roles",
         "colPlatformRole": "Platform Role",
         "colOrganizationRole": "Organization Role",
-        "noOrganizationRole": "No organisation role"
+        "noOrganizationRole": "No organisation role",
+        "actionResetPassword": "Reset password",
+        "resetPasswordTitle": "Reset password",
+        "resetPassword": "Reset password",
+        "newPassword": "New password",
+        "confirmPassword": "Confirm password",
+        "resetPasswordHint": "This also clears failed-login lockouts for the account.",
+        "resetPasswordSuccess": "Password reset and account unlocked.",
+        "passwordMismatch": "Passwords do not match.",
+        "passwordMin": "Password must be at least 10 characters."
     },
     "activeSessions": {
         "title": "Active Sessions",

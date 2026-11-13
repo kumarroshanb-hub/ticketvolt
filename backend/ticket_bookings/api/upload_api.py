@@ -96,3 +96,24 @@ class OrganizationSlugAvailabilityView(APIView):
         )
         available = valid and not Organization.objects.filter(slug=slug).exists()
         return Response({'slug': slug, 'valid': valid, 'available': available})
+
+
+class PublicOrganizationView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, slug):
+        org = Organization.objects.filter(slug=slug, is_active=True).first()
+        if org is None:
+            return Response({'error': 'Organization not found.'}, status=404)
+        return Response({
+            'id': str(org.id),
+            'name': org.name,
+            'slug': org.slug,
+            'description': org.description,
+            'organization_type': org.organization_type,
+            'industry': org.industry,
+            'logo_url': org.org_logo_url,
+            'email': org.org_email,
+            'phone': org.org_phone,
+            'social_links': org.social_links or [],
+        })

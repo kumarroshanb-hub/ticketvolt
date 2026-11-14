@@ -17,13 +17,23 @@
 
 set -e
 
+# Accept 1/true/yes/on (any case) for boolean flags. Render's blueprint and
+# some .env files use "true" while compose files used "1"; comparing only
+# against "1" silently skipped migrations on UAT.
+is_enabled() {
+    case "$(printf '%s' "${1:-0}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 echo "🌐 Compiling translations..."
 python manage.py compilemessages || true
 
 # -------------------- collectstatic --------------------
 # Always run on the primary service. Idempotent, cheap, and required
 # for WhiteNoise to find the static root at runtime.
-if [ "${RUN_COLLECTSTATIC:-1}" = "1" ]; then
+if is_enabled "${RUN_COLLECTSTATIC:-1}"; then
     echo "📦 Collecting static files..."
     python manage.py collectstatic --noinput
 else
@@ -31,7 +41,7 @@ else
 fi
 
 # -------------------- migrate --------------------
-if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
+if is_enabled "${RUN_MIGRATIONS:-0}"; then
     echo "🚀 Running migrations..."
     python manage.py migrate --noinput
 
@@ -65,7 +75,7 @@ else
 fi
 
 # Optional: create deployment users from DJANGO_* env vars. Never fail startup.
-if [ "${SEED_DEFAULT_USERS:-0}" = "1" ] || [ -n "${DJANGO_SUPERADMIN_PASSWORD:-}" ] || [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ] || [ -n "${SUPERADMIN_PASSWORD:-}" ] || [ -n "${SUPER_ADMIN_PASSWORD:-}" ]; then
+if is_enabled "${SEED_DEFAULT_USERS:-0}" || [ -n "${DJANGO_SUPERADMIN_PASSWORD:-}" ] || [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ] || [ -n "${SUPERADMIN_PASSWORD:-}" ] || [ -n "${SUPER_ADMIN_PASSWORD:-}" ]; then
     echo "👤 Seeding default users with env passwords..."
     python manage.py seed_default_users --all --reset-passwords || true
 fi

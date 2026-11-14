@@ -9,6 +9,11 @@ app = Celery('ticketvolt')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
+# Celery 6.0 removes the implicit "retry broker connection on startup"
+# behaviour; opt in explicitly so worker boot keeps working after the upgrade
+# and the CPendingDeprecationWarning stops being logged.
+app.conf.broker_connection_retry_on_startup = True
+
 @app.task(bind=True)
 def debug_task(self):
     print(f'Request: {self.request!r}')

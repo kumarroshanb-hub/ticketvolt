@@ -330,6 +330,7 @@ REST_FRAMEWORK = {
         'checkin_verify': '240/min', # read-only verify — allow more
         'register': '3/hour',
         'booking_create': '30/hour',
+        'checkout': '10/min',        # anonymous payment-intent creation
         'public_read': '120/min',
         'booking_resend': '5/hour',
         'cron': '20/hour',           # for the GitHub Actions trigger endpoint
@@ -479,6 +480,14 @@ if IS_PRODUCTION and _ADMIN_URL_RAW == 'admin':
 
 
 # ============================================
+# ============================================
+# PROXY / CLIENT IP (pentest F9)
+# ============================================
+# Number of reverse proxies in front of Django. 0 = trust REMOTE_ADDR only.
+# Set to 1 behind a single nginx so audit logs and lockouts see the real client.
+TRUSTED_PROXY_COUNT = int(os.environ.get('TRUSTED_PROXY_COUNT', '0') or 0)
+
+
 # AXES — BRUTE-FORCE PROTECTION
 # ============================================
 # Raise the threshold so a single bad actor cannot lock out a known user

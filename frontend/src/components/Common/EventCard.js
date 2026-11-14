@@ -44,22 +44,20 @@ const StyledCard = styled(Card)`
 
 const CardImageBanner = styled.div`
     width: 100%;
-    height: 190px;
-    flex: 0 0 190px;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    flex: 0 0 auto;
     position: relative;
     overflow: hidden;
     background-color: ${C.bgInput};
 
-    @media (max-width: 600px) {
-        height: 170px;
-        flex-basis: 170px;
-    }
-
     img {
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
+        object-position: center;
         display: block;
+        background: ${C.bgInput};
     }
 
     &::after {

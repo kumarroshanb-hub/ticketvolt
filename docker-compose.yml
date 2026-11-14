@@ -43,7 +43,10 @@ services:
       - ./backend/.env.local     # ← Load from .env.local
     environment:
       ENVIRONMENT: local          # ← Selects local.py settings
-      RUN_MIGRATIONS: '0'       # ✅ Backend should NOT run migrations (handled by entrypoint.sh)
+      # The backend is the primary service: migrate here BEFORE the entrypoint
+      # seeds default users. With '0' a fresh database seeds before the tables
+      # exist and the seed command crashes ("relation auth_user does not exist").
+      RUN_MIGRATIONS: '1'
     depends_on:
       postgres:
         condition: service_healthy

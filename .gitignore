@@ -38,6 +38,7 @@ celerybeat-schedule
 
 #baileys
 baileys-gateway/sessions/*.json
+baileys-gateway/sessions.bak-*/
 
 #codebase dump
 complete_codebase*.txt

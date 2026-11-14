@@ -44,9 +44,16 @@ const StyledCard = styled(Card)`
 
 const CardImageBanner = styled.div`
     width: 100%;
-    height: 100%;
+    height: 190px;
+    flex: 0 0 190px;
     position: relative;
+    overflow: hidden;
     background-color: ${C.bgInput};
+
+    @media (max-width: 600px) {
+        height: 170px;
+        flex-basis: 170px;
+    }
 
     img {
         width: 100%;
@@ -360,6 +367,7 @@ const pickAnnouncementImage = (event) => {
     const images = event.template_images || {};
 
     return (
+        event.cover_image ||
         images.default ||
         images.announcement ||
         images.flyer ||
@@ -368,7 +376,6 @@ const pickAnnouncementImage = (event) => {
         images.invite ||
         images.certificate ||
         Object.values(images)[0] ||
-        event.cover_image ||
         null
     );
 };
@@ -605,7 +612,7 @@ const EventCard = ({
                     href={`/events/${event.id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ display: 'block', height: '100%' }}
+                    style={{ display: 'block', width: '100%' }}
                     aria-label={event.title}
                 >
                     <CardImageBanner>

@@ -9,7 +9,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
 
-from ticket_bookings.models import Event, Booking, Venue
+from ticket_bookings.models import Event, Booking, Venue, Organization
 
 
 def make_user(username, **kw):
@@ -17,7 +17,13 @@ def make_user(username, **kw):
 
 
 def make_event(organizer, title='E'):
+    # Event.organization is required; give each organizer their own tenant.
+    org, _ = Organization.objects.get_or_create(
+        slug=f'org-{organizer.username}',
+        defaults={'name': f'{organizer.username} org'},
+    )
     return Event.objects.create(
+        organization=org,
         organizer=organizer,
         title=title,
         start_date=timezone.now(),

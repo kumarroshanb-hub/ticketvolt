@@ -63,21 +63,35 @@ class OrganizationLogoUploadView(APIView):
             return Response({'error': 'logo is required.'}, status=400)
         if upload.size > 2 * 1024 * 1024:
             return Response({'error': 'Logo must be 2MB or smaller.'}, status=400)
-        ext = os.path.splitext(upload.name)[1].lower() or '.png'
-        is_svg = ext == '.svg' or upload.content_type == 'image/svg+xml'
-        if not is_svg:
-            try:
-                image = Image.open(upload)
-                image.verify()
-                if image.width < 200 or image.height < 200:
+        # SECURITY (pentest F1): SVG is an active document format. An SVG
+        # "logo" can carry <script>, event handlers and external entity
+        # references, and it is served back inline from the media origin, so
+        # accepting it is a stored-XSS primitive. Only raster formats are
+        # accepted, and the stored extension is derived from the *decoded*
+        # image format — never from the client-supplied filename.
+        upload.seek(0)
+        try:
+            with Image.open(upload) as probe:
+                probe.verify()
+                image_format = (probe.format or '').upper()
+            upload.seek(0)
+            with Image.open(upload) as probe:
+                if probe.width < 200 or probe.height < 200:
                     return Response({'error': 'Logo must be at least 200×200px.'}, status=400)
-                upload.seek(0)
-            except Exception:
-                return Response({'error': 'Upload a valid PNG, JPG or SVG logo.'}, status=400)
-        if ext not in ('.png', '.jpg', '.jpeg', '.webp', '.svg'):
-            ext = '.png'
+        except Exception:
+            return Response({'error': 'Upload a valid PNG, JPG or WEBP logo.'}, status=400)
+
+        format_ext = {
+            'PNG': '.png',
+            'JPEG': '.jpg',
+            'WEBP': '.webp',
+        }.get(image_format)
+        if format_ext is None:
+            return Response({'error': 'Logo must be a PNG, JPG or WEBP image.'}, status=400)
+
+        upload.seek(0)
         folder = slugify(org.slug or org.name) or str(org.id)
-        path = default_storage.save(f'org_logos/{folder}/{uuid.uuid4().hex}{ext}', upload)
+        path = default_storage.save(f'org_logos/{folder}/{uuid.uuid4().hex}{format_ext}', upload)
         url = default_storage.url(path)
         if url.startswith('/'):
             url = request.build_absolute_uri(url)

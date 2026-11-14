@@ -2,7 +2,12 @@
 import axios from 'axios';
 import { getCurrentLanguage } from '../i18n';                         // ✅ NEW
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+// Default to a SAME-ORIGIN path: nginx proxies /api/ to Django, so the
+// browser never makes a cross-origin request. This keeps CORS and CSP simple
+// (connect-src 'self' is enough) and makes cookies/CSP behave identically in
+// dev and production. Deployments that host the API on another origin set
+// REACT_APP_API_URL to that absolute URL.
+const API_URL = process.env.REACT_APP_API_URL || '/api';
 
 const api = axios.create({
     baseURL: API_URL,

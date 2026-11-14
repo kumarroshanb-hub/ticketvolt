@@ -760,16 +760,16 @@ const CreateBooking = () => {
                     flexDirection: 'column', 
                     gap: 2,
                     width: '100%',
-                    height: 'calc(100vh - 340px)',
-                    minHeight: '540px',
-                    maxHeight: '780px',
+                    height: isMobile ? 'auto' : 'calc(100vh - 340px)',
+                    minHeight: isMobile ? 0 : '540px',
+                    maxHeight: isMobile ? 'none' : '780px',
                 }}>
                     
                     {/* ✅ Two-column header: Alert on left, Summary on right */}
-                    <Box sx={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                    <Box sx={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 2, flexShrink: 0 }}>
                         <Alert 
                             severity="info" 
-                            sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}
+                            sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', width: '100%', minWidth: 0 }}
                         >
                             <LocationIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                             {t('bookings.selectSeatsHint', { event: selectedEvent?.title })}
@@ -786,7 +786,8 @@ const CreateBooking = () => {
                             justifyContent: 'center',
                             border: `1px solid ${BRAND_COLORS.border}`,
                             borderRadius: 1,
-                            minWidth: '200px',
+                            minWidth: isMobile ? 0 : '200px',
+                            width: isMobile ? '100%' : 'auto',
                             bgcolor: C.bgPrimary,
                         }}>
                             <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary' }}>
@@ -798,7 +799,7 @@ const CreateBooking = () => {
                         </Paper>
                     </Box>
                     
-                    <Box sx={{ flexGrow: 1, minHeight: 0, width: '100%', position: 'relative' }}>
+                    <Box sx={{ flexGrow: isMobile ? 0 : 1, minHeight: isMobile ? 420 : 0, height: isMobile ? 420 : 'auto', width: '100%', position: 'relative' }}>
                         <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
                             <SeatingCanvas
                                 ref={canvasRef}
@@ -858,7 +859,8 @@ const CreateBooking = () => {
                             gap: 1.5,
                             alignItems: 'center',
                             flexWrap: 'wrap',
-                            maxWidth: 'calc(100% - 160px)' 
+                            maxWidth: 'calc(100% - 160px)',
+                            display: isMobile ? 'none' : 'flex',
                         }}>
                             {seatingLegendStats.map((stat) => (
                                 <Box key={stat.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -1100,7 +1102,7 @@ const CreateBooking = () => {
                                         fullWidth
                                         size="small"
                                         type="number"
-                                        label={t('booking.donationAmountLabel')}
+                                        label={t('booking.donationAmountLabel', { currency: eventDetails?.currency_code || 'HKD' })}
                                         value={donationAmount}
                                         onChange={(e) => setDonationAmount(e.target.value)}
                                         inputProps={{ min: 0, step: '0.01' }}

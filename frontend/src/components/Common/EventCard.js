@@ -492,12 +492,12 @@ const EventCard = ({
     const [event, setEvent] = useState(initialEvent);
     const [tiersExpanded, setTiersExpanded] = useState(false);
     const [loadingDetails, setLoadingDetails] = useState(!initialEvent.tiers);
-    const [imageFailed, setImageFailed] = useState(false);
+    const [failedImage, setFailedImage] = useState(null);
 
     useEffect(() => {
         let isMounted = true;
         const fetchDetails = async () => {
-            if (initialEvent.tiers && initialEvent.tiers.length > 0) {
+            if (initialEvent.tiers && initialEvent.tiers.length > 0 && initialEvent.cover_image) {
                 setLoadingDetails(false);
                 return;
             }
@@ -600,7 +600,7 @@ const EventCard = ({
         });
     };
 
-    const showImage = announcementImage && !imageFailed;
+    const showImage = Boolean(announcementImage) && failedImage !== announcementImage;
 
     return (
         <StyledCard
@@ -621,7 +621,7 @@ const EventCard = ({
                             alt={event.title}
                             onError={() => {
                                 console.error('❌ Image failed to load:', announcementImage);
-                                setImageFailed(true);
+                                setFailedImage(announcementImage);
                             }}
                         />
                     </CardImageBanner>

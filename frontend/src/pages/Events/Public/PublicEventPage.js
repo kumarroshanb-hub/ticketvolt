@@ -156,7 +156,7 @@ const PublicEventPage = () => {
     const priceLabel = minPrice !== null ? formatMoney(minPrice) : t('events.ticketsTitle', 'Tickets');
 
     return (
-        <Box sx={{ minHeight: '100vh', bgcolor: C.bgPrimary, fontFamily: F.family }}>
+        <Box sx={{ minHeight: '100vh', bgcolor: C.bgPrimary, fontFamily: F.family, overflowX: 'hidden' }}>
             <Box
                 component="header"
                 sx={{
@@ -212,7 +212,7 @@ const PublicEventPage = () => {
 
                             <Typography
                                 component="h1"
-                                sx={{ fontSize: { xs: '2rem', sm: '2.7rem', md: '3.35rem' }, lineHeight: 1.04, letterSpacing: '-0.045em', fontWeight: 800, color: C.textPrimary }}
+                                sx={{ fontSize: { xs: '1.75rem', sm: '2.5rem', md: '3.35rem' }, lineHeight: 1.04, letterSpacing: '-0.045em', fontWeight: 800, color: C.textPrimary }}
                             >
                                 {event.title}
                             </Typography>
@@ -228,7 +228,7 @@ const PublicEventPage = () => {
                                     label={`${startDate} · ${startTime}${endTime ? ` – ${endTime}` : ''}`}
                                     sx={{
                                         bgcolor: C.bgCard, border: `1px solid ${C.borderLight}`, fontWeight: 600, py: 2.1,
-                                        width: { xs: '100%', sm: 'auto' }, justifyContent: 'flex-start',
+                                        width: { xs: '100%', sm: 'auto' }, maxWidth: '100%', boxSizing: 'border-box', justifyContent: 'flex-start',
                                         '& .MuiChip-label': { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'unset', lineHeight: 1.35 },
                                     }}
                                 />
@@ -242,7 +242,7 @@ const PublicEventPage = () => {
                                         clickable={Boolean(mapLink)}
                                         sx={{
                                             bgcolor: C.bgCard, border: `1px solid ${C.borderLight}`, fontWeight: 600, py: 2.1,
-                                            width: { xs: '100%', sm: 'auto' }, justifyContent: 'flex-start',
+                                            width: { xs: '100%', sm: 'auto' }, maxWidth: '100%', boxSizing: 'border-box', justifyContent: 'flex-start',
                                             '& .MuiChip-label': { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'unset', lineHeight: 1.35 },
                                         }}
                                     />

@@ -3,16 +3,20 @@ import logging
 from decimal import Decimal
 
 from django.conf import settings
-from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import transaction
+from django.db.models import Sum
+from django.utils import timezone
 
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
 from ..models import Event, TicketTier
-from ..models_payments import Payment, PaymentGateway, PaymentStatus, WebhookEvent
+from ..models_payments import InventoryHold, Payment, PaymentGateway, PaymentStatus, WebhookEvent
 from ..services import inventory_hold
 from ..services.payments import get_provider
 from ..services.payment_fulfillment import fulfill_payment, fail_payment, PaymentStateError
@@ -57,10 +61,67 @@ def _compute_amount(event, items):
 
 
 # ---------------------------------------------------------------------------
+# Hold-abuse limits (pentest F2)
+# ---------------------------------------------------------------------------
+# Checkout is intentionally usable without an account, but unverified
+# inventory holds must not be able to starve an event. Two bounds:
+#   • a buyer e-mail can keep at most N unpaid checkouts alive at once, and
+#   • at most 40% of any tier may sit in unverified holds at any moment.
+# Evaluated immediately before the hold is acquired; the bounds are advisory
+# under extreme concurrency (no row lock on the aggregate), which is fine for
+# a denial-of-inventory guard but would need SELECT ... FOR UPDATE if the cap
+# ever becomes a hard financial limit.
+MAX_ACTIVE_HOLDS_PER_EMAIL = 3
+MAX_HOLD_FRACTION_PER_TIER = 0.40
+
+
+def _enforce_hold_limits(event, customer_email, items):
+    """Return an error message when this checkout would exceed a hold cap."""
+    now = timezone.now()
+    live = InventoryHold.objects.filter(
+        status=InventoryHold.Status.ACTIVE,
+        payment__hold_expires_at__gt=now,
+        payment__status__in=[PaymentStatus.CREATED, PaymentStatus.PENDING],
+    )
+
+    # a) the same buyer cannot accumulate unlimited parallel carts.
+    existing = (
+        live.filter(payment__event=event, payment__customer_email=customer_email)
+        .values('payment_id')
+        .distinct()
+        .count()
+    )
+    if existing >= MAX_ACTIVE_HOLDS_PER_EMAIL:
+        return (
+            'Too many unpaid checkouts for this e-mail. '
+            'Complete or abandon the existing one first.'
+        )
+
+    # b) cap unverified holds per tier so stock cannot be fully absorbed.
+    for item in items:
+        tier_id = item.get('tier_id')
+        qty = int(item.get('qty', 0))
+        if not tier_id or qty <= 0:
+            continue
+        tier = TicketTier.objects.filter(pk=tier_id, event=event).first()
+        if tier is None:
+            continue
+        held = live.filter(tier_id=tier_id).aggregate(total=Sum('quantity'))['total'] or 0
+        ceiling = max(1, int(tier.quantity_total * MAX_HOLD_FRACTION_PER_TIER))
+        if held + qty > ceiling:
+            return (
+                'Too many tickets for this tier are currently reserved by '
+                'unpaid checkouts. Please try again shortly.'
+            )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 1. CREATE CHECKOUT
 # ---------------------------------------------------------------------------
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
 def create_checkout(request):
     # ✅ BLOCK CHECKOUT IF DISABLED
     if not _are_payments_enabled():
@@ -88,10 +149,20 @@ def create_checkout(request):
     if not customer.get('email'):
         return Response({'error': 'customer.email is required.'}, status=400)
 
+    customer_email = str(customer['email']).lower().strip()
+    try:
+        validate_email(customer_email)
+    except ValidationError:
+        return Response({'error': 'A valid customer.email is required.'}, status=400)
+
     try:
         subtotal, items = _compute_amount(event, data.get('items', []))
     except ValueError as e:
         return Response({'error': str(e)}, status=400)
+
+    hold_error = _enforce_hold_limits(event, customer_email, items)
+    if hold_error:
+        return Response({'error': hold_error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
     # Currency must match the tenant's configured currency
     currency = event.organization.currency_code
@@ -106,7 +177,7 @@ def create_checkout(request):
             currency=currency,
             amount=subtotal,
             customer_name=customer.get('name', ''),
-            customer_email=customer['email'].lower().strip(),
+            customer_email=customer_email,
             customer_phone=customer.get('phone', ''),
             whatsapp_number=customer.get('whatsapp_number', ''),
             items=items,
@@ -138,6 +209,9 @@ def create_checkout(request):
         'expires_at': payment.hold_expires_at,
         'client': payment.checkout,      # razorpay config OR stripe client_secret
     }, status=201)
+
+
+create_checkout.cls.throttle_scope = 'checkout'
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +361,7 @@ def stripe_webhook(request):
 # 5. REFUND (tenant-scoped)
 # ---------------------------------------------------------------------------
 @api_view(['POST'])
-@permission_classes([AllowAny])  # swap to IsAuthenticated + org check in real wiring
+@permission_classes([IsAuthenticated])
 def refund_payment(request, payment_id):
     try:
         payment = Payment.objects.select_related('organization').get(pk=payment_id)

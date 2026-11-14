@@ -30,7 +30,10 @@ from .base import *
 # ============================================
 # DEBUG
 # ============================================
-DEBUG = True
+# SECURITY (pentest F7): even locally, DEBUG is opt-in. A local stack
+# published on the LAN must not serve Django's technical 404 pages (full
+# URLconf + settings). backend/.env.local sets DEBUG=True for development.
+DEBUG = os.environ.get('DEBUG', 'False').strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 # ============================================

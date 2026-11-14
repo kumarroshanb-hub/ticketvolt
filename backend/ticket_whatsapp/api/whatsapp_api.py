@@ -7,12 +7,37 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ..services.whatsapp_service import WhatsAppService
 from ticket_bookings.models import Booking, Ticket
+import hmac
 import logging
+import os
 
 # ✅ Canonical signed QR payload builder.
 from ticket_bookings.services.qr_payload import serialise_ticket_qr_payload
 
 logger = logging.getLogger(__name__)
+
+
+def _ticket_visible_to(user, ticket):
+    """Object-level authorization for ticket reads (pentest F10).
+
+    A ticket may be used by its booking owner, an operator of the event's
+    organization, or a platform admin. Everyone else gets a 404 so the
+    endpoint cannot be used as a ticket-existence oracle.
+    """
+    from ticket_bookings.services import tenancy
+
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    booking = getattr(ticket, 'booking', None)
+    if booking is not None and booking.user_id == user.id:
+        return True
+    event = getattr(ticket, 'event', None)
+    org = getattr(event, 'organization', None) if event is not None else None
+    if org is not None and tenancy.can_operate_org(user, org):
+        return True
+    return False
 
 
 class SendTicketView(APIView):
@@ -36,8 +61,16 @@ class SendTicketView(APIView):
             phone_number = f"+{phone_number}"
 
         try:
-            ticket = Ticket.objects.get(id=ticket_id)
+            ticket = Ticket.objects.select_related(
+                'booking', 'event__organization',
+            ).get(id=ticket_id)
         except Ticket.DoesNotExist:
+            return Response(
+                {'error': 'Ticket not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not _ticket_visible_to(request.user, ticket):
             return Response(
                 {'error': 'Ticket not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -186,8 +219,16 @@ class SendTicketPDFView(APIView):
             )
 
         try:
-            ticket = Ticket.objects.get(id=ticket_id)
+            ticket = Ticket.objects.select_related(
+                'booking', 'event__organization',
+            ).get(id=ticket_id)
         except Ticket.DoesNotExist:
+            return Response(
+                {'error': 'Ticket not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not _ticket_visible_to(request.user, ticket):
             return Response(
                 {'error': 'Ticket not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -295,8 +336,16 @@ class SendTestQRView(APIView):
             )
 
         try:
-            ticket = Ticket.objects.get(id=ticket_id)
+            ticket = Ticket.objects.select_related(
+                'booking', 'event__organization',
+            ).get(id=ticket_id)
         except Ticket.DoesNotExist:
+            return Response(
+                {'error': 'Ticket not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not _ticket_visible_to(request.user, ticket):
             return Response(
                 {'error': 'Ticket not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -351,17 +400,61 @@ class SendTestQRView(APIView):
 
 
 class WhatsAppWebhookView(APIView):
-    """Handle incoming WhatsApp messages."""
+    """Handle inbound WhatsApp events forwarded by the Baileys gateway.
+
+    SECURITY (pentest F5): this endpoint drives outbound messages and is
+    reachable from the network, so it must never accept anonymous posts.
+    The caller proves itself with a shared secret in X-Webhook-Token (or
+    Authorization: Bearer). When WHATSAPP_WEBHOOK_SECRET is not configured
+    the endpoint fails closed rather than silently allowing anyone to make
+    the bot send messages to arbitrary numbers.
+    """
+
     permission_classes = [AllowAny]
 
-    def post(self, request):
-        data = request.data
+    @staticmethod
+    def _provided_token(request):
+        token = request.headers.get('X-Webhook-Token', '')
+        if token:
+            return token.strip()
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            return auth[7:].strip()
+        return ''
 
+    def post(self, request):
+        expected = (os.environ.get('WHATSAPP_WEBHOOK_SECRET') or '').strip()
+        if not expected:
+            logger.error(
+                'WHATSAPP_WEBHOOK_SECRET is not configured; rejecting inbound '
+                'WhatsApp webhook. Set it in the backend environment.'
+            )
+            return Response(
+                {'error': 'Webhook not configured.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if not hmac.compare_digest(self._provided_token(request), expected):
+            logger.warning('Rejected unauthenticated WhatsApp webhook request.')
+            return Response(
+                {'error': 'Unauthorized.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        data = request.data
         message_type = data.get('type')
         phone_number = data.get('phone_number')
         message = data.get('message', '')
 
-        logger.info(f"Received WhatsApp message from {phone_number}: {message}")
+        # PII: log the event type and a masked destination only.
+        masked = ('*' * max(len(str(phone_number or '')) - 4, 0)) + str(phone_number or '')[-4:]
+        logger.info('Received WhatsApp webhook type=%s to=%s', message_type, masked)
+
+        # Only phone-number shapes we can actually reply to.
+        if not phone_number or not isinstance(phone_number, str):
+            return Response({'error': 'phone_number is required.'}, status=400)
+        if not 7 <= len([c for c in phone_number if c.isdigit()]) <= 15:
+            return Response({'error': 'Invalid phone_number.'}, status=400)
 
         if message_type == 'text':
             return self._handle_text_message(phone_number, message)
